@@ -49,6 +49,7 @@ export type ActualTransaction = {
   id: string;
   date: string;
   amountYen: number;
+  kind: "expense" | "income" | "transfer";
   payeeName: string | null;
   categoryName: string | null;
   accountId: string;
@@ -58,6 +59,7 @@ export type ActualTransaction = {
 export interface ActualGateway {
   getRecentTransactions(params?: { limit?: number }): Promise<ActualTransaction[]>;
   getTransactions(params: { startDate: string; endDate: string }): Promise<ActualTransaction[]>;
+  getTransactionById(id: string): Promise<ActualTransaction | null>;
   /** Positive integer yen spent during the specified calendar month. */
   getMonthlySpending(params: { yearMonth: string }): Promise<number>;
 }
@@ -168,10 +170,12 @@ export async function runActualQuery(syncId: string, mappingId: string, query: Q
 type QueryRunner = typeof runActualQuery;
 
 function toTransaction(row: TransactionRow, unitsPerYen: number): ActualTransaction {
+  const amountYen = actualAmountToYen(row.amount, unitsPerYen);
   return {
     id: row.id,
     date: row.date,
-    amountYen: actualAmountToYen(row.amount, unitsPerYen),
+    amountYen,
+    kind: row.transfer_id ? "transfer" : amountYen < 0 ? "expense" : "income",
     accountId: row.account,
     payeeName: row["payee.name"] ?? null,
     categoryName: row["category.name"] ?? null,
@@ -208,6 +212,14 @@ export function createActualGateway(options: { unitsPerYen: number; run?: QueryR
       if (start > end) throw new Error("Start date must not follow end date.");
       const rows = await read(transactionsQuery({ date: { $gte: start, $lte: end } }));
       return rows.filter((row) => !row.is_parent).map((row) => toTransaction(row, options.unitsPerYen));
+    },
+
+    async getTransactionById(id) {
+      const parsedId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(id);
+      if (!parsedId.success) return null;
+      const rows = await read(transactionsQuery({ id: { $eq: parsedId.data } }, 1));
+      const row = rows.find((candidate) => candidate.id === parsedId.data && !candidate.is_parent);
+      return row ? toTransaction(row, options.unitsPerYen) : null;
     },
 
     async getMonthlySpending({ yearMonth }) {

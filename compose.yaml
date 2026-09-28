@@ -5,6 +5,7 @@ services:
     environment:
       NODE_ENV: production
       APP_URL: ${APP_URL:-http://localhost:3002}
+      APP_TIME_ZONE: ${APP_TIME_ZONE:-Asia/Tokyo}
       DATABASE_PATH: /app/data/kakeimatch.db
       AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env before starting Compose}
       ACTUAL_SERVER_URL: ${ACTUAL_SERVER_URL:-http://actual:5006}
