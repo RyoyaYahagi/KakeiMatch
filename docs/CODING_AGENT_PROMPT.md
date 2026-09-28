@@ -289,9 +289,28 @@ components/app
 
 巨大なpage componentにすべて入れないでください。
 
-## Docker
+## Docker / Hosting portability
 
-自宅の常時稼働Linuxで動かす前提です。
+最初のデプロイ先は自宅の常時稼働Linuxですが、KakeiMatchを自宅Linux専用にしないでください。
+
+`docs/DEPLOYMENT.md` も必ず読み、VPS等へ同じ構成を移せるようにしてください。
+
+以下をsource codeへ埋め込まないでください。
+
+- home server固有のabsolute path
+- LAN IP
+- Docker Compose service name
+- reverse proxy固有設定
+- host username
+
+これらはenvironment/deployment configurationへ置いてください。
+
+レシート保存は将来のPhaseで `ReceiptStorage` interface等を介し、local persistent volumeからS3-compatible storageへ差し替えられる構造にします。
+
+MVPではSQLiteを維持します。将来のためだけにPostgreSQLを導入しないでください。ただしSQLite固有処理をdomain/UIへ散らさないでください。
+
+### 自宅Linux reference deployment
+
 
 少なくとも以下を用意してください。
 
