@@ -45,3 +45,27 @@
 Planning / Initial setup
 
 現時点では設計段階です。アプリ本体の技術構成は実装前に検証し、必要以上に複雑な構成を採用しません。
+
+
+## Development workflow
+
+仕様・設計は `docs/` を正本とし、実装作業はGitHub Issuesで管理します。
+
+- [MVP Epic](https://github.com/RyoyaYahagi/KakeiMatch/issues/15)
+- [最初の実装Issue: MVP基盤](https://github.com/RyoyaYahagi/KakeiMatch/issues/1)
+
+基本の流れ:
+
+```text
+docs = 長期仕様
+  ↓
+GitHub Issue = 1つの作業
+  ↓
+feature branch
+  ↓
+Pull Request
+  ↓
+squash merge
+```
+
+AIコーディングエージェントには原則として1 Issueずつ実装させます。
