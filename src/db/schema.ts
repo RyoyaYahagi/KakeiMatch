@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // Better Auth's email/password and database-session tables.
 export const user = sqliteTable("user", {
@@ -59,4 +59,14 @@ export const actualBudgetMapping = sqliteTable("actual_budget_mapping", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping };
+// Receipt metadata is private to its owner; image bytes live behind ReceiptStorage.
+export const receipt = sqliteTable("receipt", {
+  id: text("id").primaryKey(),
+  ownerUserId: text("owner_user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  storageKey: text("storage_key").notNull().unique(),
+  contentType: text("content_type").notNull(),
+  fileSize: integer("file_size").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [index("receipt_owner_created_at_idx").on(table.ownerUserId, table.createdAt)]);
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt };

@@ -28,7 +28,9 @@ Home Linux
         +-- Actual /data volume
 ```
 
-`compose.yaml` では公式 `actualbudget/actual-server:latest` imageを独立serviceとして起動します。公式ドキュメントでは `latest` は最新の公式リリースを指す推奨tagです。Actualの `/data` は `actual-data` named volumeへ保存し、KakeiMatch SQLiteの `app-data` とは分離します。`ACTUAL_DATA_DIR` を変更すると、Actualの環境変数とvolumeのmount先が一緒に変わり、データはnamed volume内に引き続き保持されます。
+`compose.yaml` では公式 `actualbudget/actual-server:latest` imageを独立serviceとして起動します。公式ドキュメントでは `latest` は最新の公式リリースを指す推奨tagです。Actualの `/data` は `actual-data` named volumeへ保存し、KakeiMatch SQLiteとActual CLI cacheの `app-data`、レシート画像の `receipt-data` とは分離します。`receipt-data` は `/app/receipts` にマウントし、`RECEIPT_STORAGE_DIR` を同じ場所に設定します。`ACTUAL_DATA_DIR` を変更すると、Actualの環境変数とvolumeのmount先が一緒に変わり、データはnamed volume内に引き続き保持されます。
+
+レシート画像の保存先は、ローカル開発では `RECEIPT_STORAGE_DIR`、Composeでは `receipt-data` です。保存原本にはEXIFやGPS情報が残る可能性があります。バックアップと復元では、SQLiteの `app-data` と画像の `receipt-data` を対応する時点の組として扱ってください。`docker compose down` はvolumeを残しますが、`docker compose down --volumes` は画像も削除します。画像は `ReceiptStorage` 境界に閉じているため、将来S3/R2互換の保存先へ差し替えられます。
 
 Actual管理UI用host portは `127.0.0.1` にbindし、デフォルトでは `http://127.0.0.1:5006` から管理者がアクセスします。`ACTUAL_HOST_PORT` でhost側portを変更できます。アプリからの接続先はserver-only environment variable `ACTUAL_SERVER_URL` で変更します（Compose内の初期値は `http://actual:5006`）。`ACTUAL_SERVER_PASSWORD` もKakeiMatch server側だけへ設定します。Actual自身のserver passwordは初回UIで設定し、その値をこのenvironment variableへ登録してください。これらの値を `NEXT_PUBLIC_` 設定へ移さないでください。
 

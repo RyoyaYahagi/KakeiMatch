@@ -50,7 +50,7 @@ prisma/dev.db
 data/
 storage/
 uploads/
-receipts/
+/receipts/
 statement-imports/
 actual-data/
 actual-cache/

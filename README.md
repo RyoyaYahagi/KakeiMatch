@@ -42,7 +42,7 @@
 
 ## Status
 
-家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。取引の書き込み、レシート・明細機能は後続のIssueで実装します。
+家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示に対応しています。取引の書き込み、レシート解析・明細機能は後続のIssueで実装します。
 
 支出一覧は、本人の家計簿から日付の新しい取引を最大50件取得し、その中の支出だけを表示します。ホームの最近の支出は同じ取得結果から最大5件を表示します。収入と口座間振替は支出一覧へ表示しません。「今月」は `APP_TIME_ZONE`（既定値 `Asia/Tokyo`）で判定します。取引に保存された日付は変換しません。
 
@@ -106,7 +106,7 @@ curl http://127.0.0.1:3002/api/health
 
 ActualでBudgetを作成した後、各ユーザーを紐付けます。Composeでは管理用imageを使って `docker compose run --rm bootstrap pnpm actual:link-user` を実行し、画面の案内に従ってuser emailと非表示のSync IDを入力してください。既にmappingがあるuserは上書きされません。
 
-ホスト側の保存先はDockerが管理します。KakeiMatch SQLite (`app-data`) とActual (`actual-data`) は別々にバックアップ・復元してください。Actualのvolumeには家計簿データとサーバー設定が含まれます。バックアップ手順は運用開始前に整備が必要です。
+ホスト側の保存先はDockerが管理します。KakeiMatch SQLiteとActual CLI cache (`app-data`)、レシート画像 (`receipt-data`)、Actual (`actual-data`) は別のvolumeです。DBとレシート画像は同じ時点の組としてバックアップ・復元してください。Actualのvolumeには家計簿データとサーバー設定が含まれます。バックアップ手順は運用開始前に整備が必要です。
 
 ## 確認コマンド
 
@@ -149,7 +149,7 @@ pnpm exec vitest run src/lib/actual-gateway.live.test.ts
 
 ## 環境変数
 
-`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActual Serverコンテナ内のデータディレクトリです。`ACTUAL_CLI_DATA_DIR` はKakeiMatch内のCLIクライアント用キャッシュディレクトリです。Composeでは前者をActual専用volumeの `/data`、後者をアプリ専用volumeの `/app/data/actual-cli` に分けます。CLIのキャッシュはmapping IDとSync IDのハッシュごとに別ディレクトリへ保存し、生のメールアドレスやSync IDをパスに使用しません。
+`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`RECEIPT_STORAGE_DIR` は公開ディレクトリ外のレシート原本保存先で、ローカル開発では `./data/receipts`、Composeでは `/app/receipts` を使います。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActual Serverコンテナ内のデータディレクトリです。`ACTUAL_CLI_DATA_DIR` はKakeiMatch内のCLIクライアント用キャッシュディレクトリです。Composeでは前者をActual専用volumeの `/data`、後者をアプリ専用volumeの `/app/data/actual-cli` に分けます。CLIのキャッシュはmapping IDとSync IDのハッシュごとに別ディレクトリへ保存し、生のメールアドレスやSync IDをパスに使用しません。
 
 KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削除されます。対応するActual Budgetとその家計データはActual Server上に残るため、不要になったBudgetはActual管理UIで別途削除してください。
 

@@ -11,10 +11,12 @@ services:
       ACTUAL_SERVER_URL: ${ACTUAL_SERVER_URL:-http://actual:5006}
       ACTUAL_SERVER_PASSWORD: ${ACTUAL_SERVER_PASSWORD:-}
       ACTUAL_CLI_DATA_DIR: /app/data/actual-cli
+      RECEIPT_STORAGE_DIR: /app/receipts
     ports:
       - "127.0.0.1:${PORT:-3002}:3000"
     volumes:
       - app-data:/app/data
+      - receipt-data:/app/receipts
     healthcheck:
       test:
         - CMD
@@ -59,4 +61,5 @@ services:
 
 volumes:
   app-data:
+  receipt-data:
   actual-data:
