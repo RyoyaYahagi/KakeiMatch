@@ -33,9 +33,13 @@ KakeiMatch Web App
         |
         +--------> Actual Adapter
                          |
-                         v
-                  @actual-app/api
-                  (Node.js / server-side)
+              +----------+----------+
+              |                     |
+              v                     v
+      @actual-app/cli         @actual-app/api
+      (MVP第一候補)          (必要時)
+              |                     |
+              +----------+----------+
                          |
                          v
                   Actual Sync Server
@@ -103,7 +107,9 @@ MVPでは原則として **KakeiMatchユーザー1人につきActual Budgetを1�
 
 Actualは1インストール内に複数Budgetを保持できます。この分離方式により、同じBudget内でユーザー所有権を再実装するより、データ混在のリスクを小さくします。
 
-Actualのserver password / session token / budget Sync IDはブラウザへ公開しません。Actual操作はNode.jsサーバーサイドから `@actual-app/api` を利用します。
+Actualのserver password / session token / budget Sync IDはブラウザへ公開しません。
+
+MVPでは、複数Budgetを扱うWebアプリからActualを安全に呼び出す境界として、まず公式 `@actual-app/cli` をサーバーサイドの短命プロセスとして利用できるか検証します。CLIで不足する機能がある場合のみ `@actual-app/api` をadapter内部で利用します。アプリのdomain層からCLI/APIの違いが見えない構造にしてください。
 
 ## レシート処理
 
@@ -232,3 +238,20 @@ Actual Budgetをセルフホストしても、Geminiへ送信したレシート�
 - user correctionを追跡可能にする
 - fallbackで誤魔化さず、失敗状態を明示する
 - UIからインフラ実装を直接参照しない
+
+
+## Actual Adapterの検証方針
+
+実装の最初に、UIより先に小さなintegration spikeを行います。
+
+確認項目:
+
+1. 同一Actual Server上にテスト用Budgetを2つ作成する
+2. KakeiMatchのテストユーザーA/Bへ別々のSync IDを割り当てる
+3. CLI経由で各Budgetのaccount / category / transactionを取得できる
+4. Aの操作でBのBudgetへアクセスしないことをテストする
+5. transaction追加・更新・一覧取得を確認する
+6. `transactions import` のreconciliation挙動を人工データで確認する
+7. CLI失敗時にstderrや秘密情報をそのままユーザーへ返さないことを確認する
+
+Actual連携をdomain層へ直接書かず、`ActualGateway` 等の小さなinterfaceの背後に置きます。
