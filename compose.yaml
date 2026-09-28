@@ -6,6 +6,7 @@ services:
       NODE_ENV: production
       APP_URL: ${APP_URL:-http://localhost:3002}
       DATABASE_PATH: /app/data/kakeimatch.db
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env before starting Compose}
     ports:
       - "127.0.0.1:${PORT:-3002}:3000"
     volumes:
@@ -20,6 +21,21 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  bootstrap:
+    profiles: ["tools"]
+    build:
+      context: .
+      target: maintenance
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-http://localhost:3002}
+      DATABASE_PATH: /app/data/kakeimatch.db
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env before starting Compose}
+    volumes:
+      - app-data:/app/data
+    stdin_open: true
+    tty: true
 
 volumes:
   app-data:

@@ -7,6 +7,7 @@ describe("environment schema", () => {
       NODE_ENV: "development",
       APP_URL: "http://localhost:3000",
       DATABASE_PATH: "./data/kakeimatch.db",
+      AUTH_SECRET: undefined,
     });
   });
 
