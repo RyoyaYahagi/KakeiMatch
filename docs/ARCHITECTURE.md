@@ -107,7 +107,7 @@ Actualのserver password / session token / budget Sync IDはブラウザへ公�
 
 読み取り専用のActual Gatewayには、公式 `@actual-app/cli` の短命プロセスを採用しました。取引照会は1メソッドにつき1回のActualQL queryで実行します。Better Authセッションから得たユーザーIDだけでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数として渡します。CLIへ渡す引数は配列で組み立て、JSON出力をZodで検証します。`@actual-app/api` はGatewayの実装に使用していません。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を実装時に確認しました。
 
-Gatewayのインターフェースは `getRecentTransactions({ limit? })`、`getTransactions({ startDate, endDate })`、`getMonthlySpending({ yearMonth })` です。取引の金額は符号付き整数円、今月の支出は正の整数円で返します。ActualQLではsplit transactionの子を読む既定の `inline` 方式を使用します。集計ではparent、口座間transfer、収入を除外します。[ActualQLのsplit仕様](https://actualbudget.org/docs/api/actual-ql/)に従います。
+Gatewayのインターフェースは `getRecentTransactions({ limit? })`、`getTransactions({ startDate, endDate })`、`getTransactionById(id)`、`getMonthlySpending({ yearMonth })` です。取引の金額は符号付き整数円、今月の支出は正の整数円で返します。Gatewayは取引を支出・収入・口座間振替へ変換し、画面へActual固有の振替IDを渡しません。ID指定の照会は認証済みユーザーに紐付いたBudgetへ限定し、1件だけ取得します。ActualQLではsplit transactionの子を読む既定の `inline` 方式を使用します。集計ではparent、口座間transfer、収入を除外します。[ActualQLのsplit仕様](https://actualbudget.org/docs/api/actual-ql/)に従います。
 
 CLIのキャッシュは `ACTUAL_CLI_DATA_DIR` の下にmapping IDとSync IDのハッシュで分離したディレクトリへ保存します。CLI自身のロックを有効なまま使用します。Composeではアプリ側の `/app/data/actual-cli` を使い、Actual Server側の `ACTUAL_DATA_DIR=/data` とは別のvolumeです。JPY設定の人工Budgetへ¥3,284の支出を登録してCLIのJSONが `-3284` を返すことを確認したため、Actualの整数値1単位を1円として変換します。[ActualのJPY通貨定義](https://github.com/actualbudget/actual/blob/master/packages/loot-core/src/shared/currencies.ts)とも一致します。
 

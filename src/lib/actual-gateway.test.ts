@@ -46,6 +46,9 @@ const normalExpense = {
   transfer_id: null, is_parent: false, is_child: false,
 };
 
+const transfer = { ...normalExpense, id: "transfer", transfer_id: "paired-transfer" };
+const income = { ...normalExpense, id: "income", amount: 5000 };
+
 function makeChildProcess() {
   const child = new EventEmitter() as EventEmitter & {
     stdout: EventEmitter & { setEncoding: ReturnType<typeof vi.fn> };
@@ -131,6 +134,52 @@ describe("Actual read-only gateway", () => {
     await expect(actual.getTransactions({ startDate: "2026-04-01", endDate: "2026-04-02" })).rejects.toMatchObject({ reason: "invalid_data" });
   });
 
+  it("classifies expense, income, and transfer rows and preserves missing names as null", async () => {
+    const run = vi.fn<QueryRunner>(async () => [
+      normalExpense,
+      income,
+      transfer,
+      { ...normalExpense, id: "unnamed", "payee.name": null, "category.name": null },
+    ]);
+    const actual = gateway(run);
+
+    const rows = await actual.getTransactions({ startDate: "2026-04-01", endDate: "2026-04-30" });
+    expect(rows.map(({ id, kind }) => [id, kind])).toEqual([
+      ["ordinary", "expense"],
+      ["income", "income"],
+      ["transfer", "transfer"],
+      ["unnamed", "expense"],
+    ]);
+    expect(rows[3]).toMatchObject({ payeeName: null, categoryName: null });
+    expect(rows[2]).not.toHaveProperty("transfer_id");
+  });
+
+  it("looks up one transaction inside the authenticated budget and returns null for invalid or missing IDs", async () => {
+    const run = vi.fn<QueryRunner>(async (syncId) => syncId === "sync-a" ? [normalExpense] : [income]);
+    const actual = gateway(run);
+
+    await expect(actual.getTransactionById("ordinary")).resolves.toMatchObject({ id: "ordinary", kind: "expense" });
+    expect(run.mock.calls[0]?.[0]).toBe("sync-a");
+    expect(run.mock.calls[0]?.[2]).toMatchObject({
+      filter: { id: { $eq: "ordinary" } },
+      limit: 1,
+    });
+
+    mocks.requireUser.mockImplementation(async () => ({ id: "session-b" }));
+    await expect(actual.getTransactionById("ordinary")).resolves.toBeNull();
+    expect(run.mock.calls[1]?.[0]).toBe("sync-b");
+
+    const callsBeforeInvalid = run.mock.calls.length;
+    await expect(actual.getTransactionById("\u0000bad")).resolves.toBeNull();
+    await expect(actual.getTransactionById("%00bad")).resolves.toBeNull();
+    expect(run).toHaveBeenCalledTimes(callsBeforeInvalid);
+    await expect(actual.getTransactionById("missing")).resolves.toBeNull();
+    expect(run.mock.calls[2]?.[2]).toMatchObject({ filter: { id: { $eq: "missing" } }, limit: 1 });
+
+    const parentRun = vi.fn<QueryRunner>(async () => [{ ...normalExpense, id: "split-parent", is_parent: true }]);
+    await expect(gateway(parentRun).getTransactionById("split-parent")).resolves.toBeNull();
+  });
+
   it("passes one bounded query and aggregates split children as positive spending, excluding income, parents, and transfers", async () => {
     const run = vi.fn<QueryRunner>(async () => [
       normalExpense,
@@ -138,7 +187,7 @@ describe("Actual read-only gateway", () => {
       { ...normalExpense, id: "split-food", amount: -200, "category.name": "Food", is_child: true },
       { ...normalExpense, id: "split-home", amount: -300, "category.name": "Home", is_child: true },
       { ...normalExpense, id: "income", amount: 5000, "category.name": "Income" },
-      { ...normalExpense, id: "transfer", amount: -700, transfer_id: "paired-transfer" },
+      { ...transfer, amount: -700 },
     ]);
     const actual = gateway(run);
 
