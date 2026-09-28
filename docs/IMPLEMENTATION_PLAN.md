@@ -219,7 +219,9 @@ AIを主判定器にしない。
 
 ## Phase 9: Deployment
 
-### 自宅Linux
+自宅Linuxは最初のデプロイ先であり、アプリ仕様ではありません。詳細は `docs/DEPLOYMENT.md` に従います。
+
+### 自宅Linux reference deployment
 
 - Docker Compose
 - KakeiMatch
@@ -272,3 +274,14 @@ MVP安定後、最低限:
 UXの完成度より先にデータ分離・保存・Actual連携を確認します。
 
 ただしPhase 1以降のUI実装は必ず `docs/UX.md` と `docs/DESIGN.md` に従い、デスクトップ向け管理画面を先に作らないでください。
+
+
+## Portability gate
+
+各Phaseで以下を壊していないか確認します。
+
+- host固有pathをsource codeへ埋め込んでいない
+- Actual Server URLをenvironmentから変更できる
+- persistent dataがcontainer imageから分離されている
+- filesystem accessがUI/domainへ漏れていない
+- 別Linux hostへDocker構成を移せる
