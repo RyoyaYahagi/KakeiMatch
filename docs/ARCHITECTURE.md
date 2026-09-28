@@ -35,10 +35,15 @@ KakeiMatch Web App
                          |
                          v
                   @actual-app/api
+                  (Node.js / server-side)
                          |
                          v
-                  Actual Budget
+                  Actual Sync Server
                   self-hosted
+                         |
+                         +-- User A Budget
+                         +-- User B Budget
+                         +-- User C Budget
 ```
 
 ## ホスティング
@@ -94,7 +99,11 @@ MVPは**本人だけ見える家計簿**です。
 - import・reconciliation検索は必ずログインユーザーのスコープ内で行う
 - 他ユーザーのActual上の取引IDを指定しても読み書きできないようにする
 
-Actual Budget側でユーザーごとにbudget fileを分離するか、別の安全なマッピング方式を採るかは、Actual APIの制約を実装前に検証して決定します。MVP要件は「データが混ざらないこと」であり、実装方法を先に固定しません。
+MVPでは原則として **KakeiMatchユーザー1人につきActual Budgetを1つ**割り当てます。KakeiMatch DBに `user_id -> Actual Sync ID` の対応を保持し、サーバーサイドだけがこの対応を解決します。
+
+Actualは1インストール内に複数Budgetを保持できます。この分離方式により、同じBudget内でユーザー所有権を再実装するより、データ混在のリスクを小さくします。
+
+Actualのserver password / session token / budget Sync IDはブラウザへ公開しません。Actual操作はNode.jsサーバーサイドから `@actual-app/api` を利用します。
 
 ## レシート処理
 
