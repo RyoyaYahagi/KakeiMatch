@@ -88,3 +88,6 @@ Thumbs.db
 # Local AI / agent artifacts
 .claude/settings.local.json
 .codex/
+
+# KakeiMatch development database
+*.sqlite-journal

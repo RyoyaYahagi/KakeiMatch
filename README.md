@@ -42,10 +42,7 @@
 
 ## Status
 
-Planning / Initial setup
-
-現時点では設計段階です。アプリ本体の技術構成は実装前に検証し、必要以上に複雑な構成を採用しません。
-
+MVP開発基盤を構築しています。現時点で家計簿の利用機能は実装されていません。
 
 ## Development workflow
 
@@ -69,3 +66,45 @@ squash merge
 ```
 
 AIコーディングエージェントには原則として1 Issueずつ実装させます。
+
+## ローカル開発
+
+必要なものはNode.js 22以降とCorepackです。CorepackはNode.jsに同梱され、プロジェクト指定のpnpmを利用できるようにします。
+
+```sh
+corepack enable
+pnpm install
+cp .env.example .env.local
+pnpm dev
+```
+
+開発サーバーは <http://localhost:3000> で起動します。SQLiteデータベースは初期設定では `./data/kakeimatch.db` に保存されます。データを消去する場合は開発サーバーを停止してから `data/` を削除してください。
+
+## Docker Composeでの起動
+
+Docker Composeはアプリを `127.0.0.1` にだけ公開し、SQLiteデータを名前付きvolumeへ保存します。外部公開用のHTTPSや認証はまだ構成していないため、公開サーバーとしてインターネットへ接続しないでください。
+
+```sh
+cp .env.example .env
+docker compose up --build -d
+curl http://127.0.0.1:3002/api/health
+```
+
+正常時の応答は `{"status":"ok"}` です。停止するには `docker compose down` を実行します。データ用volumeはこの操作では削除されません。データを含めて削除する場合は `docker compose down --volumes` を実行してください。
+
+ホスト側の保存先はDockerが管理します。別ホストへ移す場合は、Docker volumeをバックアップ・復元してください。バックアップ手順は運用開始前に整備が必要です。
+
+## 確認コマンド
+
+```sh
+pnpm lint
+pnpm typecheck
+pnpm test
+pnpm build
+```
+
+## 環境変数
+
+`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。Compose起動時はデータベースをコンテナ内の `/app/data/kakeimatch.db` に保存し、永続volumeへ保持します。
+
+実際の秘密情報は `.env` や `.env.local` に設定し、Gitへ登録しないでください。
