@@ -87,7 +87,7 @@ Docker Composeはアプリを `127.0.0.1` にだけ公開し、SQLiteデータ�
 ```sh
 cp .env.example .env
 docker compose up --build -d
-curl http://127.0.0.1:3000/api/health
+curl http://127.0.0.1:3002/api/health
 ```
 
 正常時の応答は `{"status":"ok"}` です。停止するには `docker compose down` を実行します。データ用volumeはこの操作では削除されません。データを含めて削除する場合は `docker compose down --volumes` を実行してください。
