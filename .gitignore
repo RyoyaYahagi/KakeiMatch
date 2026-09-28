@@ -31,6 +31,13 @@ test-results/
 credentials*.json
 service-account*.json
 
+# Actual CLI config (may contain credentials)
+.actualrc
+.actualrc.*
+actual.config.json
+actual.config.yaml
+actual.config.yml
+
 # Local databases
 *.db
 *.db-shm
