@@ -255,3 +255,129 @@ Actual Budgetをセルフホストしても、Geminiへ送信したレシート�
 7. CLI失敗時にstderrや秘密情報をそのままユーザーへ返さないことを確認する
 
 Actual連携をdomain層へ直接書かず、`ActualGateway` 等の小さなinterfaceの背後に置きます。
+
+
+## Hosting portability
+
+自宅LinuxはMVPの**最初のデプロイ先**であり、アプリケーション仕様にはしません。
+
+KakeiMatchは、Dockerを実行できる別環境へ移行できることを前提に設計します。
+
+### Hostに依存させないもの
+
+以下をコードへ埋め込まないでください。
+
+- 自宅Linux固有の絶対パス
+- LAN内IPアドレス
+- 特定のreverse proxy
+- 特定のDNS provider
+- systemd固有の起動処理
+- ホスト上のユーザー名
+- localhost前提のActual URL
+
+これらはenvironment / deployment configurationへ置きます。
+
+### 状態を3つに分離する
+
+KakeiMatchの永続状態を以下の境界で扱います。
+
+1. **Application Database**
+   - ユーザー
+   - receipt metadata
+   - import metadata
+   - reconciliation state
+   - Actual mapping
+
+2. **Receipt Object Storage**
+   - レシート画像
+   - 必要に応じてimport元ファイル
+
+3. **Actual Budget Data**
+   - Actual Sync Serverの永続データ
+
+アプリケーションコードはホスト上の具体的な保存場所を直接知りません。
+
+### Storage abstraction
+
+レシート画像は小さなinterfaceを通して扱います。
+
+概念例:
+
+```ts
+interface ReceiptStorage {
+  put(...): Promise<StoredReceipt>;
+  get(...): Promise<ReadableStream | Buffer>;
+  delete(...): Promise<void>;
+}
+```
+
+MVP:
+
+```text
+LocalReceiptStorage
+  -> mounted persistent volume
+```
+
+将来:
+
+```text
+S3ReceiptStorage
+  -> S3 / R2 / S3-compatible object storage
+```
+
+domain/UIからローカルファイルパスを参照しないでください。
+
+### Database portability
+
+MVPでは少人数・単一インスタンスを優先しSQLiteを利用します。
+
+ただし:
+
+- SQLite固有SQLを必要以上にdomain層へ漏らさない
+- ORM / repository境界を利用する
+- DBファイルパスはenvironmentで与える
+- backup/export手段を用意する
+- 将来PaaS等で必要になればPostgreSQLへ移行できる余地を残す
+
+「いつかPostgreSQLへ移行するかもしれない」という理由だけで、MVPをPostgreSQL化しません。
+
+### Actual portability
+
+Actual ServerはKakeiMatch containerと分離します。
+
+KakeiMatchが知るのは:
+
+- server URL
+- credential
+- user -> Sync ID mapping
+
+だけです。
+
+Actualの `/data` volumeを別ホストへ移せば、KakeiMatch本体を変更せず移行できる構造にします。
+
+### Portable deployment contract
+
+最低限、以下で起動できることを目標とします。
+
+```text
+Docker / OCI container runtime
++ environment variables / secrets
++ persistent database volume
++ persistent Actual volume
++ receipt storage backend
+```
+
+Docker Composeは自宅Linux向けのreference deploymentとして扱い、アプリ内部からComposeのservice name等へ強く依存しないでください。
+
+### Backup / restore
+
+将来のホスト移行もバックアップ/リストアの一種として扱います。
+
+少なくとも以下を個別に復元できる構造にします。
+
+- KakeiMatch DB
+- receipt files
+- Actual data
+- environment/secretsは別途再設定
+
+本番データをcontainer imageへ含めないでください。
