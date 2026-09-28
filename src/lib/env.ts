@@ -5,6 +5,8 @@ export const envSchema = z.object({
   APP_URL: z.string().url().default("http://localhost:3000"),
   DATABASE_PATH: z.string().min(1).default("./data/kakeimatch.db"),
   AUTH_SECRET: z.string().min(32).optional(),
+  ACTUAL_SERVER_URL: z.string().url().default("http://localhost:5006"),
+  ACTUAL_SERVER_PASSWORD: z.string().optional().transform((value) => value || undefined),
 });
 
 export const env = envSchema.parse(process.env);

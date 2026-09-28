@@ -83,23 +83,28 @@ pnpm dev
 
 アカウント作成コマンドは管理者がサーバー上の対話端末で実行します。表示名、メールアドレス、パスワードを順に入力します。パスワードの入力内容は画面に表示されません。家族の人数分だけコマンドを実行してください。パスワードをコマンド引数や環境変数へ書かないでください。
 
+Actualでユーザー用Budgetを作成した後、KakeiMatch userとBudgetを管理者commandで紐付けます。開発環境では `pnpm actual:link-user` を実行し、KakeiMatch userのemailとActual Sync IDを対話入力してください。Sync ID入力は画面に表示されません。既にmappingがあるuserは上書きされないため、誤ったmappingの修正は管理者が別途対応してください。
+
 開発サーバーは <http://localhost:3000> で起動します。SQLiteデータベースは初期設定では `./data/kakeimatch.db` に保存されます。認証テーブルのマイグレーションはアプリ起動時にも適用されます。データを消去する場合は開発サーバーを停止してから `data/` を削除してください。
 
 ## Docker Composeでの起動
 
-Docker Composeはアプリを `127.0.0.1` にだけ公開し、SQLiteデータを名前付きvolumeへ保存します。外部公開にはHTTPSを終端するリバースプロキシが必要です。
+Docker Composeはアプリと公式Actual Serverを別serviceとして起動します。アプリは `127.0.0.1` に、Actual管理UIも `127.0.0.1` にだけ公開し、それぞれSQLiteとActual `/data` を別の名前付きvolumeへ保存します。外部公開にはHTTPSを終端するリバースプロキシが必要です。Actual管理UIは一般ユーザー向けに公開しないでください。
 
 ```sh
 cp .env.example .env
 # openssl rand -base64 32 の出力を .env の AUTH_SECRET に設定する
+# Actual管理UIで設定したserver passwordを .env の ACTUAL_SERVER_PASSWORD に設定する
 docker compose up --build -d
 docker compose run --rm bootstrap
 curl http://127.0.0.1:3002/api/health
 ```
 
-`bootstrap` は同じ永続volumeを使う管理者用コマンドです。家族のアカウントごとに実行してください。通常の画面に登録機能はなく、公開の新規登録APIは無効です。正常時のヘルスチェック応答は `{"status":"ok"}` です。停止するには `docker compose down` を実行します。データ用volumeはこの操作では削除されません。データを含めて削除する場合は `docker compose down --volumes` を実行してください。
+`bootstrap` は同じ永続volumeを使う管理者用コマンドです。家族のアカウントごとに実行してください。通常の画面に登録機能はなく、公開の新規登録APIは無効です。Actual管理UIは <http://127.0.0.1:5006> で開けます。初回起動時にActualのserver passwordを設定してください。正常時のKakeiMatchヘルスチェック応答は `{"status":"ok"}` です。停止するには `docker compose down` を実行します。データ用volumeはこの操作では削除されません。データを含めて削除する場合は `docker compose down --volumes` を実行してください。
 
-ホスト側の保存先はDockerが管理します。別ホストへ移す場合は、Docker volumeをバックアップ・復元してください。バックアップ手順は運用開始前に整備が必要です。
+ActualでBudgetを作成した後、各ユーザーを紐付けます。Composeでは管理用imageを使って `docker compose run --rm bootstrap pnpm actual:link-user` を実行し、画面の案内に従ってuser emailと非表示のSync IDを入力してください。既にmappingがあるuserは上書きされません。
+
+ホスト側の保存先はDockerが管理します。KakeiMatch SQLite (`app-data`) とActual (`actual-data`) は別々にバックアップ・復元してください。Actualのvolumeには家計簿データとサーバー設定が含まれます。バックアップ手順は運用開始前に整備が必要です。
 
 ## 確認コマンド
 
@@ -112,6 +117,8 @@ pnpm build
 
 ## 環境変数
 
-`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。十分に長い値を生成して設定してください。Compose起動時はデータベースをコンテナ内の `/app/data/kakeimatch.db` に保存し、永続volumeへ保持します。
+`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActualコンテナ内のデータdirectoryです。Compose起動時はKakeiMatch DBを `/app/data/kakeimatch.db` に、Actualデータを `/data` に保存し、それぞれ別の永続volumeへ保持します。
+
+KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削除されます。対応するActual Budgetとその家計データはActual Server上に残るため、不要になったBudgetはActual管理UIで別途削除してください。
 
 実際の秘密情報は `.env` や `.env.local` に設定し、Gitへ登録しないでください。
