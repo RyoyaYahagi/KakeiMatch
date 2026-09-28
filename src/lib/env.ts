@@ -7,6 +7,7 @@ export const envSchema = z.object({
   AUTH_SECRET: z.string().min(32).optional(),
   ACTUAL_SERVER_URL: z.string().url().default("http://localhost:5006"),
   ACTUAL_SERVER_PASSWORD: z.string().optional().transform((value) => value || undefined),
+  ACTUAL_CLI_DATA_DIR: z.string().min(1).default("./data/actual-cli"),
 });
 
 export const env = envSchema.parse(process.env);

@@ -16,10 +16,11 @@
     "actual:link-user": "tsx scripts/link-actual-budget.ts"
   },
   "dependencies": {
-    "better-sqlite3": "^12.2.0",
-    "better-auth": "^1.7.6",
+    "@actual-app/cli": "26.9.0",
     "@better-auth/drizzle-adapter": "^1.7.6",
     "@next/env": "^15.5.3",
+    "better-auth": "^1.7.6",
+    "better-sqlite3": "^12.2.0",
     "drizzle-orm": "^0.45.2",
     "next": "^15.5.3",
     "react": "^19.1.1",
@@ -33,10 +34,10 @@
     "@types/react": "^19.1.13",
     "@types/react-dom": "^19.1.9",
     "drizzle-kit": "^0.31.4",
-    "tsx": "^4.23.15",
     "eslint": "^9.35.0",
     "eslint-config-next": "^15.5.3",
     "server-only": "^0.0.1",
+    "tsx": "^4.23.15",
     "typescript": "^5.9.2",
     "vitest": "^3.2.4"
   }

@@ -42,7 +42,7 @@
 
 ## Status
 
-家族ごとのメールアドレス・パスワードによるログインを実装しています。ホームはログインした本人だけが閲覧できます。家計簿の取引・レシート・明細機能は、後続のIssueで実装します。
+家族ごとのメールアドレス・パスワードによるログインを実装しています。ホームはログインした本人だけが閲覧できます。本人のActual Budgetから取引を読むサーバー側Gatewayも実装しています。ホームへの取引表示、取引の書き込み、レシート・明細機能は後続のIssueで実装します。
 
 ## Development workflow
 
@@ -115,9 +115,39 @@ pnpm test
 pnpm build
 ```
 
+## Actual Gatewayの検証
+
+`src/lib/actual-gateway.ts` はBetter Authのログインセッションからユーザーを特定し、`actual_budget_mapping` に保存された本人のSync IDをサーバー側で取得します。`getRecentTransactions`、`getTransactions`、`getMonthlySpending` が読み取り専用の公開インターフェースです。各呼び出しでは公式 `@actual-app/cli` のActualQL照会を1回実行します。CLIのJSONを検証し、金額を整数円に変換してから返します。認証が必要な `GET /api/actual` は `view=recent`、`view=range&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`、`view=monthly&yearMonth=YYYY-MM` を受け付けます。Sync IDとパスワードはブラウザーへ返しません。CLIの接続設定とJSON形式は[Actual公式CLI資料](https://actualbudget.org/docs/api/cli/)に従います。
+
+通常の `pnpm test` は人工データによる単体テストを実行します。実Actual Serverを使ったA/B分離テストは、次の手順で別途実行します。
+
+1. 一時的なActual Serverを起動し、Actualの画面でJPY設定のBudget AとBudget Bを作成します。既存の家計簿は使用しないでください。
+2. Budget Aへ `2026-09-28`、支出 `¥3,284`、支払先 `Synthetic A` の人工取引を登録します。同じ日付に合計 `¥500` のsplit transaction（`¥200` と `¥300` の子取引）と、別の口座への `¥400` のtransferも登録します。Budget Bへ同日、支出 `¥710`、支払先 `Synthetic B` の人工取引を登録します。
+3. 2つのSync IDをActualの設定画面で確認します。テスト用Actual ServerのURLとパスワードも用意します。
+4. リポジトリ外の `/tmp/kakeimatch-actual-test.env` を権限 `600` で作成し、以下の4変数を設定します。実際の値をGitへ登録しないでください。
+
+```text
+ACTUAL_SERVER_URL=http://127.0.0.1:5006
+ACTUAL_SERVER_PASSWORD=<test-server-password>
+ACTUAL_TEST_SYNC_ID_A=<budget-a-sync-id>
+ACTUAL_TEST_SYNC_ID_B=<budget-b-sync-id>
+```
+
+```sh
+chmod 600 /tmp/kakeimatch-actual-test.env
+set -a
+. /tmp/kakeimatch-actual-test.env
+set +a
+pnpm exec vitest run src/lib/actual-gateway.live.test.ts
+```
+
+このテストは一時SQLiteへテストユーザーA/Bとそれぞれのmappingを作成します。認証ユーザーをA/Bへ切り替えてそれぞれのBudgetの取引だけを取得し、mappingのないユーザーでは明示的に失敗することを確認します。Aの月間支出はsplitの親を重複計上せず、transferを除いた `¥3,784` です。Actual CLIのJSONでAの最初の支出が `-3284`、Bの支出が `-710` となることも確認します。CLIが返すJPY金額の扱いは、[Actualの通貨定義](https://github.com/actualbudget/actual/blob/master/packages/loot-core/src/shared/currencies.ts)とこの人工Budgetでの往復結果に基づき、整数値1単位を1円としています。
+
+本番Dockerイメージ内のCLIを確認するには、`docker compose build app` の後、`docker compose run --rm --no-deps app node /app/node_modules/@actual-app/cli/dist/cli.js --version` を実行します。実接続の確認は、テスト専用の資格情報ファイルを `docker run --env-file` で渡し、`node /app/node_modules/@actual-app/cli/dist/cli.js --format json query run --table transactions --select id,date,amount --order-by date:desc` を実行します。CLI用キャッシュディレクトリをコンテナ内の書き込み可能な `/app/data/actual-cli` 以下に設定してください。
+
 ## 環境変数
 
-`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActualコンテナ内のデータdirectoryです。Compose起動時はKakeiMatch DBを `/app/data/kakeimatch.db` に、Actualデータを `/data` に保存し、それぞれ別の永続volumeへ保持します。
+`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActual Serverコンテナ内のデータディレクトリです。`ACTUAL_CLI_DATA_DIR` はKakeiMatch内のCLIクライアント用キャッシュディレクトリです。Composeでは前者をActual専用volumeの `/data`、後者をアプリ専用volumeの `/app/data/actual-cli` に分けます。CLIのキャッシュはmapping IDとSync IDのハッシュごとに別ディレクトリへ保存し、生のメールアドレスやSync IDをパスに使用しません。
 
 KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削除されます。対応するActual Budgetとその家計データはActual Server上に残るため、不要になったBudgetはActual管理UIで別途削除してください。
 

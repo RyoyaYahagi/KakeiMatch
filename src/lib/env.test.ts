@@ -10,6 +10,7 @@ describe("environment schema", () => {
       AUTH_SECRET: undefined,
       ACTUAL_SERVER_URL: "http://localhost:5006",
       ACTUAL_SERVER_PASSWORD: undefined,
+      ACTUAL_CLI_DATA_DIR: "./data/actual-cli",
     });
   });
 

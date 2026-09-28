@@ -14,6 +14,9 @@ COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN pnpm build
 
+FROM dependencies AS runtime-dependencies
+RUN pnpm prune --prod
+
 # Run the account bootstrap command against the same persistent database volume.
 FROM dependencies AS maintenance
 COPY . .
@@ -30,6 +33,7 @@ RUN groupadd --system --gid 1001 nodejs && useradd --system --uid 1001 --gid nod
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
+COPY --from=runtime-dependencies --chown=nextjs:nodejs /app/node_modules ./node_modules
 USER nextjs
 EXPOSE 3000
 CMD ["node", "server.js"]
