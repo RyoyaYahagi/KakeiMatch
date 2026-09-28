@@ -27,10 +27,10 @@ export default async function HomePage() {
         <p className="muted">{formatMonth(currentYearMonth())}</p>
       </section>
 
-      <section className="receipt-prompt" aria-label="レシート登録">
-        <span>レシート登録</span>
-        <span className="status-label">準備中</span>
-      </section>
+      <Link className="receipt-prompt" href="/receipts/new" aria-label="レシートを登録する">
+        <span>レシートを登録する</span>
+        <span aria-hidden="true">撮影・選択 →</span>
+      </Link>
 
       {errorMessage ? (
         <section className="notice notice-error" role="alert">

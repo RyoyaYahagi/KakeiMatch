@@ -8,9 +8,8 @@ describe("environment schema", () => {
       APP_URL: "http://localhost:3000",
       APP_TIME_ZONE: "Asia/Tokyo",
       DATABASE_PATH: "./data/kakeimatch.db",
-      AUTH_SECRET: undefined,
+      RECEIPT_STORAGE_DIR: "./data/receipts",
       ACTUAL_SERVER_URL: "http://localhost:5006",
-      ACTUAL_SERVER_PASSWORD: undefined,
       ACTUAL_CLI_DATA_DIR: "./data/actual-cli",
     });
   });

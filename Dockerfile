@@ -12,7 +12,7 @@ FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+RUN mkdir -p data && pnpm db:migrate && pnpm build
 
 FROM dependencies AS runtime-dependencies
 RUN pnpm prune --prod
@@ -26,10 +26,11 @@ FROM node:22-bookworm-slim AS runner
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV DATABASE_PATH=/app/data/kakeimatch.db
+ENV RECEIPT_STORAGE_DIR=/app/receipts
 ENV HOSTNAME=0.0.0.0
 WORKDIR /app
 RUN groupadd --system --gid 1001 nodejs && useradd --system --uid 1001 --gid nodejs nextjs \
-  && mkdir -p /app/data && chown nextjs:nodejs /app/data
+  && mkdir -p /app/data /app/receipts && chown nextjs:nodejs /app/data /app/receipts
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/drizzle ./drizzle
