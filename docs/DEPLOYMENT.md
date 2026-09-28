@@ -28,6 +28,30 @@ Home Linux
         +-- Actual /data volume
 ```
 
+`compose.yaml` では公式 `actualbudget/actual-server:latest` imageを独立serviceとして起動します。公式ドキュメントでは `latest` は最新の公式リリースを指す推奨tagです。Actualの `/data` は `actual-data` named volumeへ保存し、KakeiMatch SQLiteの `app-data` とは分離します。`ACTUAL_DATA_DIR` を変更すると、Actualの環境変数とvolumeのmount先が一緒に変わり、データはnamed volume内に引き続き保持されます。
+
+Actual管理UI用host portは `127.0.0.1` にbindし、デフォルトでは `http://127.0.0.1:5006` から管理者がアクセスします。`ACTUAL_HOST_PORT` でhost側portを変更できます。アプリからの接続先はserver-only environment variable `ACTUAL_SERVER_URL` で変更します（Compose内の初期値は `http://actual:5006`）。`ACTUAL_SERVER_PASSWORD` もKakeiMatch server側だけへ設定します。Actual自身のserver passwordは初回UIで設定し、その値をこのenvironment variableへ登録してください。これらの値を `NEXT_PUBLIC_` 設定へ移さないでください。
+
+Official references: [Actual Docker installation](https://actualbudget.org/docs/install/docker/), [server configuration](https://actualbudget.org/docs/config/), [official Actual Server Compose example](https://github.com/actualbudget/actual-server/blob/master/docker-compose.yml).
+
+## Actual Budgetをuserへ紐付ける
+
+Actual管理UIで各user用Budgetを用意した後、KakeiMatchの管理commandで紐付けます。userの内部IDを直接扱わず、登録済みKakeiMatch userのemailとActual Sync IDを対話入力します。Sync IDは入力時に画面へ表示されません。既にmappingがあるuserに対する上書きは拒否されます。
+
+ローカル開発では、KakeiMatch userを作成した後に実行します:
+
+```sh
+pnpm actual:link-user
+```
+
+Compose環境では、同じKakeiMatch DB volumeを使う管理用containerから実行します:
+
+```sh
+docker compose run --rm bootstrap pnpm actual:link-user
+```
+
+KakeiMatch userを削除するとmapping行は削除されますが、Actual BudgetはActual Serverに残ります。Budgetの削除が必要な場合はActual管理UIで別途行ってください。
+
 HTTPS / external access methodはdeployment concernとして分離します。
 
 ## 将来の移行候補

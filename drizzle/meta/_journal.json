@@ -8,6 +8,13 @@
       "when": 1790602474697,
       "tag": "0000_dashing_iron_monger",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790621950672,
+      "tag": "0001_curly_thunderbolt",
+      "breakpoints": true
     }
   ]
 }

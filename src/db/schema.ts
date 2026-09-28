@@ -47,4 +47,16 @@ export const verification = sqliteTable("verification", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
 });
 
-export const authSchema = { user, session, account, verification };
+// Actual Budget credentials are deliberately kept in the server-side mapping table.
+export const actualBudgetMapping = sqliteTable("actual_budget_mapping", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => user.id, { onDelete: "cascade" }),
+  syncId: text("sync_id").notNull().unique(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping };

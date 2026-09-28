@@ -12,7 +12,8 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "user:create": "tsx scripts/create-user.ts"
+    "user:create": "tsx scripts/create-user.ts",
+    "actual:link-user": "tsx scripts/link-actual-budget.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.2.0",
