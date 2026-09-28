@@ -22,7 +22,7 @@
 - Geminiによるレシート情報抽出
 - 家計簿への支出登録
 - 基本カテゴリ分類
-- ユーザーごとのアカウント
+- ユーザーごとのアカウント（MVPでは本人の家計簿だけ閲覧可能）
 - 三井住友カード / 楽天カード / イオンカード / PayPay の明細取り込み
 - 家計簿記録と明細の自動照合
 - 一致 / 要確認 / 記録なし の確認画面
@@ -34,7 +34,10 @@
 - [ARCHITECTURE.md](docs/ARCHITECTURE.md): システム構成と責務分離
 - [UX.md](docs/UX.md): ユーザーフローと画面設計
 - [DESIGN.md](docs/DESIGN.md): UIデザイン原則
+- [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): 段階的な実装計画
+- [CODING_AGENT_PROMPT.md](docs/CODING_AGENT_PROMPT.md): 初期実装を依頼するためのプロンプト
 - [CONTRIBUTING.md](CONTRIBUTING.md): ブランチ・コミット・PR運用
+- [SECURITY.md](SECURITY.md): 家計データを扱う際のセキュリティ方針
 
 ## Status
 
