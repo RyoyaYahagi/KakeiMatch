@@ -80,4 +80,15 @@ describe("receipt category API", () => {
     expect(response.status).toBe(409);
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
+
+  it("does not change a confirmed category while its Actual registration is active", async () => {
+    const extraction = {
+      documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-28",
+      purchasedTime: null, totalAmountYen: 100, taxAmountYen: null, items: [], warnings: [],
+    };
+    setupSelect([{ id: "receipt-a" }], [{ status: "succeeded", resultJson: JSON.stringify(extraction) }], [{ status: "registering" }]);
+    const response = await PUT(request("/api/receipts/receipt-a/category", "PUT", { categoryId: "food" }), context());
+    expect(response.status).toBe(409);
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
 });

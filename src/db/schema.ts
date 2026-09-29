@@ -110,4 +110,42 @@ export const receiptCategory = sqliteTable("receipt_category", {
   confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
 });
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory };
+// Final user-reviewed values and the idempotency claim for Actual registration.
+export const receiptRegistration = sqliteTable("receipt_registration", {
+  receiptId: text("receipt_id").primaryKey().references(() => receipt.id, { onDelete: "cascade" }),
+  merchant: text("merchant").notNull(),
+  purchasedDate: text("purchased_date").notNull(),
+  totalAmountYen: integer("total_amount_yen").notNull(),
+  categoryId: text("category_id").notNull(),
+  actualAccountId: text("actual_account_id").notNull(),
+  status: text("status").notNull(),
+  importedId: text("imported_id").notNull().unique(),
+  actualTransactionId: text("actual_transaction_id").unique(),
+  lastErrorCode: text("last_error_code"),
+  claimToken: text("claim_token"),
+  claimExpiresAt: integer("claim_expires_at", { mode: "timestamp_ms" }),
+  attemptedAt: integer("attempted_at", { mode: "timestamp_ms" }),
+  registeredAt: integer("registered_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+// Actual category IDs are specific to each user's Budget.
+export const actualCategoryMapping = sqliteTable("actual_category_mapping", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  categoryId: text("category_id").notNull(),
+  actualCategoryId: text("actual_category_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [
+  uniqueIndex("actual_category_mapping_user_category_unique").on(table.userId, table.categoryId),
+]);
+
+// Remembers only the last selected Actual account for this user.
+export const actualAccountPreference = sqliteTable("actual_account_preference", {
+  userId: text("user_id").primaryKey().references(() => user.id, { onDelete: "cascade" }),
+  actualAccountId: text("actual_account_id").notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference };

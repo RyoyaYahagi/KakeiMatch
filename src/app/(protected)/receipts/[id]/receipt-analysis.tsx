@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CATEGORY_IDS, CATEGORY_LABELS, isCategoryId, type CategoryId } from "@/lib/category";
+import RegistrationForm from "./registration-form";
 
 type Warning = { field: string | null; code: string; message: string };
 type ReceiptItem = { name: string; amountYen: number | null };
@@ -44,9 +45,11 @@ export default function ReceiptAnalysis({ receiptId }: { receiptId: string }) {
   const [selectedCategory, setSelectedCategory] = useState<CategoryId | "">("");
   const [categoryBusy, setCategoryBusy] = useState(false);
   const [categoryError, setCategoryError] = useState<string | null>(null);
+  const [registrationDone, setRegistrationDone] = useState(false);
   const activeRequest = useRef(false);
   const autoStarted = useRef(false);
   const encodedId = encodeURIComponent(receiptId);
+  const markRegistrationDone = useCallback(() => setRegistrationDone(true), []);
 
   const loadCategory = useCallback(async (classifyIfNeeded: boolean, forceClassification = false) => {
     try {
@@ -197,9 +200,18 @@ export default function ReceiptAnalysis({ receiptId }: { receiptId: string }) {
               category={category}
               selected={selectedCategory}
               busy={categoryBusy}
+              disabled={registrationDone}
               error={categoryError}
               onSelect={setSelectedCategory}
               onSave={() => void saveCategory()}
+            />
+          ) : null}
+          {result.documentKind === "receipt" ? (
+            <RegistrationForm
+              receiptId={receiptId}
+              extraction={result}
+              categoryConfirmed={category?.confirmedCategory !== null && category?.confirmedCategory !== undefined}
+              onRegistered={markRegistrationDone}
             />
           ) : null}
           {result.warnings.length > 0 ? (
@@ -260,10 +272,11 @@ function parseCategoryState(value: unknown): CategoryState | null {
   return body as CategoryState;
 }
 
-function CategoryPicker({ category, selected, busy, error, onSelect, onSave }: {
+function CategoryPicker({ category, selected, busy, disabled, error, onSelect, onSave }: {
   category: CategoryState | null;
   selected: CategoryId | "";
   busy: boolean;
+  disabled: boolean;
   error: string | null;
   onSelect: (value: CategoryId | "") => void;
   onSave: () => void;
@@ -277,14 +290,14 @@ function CategoryPicker({ category, selected, busy, error, onSelect, onSave }: {
       {suggestionLabel ? <p className="receipt-category-hint">{suggestionLabel}</p> : null}
       {category.needsReview && !confirmed ? <p className="receipt-category-hint" role="status">確認してください</p> : null}
       <label className="visually-hidden" htmlFor="receipt-category-select">カテゴリを選択</label>
-      <select id="receipt-category-select" value={selected} disabled={busy} onChange={(event) => onSelect(event.target.value as CategoryId | "")}>
+      <select id="receipt-category-select" value={selected} disabled={busy || disabled} onChange={(event) => onSelect(event.target.value as CategoryId | "")}>
         <option value="">未分類</option>
         {CATEGORY_IDS.map((id) => <option key={id} value={id}>{CATEGORY_LABELS[id]}</option>)}
       </select>
       {confirmed && selected === category.confirmedCategory ? <p className="receipt-category-hint" role="status">カテゴリを保存しました</p> : null}
-      <button className="button button-primary receipt-category-save" type="button" disabled={!selected || busy || selected === category.confirmedCategory} onClick={onSave}>
+      {!disabled ? <button className="button button-primary receipt-category-save" type="button" disabled={!selected || busy || selected === category.confirmedCategory} onClick={onSave}>
         {busy ? "保存中…" : confirmed ? "変更を保存" : "カテゴリを保存"}
-      </button>
+      </button> : null}
       {error ? <p className="receipt-category-error" role="alert">{error}</p> : null}
     </section>
   );
