@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#faf7f2" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>Actual browser 検証</title>
+  </head>
+  <body>
+    <main>
+      <h1>Actual browser 検証</h1>
+      <p>人工データだけを使います。結果はこの端末に保存されます。</p>
+      <p id="environment"></p>
+      <button id="run">空の端末から検証を実行</button>
+      <button id="reload">既存データを再読込</button>
+      <button id="edit">既存の支出を編集</button>
+      <button id="storage">保存容量を確認</button>
+      <button id="persist">永続保存を要求</button>
+      <button id="export">家計簿をファイルへ保存</button>
+      <label for="import">保存した家計簿ファイルを読み込む</label>
+      <input id="import" type="file" accept=".zip,application/zip" />
+      <ol id="results" aria-live="polite"></ol>
+      <p>検証後は Safari の共有メニューから「ホーム画面に追加」し、再読込・Safari 終了後・オフラインで「既存データを再読込」を実行してください。</p>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

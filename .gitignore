@@ -84,6 +84,8 @@ Thumbs.db
 # Deployment / tooling
 .vercel/
 .turbo/
+spikes/actual-browser/.cloudflare/
+spikes/actual-browser/.wrangler/
 
 # Local AI / agent artifacts
 .claude/settings.local.json
