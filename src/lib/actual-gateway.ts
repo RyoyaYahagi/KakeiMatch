@@ -71,6 +71,16 @@ export function actualAmountToYen(amount: number, unitsPerYen: number): number {
   return amount / unitsPerYen;
 }
 
+/** Converts signed integer yen to Actual's integer amount units. */
+export function yenToActualAmount(amountYen: number, unitsPerYen: number): number {
+  if (!Number.isSafeInteger(amountYen) || !Number.isSafeInteger(unitsPerYen) || unitsPerYen < 1) {
+    throw new ActualUnavailableError("invalid_data");
+  }
+  const amount = amountYen * unitsPerYen;
+  if (!Number.isSafeInteger(amount)) throw new ActualUnavailableError("invalid_data");
+  return amount;
+}
+
 function validatedDate(value: string): string {
   if (!z.iso.date().safeParse(value).success) throw new Error("Invalid transaction date.");
   return value;

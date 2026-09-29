@@ -119,6 +119,15 @@ h1 { font-size: clamp(28px, 7vw, 36px); line-height: 1.25; letter-spacing: -.035
 .receipt-category select { display: block; width: 100%; min-height: 52px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
 .receipt-category-save { width: 100%; min-height: 52px; margin-top: 12px; }
 .receipt-category-error { margin: 10px 0 0; color: var(--danger); }
+.receipt-registration { display: grid; gap: 8px; margin: 28px 0; padding-top: 20px; border-top: 1px solid var(--border); }
+.receipt-registration h2 { margin: 0 0 4px; font-size: 18px; }
+.receipt-registration label { margin-top: 8px; font-weight: 600; }
+.receipt-registration input, .receipt-registration select { width: 100%; min-height: 52px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.receipt-registration input:focus, .receipt-registration select:focus { outline: 3px solid #28634c33; border-color: var(--primary); }
+.receipt-registration-hint { margin: 4px 0; color: var(--muted); }
+.receipt-registration-error { margin: 8px 0 0; color: var(--danger); }
+.receipt-registration-submit { width: 100%; min-height: 56px; }
+.receipt-registration-success { margin: 28px 0; padding: 20px 0; border-top: 1px solid var(--border); color: var(--primary); font-size: 20px; font-weight: 700; }
 .skeleton { border-radius: 6px; background: #e8ece8; animation: pulse 1.4s ease-in-out infinite; }
 .skeleton-heading { width: 55%; height: 40px; margin-bottom: 28px; }
 .skeleton-summary { height: 72px; margin-bottom: 24px; }

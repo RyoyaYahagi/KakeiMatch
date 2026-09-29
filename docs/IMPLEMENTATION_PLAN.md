@@ -132,6 +132,8 @@ Gemini等で構造化した以下の情報をstateとして使う。
 
 目的: 確定したレシート情報をActualへ取引として登録する。
 
+実装済み: `/receipts/[id]` で店名・日付・整数円金額・本人Budgetの支払元口座を確認し、カテゴリを確定してから登録します。Actual用の書き込みadapterは公式CLIのstdin import/updateを使います。`receipt_registration` に一意なreceipt行と安定した `kakeimatch:receipt:<receipt-id>` を保存し、Actual read-backで結果を検証します。日本語カテゴリ名の一意な完全一致を自動利用し、一致しない場合や曖昧な場合は管理者が `pnpm actual:map-categories` でユーザー別mappingを設定できます。Actual登録の一時Serverを使ったライブ試験は未実施です。実施手順は[ACTUAL_RECEIPT_LIVE_TEST.md](ACTUAL_RECEIPT_LIVE_TEST.md)に記録しています。
+
 ### 要件
 
 - user -> Actual Sync IDをサーバー側で解決

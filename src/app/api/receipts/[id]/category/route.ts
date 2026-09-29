@@ -2,7 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { db } from "@/db/client";
-import { receipt, receiptCategory, receiptExtraction } from "@/db/schema";
+import { receipt, receiptCategory, receiptExtraction, receiptRegistration } from "@/db/schema";
 import { getCurrentUser } from "@/lib/current-user";
 import { isCategoryId } from "@/lib/category";
 import { confirmReceiptCategory, toPublicCategoryState } from "@/lib/receipt-category-state";
@@ -64,6 +64,12 @@ export async function PUT(request: NextRequest, context: { params: Promise<{ id:
     catch { return privateJson({ error: "レシートの読み取り結果を確認できません。" }, 409); }
     if (extraction.documentKind !== "receipt") {
       return privateJson({ error: "レシートとして読み取れた場合にカテゴリを保存できます。" }, 409);
+    }
+
+    const [registration] = await db.select({ status: receiptRegistration.status }).from(receiptRegistration)
+      .where(eq(receiptRegistration.receiptId, id)).limit(1);
+    if (registration?.status === "registering" || registration?.status === "registered") {
+      return privateJson({ error: "登録中または登録済みのカテゴリは変更できません。" }, 409);
     }
 
     await confirmReceiptCategory({ receiptId: id, userId: owner.id, categoryId: parsedBody.categoryId, merchant: extraction.merchant });

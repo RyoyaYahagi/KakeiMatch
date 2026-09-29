@@ -43,7 +43,7 @@
 
 ## Status
 
-家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示、Geminiによるレシート情報抽出、カテゴリ提案とユーザー確定に対応しています。明細の取り込み・照合は後続Issueで実装します。Actual Budgetへの取引書き込みは未実装です。
+家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示、Geminiによるレシート情報抽出、カテゴリ提案とユーザー確定、確認済みレシートのActual Budget登録に対応しています。レシート登録は本人のBudget内の口座を選び、店名・日付・整数円金額を確認してから実行します。カード明細の取り込みと照合は後続Issueで実装します。Actualへのレシート登録のライブ試験は未実施です。手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)を参照してください。
 
 支出一覧は、本人の家計簿から日付の新しい取引を最大50件取得し、その中の支出だけを表示します。ホームの最近の支出は同じ取得結果から最大5件を表示します。収入と口座間振替は支出一覧へ表示しません。「今月」は `APP_TIME_ZONE`（既定値 `Asia/Tokyo`）で判定します。取引に保存された日付は変換しません。
 
@@ -121,6 +121,8 @@ pnpm build
 ## Actual Gatewayの検証
 
 `src/lib/actual-gateway.ts` はBetter Authのログインセッションからユーザーを特定し、`actual_budget_mapping` に保存された本人のSync IDをサーバー側で取得します。`getRecentTransactions`、`getTransactions`、`getTransactionById`、`getMonthlySpending` が読み取り専用の公開インターフェースです。各呼び出しでは公式 `@actual-app/cli` のActualQL照会を1回実行します。CLIのJSONを検証し、金額を整数円に変換してから返します。取引種別はGateway内で支出・収入・口座間振替へ変換し、画面には支出だけを表示します。ID指定の取得も本人のBudget内だけで行います。認証が必要な `GET /api/actual` は `view=recent`、`view=range&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`、`view=monthly&yearMonth=YYYY-MM` を受け付けます。Sync IDとパスワードはブラウザーへ返しません。CLIの接続設定とJSON形式は[Actual公式CLI資料](https://actualbudget.org/docs/api/cli/)に従います。
+
+レシート登録は別の `src/lib/actual-receipt-writer.ts` が担当します。Actual公式CLIの `transactions import` と `transactions update` を使い、取引情報を引数ではなく標準入力からJSONで渡します。KakeiMatchとActualのカテゴリ名が一致しないBudgetでは、管理者が対話端末で `pnpm actual:map-categories` を実行してユーザー別の対応を設定します。詳細な状態保存と再試行手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)に記載しています。
 
 通常の `pnpm test` は人工データによる単体テストを実行します。実Actual Serverを使ったA/B分離テストは、次の手順で別途実行します。
 

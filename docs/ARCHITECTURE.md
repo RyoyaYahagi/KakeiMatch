@@ -35,7 +35,7 @@ KakeiMatch Web App
                          |
                          v
                  @actual-app/cli
-               (採用済み・読み取り専用)
+                 (読み取り・書き込み)
                          |
                          v
                   Actual Sync Server
@@ -105,7 +105,17 @@ Actualは1インストール内に複数Budgetを保持できます。この分�
 
 Actualのserver password / session token / budget Sync IDはブラウザへ公開しません。
 
-読み取り専用のActual Gatewayには、公式 `@actual-app/cli` の短命プロセスを採用しました。取引照会は1メソッドにつき1回のActualQL queryで実行します。Better Authセッションから得たユーザーIDだけでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数として渡します。CLIへ渡す引数は配列で組み立て、JSON出力をZodで検証します。`@actual-app/api` はGatewayの実装に使用していません。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を実装時に確認しました。
+Actual連携は読み取り用の `actual-gateway.ts` と、レシート書き込み用の `actual-receipt-writer.ts` に分けています。どちらも公式 `@actual-app/cli` の短命プロセスを使います。読み取りはActualQL queryを実行します。書き込みは `transactions import` と `transactions update` を実行し、レシート値や更新JSONは `--file -` を介して標準入力から渡します。Better Authセッションから得たユーザーIDでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数へ渡します。引数は配列で組み立て、CLIのJSON出力をZodで検証します。`@actual-app/api` は使用していません。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を参照します。
+
+## レシートからActualへの登録
+
+画面が送る店名、日付、正の整数円金額、口座IDは、セッションユーザーが所有するレシートに対してサーバーで再検証します。口座の選択肢は本人Budgetのopen accountだけです。最後に登録した口座IDはユーザー別設定として記憶し、次回はその口座が引き続きopen accountである場合だけ初期選択に使います。
+
+カテゴリ登録にはユーザーが確定したKakeiMatchカテゴリが必要です。`actual_category_mapping` にユーザー別の対応があればそのActualカテゴリIDを使います。対応がない場合はActualの非表示でない支出カテゴリから日本語ラベルの完全一致を探し、1件の場合だけmappingを保存します。一致が0件または複数件の場合は登録を止め、「カテゴリの連携設定が必要です」を返します。Actualカテゴリは自動作成しません。管理者は `pnpm actual:map-categories` を対話端末で実行し、KakeiMatchユーザーのemailを入力後、Actualカテゴリ一覧から各日本語カテゴリへ対応する項目を選択します。Enterは既存mappingの維持を表し、既存mappingの変更には確認入力が必要です。
+
+確定値は `receipt_registration` に1レシート1行で保存します。行には店名、日付、整数円金額、KakeiMatchカテゴリ、Actual口座、状態、安定した `kakeimatch:receipt:<receipt-id>` の `imported_id`、Actual取引ID、エラーコード、試行・登録時刻を保存します。`receipt_id` と `imported_id` に一意制約を置き、登録中はclaim tokenと期限で並行するPOSTを制御します。Actualへのimport前に `imported_id` で検索し、既存行がなければimportします。import後も読み戻し、口座、日付、負数の整数円金額、payee、カテゴリを検証します。Actual ruleがカテゴリまたはcleared状態を変更した場合は `transactions update --file -` でカテゴリを確定済みmappingへ戻し、`cleared: false` にして再確認します。
+
+Actualの書き込み後に応答やKakeiMatch DB更新が失敗しても、確定値と `imported_id` は保持されます。書き込み結果が不明な失敗では確定値を変更できない状態にします。再試行では同じ `imported_id` を検索し、既存のActual取引を検証してKakeiMatch側の登録状態を回復します。登録済みレシートは変更・再登録できません。Issue #11/#12の照合処理では、`receipt_registration.actual_transaction_id` をActual取引の対応先として使えます。ライブ試験手順と現在の未実施状態は[レシート登録ライブ試験](ACTUAL_RECEIPT_LIVE_TEST.md)を参照してください。
 
 Gatewayのインターフェースは `getRecentTransactions({ limit? })`、`getTransactions({ startDate, endDate })`、`getTransactionById(id)`、`getMonthlySpending({ yearMonth })` です。取引の金額は符号付き整数円、今月の支出は正の整数円で返します。Gatewayは取引を支出・収入・口座間振替へ変換し、画面へActual固有の振替IDを渡しません。ID指定の照会は認証済みユーザーに紐付いたBudgetへ限定し、1件だけ取得します。ActualQLではsplit transactionの子を読む既定の `inline` 方式を使用します。集計ではparent、口座間transfer、収入を除外します。[ActualQLのsplit仕様](https://actualbudget.org/docs/api/actual-ql/)に従います。
 
