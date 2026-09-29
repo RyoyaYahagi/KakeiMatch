@@ -1,0 +1,21 @@
+{
+  "name": "kakeimatch-pwa",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node test/sw.test.mjs",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@actual-app/api": "26.9.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "1.62.0",
+    "cf": "1.0.0-beta.5",
+    "typescript": "5.9.2",
+    "vite": "8.3.1"
+  }
+}
