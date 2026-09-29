@@ -50,6 +50,20 @@
       "when": 1790668103633,
       "tag": "0006_lethal_master_mold",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790673181299,
+      "tag": "0007_mature_agent_zero",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790673208498,
+      "tag": "0008_cynical_hawkeye",
+      "breakpoints": true
     }
   ]
 }

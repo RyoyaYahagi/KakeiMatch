@@ -206,26 +206,15 @@ provider固有の列名や文字コードをreconciliationロジックに漏ら�
 
 ## Reconciliation
 
-照合はLLM中心にしません。
+照合判定はGemini/Jev/LLMを呼ばない純粋な決定ロジックです。入力は本人の `statement_transaction` canonical行と、`receipt_registration.status=registered` かつ `actual_transaction_id` があるreceiptです。Receiptでは登録時にユーザーが確定した店名・日付・金額・Actual口座ID・取引IDを読み、Geminiのraw extractionへ戻りません。Statementではprovider名を含むcanonical項目だけを読み、CSV原本やprovider固有headerを参照しません。照合はActualへ書き込みません。
 
-候補生成に利用可能な情報:
+店舗比較ではNFKC、trim、ASCII小文字化、空白・一般的な区切り記号の除去を行い、文字bigram Dice係数で類似度を計算します。候補はUTC日付bucketでreceiptを索引し、statementごとに±7日だけを見るため、全件Cartesian productを作りません。amount exactまたは金額差が `max(100円, statement金額の3%)` 以下かつ店舗類似度0.70以上の場合に候補になります。Refundは購入receiptの候補にせず、`unmatched_statement` と `refund_not_supported` を返します。
 
-- 金額
-- 利用日 / 計上日
-- 店舗名
-- 決済手段
-- OCR情報
-- 過去のmerchant alias
+現在のrule versionは `1.0.0` です。scoreはamount/date/merchantをそれぞれ55%/25%/20%で重み付けし、計算rule・thresholdは `src/lib/reconciliation-engine.ts` の `RECONCILIATION_RULES` に集約しています。自動 `matched` には購入、金額完全一致、日付差2日以内、merchant類似度0.72以上または既知alias、score 0.88以上、statement側とreceipt側双方の1位、双方で2位との差0.15以上を要求します。曖昧な重複候補は配列順に決めず `needs_review` とします。amount不一致候補は自動一致しません。machine状態は `matched` / `needs_review` / `unmatched_statement` / `unmatched_receipt` のみです。人間確定状態 `confirmed` はIssue #13の責務です。
 
-状態例:
+各実行は上書きされないsnapshotです。`reconciliation_run` がrule versionと実行状態・時刻を持ち、candidate（各明細上位3件まで）、statement result、receipt resultを別テーブルに保存します。`merchant_alias` はユーザー別の明示aliasを保持し、auto-matchから学習しません。全テーブルの取得・書込はsessionから得たユーザーのscopeに限定します。Issue #13は `GET /api/reconciliation/latest` のlatest completed runからcandidateのscore、金額差、日付差、店舗類似度、reason codeと双方のresultを取得できます。新しい照合は `POST /api/reconciliation/run` で開始します。
 
-- `matched`: 高信頼で一致
-- `needs_review`: 候補はあるが要確認
-- `unmatched_statement`: 明細側だけ存在
-- `unmatched_receipt`: 家計簿/レシート側だけ存在
-- `confirmed`: ユーザーが確認済み
-
-スコアや閾値は一箇所で管理し、単体テスト可能にします。
+合成データ評価は `pnpm eval:reconciliation` で実行できます。人工シナリオ33件のauto-match precision、coverage、needs-review率、未照合数、状態期待値との一致を出力します。詳細と最新評価値はREADMEの「Reconciliation evaluation」を参照してください。
 
 ## レシート画像
 

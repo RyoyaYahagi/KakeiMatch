@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "eval:category": "node --conditions=react-server --import tsx eval/run-jev-category-eval.ts --live",
+    "eval:reconciliation": "node --conditions=react-server --import tsx eval/run-reconciliation-eval.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "user:create": "tsx scripts/create-user.ts",
