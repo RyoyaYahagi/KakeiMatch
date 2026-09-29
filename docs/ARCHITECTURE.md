@@ -230,7 +230,9 @@ Issue #7ではレシート原本を `ReceiptStorage` 境界の背後に保存し
 
 Actual Budgetをセルフホストしても、Geminiへ送信したレシート情報は外部サービスへ送られます。
 
-秘密情報や不要な家計データをAIへ送信せず、処理ごとに入力を最小化します。
+レシート解析では、保存画像、content type、抽出promptだけをGoogleのGemini APIへ送信します。ユーザー名、email、Actual Budget情報、家計履歴、他のレシートは送信しません。Gemini Interactions APIでは `store: false` を指定し、Google Search、grounding、toolsを有効にしません。APIキーとモデル名はserver-onlyの `GEMINI_API_KEY` / `GEMINI_MODEL` で設定します。モデル既定値は `gemini-3.5-flash-lite` です。
+
+解析endpointは、セッションユーザーとreceipt IDおよびownerで画像metadataを取得した後、`ReceiptStorage.get()` から画像を読み出します。解析に失敗しても保存済み画像を削除せず、ユーザーが再解析できます。Gemini APIが利用されることはREADMEと画面の案内で利用者に伝えます。
 
 ## 設計ルール
 

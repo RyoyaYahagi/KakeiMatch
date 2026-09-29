@@ -5,6 +5,8 @@
 レシートを撮影して支出を記録し、後からクレジットカード・決済サービスの明細と照合します。
 一致した取引は自動で処理し、確認が必要な取引だけをユーザーに見せることで、家計簿入力と明細確認の手間を減らすことを目指します。
 
+レシート解析では、保存した画像をGoogleのGemini APIへ送信します。Geminiには画像、画像形式、抽出指示だけを送り、氏名、メールアドレス、Actual Budget情報、家計履歴は送りません。Gemini APIキーと使用モデルはサーバー側の環境変数で設定します。
+
 ## コンセプト
 
 - 親を含む家族がスマートフォンから迷わず使えることを最優先する
@@ -152,5 +154,7 @@ pnpm exec vitest run src/lib/actual-gateway.live.test.ts
 `.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`RECEIPT_STORAGE_DIR` は公開ディレクトリ外のレシート原本保存先で、ローカル開発では `./data/receipts`、Composeでは `/app/receipts` を使います。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActual Serverコンテナ内のデータディレクトリです。`ACTUAL_CLI_DATA_DIR` はKakeiMatch内のCLIクライアント用キャッシュディレクトリです。Composeでは前者をActual専用volumeの `/data`、後者をアプリ専用volumeの `/app/data/actual-cli` に分けます。CLIのキャッシュはmapping IDとSync IDのハッシュごとに別ディレクトリへ保存し、生のメールアドレスやSync IDをパスに使用しません。
 
 KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削除されます。対応するActual Budgetとその家計データはActual Server上に残るため、不要になったBudgetはActual管理UIで別途削除してください。
+
+`GEMINI_API_KEY` はGemini APIへの接続に使う秘密情報です。`GEMINI_MODEL` はレシート解析モデルで、既定値は `gemini-3.5-flash-lite` です。どちらもサーバーだけが読み取り、ブラウザーへ公開しません。Gemini APIを有効にすると、ユーザーが保存したレシート画像が解析のためGoogleへ送信されます。画像と形式、抽出指示以外のユーザー情報は送信しません。
 
 実際の秘密情報は `.env` や `.env.local` に設定し、Gitへ登録しないでください。

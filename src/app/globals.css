@@ -100,6 +100,19 @@ h1 { font-size: clamp(28px, 7vw, 36px); line-height: 1.25; letter-spacing: -.035
 .receipt-uploading, .receipt-error { margin: 12px 0 0; }
 .receipt-success-message { margin: 0 0 16px; color: var(--primary); font-size: 20px; font-weight: 700; }
 .receipt-saved-preview { max-height: 68svh; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 8px; background: #eceeea; }
+.receipt-detail-image { max-height: 58svh; margin: 20px 0; border: 1px solid var(--border); border-radius: 8px; background: #eceeea; }
+.receipt-review-status { margin: 16px 0; }
+.receipt-review-notice { margin: 16px 0; }
+.receipt-result-list { margin-top: 12px; }
+.receipt-warnings { margin-top: 24px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; }
+.receipt-warnings h2 { margin: 0 0 8px; font-size: 18px; }
+.receipt-warnings ul { margin: 0; padding-left: 24px; }
+.receipt-items { margin: 20px 0; border-block: 1px solid var(--border); }
+.receipt-items summary { min-height: 52px; display: flex; align-items: center; cursor: pointer; font-weight: 600; }
+.receipt-items ul { margin: 0; padding: 0; list-style: none; }
+.receipt-items li { min-height: 48px; display: flex; justify-content: space-between; align-items: center; gap: 16px; border-top: 1px solid var(--border); }
+.receipt-items li span:last-child { white-space: nowrap; }
+.receipt-retry { min-height: 52px; width: 100%; margin-top: 20px; }
 .skeleton { border-radius: 6px; background: #e8ece8; animation: pulse 1.4s ease-in-out infinite; }
 .skeleton-heading { width: 55%; height: 40px; margin-bottom: 28px; }
 .skeleton-summary { height: 72px; margin-bottom: 24px; }

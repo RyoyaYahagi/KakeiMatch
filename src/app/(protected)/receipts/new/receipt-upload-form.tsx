@@ -1,17 +1,17 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
 const maxFileSize = 10 * 1024 * 1024;
 
-type UploadState = "ready" | "uploading" | "saved";
+type UploadState = "ready" | "uploading";
 
 export default function ReceiptUploadForm() {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [savedId, setSavedId] = useState<string | null>(null);
   const [state, setState] = useState<UploadState>("ready");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const uploadInProgress = useRef(false);
@@ -29,7 +29,6 @@ export default function ReceiptUploadForm() {
 
   function chooseFile(nextFile: File | null) {
     setErrorMessage(null);
-    setSavedId(null);
     setState("ready");
     if (!nextFile) return;
 
@@ -63,8 +62,7 @@ export default function ReceiptUploadForm() {
       }
       const id = getReceiptId(result);
       if (!id) throw new Error("保存結果を確認できませんでした。もう一度お試しください。");
-      setSavedId(id);
-      setState("saved");
+      router.push(`/receipts/${encodeURIComponent(id)}`);
     } catch (error) {
       setState("ready");
       setErrorMessage(error instanceof Error && error.message ? error.message : "通信に失敗しました。接続を確認して、もう一度お試しください。");
@@ -75,14 +73,7 @@ export default function ReceiptUploadForm() {
 
   return (
     <section className="receipt-upload" aria-label="レシート画像">
-      {state === "saved" && savedId ? (
-        <div className="receipt-saved" role="status" aria-live="polite">
-          <p className="receipt-success-message">レシートを保存しました</p>
-          <img className="receipt-preview receipt-saved-preview" src={`/api/receipts/${encodeURIComponent(savedId)}/image`} alt="保存したレシート" />
-          <Link className="text-link" href="/">ホームへ戻る</Link>
-        </div>
-      ) : (
-        <>
+      <>
           <div className="receipt-file-actions">
             <label className={`button ${file ? "button-secondary" : "button-primary"} receipt-file-button`} htmlFor="receipt-camera">写真を撮る</label>
             <input
@@ -118,8 +109,7 @@ export default function ReceiptUploadForm() {
             </button>
           ) : null}
           {state === "uploading" ? <p className="muted receipt-uploading" role="status" aria-live="polite">画像を保存しています。画面を閉じずにお待ちください。</p> : null}
-        </>
-      )}
+      </>
     </section>
   );
 }

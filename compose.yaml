@@ -12,6 +12,8 @@ services:
       ACTUAL_SERVER_PASSWORD: ${ACTUAL_SERVER_PASSWORD:-}
       ACTUAL_CLI_DATA_DIR: /app/data/actual-cli
       RECEIPT_STORAGE_DIR: /app/receipts
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     ports:
       - "127.0.0.1:${PORT:-3002}:3000"
     volumes:
