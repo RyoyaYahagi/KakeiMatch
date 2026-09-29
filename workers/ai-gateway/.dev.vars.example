@@ -1,0 +1,3 @@
+AI_GATEWAY_AUTH_SECRET=<local-synthetic-signing-secret>
+GEMINI_API_KEY=<local-synthetic-gemini-key>
+TYPESAFE_API_KEY=<local-synthetic-jev-key>
