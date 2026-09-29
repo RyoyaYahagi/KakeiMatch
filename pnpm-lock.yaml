@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@actual-app/api':
+        specifier: 26.9.0
+        version: 26.9.0
       '@actual-app/cli':
         specifier: 26.9.0
         version: 26.9.0(typescript@5.9.3)

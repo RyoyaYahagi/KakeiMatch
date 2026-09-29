@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ user: vi.fn(), run: vi.fn() }));
+const mocks = vi.hoisted(() => ({ user: vi.fn(), run: vi.fn(), automatic: vi.fn() }));
 vi.mock("@/lib/current-user", () => ({ getCurrentUser: mocks.user }));
 vi.mock("@/lib/reconciliation-service", () => ({ runReconciliation: mocks.run }));
+vi.mock("@/lib/reconciliation-review-actions", () => ({ applyAutomaticMatches: mocks.automatic }));
 import { POST } from "./route";
 
 describe("reconciliation run authorization", () => {
@@ -11,6 +12,7 @@ describe("reconciliation run authorization", () => {
     vi.resetAllMocks();
     mocks.user.mockResolvedValue({ id: "session-user-a" });
     mocks.run.mockResolvedValue({ runId: "run-a" });
+    mocks.automatic.mockResolvedValue(undefined);
   });
 
   it("rejects unauthenticated requests", async () => {
@@ -27,5 +29,6 @@ describe("reconciliation run authorization", () => {
     expect(response.status).toBe(201);
     expect(response.headers.get("Cache-Control")).toBe("private, no-store");
     expect(mocks.run).toHaveBeenCalledExactlyOnceWith("session-user-a");
+    expect(mocks.automatic).toHaveBeenCalledExactlyOnceWith("session-user-a", "run-a");
   });
 });

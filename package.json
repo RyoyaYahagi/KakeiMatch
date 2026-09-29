@@ -19,6 +19,7 @@
     "actual:map-categories": "node --conditions=react-server --import tsx scripts/map-actual-categories.ts"
   },
   "dependencies": {
+    "@actual-app/api": "26.9.0",
     "@actual-app/cli": "26.9.0",
     "@better-auth/drizzle-adapter": "^1.7.6",
     "@google/genai": "^2.24.0",

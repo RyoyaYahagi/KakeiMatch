@@ -2,11 +2,14 @@ import Link from "next/link";
 import { actualGateway } from "@/lib/actual-gateway";
 import { currentYearMonth, expensesOnly, formatYen } from "@/lib/ledger-format";
 import { formatDate, getLedgerErrorMessage } from "../components/ledger-display";
+import { requireUser } from "@/lib/current-user";
+import { getPendingReconciliationCount } from "@/lib/reconciliation-review";
 
 export default async function HomePage() {
   let spending: number | null = null;
   let recent: Awaited<ReturnType<typeof actualGateway.getRecentTransactions>> = [];
   let errorMessage: string | null = null;
+  let reconciliationCount: number | null = null;
 
   try {
     const month = currentYearMonth();
@@ -17,6 +20,13 @@ export default async function HomePage() {
     recent = expensesOnly(recent).slice(0, 5);
   } catch (error) {
     errorMessage = getLedgerErrorMessage(error);
+  }
+
+  try {
+    const user = await requireUser();
+    reconciliationCount = await getPendingReconciliationCount(user.id);
+  } catch {
+    // Reconciliation status is secondary to the home page ledger content.
   }
 
   return (
@@ -31,6 +41,10 @@ export default async function HomePage() {
         <span>レシートを登録する</span>
         <span aria-hidden="true">撮影・選択 →</span>
       </Link>
+
+      {reconciliationCount !== null ? (
+        <Link className="reconciliation-home-link" href="/reconciliation">要確認 {reconciliationCount}件<span aria-hidden="true">›</span></Link>
+      ) : null}
 
       {errorMessage ? (
         <section className="notice notice-error" role="alert">

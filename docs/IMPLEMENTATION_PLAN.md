@@ -185,11 +185,13 @@ type CanonicalStatementTransaction = {
 
 実装済み: `src/lib/reconciliation-engine.ts` が登録済みreceiptとcanonical statementを決定的に照合します。ユーザーの登録済み値を使い、Gemini/Jev/LLMやprovider固有CSVを照合判定から除外します。候補探索は日付bucketの±7日、amount exactまたは `max(100円, 3%)` 以内かつmerchant similarity 0.70以上です。scoreはamount/date/merchantの55%/25%/20%、rule versionは `1.0.0` です。自動一致は金額exact、日付差2日以内、merchant similarity 0.72以上または明示alias、score 0.88以上、statement/receiptのmutual best、双方のmargin 0.15以上を要求します。曖昧候補と金額差のある候補は `needs_review` です。refundは `unmatched_statement` / `refund_not_supported` になります。
 
-`POST /api/reconciliation/run` はsession userのデータで新しいsnapshotを作り、`GET /api/reconciliation/latest` は本人のlatest completed snapshotを返します。run、candidate、statement result、receipt resultは履歴を上書きせず保存します。machine runは `confirmed` を作りません。合成シナリオによる再現可能な評価は `pnpm eval:reconciliation` で行います。評価結果と指標はREADMEに記録します。
+`POST /api/reconciliation/run` はsession userのデータで新しいsnapshotを作り、`GET /api/reconciliation/latest` は本人のlatest completed snapshotを返します。run、candidate、statement result、receipt resultは履歴を上書きせず保存します。machine runは `confirmed` を作りません。次回runでは解決済みの明細、同じ支出で使ったレシート、拒否済みの組を除外します。合成シナリオによる再現可能な評価は `pnpm eval:reconciliation` で行います。評価結果と指標はREADMEに記録します。
 
 ## Phase 8: Review UX
 
 目的: 要確認だけを短時間で処理できるようにする。
+
+実装済み: `/reconciliation` は自動確認済み・要確認・記録なしの件数を示し、反映エラーを優先します。`reconciliation_resolution` が判断とActual反映状態を保持し、`reconciliation_pair_rejection` が「別の支出」を組単位で保持します。自動一致は公式Actual APIで複数取引を一括で `cleared=true` にします。明示的な「同じ支出」は金額差がある場合に明細金額へ更新します。レシートなしはカテゴリと本人Budgetの口座を確認し、安定した取り込みIDで登録します。失敗した反映は保存した判断から再試行します。
 
 ### 画面
 

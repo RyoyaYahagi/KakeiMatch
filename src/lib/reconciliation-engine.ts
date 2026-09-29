@@ -145,9 +145,12 @@ export function runReconciliationEngine(input: {
   statements: ReconciliationStatement[];
   receipts: ReconciliationReceipt[];
   aliases?: ReadonlySet<string>;
+  excludedStatementIds?: ReadonlySet<string>;
+  excludedReceiptIds?: ReadonlySet<string>;
+  rejectedPairs?: ReadonlySet<string>;
 }): ReconciliationEngineResult {
-  const statements = [...input.statements].sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
-  const receipts = [...input.receipts].sort((a, b) => a.receiptId.localeCompare(b.receiptId));
+  const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
+  const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
 
   // Index receipts by UTC calendar day to avoid a statement × receipt Cartesian scan.
   const receiptBuckets = new Map<number, ReconciliationReceipt[]>();
@@ -169,6 +172,7 @@ export function runReconciliationEngine(input: {
       const dayReceipts = receiptBuckets.get(statementDay + offset);
       if (!dayReceipts) continue;
       for (const receipt of dayReceipts) {
+        if (input.rejectedPairs?.has(`${statement.statementTransactionId}\0${receipt.receiptId}`)) continue;
         if (!safeAmount(receipt.amountYen)) continue;
         const receiptDay = utcDay(receipt.purchasedDate);
         if (receiptDay === null) continue;

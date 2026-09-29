@@ -105,7 +105,7 @@ Actualは1インストール内に複数Budgetを保持できます。この分�
 
 Actualのserver password / session token / budget Sync IDはブラウザへ公開しません。
 
-Actual連携は読み取り用の `actual-gateway.ts` と、レシート書き込み用の `actual-receipt-writer.ts` に分けています。どちらも公式 `@actual-app/cli` の短命プロセスを使います。読み取りはActualQL queryを実行します。書き込みは `transactions import` と `transactions update` を実行し、レシート値や更新JSONは `--file -` を介して標準入力から渡します。Better Authセッションから得たユーザーIDでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数へ渡します。引数は配列で組み立て、CLIのJSON出力をZodで検証します。`@actual-app/api` は使用していません。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を参照します。
+Actual連携は読み取り用の `actual-gateway.ts` と、レシート書き込み用の `actual-receipt-writer.ts` に分けています。どちらも公式 `@actual-app/cli` の短命プロセスを使います。読み取りはActualQL queryを実行します。書き込みは `transactions import` と `transactions update` を実行し、レシート値や更新JSONは `--file -` を介して標準入力から渡します。Better Authセッションから得たユーザーIDでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数へ渡します。引数は配列で組み立て、CLIのJSON出力をZodで検証します。照合で複数の既存取引を更新するときだけ公式 `@actual-app/api` の `batchBudgetUpdates` と `updateTransaction` を使用します。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を参照します。
 
 ## レシートからActualへの登録
 
@@ -210,9 +210,11 @@ provider固有の列名や文字コードをreconciliationロジックに漏ら�
 
 店舗比較ではNFKC、trim、ASCII小文字化、空白・一般的な区切り記号の除去を行い、文字bigram Dice係数で類似度を計算します。候補はUTC日付bucketでreceiptを索引し、statementごとに±7日だけを見るため、全件Cartesian productを作りません。amount exactまたは金額差が `max(100円, statement金額の3%)` 以下かつ店舗類似度0.70以上の場合に候補になります。Refundは購入receiptの候補にせず、`unmatched_statement` と `refund_not_supported` を返します。
 
-現在のrule versionは `1.0.0` です。scoreはamount/date/merchantをそれぞれ55%/25%/20%で重み付けし、計算rule・thresholdは `src/lib/reconciliation-engine.ts` の `RECONCILIATION_RULES` に集約しています。自動 `matched` には購入、金額完全一致、日付差2日以内、merchant類似度0.72以上または既知alias、score 0.88以上、statement側とreceipt側双方の1位、双方で2位との差0.15以上を要求します。曖昧な重複候補は配列順に決めず `needs_review` とします。amount不一致候補は自動一致しません。machine状態は `matched` / `needs_review` / `unmatched_statement` / `unmatched_receipt` のみです。人間確定状態 `confirmed` はIssue #13の責務です。
+現在のrule versionは `1.0.0` です。scoreはamount/date/merchantをそれぞれ55%/25%/20%で重み付けし、計算rule・thresholdは `src/lib/reconciliation-engine.ts` の `RECONCILIATION_RULES` に集約しています。自動 `matched` には購入、金額完全一致、日付差2日以内、merchant類似度0.72以上または既知alias、score 0.88以上、statement側とreceipt側双方の1位、双方で2位との差0.15以上を要求します。曖昧な重複候補は配列順に決めず `needs_review` とします。amount不一致候補は自動一致しません。machine状態は `matched` / `needs_review` / `unmatched_statement` / `unmatched_receipt` のみです。人間の確定状態は `reconciliation_resolution` から導出し、machine snapshotの行は書き換えません。
 
-各実行は上書きされないsnapshotです。`reconciliation_run` がrule versionと実行状態・時刻を持ち、candidate（各明細上位3件まで）、statement result、receipt resultを別テーブルに保存します。`merchant_alias` はユーザー別の明示aliasを保持し、auto-matchから学習しません。全テーブルの取得・書込はsessionから得たユーザーのscopeに限定します。Issue #13は `GET /api/reconciliation/latest` のlatest completed runからcandidateのscore、金額差、日付差、店舗類似度、reason codeと双方のresultを取得できます。新しい照合は `POST /api/reconciliation/run` で開始します。
+各実行は上書きされないsnapshotです。`reconciliation_run` がrule versionと実行状態・時刻を持ち、candidate（各明細上位3件まで）、statement result、receipt resultを別テーブルに保存します。`merchant_alias` はユーザー別の明示aliasを保持し、auto-matchから学習しません。全テーブルの取得・書込はsessionから得たユーザーのscopeに限定します。`GET /api/reconciliation/latest` はlatest completed runのmachine snapshotを返します。`GET /api/reconciliation/review` は判断記録と候補を合わせた本人向け表示を返します。新しい照合は `POST /api/reconciliation/run` で開始します。
+
+照合判断は `reconciliation_resolution` に明細ごとに一意に保存します。適用状態、claim token、Actual取引ID、明細金額、エラーコード、再試行に必要なカテゴリと支払元を保持します。「別の支出」は `reconciliation_pair_rejection` に組だけを保存します。次回の照合は判断済み明細、同じ支出で使ったレシート、拒否済み組を除外します。自動一致は金額を変更せず、公式APIの一括更新で `cleared=true` にします。API用キャッシュは本人Budgetのハッシュ配下の `reconciliation-api` に置き、既存CLIのキャッシュと分離します。Dockerでは既存のアプリ側 `ACTUAL_CLI_DATA_DIR` volume内に保存します。人間が金額差のある候補を「同じ支出」と確定したときだけActualの金額を明細金額へ変更し、登録済みレシートの確定値は保持します。レシートなしの登録には `kakeimatch:statement:<statement-id>` を使い、Actualから読み戻して重複を防ぎます。最新run以外の判断は拒否します。[Actual公式APIリファレンス](https://actualbudget.org/docs/api/reference/)を参照します。
 
 合成データ評価は `pnpm eval:reconciliation` で実行できます。人工シナリオ33件のauto-match precision、coverage、needs-review率、未照合数、状態期待値との一致を出力します。詳細と最新評価値はREADMEの「Reconciliation evaluation」を参照してください。
 

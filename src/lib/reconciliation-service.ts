@@ -9,7 +9,12 @@ export async function runReconciliation(userId: string) {
     return { ...statement, kind: statement.kind };
   });
   const aliases = new Set(input.aliases.map((alias) => merchantAliasKey(alias.normalizedMerchant, alias.normalizedAlias)));
-  const result = runReconciliationEngine({ statements, receipts: input.receipts, aliases });
+  const result = runReconciliationEngine({
+    statements, receipts: input.receipts, aliases,
+    excludedStatementIds: new Set(input.excludedStatementIds ?? []),
+    excludedReceiptIds: new Set(input.excludedReceiptIds ?? []),
+    rejectedPairs: new Set(input.rejectedPairs ?? []),
+  });
   const runId = await saveReconciliationRun({ userId, ...result });
   return {
     runId,
