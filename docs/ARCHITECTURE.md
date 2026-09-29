@@ -348,6 +348,12 @@ S3ReceiptStorage
 
 domain/UIからローカルファイルパスを参照しないでください。
 
+### Statement import boundary (Issue #11)
+
+`/api/statements/import` はログイン中のユーザーと明示選択されたproviderを受け取り、CSV全体を検証してから保存します。各providerのadapterはheader署名を厳密に照合します。形式を確認できない三井住友カード・楽天カード・イオンカードは安全に拒否します。確認状況は[STATEMENT_FORMATS.md](STATEMENT_FORMATS.md)に記録します。
+
+`statement_import` はファイルのSHA-256、専用保存キー、件数を本人単位で保持します。`statement_transaction` はprovider非依存の購入・返金、利用日時、店名、正の整数円金額、重複識別子を保持します。ファイル全体の検証後、原本を `StatementStorage` に保存し、両テーブルを1つのDBトランザクションで更新します。DB失敗時は原本を削除します。原本は `STATEMENT_STORAGE_DIR` の非公開領域に置き、Composeでは `statement-data` volumeを使います。Issue #12は `statement_transaction` のcanonical項目だけを読み、CSV原本やprovider列名は読みません。
+
 ### Database portability
 
 MVPでは少人数・単一インスタンスを優先しSQLiteを利用します。

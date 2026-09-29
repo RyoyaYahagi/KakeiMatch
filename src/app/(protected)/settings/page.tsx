@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/current-user";
+import Link from "next/link";
 import LogoutButton from "../../components/logout-button";
 
 export default async function SettingsPage() {
@@ -21,6 +22,11 @@ export default async function SettingsPage() {
         <h2 id="session-heading">ログイン</h2>
         <p className="muted">この端末からログアウトします。</p>
         <LogoutButton />
+      </section>
+      <section className="settings-section" aria-labelledby="statement-heading">
+        <h2 id="statement-heading">明細</h2>
+        <p className="muted">カード・決済サービスのCSV明細を取り込みます。</p>
+        <Link className="text-link" href="/statements/import">明細を取り込む</Link>
       </section>
     </div>
   );

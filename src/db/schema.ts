@@ -1,4 +1,5 @@
 import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 
 // Better Auth's email/password and database-session tables.
 export const user = sqliteTable("user", {
@@ -148,4 +149,48 @@ export const actualAccountPreference = sqliteTable("actual_account_preference", 
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference };
+// Statement rows are normalized before persistence; only the private raw file keeps provider columns.
+export const statementImport = sqliteTable("statement_import", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  storageKey: text("storage_key").notNull().unique(),
+  fileHash: text("file_hash").notNull(),
+  encoding: text("encoding").notNull(),
+  headerSignature: text("header_signature").notNull(),
+  status: text("status").notNull(),
+  totalRows: integer("total_rows").notNull(),
+  importedRows: integer("imported_rows").notNull(),
+  duplicateRows: integer("duplicate_rows").notNull(),
+  excludedRows: integer("excluded_rows").notNull(),
+  rejectedRows: integer("rejected_rows").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [
+  uniqueIndex("statement_import_user_provider_hash_unique").on(table.userId, table.provider, table.fileHash),
+  index("statement_import_user_created_idx").on(table.userId, table.createdAt),
+]);
+
+export const statementTransaction = sqliteTable("statement_transaction", {
+  id: text("id").primaryKey(),
+  importId: text("import_id").notNull().references(() => statementImport.id, { onDelete: "cascade" }),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  externalId: text("external_id"),
+  kind: text("kind").notNull(),
+  usedDate: text("used_date").notNull(),
+  usedTime: text("used_time"),
+  postedDate: text("posted_date"),
+  merchant: text("merchant").notNull(),
+  amountYen: integer("amount_yen").notNull(),
+  paymentMethod: text("payment_method"),
+  sourceFingerprint: text("source_fingerprint").notNull(),
+  duplicateOrdinal: integer("duplicate_ordinal").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [
+  uniqueIndex("statement_transaction_external_unique").on(table.userId, table.provider, table.externalId).where(sql`external_id is not null`),
+  uniqueIndex("statement_transaction_fingerprint_ordinal_unique").on(table.userId, table.provider, table.sourceFingerprint, table.duplicateOrdinal).where(sql`external_id is null`),
+  index("statement_transaction_user_date_idx").on(table.userId, table.usedDate),
+]);
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference, statementImport, statementTransaction };

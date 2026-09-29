@@ -46,6 +46,8 @@ At minimum:
 - require authorization when serving files
 - avoid logging raw financial data
 
+Statement CSV files are saved through `StatementStorage` outside the public directory. `STATEMENT_STORAGE_DIR` identifies the private location; Docker Compose mounts the separate `statement-data` volume. The server generates storage keys and stores no absolute path or original filename in the database. Imports and canonical rows are scoped to the authenticated user. CSV data is never sent to Gemini, Jev, or Actual Budget by Issue #11. Validate the entire CSV before persisting any rows; remove the raw file if the database transaction fails.
+
 ## External AI
 
 Receipt data sent to Gemini and TypeSafe leaves the self-hosted environment.
