@@ -1,187 +1,180 @@
 import * as api from '@actual-app/api';
+import {
+  checkOffline, formatReport, readReport, resumeAfterReload, runDiagnostics,
+  saveReport, setManualResult, summarize, type DiagnosticItem, type DiagnosticReport, type Progress,
+} from './diagnostic';
 import './style.css';
 
-const results = document.querySelector<HTMLOListElement>('#results')!;
-const environment = document.querySelector<HTMLElement>('#environment')!;
-const budgetKey = 'actual-browser-spike-budget';
-const importedId = 'kakeimatch:spike:receipt:synthetic-1';
-const today = '2026-09-29'; // Fixed synthetic date; independent of the device time zone.
-let initialized = false;
-environment.textContent = `crossOriginIsolated=${crossOriginIsolated}, SharedArrayBuffer=${typeof SharedArrayBuffer}, IndexedDB=${'indexedDB' in window}, User-Agent=${navigator.userAgent}`;
+const get = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const runButton = get<HTMLButtonElement>('run');
+const copyButton = get<HTMLButtonElement>('copy');
+const message = get<HTMLElement>('message');
+let report = readReport();
+let busy = false;
 
-function report(name: string, detail: unknown, ok = true) {
-  const item = document.createElement('li');
-  item.textContent = `${ok ? '成功' : '失敗'}: ${name} — ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
-  results.append(item);
+function renderItem(item: DiagnosticItem): HTMLLIElement {
+  const li = document.createElement('li');
+  li.className = item.status;
+  const head = document.createElement('div');
+  head.className = 'result-head';
+  const badge = document.createElement('span');
+  badge.className = 'badge';
+  badge.textContent = item.status.toUpperCase();
+  const title = document.createElement('strong');
+  title.textContent = item.label;
+  head.append(badge, title);
+  const detail = document.createElement('span');
+  detail.className = 'detail';
+  detail.textContent = `${item.detail || '未実行'}${item.source === 'reported' ? '［利用者報告］' : ''}`;
+  li.append(head, detail);
+  return li;
 }
 
-async function check(name: string, action: () => Promise<unknown>) {
-  try {
-    const detail = await action();
-    if (detail === false) throw new Error('期待した値を読み戻せませんでした');
-    report(name, detail ?? '完了');
-    return detail;
-  } catch (error) {
-    const quota = error instanceof DOMException && error.name === 'QuotaExceededError';
-    report(name, `${error instanceof Error ? error.message : String(error)}${quota ? '。保存容量不足です。家計簿をファイルへ保存し、端末容量を確認してください' : ''}`, false);
-    return undefined;
-  }
-}
-
-async function init() {
-  if (!initialized) {
-    await api.init({});
-    initialized = true;
-  }
-}
-
-async function loadExisting() {
-  await init();
-  const budgets = await api.getBudgets();
-  report('getBudgets', budgets.map(budget => ({ id: budget.id, name: budget.name })));
-  const id = localStorage.getItem(budgetKey) ?? budgets[0]?.id;
-  if (!id) throw new Error('端末内に家計簿がありません');
-  await api.loadBudget(id);
-  localStorage.setItem(budgetKey, id);
-  report('loadBudget', id);
-  const accounts = await api.getAccounts();
-  const categories = await api.getCategories();
-  report('getAccounts / getCategories', { accounts: accounts.map(a => a.name), categories: categories.map(c => c.name) });
-  for (const account of accounts) {
-    const transactions = await api.getTransactions(account.id, '2000-01-01', '2099-12-31');
-    report(`getTransactions ${account.name}`, transactions.map(t => ({ id: t.id, amount: t.amount, imported_id: t.imported_id, transfer_id: t.transfer_id, subtransactions: t.subtransactions?.length, notes: t.notes })));
-  }
-}
-
-async function runScenario() {
+function render(progress?: Progress) {
+  runButton.disabled = busy;
+  copyButton.disabled = !report;
+  const results = get<HTMLElement>('results');
   results.replaceChildren();
-  if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') {
-    report('分離環境', 'COOP/COEP またはブラウザ対応を確認してください', false);
+  if (!report) return;
+  const summary = summarize(report);
+  get<HTMLElement>('overall').textContent = summary.overall;
+  get<HTMLElement>('last-run').textContent = `最終診断: ${new Date(report.finishedAt ?? report.startedAt).toLocaleString('ja-JP')}`;
+  get<HTMLElement>('counts').textContent = `PASS ${summary.pass} / WARN ${summary.warn} / FAIL ${summary.fail} / PENDING ${summary.pending}`;
+  get<HTMLElement>('progress-label').textContent = progress ? `${progress.current} / ${progress.total} ${progress.label}` : (report.phase === 'complete' ? '診断が完了しました。' : '前回の診断を再開しています…');
+  const bar = get<HTMLProgressElement>('progress');
+  bar.max = progress?.total ?? 1;
+  bar.value = progress?.current ?? (report.phase === 'complete' ? bar.max : 0);
+  let section = '';
+  let list: HTMLUListElement | undefined;
+  for (const item of report.items) {
+    if (item.section !== section) {
+      section = item.section;
+      const group = document.createElement('section');
+      group.className = 'result-group';
+      const heading = document.createElement('h3');
+      heading.textContent = section;
+      list = document.createElement('ul');
+      list.className = 'result-list';
+      group.append(heading, list);
+      results.append(group);
+    }
+    list!.append(renderItem(item));
   }
-  await init();
-  report('init({})', 'serverURL なし');
-  const before = await api.getBudgets();
-  report('空の端末の家計簿数', before.length);
-  if (before.length !== 0) {
-    report('空の端末試験', '既存家計簿があります。初期作成の判定には、このサイトのデータを消してから再実行してください', false);
-    return;
-  }
-  await api.runImport('KakeiMatch Spike', async () => {});
-  const budgets = await api.getBudgets();
-  const budget = budgets.find(item => item.name === 'KakeiMatch Spike');
-  if (!budget?.id) throw new Error('runImport 後の家計簿が見つかりません');
-  localStorage.setItem(budgetKey, budget.id);
-  report('runImport で空状態から作成', budget.id);
-
-  const accountId = await api.createAccount({ name: '人工データ口座' });
-  const transferAccountId = await api.createAccount({ name: '人工データ振替先' });
-  const accounts = await api.getAccounts();
-  report('createAccount / getAccounts', accounts.map(a => a.name));
-  const groupId = await api.createCategoryGroup({ name: '人工データ支出' });
-  const categoryId = await api.createCategory({ name: '人工データ食費', group_id: groupId });
-  await api.updateCategory(categoryId, { name: '人工データ食費更新' });
-  const categories = await api.getCategories();
-  report('category 作成・更新・取得', categories.find(c => c.id === categoryId)?.name);
-
-  const expense = { account: accountId, date: today, amount: -3284, payee_name: '人工データ店', category: categoryId, imported_id: importedId };
-  const first = await api.importTransactions(accountId, [expense]);
-  const second = await api.importTransactions(accountId, [expense]);
-  const afterDuplicate = await api.getTransactions(accountId, today, today);
-  const matching = afterDuplicate.filter(t => t.imported_id === importedId);
-  report('importTransactions / stable imported_id', { first, second, matchingCount: matching.length }, matching.length === 1);
-  const target = matching[0];
-  if (!target) throw new Error('人工データの支出が見つかりません');
-  report('JPY 金額', { expectedYen: -3284, actual: target.amount }, target.amount === -3284);
-  await api.updateTransaction(target.id, { notes: '人工データ更新' });
-  const updated = (await api.getTransactions(accountId, today, today)).find(t => t.id === target.id);
-  report('updateTransaction', updated?.notes, updated?.notes === '人工データ更新');
-  await api.batchBudgetUpdates(async () => {
-    await api.updateTransaction(target.id, { cleared: true });
-    await api.updateTransaction(target.id, { notes: '一括更新済み' });
-  });
-  const batched = (await api.getTransactions(accountId, today, today)).find(t => t.id === target.id);
-  report('batchBudgetUpdates', { cleared: batched?.cleared, notes: batched?.notes }, batched?.cleared === true && batched.notes === '一括更新済み');
-
-  await check('income', async () => {
-    await api.importTransactions(accountId, [{ account: accountId, date: today, amount: 5000, payee_name: '人工データ収入', imported_id: 'kakeimatch:spike:income' }]);
-    return (await api.getTransactions(accountId, today, today)).some(t => t.amount === 5000);
-  });
-  await check('split', async () => {
-    await api.importTransactions(accountId, [{ account: accountId, date: today, amount: -1000, payee_name: '人工データ分割', imported_id: 'kakeimatch:spike:split', subtransactions: [{ amount: -600, category: categoryId }, { amount: -400, category: categoryId }] }]);
-    const split = (await api.getTransactions(accountId, today, today)).find(t => t.imported_id === 'kakeimatch:spike:split');
-    const children = split?.subtransactions?.map(child => child.amount);
-    if (split?.amount !== -1000 || children?.join(',') !== '-600,-400') throw new Error('分割取引の金額が一致しません');
-    return { amount: split.amount, children };
-  });
-  await check('transfer', async () => {
-    const payees = await api.getPayees();
-    const transferPayee = payees.find(p => p.transfer_acct === transferAccountId);
-    if (!transferPayee) throw new Error('振替先口座の payee が見つかりません');
-    await api.importTransactions(accountId, [{ account: accountId, date: today, amount: -700, payee: transferPayee.id, imported_id: 'kakeimatch:spike:transfer' }]);
-    const source = (await api.getTransactions(accountId, today, today)).find(t => t.imported_id === 'kakeimatch:spike:transfer');
-    const destination = (await api.getTransactions(transferAccountId, today, today)).find(t => t.transfer_id === source?.id);
-    if (!source?.transfer_id || !destination || destination.amount !== 700) throw new Error('振替先取引を読み戻せませんでした');
-    return { source: source.transfer_id, destination: destination.id, valid: true };
-  });
-  report('検証終了', '家計簿ファイルを保存し、再読込・Safari終了・ホーム画面・オフラインを続けて確認してください');
 }
 
-function bind(id: string, action: () => Promise<unknown>) {
-  document.querySelector<HTMLButtonElement>(`#${id}`)!.addEventListener('click', () => void check(id, action));
+function update(next: DiagnosticReport, progress: Progress) {
+  report = next;
+  if (!saveReport(next)) message.textContent = '結果を端末に保存できません。保存容量を確認し、結果をコピーしてください。';
+  render(progress);
 }
 
-bind('run', runScenario);
-bind('reload', loadExisting);
-bind('edit', async () => {
-  await init();
-  const budgets = await api.getBudgets();
-  const id = localStorage.getItem(budgetKey) ?? budgets[0]?.id;
-  if (!id) throw new Error('端末内に家計簿がありません');
-  await api.loadBudget(id);
-  const account = (await api.getAccounts()).find(item => item.name === '人工データ口座');
-  if (!account) throw new Error('人工データ口座がありません');
-  const transaction = (await api.getTransactions(account.id, '2000-01-01', '2099-12-31')).find(item => item.imported_id === importedId);
-  if (!transaction) throw new Error('人工データ支出がありません');
-  const notes = `端末内編集 ${new Date().toISOString()}`;
-  await api.updateTransaction(transaction.id, { notes });
-  const updated = (await api.getTransactions(account.id, '2000-01-01', '2099-12-31')).find(item => item.id === transaction.id);
-  if (updated?.notes !== notes) throw new Error('編集結果を読み戻せませんでした');
-  return { id: updated.id, notes: updated.notes };
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+runButton.addEventListener('click', () => {
+  if (busy) return;
+  busy = true;
+  message.textContent = '';
+  render();
+  void runDiagnostics(update).then(next => {
+    report = next;
+    if (next.phase === 'reload') {
+      if (saveReport(next)) {
+        message.textContent = '保存できました。再読込後の保持を確認します。';
+        location.reload();
+        return;
+      }
+      message.textContent = '診断結果を保存できず、自動再読込を中止しました。保存容量を確認してください。';
+    }
+    busy = false;
+    render();
+  }).catch(error => {
+    busy = false;
+    message.textContent = `診断を完了できませんでした: ${errorText(error)}`;
+    render();
+  });
 });
-bind('storage', async () => {
-  const estimate = await navigator.storage.estimate();
-  const persisted = await navigator.storage.persisted();
-  return { usage: estimate.usage, quota: estimate.quota, persisted };
+
+async function copyText(value: string) {
+  if (navigator.clipboard?.writeText) {
+    try { await navigator.clipboard.writeText(value); return; } catch { /* Try the selection fallback. */ }
+  }
+  const field = document.createElement('textarea');
+  field.value = value;
+  field.readOnly = true;
+  field.style.position = 'fixed';
+  field.style.opacity = '0';
+  document.body.append(field);
+  field.select();
+  const copied = document.execCommand('copy');
+  field.remove();
+  if (!copied) throw new Error('ブラウザがコピーを許可しませんでした');
+}
+
+copyButton.addEventListener('click', () => {
+  if (!report) return;
+  void copyText(formatReport(report)).then(() => {
+    message.textContent = '診断結果をコピーしました。';
+  }).catch(error => {
+    message.textContent = `コピーできませんでした: ${errorText(error)}`;
+  });
 });
-bind('persist', async () => {
-  const granted = await navigator.storage.persist();
-  if (!granted) report('永続保存', '許可されませんでした。家計簿をファイルへ保存してください', false);
-  return { granted };
+
+get<HTMLButtonElement>('offline').addEventListener('click', () => {
+  if (!report || busy) { message.textContent = '先に一括診断を完了してください。'; return; }
+  busy = true;
+  render();
+  void checkOffline(report).then(outcome => {
+    setManualResult(report!, 'offline', outcome);
+    if (!saveReport(report!)) message.textContent = 'オフライン結果を保存できませんでした。結果をコピーしてください。';
+    else message.textContent = outcome.detail;
+    busy = false;
+    render();
+  }).catch(error => {
+    busy = false;
+    message.textContent = `オフライン確認でエラー: ${errorText(error)}`;
+    render();
+  });
 });
-bind('export', async () => {
-  await init();
-  await loadExisting();
-  const zip = await api.exportBudget();
-  const bytes = new Uint8Array(zip);
-  const url = URL.createObjectURL(new Blob([bytes], { type: 'application/zip' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'kakeimatch-spike-actual.zip';
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  return { byteLength: bytes.byteLength };
+
+get<HTMLButtonElement>('export').addEventListener('click', () => {
+  if (!report?.budgetId) { message.textContent = '先に一括診断を完了してください。'; return; }
+  void (async () => {
+    await api.init({});
+    await api.loadBudget(report!.budgetId!);
+    const zip = await api.exportBudget();
+    const url = URL.createObjectURL(new Blob([new Uint8Array(zip)], { type: 'application/zip' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'kakeimatch-actual-diagnostic.zip';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    message.textContent = `ZIP を保存しました（${zip.byteLength} byte）。`;
+  })().catch(error => { message.textContent = `ZIP を保存できませんでした: ${errorText(error)}`; });
 });
-document.querySelector<HTMLInputElement>('#import')!.addEventListener('change', event => {
-  void check('importBudget', async () => {
-    const file = (event.target as HTMLInputElement).files?.[0];
-    if (!file) throw new Error('ファイルが選択されていません');
-    await init();
+
+get<HTMLInputElement>('import').addEventListener('change', event => {
+  const file = (event.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  void (async () => {
+    await api.init({});
     const imported = await api.importBudget(await file.arrayBuffer(), { filename: file.name });
-    localStorage.setItem(budgetKey, imported.id);
-    await loadExisting();
-    return imported;
-  });
+    await api.loadBudget(imported.id);
+    message.textContent = `ZIP を読み込みました。Budget ID: ${imported.id}`;
+  })().catch(error => { message.textContent = `ZIP を読み込めませんでした: ${errorText(error)}`; });
 });
+
+render();
+if (report?.phase === 'reload') {
+  busy = true;
+  render();
+  void resumeAfterReload(report, update).then(() => { busy = false; render(); }).catch(error => {
+    busy = false;
+    message.textContent = `再読込後の確認でエラー: ${errorText(error)}`;
+    render();
+  });
+}
 if ('serviceWorker' in navigator) {
-  void navigator.serviceWorker.register('/sw.js').then(() => report('Service Worker', '登録済み')).catch(error => report('Service Worker', String(error), false));
+  void navigator.serviceWorker.register('/sw.js').catch(error => { message.textContent = `オフライン用ファイルの準備に失敗: ${errorText(error)}`; });
 }
