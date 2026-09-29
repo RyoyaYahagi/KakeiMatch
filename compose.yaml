@@ -12,6 +12,7 @@ services:
       ACTUAL_SERVER_PASSWORD: ${ACTUAL_SERVER_PASSWORD:-}
       ACTUAL_CLI_DATA_DIR: /app/data/actual-cli
       RECEIPT_STORAGE_DIR: /app/receipts
+      STATEMENT_STORAGE_DIR: /app/statements
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash-lite}
     ports:
@@ -19,6 +20,7 @@ services:
     volumes:
       - app-data:/app/data
       - receipt-data:/app/receipts
+      - statement-data:/app/statements
     healthcheck:
       test:
         - CMD
@@ -64,4 +66,5 @@ services:
 volumes:
   app-data:
   receipt-data:
+  statement-data:
   actual-data:
