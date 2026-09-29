@@ -48,11 +48,13 @@ At minimum:
 
 ## External AI
 
-Receipt data sent to Gemini leaves the self-hosted environment.
+Receipt data sent to Gemini and TypeSafe leaves the self-hosted environment.
 
 Only send data required for the requested processing. Do not send authentication data, unrelated transaction history, or other users' information.
 
 Receipt analysis sends the saved receipt image, its content type, and the extraction prompt to Google's Gemini API. The API key and model setting are server-only environment variables (`GEMINI_API_KEY` and `GEMINI_MODEL`); never expose them through a `NEXT_PUBLIC_` variable or return them to the browser. The Gemini Interactions API request must use `store: false`. Do not send a user's name, email, Actual Budget data, household history, or other receipts. Do not enable Google Search, grounding, or tools for receipt extraction. A failed analysis must leave the saved image intact.
+
+Category classification sends only the minimum validated extraction state needed for the decision (merchant, total amount in yen, and a bounded set of item names and amounts) to the TypeSafe System One endpoint. Never send receipt images, user name, email, user ID, receipt ID, storage key, purchase history, Actual Budget data, or other receipts to Jev. `TYPESAFE_API_KEY`, `TYPESAFE_API_URL`, and `JEV_MODEL` are server-only settings; do not expose them through `NEXT_PUBLIC_` variables or return them to the browser. A provider failure or invalid response must leave the category unclassified for the user to review.
 
 ## Test data
 

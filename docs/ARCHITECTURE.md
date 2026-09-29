@@ -133,29 +133,34 @@ Gemini
   v
 schema validation
   |
-  +--> 既知ルール / 過去修正
-  |
-  +--> Jev分類
-  |
   v
-必要な場合のみ確認
-  |
-  v
-Actualへ登録
+ユーザー固有merchant mappingを確認
+  | hit                         | miss
+  |                             v
+  |                         Jev Choice
+  +-------------+---------------+
+                v
+       提案カテゴリを表示
+                |
+                v
+       ユーザーがカテゴリ確定
 ```
 
 AIの出力は必ずschema validationを通します。金額・日付など重要項目が不正な場合は自動確定しません。
 
 ## カテゴリ分類
 
-優先順位:
+分類の順序は、(1) そのユーザーが以前明示的に確定した店舗カテゴリ、(2) Jev Choice、(3) 閾値未達・入力不足・provider障害なら未分類として確認、です。店舗名はUnicode NFKC、前後trim、連続空白の圧縮、ASCII英字の小文字化だけで正規化し、fuzzy matchingは行いません。提案だけでは店舗mappingを作りません。
 
-1. 明確な固定ルール
-2. 過去に確定したユーザー修正・merchant mapping
-3. Jevによる分類
-4. confidenceが低ければユーザー確認
+Jevへは `merchant`、`totalAmountYen`、商品名と金額からなる最大30件のitemsだけを送信します。receipt画像、user/receipt ID、storage key、ユーザー名・email、Actual Budget情報、家計履歴、他のreceiptは含めません。[TypeSafe公式System One REST API](https://docs.typesafe.ai/api) の `POST https://api.typesafe.ai/v1/systemone` をserver-sideから呼び、Choiceの候補は固定カテゴリIDのみにします。`other` は候補に含み、`unclassified` はKakeiMatch側で管理します。Choiceのchoice、probabilities、confidence、response modelを検証し、confidence単独で自動提案を決めません。
 
-LLMを毎回呼ぶことを前提にしません。
+自動提案条件は、選択カテゴリのprobabilityが `JEV_CATEGORY_MIN_PROBABILITY` 以上、かつ1位と2位のprobability差が `JEV_CATEGORY_MIN_MARGIN` 以上であることです。初期値はそれぞれ `0.75` と `0.15` で、synthetic evalに基づき調整する設定値です。条件を満たさない場合やtimeout、429/529、provider障害、malformed responseでは未分類として確認を求めます。
+
+カテゴリIDと表示名は次の固定対応です: `food`=食費、`household`=日用品、`transport`=交通、`medical`=医療、`clothing`=衣服、`entertainment`=娯楽、`utilities`=水道・光熱、`communications`=通信、`other`=その他。
+
+`receipt_category` はreceiptごとの提案とユーザー確定を別々に保存し、suggested category、selected probability、confidence、全probabilities、source、needs review、confirmed category、model、question version、attempted/confirmed時刻を追跡します。`merchant_category_mapping` は `(user_id, normalized_merchant)` をキーとしてユーザー別に保存し、ユーザーがカテゴリを明示的に確定または修正した時だけ作成・更新します。merchantがないreceiptからmappingは作りません。確認endpointは認証sessionの所有者に限定し、カテゴリIDをallowlistで検証します。再分類時もconfirmed categoryは維持します。
+
+Issue #10へ渡す `getConfirmedReceiptCategory(userId, receiptId)` は、指定したユーザーが所有し、カテゴリが明示的に確定され、現在の検証済み抽出結果がレシートである場合だけ `{ receiptId, categoryId }` を返します。それ以外は `null` を返します。
 
 ## 明細import
 
@@ -228,11 +233,13 @@ Issue #7ではレシート原本を `ReceiptStorage` 境界の背後に保存し
 
 ## 外部AI
 
-Actual Budgetをセルフホストしても、Geminiへ送信したレシート情報は外部サービスへ送られます。
+Actual Budgetをセルフホストしても、Geminiへ送るレシート画像と、TypeSafeへ送るカテゴリ分類用の抽出データは外部サービスへ送られます。
 
 レシート解析では、保存画像、content type、抽出promptだけをGoogleのGemini APIへ送信します。ユーザー名、email、Actual Budget情報、家計履歴、他のレシートは送信しません。Gemini Interactions APIでは `store: false` を指定し、Google Search、grounding、toolsを有効にしません。APIキーとモデル名はserver-onlyの `GEMINI_API_KEY` / `GEMINI_MODEL` で設定します。モデル既定値は `gemini-3.5-flash-lite` です。
 
 解析endpointは、セッションユーザーとreceipt IDおよびownerで画像metadataを取得した後、`ReceiptStorage.get()` から画像を読み出します。解析に失敗しても保存済み画像を削除せず、ユーザーが再解析できます。Gemini APIが利用されることはREADMEと画面の案内で利用者に伝えます。
+
+カテゴリ分類では、Geminiのvalidated extractionからmerchant、合計金額、最大30件の商品名・金額のみをJevへ送ります。画像やユーザー/receipt識別子、家計履歴等は送信しません。`TYPESAFE_API_KEY`、`TYPESAFE_API_URL`、`JEV_MODEL` はserver-onlyです。カテゴリ提案・確定状態とユーザー固有mappingはSQLiteへ保存し、APIはsession userが所有するreceiptにだけアクセスします。
 
 ## 設計ルール
 
