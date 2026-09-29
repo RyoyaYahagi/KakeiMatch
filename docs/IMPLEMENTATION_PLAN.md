@@ -147,7 +147,7 @@ Gemini等で構造化した以下の情報をstateとして使う。
 
 目的: カード・決済明細を取り込めるようにする。
 
-Issue #11ではPayPayの公式13列headerを厳密に検証し、購入・返金と既知の対象外行を区別します。三井住友カード・楽天カード・イオンカードは公式情報からexact headerを確認できていないため、freshな完全合成sampleで確認するまで取り込みを拒否します。各社の確認状況は[STATEMENT_FORMATS.md](STATEMENT_FORMATS.md)に記録します。照合とActualへの明細登録はこの段階に含めません。
+Issue #11ではPayPayの公式13列headerを厳密に検証し、購入・返金と既知の対象外行を区別します。楽天カードの実exportではUTF-8 BOMと11列headerを確認しましたが、継続行・部分行と金額列の意味を確認できないため取り込みを拒否します。三井住友カードの実exportはCP932でheaderがなく、列の意味が未確定です。イオンカードは形式未確認です。各社の確認状況は[STATEMENT_FORMATS.md](STATEMENT_FORMATS.md)に記録します。照合とActualへの明細登録はこの段階に含めません。
 
 ### Adapter
 

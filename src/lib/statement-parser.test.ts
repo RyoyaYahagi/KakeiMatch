@@ -5,6 +5,10 @@ const PAYPAY_HEADER = [
   "取引日", "出金金額（円）", "入金金額（円）", "海外出金金額", "通貨", "変換レート（円）", "利用国",
   "取引内容", "取引先", "取引方法", "支払い区分", "利用者", "取引番号",
 ];
+const RAKUTEN_2026_09_HEADER = [
+  "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
+  "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
+];
 
 function row(values: Partial<Record<(typeof PAYPAY_HEADER)[number], string>> = {}): string[] {
   const base: Record<string, string> = {
@@ -109,10 +113,31 @@ describe("parseStatement", () => {
     expect(parseStatement(csv([PAYPAY_HEADER]), "paypay").fatalErrors[0].code).toBe("header_only");
     expect(parseStatement(Buffer.from('"unterminated', "utf8"), "paypay").fatalErrors[0].code).toBe("malformed_csv");
     expect(parseStatement(csv([PAYPAY_HEADER, row({ "取引先": "x".repeat(2_001) })]), "paypay").fatalErrors[0].code).toBe("limit_exceeded");
-    for (const provider of ["smbc_card", "rakuten_card", "aeon_card"] as const) {
-      expect(parseStatement(csv([PAYPAY_HEADER, row()]), provider).fatalErrors[0].code).toBe("unsupported_provider");
-    }
+    expect(parseStatement(csv([PAYPAY_HEADER, row()]), "smbc_card").fatalErrors[0].code).toBe("invalid_file");
+    expect(parseStatement(csv([PAYPAY_HEADER, row()]), "aeon_card").fatalErrors[0].code).toBe("unsupported_provider");
+    expect(parseStatement(csv([PAYPAY_HEADER, row()]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
     expect(parseStatement(Buffer.alloc(5 * 1024 * 1024 + 1, 0x61), "paypay").fatalErrors[0].code).toBe("limit_exceeded");
     expect(parseStatement(csv([PAYPAY_HEADER, ...Array.from({ length: 20_001 }, () => row())]), "paypay").fatalErrors[0].code).toBe("limit_exceeded");
+  });
+
+  it("recognizes only the verified Rakuten header and still rejects unresolved row semantics", () => {
+    const synthetic = csv([RAKUTEN_2026_09_HEADER, ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "100", "0", "*"]]);
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), synthetic]);
+    const result = parseStatement(bytes, "rakuten_card");
+    expect(result.encoding).toBe("utf-8-bom");
+    expect(result.fatalErrors[0].code).toBe("unsupported_provider");
+    expect(result.headerSignature).toBe(JSON.stringify(RAKUTEN_2026_09_HEADER));
+    expect(result.transactions).toEqual([]);
+    const changedMonth = [...RAKUTEN_2026_09_HEADER];
+    changedMonth[7] = "10月支払金額";
+    expect(parseStatement(csv([changedMonth, ["synthetic"]]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+  });
+
+  it("decodes a synthetic CP932 file for the still-unsupported headerless SMBC format", () => {
+    const bytes = Buffer.from([0x82, 0xa0, 0x2c, 0x31, 0x0d, 0x0a]); // "あ,1\r\n" in CP932
+    const result = parseStatement(bytes, "smbc_card");
+    expect(result.encoding).toBe("cp932");
+    expect(result.fatalErrors[0].code).toBe("unsupported_provider");
+    expect(result.headerSignature).toBeNull();
   });
 });

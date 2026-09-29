@@ -33,7 +33,7 @@ export type StatementParseResult = {
   excludedRows: Array<{ rowNumber: number; reason: "non_expense" }>;
   duplicateRowsInFile: number;
   totalRows: number;
-  encoding: "utf-8" | "utf-8-bom";
+  encoding: "utf-8" | "utf-8-bom" | "cp932";
   fatalErrors: Array<{ rowNumber: number | null; code: StatementFatalErrorCode }>;
   headerSignature: string | null;
 };
@@ -63,9 +63,15 @@ const PAYPAY_HEADERS = [
   "取引番号",
 ] as const;
 
+// Verified against a September 2026 e-NAVI export supplied by the user. The two month labels vary by export month.
+const RAKUTEN_2026_09_HEADERS = [
+  "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
+  "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
+] as const;
+
 const EMPTY_RESULT = (
   code: StatementFatalErrorCode,
-  encoding: "utf-8" | "utf-8-bom" = "utf-8",
+  encoding: StatementParseResult["encoding"] = "utf-8",
 ): StatementParseResult => ({
   transactions: [],
   excludedRows: [],
@@ -105,7 +111,7 @@ function parsePaypayDate(value: string): { date: string; time: string } | null {
   return { date, time: `${hour}:${minute}` };
 }
 
-function makePaypayParseResult(rows: string[][], encoding: "utf-8" | "utf-8-bom"): StatementParseResult {
+function makePaypayParseResult(rows: string[][], encoding: StatementParseResult["encoding"]): StatementParseResult {
   const [headers, ...bodyRows] = rows;
   const headerSignature = JSON.stringify(headers);
   if (headers.length !== PAYPAY_HEADERS.length || PAYPAY_HEADERS.some((header, index) => headers[index] !== header)) {
@@ -205,32 +211,49 @@ function makePaypayParseResult(rows: string[][], encoding: "utf-8" | "utf-8-bom"
   return { transactions: fatalErrors.length ? [] : transactions, excludedRows, duplicateRowsInFile, totalRows: bodyRows.length, encoding, fatalErrors, headerSignature };
 }
 
-function unsupportedParser(provider: Exclude<StatementProvider, "paypay">): StatementParser {
+function unsupportedParser(provider: "smbc_card" | "aeon_card"): StatementParser {
   return {
     provider,
     parse(rows, encoding) {
-      return { ...EMPTY_RESULT("unsupported_provider", encoding), totalRows: Math.max(rows.length - 1, 0), headerSignature: JSON.stringify(rows[0]) };
+      // No header is verified here. SMBC's first row contains private account data.
+      return { ...EMPTY_RESULT("unsupported_provider", encoding), totalRows: Math.max(rows.length - 1, 0) };
     },
   };
 }
 
+const rakutenParser: StatementParser = {
+  provider: "rakuten_card",
+  parse(rows, encoding) {
+    const [headers, ...bodyRows] = rows;
+    const headerSignature = JSON.stringify(headers);
+    if (headers.length !== RAKUTEN_2026_09_HEADERS.length ||
+        RAKUTEN_2026_09_HEADERS.some((header, index) => headers[index] !== header)) {
+      return { ...EMPTY_RESULT("header_mismatch", encoding), totalRows: bodyRows.length, headerSignature: null };
+    }
+    if (bodyRows.length === 0) return { ...EMPTY_RESULT("header_only", encoding), headerSignature };
+    // The verified export contains continuation and partial rows whose meaning is unresolved.
+    return { ...EMPTY_RESULT("unsupported_provider", encoding), totalRows: bodyRows.length, headerSignature };
+  },
+};
+
 const adapters: Record<StatementProvider, StatementParser> = {
   smbc_card: unsupportedParser("smbc_card"),
-  rakuten_card: unsupportedParser("rakuten_card"),
+  rakuten_card: rakutenParser,
   aeon_card: unsupportedParser("aeon_card"),
   paypay: { provider: "paypay", parse: makePaypayParseResult },
 };
 
 export function parseStatement(bytes: Buffer, provider: StatementProvider): StatementParseResult {
   const hasBom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
-  const encoding = hasBom ? "utf-8-bom" : "utf-8";
+  const encoding = provider === "smbc_card" ? "cp932" : hasBom ? "utf-8-bom" : "utf-8";
   if (bytes.length === 0) return EMPTY_RESULT("empty_file", encoding);
   if (bytes.length > MAX_STATEMENT_FILE_BYTES) return EMPTY_RESULT("limit_exceeded", encoding);
   if (bytes.includes(0)) return EMPTY_RESULT("invalid_file", encoding);
 
   let text: string;
   try {
-    text = new TextDecoder("utf-8", { fatal: true }).decode(hasBom ? bytes.subarray(3) : bytes);
+    text = new TextDecoder(encoding === "cp932" ? "shift_jis" : "utf-8", { fatal: true })
+      .decode(hasBom && encoding !== "cp932" ? bytes.subarray(3) : bytes);
   } catch {
     return EMPTY_RESULT("invalid_file", encoding);
   }
