@@ -5,23 +5,45 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#faf7f2" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <title>Actual browser 検証</title>
+    <title>Actual Browser API 診断</title>
   </head>
   <body>
     <main>
-      <h1>Actual browser 検証</h1>
-      <p>人工データだけを使います。結果はこの端末に保存されます。</p>
-      <p id="environment"></p>
-      <button id="run">空の端末から検証を実行</button>
-      <button id="reload">既存データを再読込</button>
-      <button id="edit">既存の支出を編集</button>
-      <button id="storage">保存容量を確認</button>
-      <button id="persist">永続保存を要求</button>
-      <button id="export">家計簿をファイルへ保存</button>
-      <label for="import">保存した家計簿ファイルを読み込む</label>
-      <input id="import" type="file" accept=".zip,application/zip" />
-      <ol id="results" aria-live="polite"></ol>
-      <p>検証後は Safari の共有メニューから「ホーム画面に追加」し、再読込・Safari 終了後・オフラインで「既存データを再読込」を実行してください。</p>
+      <header>
+        <p class="eyebrow">KakeiMatch / Issue #31</p>
+        <h1>Actual Browser API 診断</h1>
+        <p>この端末で家計簿の読み書きを一括確認します。人工データだけを使い、結果をこの端末へ保存します。</p>
+      </header>
+      <section class="summary" aria-live="polite">
+        <p id="overall" class="overall">診断待ち</p>
+        <p id="last-run">最終診断: なし</p>
+        <p id="counts">PASS 0 / WARN 0 / FAIL 0 / PENDING 0</p>
+        <p id="progress-label">診断を開始してください。</p>
+        <progress id="progress" value="0" max="1"></progress>
+      </section>
+      <div class="actions">
+        <button id="run" class="primary">一括診断</button>
+        <button id="copy" disabled>結果をコピー</button>
+      </div>
+      <p class="note">診断ごとに専用の家計簿を作ります。Actual の公開 API では削除できないため、診断用家計簿が端末に残ります。</p>
+      <p id="message" role="status" aria-live="polite"></p>
+      <section aria-labelledby="results-title">
+        <h2 id="results-title">検証結果</h2>
+        <div id="results"></div>
+      </section>
+      <section class="manual" aria-labelledby="offline-title">
+        <h2 id="offline-title">iPhone のオフライン確認</h2>
+        <p>オンラインで一括診断を終えた後、機内モードにして Safari またはホーム画面のアプリを開き直し、下のボタンを押してください。保存済みの取引を読み、メモを編集して読み戻します。</p>
+        <button id="offline">オフライン確認</button>
+        <p>Safari の終了後、ホーム画面アプリ、ZIP の保存・読み込みと再読込後の保持は、iOS 27.0 / Safari Version/27.0 で利用者が確認済みです。<code>persist()</code> は <code>false</code> でした。</p>
+      </section>
+      <details>
+        <summary>家計簿ファイルの手動操作</summary>
+        <p>診断用家計簿の ZIP を保存・読み込みできます。読み込み先も端末に残ります。</p>
+        <button id="export">診断用家計簿を ZIP で保存</button>
+        <label for="import">ZIP ファイルを読み込む</label>
+        <input id="import" type="file" accept=".zip,application/zip" />
+      </details>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
