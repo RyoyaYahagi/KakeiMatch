@@ -52,6 +52,8 @@ Receipt data sent to Gemini leaves the self-hosted environment.
 
 Only send data required for the requested processing. Do not send authentication data, unrelated transaction history, or other users' information.
 
+Receipt analysis sends the saved receipt image, its content type, and the extraction prompt to Google's Gemini API. The API key and model setting are server-only environment variables (`GEMINI_API_KEY` and `GEMINI_MODEL`); never expose them through a `NEXT_PUBLIC_` variable or return them to the browser. The Gemini Interactions API request must use `store: false`. Do not send a user's name, email, Actual Budget data, household history, or other receipts. Do not enable Google Search, grounding, or tools for receipt extraction. A failed analysis must leave the saved image intact.
+
 ## Test data
 
 Use synthetic or thoroughly anonymized fixtures. Do not commit family financial records for tests.

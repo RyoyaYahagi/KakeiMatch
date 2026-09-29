@@ -69,4 +69,18 @@ export const receipt = sqliteTable("receipt", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 }, (table) => [index("receipt_owner_created_at_idx").on(table.ownerUserId, table.createdAt)]);
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt };
+// Extraction state is separate from receipt metadata so retries never affect stored image bytes.
+export const receiptExtraction = sqliteTable("receipt_extraction", {
+  receiptId: text("receipt_id").primaryKey().references(() => receipt.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  model: text("model"),
+  promptVersion: text("prompt_version"),
+  resultJson: text("result_json"),
+  needsReview: integer("needs_review", { mode: "boolean" }),
+  lastErrorCode: text("last_error_code"),
+  attemptedAt: integer("attempted_at", { mode: "timestamp_ms" }),
+  succeededAt: integer("succeeded_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction };
