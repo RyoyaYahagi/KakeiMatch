@@ -25,9 +25,11 @@ Actual Budgetで解決済みの家計簿機能は可能な限り再実装しま�
 
 ## データ境界
 
-MVPでは各ユーザーは本人の家計簿だけを閲覧・操作します。
+各ユーザーは本人の家計簿だけを閲覧・操作します。
 
-必ずサーバー側で認可してください。URL parameter、form、JSON body等から受け取ったuser IDをそのまま認可に使用しないでください。
+現行server-centric実装では、必ずサーバー側で認可してください。URL parameter、form、JSON body等から受け取ったuser IDをそのまま認可に使用しないでください。
+
+Issue #30以降のlocal-first移行では、家計データの正本は原則として利用者端末に置きます。通常のローカル家計閲覧をCloudflare user/sessionへ依存させず、Cloudflare側の利用者識別はGemini/Jev等の外部API利用境界に限定します。
 
 ## AIの役割
 
@@ -61,6 +63,20 @@ AI応答は必ず型/schemaで検証し、不正な応答を正常値として�
 - エラーを握りつぶさない
 - 本番秘密情報をログ出力しない
 - 実際の家計情報をテストfixtureへ入れない
+
+## Cloudflare
+
+Issue #30以降のCloudflare作業では、新しい公式 `cf` CLIを第一選択にしてください。
+
+- Cloudflare commandを記憶や古いWrangler知識から推測しない
+- commandが不明ならまず `cf cli search` を使う
+- 新規設定は `cloudflare.config.ts` とCloudflare Vite Pluginを優先する
+- deployは原則 `cf deploy`
+- 既存Wrangler構成を移行する場合は `cf migrate` を検討する
+- Dashboardの手作業より、再現可能なCLI/config-as-codeを優先する
+- `wrangler` を直接使うのは、現行 `cf` が未対応と確認できた場合、または `cf` 自身が委譲する場合に限る
+- `cf` はopen betaなので、実行時点の `cf --help` / `cf cli search` / 公式Docsを確認する
+- Gemini/Jev等の秘密鍵をsource/configへ直書きしない。Cloudflare Secret bindingとして扱い、browser bundleへ露出させない
 
 ## Git
 
