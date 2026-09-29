@@ -282,4 +282,49 @@ export const reconciliationCandidate = sqliteTable("reconciliation_candidate", {
   index("reconciliation_candidate_user_run_idx").on(table.userId, table.runId),
 ]);
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference, statementImport, statementTransaction, merchantAlias, reconciliationRun, reconciliationCandidate, reconciliationStatementResult, reconciliationReceiptResult };
+// Human decisions and their Actual apply state live beside immutable machine snapshots.
+export const reconciliationResolution = sqliteTable("reconciliation_resolution", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  statementTransactionId: text("statement_transaction_id").notNull(),
+  runId: text("run_id").notNull(),
+  resolution: text("resolution").notNull(),
+  source: text("source").notNull(),
+  receiptId: text("receipt_id"),
+  categoryId: text("category_id"),
+  actualAccountId: text("actual_account_id"),
+  importedId: text("imported_id").unique(),
+  applyStatus: text("apply_status").notNull(),
+  actualTransactionId: text("actual_transaction_id"),
+  statementAmountYen: integer("statement_amount_yen").notNull(),
+  errorCode: text("error_code"),
+  claimToken: text("claim_token"),
+  claimExpiresAt: integer("claim_expires_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  appliedAt: integer("applied_at", { mode: "timestamp_ms" }),
+}, (table) => [
+  foreignKey({ columns: [table.userId, table.statementTransactionId], foreignColumns: [statementTransaction.userId, statementTransaction.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.runId, table.userId], foreignColumns: [reconciliationRun.id, reconciliationRun.userId] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.receiptId], foreignColumns: [receipt.ownerUserId, receipt.id] }).onDelete("cascade"),
+  uniqueIndex("reconciliation_resolution_user_statement_unique").on(table.userId, table.statementTransactionId),
+  index("reconciliation_resolution_user_apply_idx").on(table.userId, table.applyStatus),
+]);
+
+// Rejecting a pair must leave the statement available for another candidate.
+export const reconciliationPairRejection = sqliteTable("reconciliation_pair_rejection", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  statementTransactionId: text("statement_transaction_id").notNull(),
+  receiptId: text("receipt_id").notNull(),
+  runId: text("run_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.userId, table.statementTransactionId], foreignColumns: [statementTransaction.userId, statementTransaction.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.receiptId], foreignColumns: [receipt.ownerUserId, receipt.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.runId, table.userId], foreignColumns: [reconciliationRun.id, reconciliationRun.userId] }).onDelete("cascade"),
+  uniqueIndex("reconciliation_pair_rejection_user_pair_unique").on(table.userId, table.statementTransactionId, table.receiptId),
+  index("reconciliation_pair_rejection_user_statement_idx").on(table.userId, table.statementTransactionId),
+]);
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference, statementImport, statementTransaction, merchantAlias, reconciliationRun, reconciliationCandidate, reconciliationStatementResult, reconciliationReceiptResult, reconciliationResolution, reconciliationPairRejection };

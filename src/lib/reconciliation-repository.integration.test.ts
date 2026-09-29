@@ -57,6 +57,11 @@ const resultFor = (statementTransactionId: string, receiptId: string) => ({
   statementResults: [{ statementTransactionId, status: "matched" as const, matchedReceiptId: receiptId, reasonCodes: ["automatic_high_confidence_match"] }],
   receiptResults: [{ receiptId, status: "matched" as const, matchedStatementTransactionId: statementTransactionId, reasonCodes: ["automatic_high_confidence_match"] }],
 });
+const reviewFor = (statementTransactionId: string, receiptId: string) => ({
+  ...resultFor(statementTransactionId, receiptId),
+  statementResults: [{ statementTransactionId, status: "needs_review" as const, reasonCodes: ["candidate_requires_review"] }],
+  receiptResults: [{ receiptId, status: "needs_review" as const, reasonCodes: ["candidate_requires_review"] }],
+});
 
 describe("reconciliation repository", () => {
   it("reads only the user's canonical statements and registered final receipt values", async () => {
@@ -90,5 +95,51 @@ describe("reconciliation repository", () => {
     await repository.rememberMerchantAlias({ userId: "user-a", merchant: " ＡＢＣ ", aliasMerchant: "abc store" });
     expect((await repository.getReconciliationInputs("user-a")).aliases).toEqual([{ normalizedMerchant: "abc", normalizedAlias: "abcstore" }]);
     expect((await repository.getReconciliationInputs("user-b")).aliases).toEqual([]);
+  });
+
+  it("persists pair rejections and removes their pair from the next run inputs", async () => {
+    const runId = await repository.saveReconciliationRun({ userId: "user-a", ...reviewFor("statement-a", "receipt-a") });
+    await repository.recordPairRejection({ userId: "user-a", runId, statementTransactionId: "statement-a", receiptId: "receipt-a" });
+    const inputs = await repository.getReconciliationInputs("user-a");
+    expect(inputs.rejectedPairs).toEqual(["statement-a\0receipt-a"]);
+    expect(inputs.excludedStatementIds).toEqual([]);
+    expect(inputs.excludedReceiptIds).toEqual([]);
+    await expect(repository.createResolution({ userId: "user-a", runId, statementTransactionId: "statement-a",
+      resolution: "same_expense", source: "user", receiptId: "receipt-a", statementAmountYen: 1000 }))
+      .rejects.toThrow("reconciliation_pair_rejected");
+    await expect(repository.recordPairRejection({ userId: "user-b", runId, statementTransactionId: "statement-a", receiptId: "receipt-a" }))
+      .rejects.toThrow("reconciliation_run_stale");
+  });
+
+  it("retains a resolution through failed apply and supports a token-claimed retry", async () => {
+    insertSource("user-a", "resolution");
+    const runId = await repository.saveReconciliationRun({ userId: "user-a", ...reviewFor("statement-resolution", "receipt-resolution") });
+    const resolution = await repository.createResolution({ userId: "user-a", runId, statementTransactionId: "statement-resolution",
+      resolution: "same_expense", source: "user", receiptId: "receipt-resolution", statementAmountYen: 1000 });
+    expect(resolution.applyStatus).toBe("pending");
+    const firstClaim = await repository.claimResolution("user-a", resolution.id);
+    expect(firstClaim.status).toBe("claimed");
+    if (firstClaim.status !== "claimed") throw new Error("expected_claim");
+    expect(await repository.markResolutionFailed({ userId: "user-a", resolutionId: resolution.id, token: firstClaim.token, errorCode: "synthetic_failure" })).toBe(true);
+    expect((await repository.getResolutionStates("user-a"))[0]).toMatchObject({ resolution: "same_expense", applyStatus: "failed", errorCode: "synthetic_failure" });
+    const retry = await repository.claimResolution("user-a", resolution.id);
+    expect(retry.status).toBe("claimed");
+    if (retry.status !== "claimed") throw new Error("expected_retry_claim");
+    expect(await repository.markResolutionApplied({ userId: "user-a", resolutionId: resolution.id, token: retry.token, actualTransactionId: "actual-a" })).toBe(true);
+    expect((await repository.getReconciliationInputs("user-a")).excludedStatementIds).toContain("statement-resolution");
+    expect((await repository.getReconciliationInputs("user-a")).excludedReceiptIds).toContain("receipt-resolution");
+  });
+
+  it("persists stable no-receipt imported IDs and rejects a refund", async () => {
+    insertSource("user-a", "no-receipt");
+    const runId = await repository.saveReconciliationRun({ userId: "user-a", ruleVersion: "test-v1", candidates: [],
+      statementResults: [{ statementTransactionId: "statement-no-receipt", status: "unmatched_statement", reasonCodes: ["no_candidate"] }],
+      receiptResults: [{ receiptId: "receipt-no-receipt", status: "unmatched_receipt", reasonCodes: ["no_candidate"] }],
+    });
+    const resolution = await repository.createResolution({ userId: "user-a", runId, statementTransactionId: "statement-no-receipt",
+      resolution: "no_receipt", source: "user", statementAmountYen: 1000, categoryId: "food", actualAccountId: "account-1" });
+    expect(resolution.importedId).toBe("kakeimatch:statement:statement-no-receipt");
+    await expect(repository.createResolution({ userId: "user-a", runId, statementTransactionId: "statement-no-receipt",
+      resolution: "no_receipt", source: "user", statementAmountYen: 1000 })).rejects.toThrow("no_receipt_category_account_required");
   });
 });

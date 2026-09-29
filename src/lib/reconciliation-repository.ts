@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db } from "@/db/client";
 import { normalizeReconciliationMerchant } from "@/lib/reconciliation-engine";
 import {
   merchantAlias, receipt, receiptRegistration, reconciliationCandidate,
   reconciliationReceiptResult, reconciliationRun, reconciliationStatementResult,
-  statementTransaction,
+  reconciliationPairRejection, reconciliationResolution, statementTransaction,
 } from "@/db/schema";
 
 export interface ReconciliationStatementInput {
@@ -33,6 +33,22 @@ export interface ReconciliationAliasInput {
   normalizedMerchant: string;
   normalizedAlias: string;
 }
+
+export type ReconciliationResolutionRecord = {
+  id: string; userId: string; statementTransactionId: string; runId: string;
+  resolution: "same_expense" | "no_receipt"; source: "automatic" | "user";
+  receiptId: string | null; categoryId: string | null; actualAccountId: string | null;
+  importedId: string | null; applyStatus: "pending" | "processing" | "applied" | "failed";
+  actualTransactionId: string | null; statementAmountYen: number; errorCode: string | null;
+  claimToken: string | null; claimExpiresAt: Date | null; createdAt: Date; updatedAt: Date; appliedAt: Date | null;
+};
+
+export type CreateResolutionInput = {
+  userId: string; runId: string; statementTransactionId: string;
+  resolution: "same_expense" | "no_receipt"; source: "automatic" | "user";
+  receiptId?: string | null; statementAmountYen: number;
+  categoryId?: string | null; actualAccountId?: string | null;
+};
 
 export interface ReconciliationCandidateInput {
   statementTransactionId: string;
@@ -82,6 +98,9 @@ export async function getReconciliationInputs(userId: string): Promise<{
   statements: ReconciliationStatementInput[];
   receipts: ReconciliationReceiptInput[];
   aliases: ReconciliationAliasInput[];
+  excludedStatementIds: string[];
+  excludedReceiptIds: string[];
+  rejectedPairs: string[];
 }> {
   const statementRows = await db.select({
     statementTransactionId: statementTransaction.id,
@@ -115,11 +134,22 @@ export async function getReconciliationInputs(userId: string): Promise<{
   }).from(merchantAlias).where(eq(merchantAlias.userId, userId))
     .orderBy(merchantAlias.normalizedMerchant, merchantAlias.normalizedAlias);
 
+  const resolutions = await db.select({ statementTransactionId: reconciliationResolution.statementTransactionId,
+    resolution: reconciliationResolution.resolution, receiptId: reconciliationResolution.receiptId })
+    .from(reconciliationResolution).where(eq(reconciliationResolution.userId, userId));
+  const rejected = await db.select({ statementTransactionId: reconciliationPairRejection.statementTransactionId,
+    receiptId: reconciliationPairRejection.receiptId }).from(reconciliationPairRejection)
+    .where(eq(reconciliationPairRejection.userId, userId));
+
   return {
     statements: statementRows,
     // Filter the nullable type at the DB boundary. Registered rows should always have an Actual ID.
     receipts: receiptRows.filter((row): row is typeof row & { actualTransactionId: string } => Boolean(row.actualTransactionId)),
     aliases,
+    excludedStatementIds: resolutions.map((row) => row.statementTransactionId),
+    excludedReceiptIds: resolutions.filter((row) => row.resolution === "same_expense" && row.receiptId)
+      .map((row) => row.receiptId!),
+    rejectedPairs: rejected.map((row) => `${row.statementTransactionId}\0${row.receiptId}`),
   };
 }
 
@@ -227,6 +257,173 @@ export async function getLatestReconciliationRun(userId: string): Promise<Latest
       reasons: parseReasons(row.reasonCodesJson),
     })),
   };
+}
+
+/** Source facts are fetched from canonical statement and confirmed receipt rows, scoped to the owner. */
+export async function getReviewSource(userId: string, statementTransactionId: string, receiptId?: string) {
+  const [statement] = await db.select().from(statementTransaction).where(and(
+    eq(statementTransaction.userId, userId), eq(statementTransaction.id, statementTransactionId),
+  )).limit(1);
+  if (!statement) return null;
+  const registration = receiptId ? await db.select({ receiptId: receiptRegistration.receiptId,
+    merchant: receiptRegistration.merchant, purchasedDate: receiptRegistration.purchasedDate,
+    amountYen: receiptRegistration.totalAmountYen, categoryId: receiptRegistration.categoryId,
+    actualAccountId: receiptRegistration.actualAccountId, actualTransactionId: receiptRegistration.actualTransactionId,
+  }).from(receiptRegistration).innerJoin(receipt, eq(receipt.id, receiptRegistration.receiptId)).where(and(
+    eq(receipt.ownerUserId, userId), eq(receiptRegistration.status, "registered"),
+    eq(receiptRegistration.receiptId, receiptId),
+  )).get() ?? null : null;
+  return { statement, registration };
+}
+
+/** Inserts a user decision after validating its source against the user's current latest immutable snapshot. */
+export async function createResolution(input: CreateResolutionInput): Promise<ReconciliationResolutionRecord> {
+  if (!input.userId.trim() || !Number.isSafeInteger(input.statementAmountYen) || input.statementAmountYen < 0) throw new Error("invalid_reconciliation_resolution");
+  if (input.resolution === "no_receipt" && (!input.categoryId?.trim() || !input.actualAccountId?.trim())) throw new Error("no_receipt_category_account_required");
+  const importedId = input.resolution === "no_receipt" ? `kakeimatch:statement:${input.statementTransactionId}` : null;
+  const result = db.transaction((tx) => {
+    const latest = tx.select({ id: reconciliationRun.id }).from(reconciliationRun).where(and(
+      eq(reconciliationRun.userId, input.userId), eq(reconciliationRun.status, "completed"),
+    )).orderBy(desc(reconciliationRun.completedAt), desc(reconciliationRun.id)).limit(1).get();
+    if (!latest || latest.id !== input.runId) throw new Error("reconciliation_run_stale");
+    const existing = tx.select().from(reconciliationResolution).where(and(
+      eq(reconciliationResolution.userId, input.userId),
+      eq(reconciliationResolution.statementTransactionId, input.statementTransactionId),
+    )).get();
+    if (existing) {
+      if (existing.runId !== input.runId || existing.resolution !== input.resolution || existing.receiptId !== (input.receiptId ?? null)) throw new Error("reconciliation_resolution_conflict");
+      return existing;
+    }
+    const statement = tx.select({ id: statementTransaction.id, amountYen: statementTransaction.amountYen, kind: statementTransaction.kind })
+      .from(statementTransaction).where(and(eq(statementTransaction.userId, input.userId), eq(statementTransaction.id, input.statementTransactionId))).get();
+    if (!statement || statement.amountYen !== input.statementAmountYen) throw new Error("reconciliation_statement_not_owned");
+    const statementResult = tx.select().from(reconciliationStatementResult).where(and(
+      eq(reconciliationStatementResult.userId, input.userId), eq(reconciliationStatementResult.runId, input.runId),
+      eq(reconciliationStatementResult.statementTransactionId, input.statementTransactionId),
+    )).get();
+    if (!statementResult) throw new Error("reconciliation_statement_not_in_run");
+    if (input.source === "user" && input.resolution === "same_expense" && statementResult.status !== "needs_review") {
+      throw new Error("reconciliation_pair_not_candidate");
+    }
+    const receiptId = input.receiptId ?? null;
+    if (input.resolution === "same_expense") {
+      if (!receiptId || statement.kind !== "purchase") throw new Error("reconciliation_receipt_required");
+      const ownedRegistration = tx.select({ id: receiptRegistration.receiptId }).from(receiptRegistration).innerJoin(receipt,
+        eq(receipt.id, receiptRegistration.receiptId)).where(and(eq(receipt.ownerUserId, input.userId),
+        eq(receiptRegistration.receiptId, receiptId), eq(receiptRegistration.status, "registered"))).get();
+      if (!ownedRegistration) throw new Error("reconciliation_receipt_not_owned");
+      const candidate = tx.select({ id: reconciliationCandidate.id }).from(reconciliationCandidate).where(and(
+        eq(reconciliationCandidate.userId, input.userId), eq(reconciliationCandidate.runId, input.runId),
+        eq(reconciliationCandidate.statementTransactionId, input.statementTransactionId), eq(reconciliationCandidate.receiptId, receiptId),
+      )).get();
+      const automaticPair = input.source === "automatic" && statementResult.status === "matched" && statementResult.matchedReceiptId === receiptId;
+      if (!candidate && !automaticPair) throw new Error("reconciliation_pair_not_candidate");
+      const rejected = tx.select({ id: reconciliationPairRejection.id }).from(reconciliationPairRejection).where(and(
+        eq(reconciliationPairRejection.userId, input.userId), eq(reconciliationPairRejection.statementTransactionId, input.statementTransactionId),
+        eq(reconciliationPairRejection.receiptId, receiptId),
+      )).get();
+      if (rejected) throw new Error("reconciliation_pair_rejected");
+    } else {
+      if (statement.kind !== "purchase") throw new Error("refund_not_supported");
+      if (receiptId) throw new Error("unexpected_reconciliation_receipt");
+      if (statementResult.status === "matched") throw new Error("reconciliation_statement_already_matched");
+      const candidates = tx.select({ receiptId: reconciliationCandidate.receiptId }).from(reconciliationCandidate).where(and(
+        eq(reconciliationCandidate.userId, input.userId), eq(reconciliationCandidate.runId, input.runId),
+        eq(reconciliationCandidate.statementTransactionId, input.statementTransactionId),
+      )).all();
+      const liveCandidate = candidates.some((candidate) => !tx.select({ id: reconciliationPairRejection.id }).from(reconciliationPairRejection).where(and(
+        eq(reconciliationPairRejection.userId, input.userId), eq(reconciliationPairRejection.statementTransactionId, input.statementTransactionId),
+        eq(reconciliationPairRejection.receiptId, candidate.receiptId),
+      )).get());
+      if (statementResult.status === "needs_review" && liveCandidate) throw new Error("reconciliation_candidates_remain");
+    }
+    const now = new Date();
+    const id = randomUUID();
+    tx.insert(reconciliationResolution).values({ id, userId: input.userId, statementTransactionId: input.statementTransactionId,
+      runId: input.runId, resolution: input.resolution, source: input.source, receiptId,
+      categoryId: input.resolution === "no_receipt" ? input.categoryId! : null,
+      actualAccountId: input.resolution === "no_receipt" ? input.actualAccountId! : null,
+      importedId, applyStatus: "pending", actualTransactionId: null, statementAmountYen: input.statementAmountYen,
+      errorCode: null, claimToken: null, claimExpiresAt: null, createdAt: now, updatedAt: now, appliedAt: null,
+    }).run();
+    return tx.select().from(reconciliationResolution).where(eq(reconciliationResolution.id, id)).get()!;
+  });
+  return result as ReconciliationResolutionRecord;
+}
+
+/** Persists a rejection for one candidate pair; it never resolves the statement itself. */
+export async function recordPairRejection(input: { userId: string; runId: string; statementTransactionId: string; receiptId: string }): Promise<void> {
+  const now = new Date();
+  db.transaction((tx) => {
+    const latest = tx.select({ id: reconciliationRun.id }).from(reconciliationRun).where(and(
+      eq(reconciliationRun.userId, input.userId), eq(reconciliationRun.status, "completed"),
+    )).orderBy(desc(reconciliationRun.completedAt), desc(reconciliationRun.id)).limit(1).get();
+    if (!latest || latest.id !== input.runId) throw new Error("reconciliation_run_stale");
+    const candidate = tx.select({ id: reconciliationCandidate.id }).from(reconciliationCandidate).where(and(
+      eq(reconciliationCandidate.userId, input.userId), eq(reconciliationCandidate.runId, input.runId),
+      eq(reconciliationCandidate.statementTransactionId, input.statementTransactionId), eq(reconciliationCandidate.receiptId, input.receiptId),
+    )).get();
+    if (!candidate) throw new Error("reconciliation_pair_not_candidate");
+    const statementResult = tx.select({ status: reconciliationStatementResult.status }).from(reconciliationStatementResult).where(and(
+      eq(reconciliationStatementResult.userId, input.userId), eq(reconciliationStatementResult.runId, input.runId),
+      eq(reconciliationStatementResult.statementTransactionId, input.statementTransactionId),
+    )).get();
+    if (statementResult?.status !== "needs_review") throw new Error("reconciliation_pair_not_reviewable");
+    const resolved = tx.select({ id: reconciliationResolution.id }).from(reconciliationResolution).where(and(
+      eq(reconciliationResolution.userId, input.userId), eq(reconciliationResolution.statementTransactionId, input.statementTransactionId),
+    )).get();
+    if (resolved) throw new Error("reconciliation_resolution_conflict");
+    tx.insert(reconciliationPairRejection).values({ id: randomUUID(), userId: input.userId,
+      statementTransactionId: input.statementTransactionId, receiptId: input.receiptId, runId: input.runId, createdAt: now,
+    }).onConflictDoNothing({ target: [reconciliationPairRejection.userId, reconciliationPairRejection.statementTransactionId, reconciliationPairRejection.receiptId] }).run();
+  });
+}
+
+export async function getResolutionStates(userId: string): Promise<ReconciliationResolutionRecord[]> {
+  return await db.select().from(reconciliationResolution).where(eq(reconciliationResolution.userId, userId))
+    .orderBy(reconciliationResolution.createdAt) as ReconciliationResolutionRecord[];
+}
+
+export async function claimResolution(userId: string, resolutionId: string): Promise<
+  { status: "claimed"; token: string; resolution: ReconciliationResolutionRecord } | { status: "busy" | "applied" | "not_found" }
+> {
+  return db.transaction((tx) => {
+    const row = tx.select().from(reconciliationResolution).where(and(eq(reconciliationResolution.userId, userId), eq(reconciliationResolution.id, resolutionId))).get();
+    if (!row) return { status: "not_found" } as const;
+    if (row.applyStatus === "applied") return { status: "applied" } as const;
+    const now = new Date();
+    if (row.applyStatus === "processing" && row.claimExpiresAt && row.claimExpiresAt > now) return { status: "busy" } as const;
+    const token = randomUUID();
+    const expires = new Date(now.getTime() + 120_000);
+    const changed = tx.update(reconciliationResolution).set({ applyStatus: "processing", claimToken: token,
+      claimExpiresAt: expires, errorCode: null, updatedAt: now }).where(and(
+      eq(reconciliationResolution.id, resolutionId), eq(reconciliationResolution.userId, userId),
+      or(eq(reconciliationResolution.applyStatus, "pending"), eq(reconciliationResolution.applyStatus, "failed"),
+        and(eq(reconciliationResolution.applyStatus, "processing"), or(isNull(reconciliationResolution.claimExpiresAt), sql`${reconciliationResolution.claimExpiresAt} <= ${now.getTime()}`))),
+    )).run();
+    if (changed.changes === 0) return { status: "busy" } as const;
+    const current = tx.select().from(reconciliationResolution).where(eq(reconciliationResolution.id, resolutionId)).get()!;
+    return { status: "claimed", token, resolution: current as ReconciliationResolutionRecord } as const;
+  });
+}
+
+export async function markResolutionApplied(input: { userId: string; resolutionId: string; token: string; actualTransactionId: string }): Promise<boolean> {
+  const now = new Date();
+  const updated = await db.update(reconciliationResolution).set({ applyStatus: "applied", actualTransactionId: input.actualTransactionId,
+    errorCode: null, claimToken: null, claimExpiresAt: null, appliedAt: now, updatedAt: now }).where(and(
+    eq(reconciliationResolution.userId, input.userId), eq(reconciliationResolution.id, input.resolutionId),
+    eq(reconciliationResolution.applyStatus, "processing"), eq(reconciliationResolution.claimToken, input.token),
+  ));
+  return updated.changes > 0;
+}
+
+export async function markResolutionFailed(input: { userId: string; resolutionId: string; token: string; errorCode: string }): Promise<boolean> {
+  const updated = await db.update(reconciliationResolution).set({ applyStatus: "failed", errorCode: input.errorCode,
+    claimToken: null, claimExpiresAt: null, updatedAt: new Date() }).where(and(
+    eq(reconciliationResolution.userId, input.userId), eq(reconciliationResolution.id, input.resolutionId),
+    eq(reconciliationResolution.applyStatus, "processing"), eq(reconciliationResolution.claimToken, input.token),
+  ));
+  return updated.changes > 0;
 }
 
 /** Records an alias only after an explicit user decision; do not call from automatic matching. */

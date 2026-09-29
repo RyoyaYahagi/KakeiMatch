@@ -180,4 +180,18 @@ describe("runReconciliationEngine", () => {
     const baseline = runReconciliationEngine({ statements: [statement("s1")], receipts: [receipt("r1")] });
     expect(runReconciliationEngine(pair)).toEqual(baseline);
   });
+
+  it("omits resolved rows and rejected pairs when generating the next run", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("resolved"), statement("remaining")],
+      receipts: [receipt("used"), receipt("available")],
+      excludedStatementIds: new Set(["resolved"]),
+      excludedReceiptIds: new Set(["used"]),
+      rejectedPairs: new Set(["remaining\0available"]),
+    });
+    expect(result.statementResults.map((row) => row.statementTransactionId)).toEqual(["remaining"]);
+    expect(result.receiptResults.map((row) => row.receiptId)).toEqual(["available"]);
+    expect(result.candidates).toEqual([]);
+    expect(result.statementResults[0]?.status).toBe("unmatched_statement");
+  });
 });
