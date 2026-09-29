@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:category": "node --conditions=react-server --import tsx eval/run-jev-category-eval.ts --live",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "user:create": "tsx scripts/create-user.ts",

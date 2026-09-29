@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Better Auth's email/password and database-session tables.
 export const user = sqliteTable("user", {
@@ -83,4 +83,31 @@ export const receiptExtraction = sqliteTable("receipt_extraction", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction };
+// User-confirmed merchant rules are isolated by owner and normalized merchant.
+export const merchantCategoryMapping = sqliteTable("merchant_category_mapping", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  normalizedMerchant: text("normalized_merchant").notNull(),
+  categoryId: text("category_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [uniqueIndex("merchant_category_mapping_user_merchant_unique").on(table.userId, table.normalizedMerchant)]);
+
+// A suggestion is retained separately from the user's confirmed category.
+export const receiptCategory = sqliteTable("receipt_category", {
+  receiptId: text("receipt_id").primaryKey().references(() => receipt.id, { onDelete: "cascade" }),
+  suggestedCategory: text("suggested_category"),
+  selectedProbability: real("selected_probability"),
+  confidence: real("confidence"),
+  probabilitiesJson: text("probabilities_json"),
+  source: text("source").notNull(),
+  needsReview: integer("needs_review", { mode: "boolean" }).notNull(),
+  confirmedCategory: text("confirmed_category"),
+  model: text("model"),
+  questionVersion: text("question_version"),
+  attemptedAt: integer("attempted_at", { mode: "timestamp_ms" }),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  confirmedAt: integer("confirmed_at", { mode: "timestamp_ms" }),
+});
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory };

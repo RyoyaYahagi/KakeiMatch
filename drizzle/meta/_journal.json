@@ -29,6 +29,13 @@
       "when": 1790640992424,
       "tag": "0003_striped_malice",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790642505311,
+      "tag": "0004_category_classification",
+      "breakpoints": true
     }
   ]
 }
