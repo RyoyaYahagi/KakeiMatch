@@ -10,6 +10,9 @@ import { db } from "@/db/client";
 import { actualBudgetMapping } from "@/db/schema";
 import { requireUser } from "@/lib/current-user";
 import { env } from "@/lib/env";
+import type { ActualLedger, ActualTransaction } from "@/lib/actual-ledger";
+
+export type { ActualTransaction } from "@/lib/actual-ledger";
 
 const CLI_TIMEOUT_MS = 30_000;
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -44,25 +47,7 @@ const transactionRowSchema = z.object({
 const rowsSchema = z.array(transactionRowSchema);
 type TransactionRow = z.infer<typeof transactionRowSchema>;
 
-/** Signed integer yen: an outflow is negative, an inflow is positive. */
-export type ActualTransaction = {
-  id: string;
-  date: string;
-  amountYen: number;
-  kind: "expense" | "income" | "transfer";
-  payeeName: string | null;
-  categoryName: string | null;
-  accountId: string;
-  cleared: boolean;
-};
-
-export interface ActualGateway {
-  getRecentTransactions(params?: { limit?: number }): Promise<ActualTransaction[]>;
-  getTransactions(params: { startDate: string; endDate: string }): Promise<ActualTransaction[]>;
-  getTransactionById(id: string): Promise<ActualTransaction | null>;
-  /** Positive integer yen spent during the specified calendar month. */
-  getMonthlySpending(params: { yearMonth: string }): Promise<number>;
-}
+export type ActualGateway = ActualLedger;
 
 export function actualAmountToYen(amount: number, unitsPerYen: number): number {
   if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(unitsPerYen) || unitsPerYen < 1 || amount % unitsPerYen !== 0) {
