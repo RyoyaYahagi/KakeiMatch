@@ -548,13 +548,15 @@ export async function checkOffline(report: DiagnosticReport): Promise<Outcome> {
 
 export function formatReport(report: DiagnosticReport): string {
   const summary = summarize(report);
-  const ios = report.userAgent.match(/(?:iPhone OS|CPU OS) ([\d_]+)/)?.[1]?.replaceAll('_', '.') ?? '利用者報告: 27.0';
+  const iosUaToken = report.userAgent.match(/(?:iPhone OS|CPU OS) ([\d_]+)/)?.[1]?.replaceAll('_', '.') ?? 'not present';
+  const safariUaVersion = report.userAgent.match(/Version\/([\d.]+)/)?.[1] ?? 'not present';
   const lines = [
     'KakeiMatch Actual Browser Diagnostic',
     `Date: ${report.finishedAt ?? report.startedAt}`,
     `URL: ${report.url}`,
     `User Agent: ${report.userAgent}`,
-    `iOS: ${ios}`,
+    `iOS UA token: ${iosUaToken} (device Settings version is not available to this web app)`,
+    `Safari UA Version: ${safariUaVersion}`,
     `PWA: ${report.pwa}`,
     '',
     `Overall: ${summary.overall}`,

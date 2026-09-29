@@ -2,7 +2,7 @@
 
 ## 技術判断
 
-**GO WITH CONSTRAINTS（暫定）**。一括診断を Cloudflare 配信ページで実行した Chromium の結果は **PASS 33 / WARN 3 / FAIL 0 / PENDING 1** だった。PASS には、利用者が報告した iPhone 実機の 5 項目を含む。`persist()=false`、閉じた口座が `getAccounts()` に現れないこと、診断用家計簿の削除 API がないことが WARN、iPhone のオフライン起動・編集が PENDING である。iPhone 上の主要 API 個別結果と `crossOriginIsolated` の値は、まだコピーされた一括診断結果を受け取っていないため未確認である。サイトの暫定判定を最終決定とせず、これらの実機結果で再評価する。
+**GO WITH CONSTRAINTS（暫定）**。利用者が iPhone Safari で一括診断を実行し、**PASS 32 / WARN 4 / FAIL 0 / PENDING 1** を報告した。`crossOriginIsolated`、`SharedArrayBuffer`、Worker、IndexedDB、Actual local-only 起動、主要な読み書き API、ZIP 読込後と再読込後のデータ一致が実機で PASS となった。WARN は `persist()=false`、既存 Budget があるため空の保存領域からの作成を判定できないこと、閉じた口座の取得、診断用 Budget の削除不可。PENDING は iPhone のオフライン起動・編集だけである。**空の保存領域からの作成は Chromium で成功したが、この iPhone 実行では未検証**。オフライン結果と合わせて最終判断する。
 
 ## 検証環境と配信
 
@@ -14,8 +14,8 @@
 | 配信先 | https://kakeimatch-actual-browser-spike.yhgry.workers.dev/ |
 | 配信方式 | `spikes/actual-browser/` の Vite 8.3.1 + Cloudflare Vite Plugin 1.62.0。`cloudflare.config.ts` と静的アセットを使用 |
 | 自動試験ブラウザ | Playwright の Chromium 配布リビジョン 1243。User-Agent は `HeadlessChrome/153.0.0.0`。iOS や Safari ではない |
-| iOS version | 27.0。利用者が iPhone の「設定」で確認した値（利用者報告） |
-| Safari version | User-Agent の `Version/27.0`（利用者報告） |
+| iOS version | 27.0。利用者が iPhone の「設定」で確認した値（利用者報告）。診断時の User-Agent には `CPU iPhone OS 18_7` が含まれ、この値とは一致しない |
+| Safari version | 診断時の User-Agent の `Version/27.0`（利用者報告） |
 
 `cf --help` と `cf cli search 'deploy a static assets worker project'` を確認した。実行した主な操作は `cf deploy --dry-run`、`cf deploy`。両方成功し、既存 Worker と同じ URL へ配信した。`wrangler` は直接実行していない。配信された HTML と `/sw.js` に対する `curl -I` では、どちらも `Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` を確認した。Cloudflare の `_headers` は静的アセットに適用され、Worker が生成する応答には適用されないため、将来 API 応答を追加する場合は別途ヘッダーが必要になる。[Cloudflare Headers (2026/09), Custom headers]
 
@@ -25,7 +25,7 @@
 
 1. [診断サイト](https://kakeimatch-actual-browser-spike.yhgry.workers.dev/)を開き、**「一括診断」**を押す。人工データを使った項目が順番に動き、途中で失敗しても実行可能な後続項目を続ける。画面には進捗、各項目の PASS / WARN / FAIL / pending、総合判定を表示する。
 2. ZIP の書き出しと読み込みを自動比較した後、ページが自動で再読込される。保存した診断状態を読み、口座・カテゴリ・取引などの一致を確認する。結果は端末内の `localStorage` に保存され、次に開いたときも表示する。
-3. **「結果をコピー」**を押し、プレーンテキストを貼り付ける。結果には日時、URL、User-Agent、iOS、PWA 状態、各項目の結果と制約を含む。診断結果や家計内容を Cloudflare へ自動送信しない。
+3. **「結果をコピー」**を押し、プレーンテキストを貼り付ける。結果には日時、URL、User-Agent の iOS 表記、Safari の `Version/` 表記、PWA 状態、各項目の結果と制約を含む。Web アプリは端末の「設定」に表示される iOS version を取得できないため、User-Agent の値を実際の OS version として表示しない。診断結果や家計内容を Cloudflare へ自動送信しない。
 4. iPhone のオフライン試験だけは手動で機内モードにしてから、ページ下部の「オフライン確認」を押す。Safari とホーム画面アプリは別々に試す。既に確認済みの Safari 終了後の保持、PWA での保持、ZIP 保存・読み込み、ZIP 読込後の再読込保持を繰り返す必要はない。
 
 各実行は一意な ID の診断専用 Budget に人工データだけを作る。既存の家計簿は編集しない。Actual browser API に公開の `deleteBudget` がないため、診断用 Budget と ZIP を読み込んだ Budget が残る可能性を画面に WARN として表示する。Actual の内部 IndexedDB を直接変更して削除しない。保存容量不足の負荷試験は行わず、`QuotaExceededError` を捕捉して ZIP 保存と端末容量確認を案内する。
@@ -47,7 +47,25 @@
 | オフライン | Chromium で機内モード相当のネットワーク遮断後にページを再読込し、保存済み取引の取得とメモ更新・読み戻しに成功。iPhone のオフライン結果は未確認 |
 | Cleanup | 公開の Budget 削除 API がないため WARN。検証用 Budget が残る |
 
-**失敗した Actual API は今回の Chromium 診断では 0 件。** iPhone での同じ API 一括診断結果は未受領である。旧スパイクで検証したオフライン再読込・編集は下表のとおり Chromium で成功しているが、新しい一括診断の PENDING は **iPhone のオフライン結果**を示す。
+**失敗した Actual API は今回の Chromium 診断では 0 件。** 旧スパイクで検証したオフライン再読込・編集も Chromium で成功している。iPhone の実測結果は次節に記録する。
+
+### iPhone Safari の一括診断（利用者報告）
+
+2026-09-29T14:34:05.751Z のコピー結果。User-Agent は `Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/27.0 Mobile/15E148 Safari/604.1`、`PWA: false`。この `CPU iPhone OS 18_7` は User-Agent の表記であり、「設定」で利用者が確認した iOS **27.0** と一致しない。Web アプリでは設定値を直接取得できないため、両者を別の情報として記録する。
+
+| 分野 | iPhone Safari の結果 |
+| --- | --- |
+| 環境 | `crossOriginIsolated === true`、`SharedArrayBuffer`、Blob URL Worker、IndexedDB open/write/read、WebAssembly 起動がすべて PASS |
+| 保存領域 | `estimate()` は usage **19,541,398 byte**、quota **41,231,686,042 byte**、使用率 **0.047%**。`persisted()=false`、`persist()=false` は WARN |
+| Actual local-only | `serverURL`・password・Sync ID なしの `init({})` が PASS。開始時に既存 Budget が1件あったため空状態の判定は WARN。専用 Budget を `runImport` で作成できた |
+| 口座・カテゴリ | 口座2件とカテゴリ2件の作成・取得・更新が PASS。閉じた口座は `getAccounts()` で確認できず WARN |
+| 取引 | `importTransactions`、日付範囲での読み戻し、金額・`cleared` の更新、同一 `imported_id` の重複防止、3件の `batchBudgetUpdates` が PASS |
+| JPY | ¥1、¥100、¥3,284、¥100,000 の書込・取得・更新・復元が個別に PASS |
+| 取引の意味 | 負額の支出、正額の収入、相互 `transfer_id` の振替、`is_parent` と子取引2件の分割が PASS |
+| 復旧 | 合成 Budget の ZIP **39,166 byte** を書き出し、`importBudget` 後の口座・カテゴリ・取引・`cleared`・`imported_id`・振替・分割が一致。自動再読込後も一致 |
+| 未完了 | 診断用 Budget の削除 API がなく WARN。**オフライン起動・編集のみ PENDING**。容量不足の実例は未再現 |
+
+合計は **PASS 32 / WARN 4 / FAIL 0 / PENDING 1**。PASS には以前の利用者報告5項目を含む。iPhone の Actual API 個別失敗はこの実行では **0件**。ただし、既存 Budget がある状態からの新規作成のため、「空の端末状態から直接作成できるか」は iPhone では依然として未確認である。既存家計データの削除を求めて再試験はしない。
 
 ## 既存スパイクで確認していた項目
 
@@ -82,7 +100,7 @@ Actual の browser build は公式資料で experimental とされる。browser 
 
 ## 利用者から報告された iPhone Safari 実機結果
 
-2026-09-29 に利用者から次の結果が報告された。以下はエージェントが実機を操作して得た結果ではない。端末ログや画面上の API 個別結果は受け取っていない。
+2026-09-29 に利用者から次の結果が報告された。以下はエージェントが実機を操作して得た結果ではない。API 個別結果は上記の一括診断で後から受け取った。
 
 | 項目 | 利用者報告 |
 | --- | --- |
@@ -92,15 +110,14 @@ Actual の browser build は公式資料で experimental とされる。browser 
 | ホーム画面のアプリ | ZIP の保存・読み込みと再読込後の保持に成功 |
 | `navigator.storage.persist()` | `false` |
 
-この結果は、iPhone での ZIP 操作と保存継続に関する前回の未確認事項を解消する。ただし、ZIP 読み込み前にサイトデータを削除したか、読み込み後にどの口座・カテゴリ・取引を照合したかは報告されていない。そのため、**空の保存領域からの完全復旧までは確認済みと扱わない**。
+この結果は、iPhone での ZIP 操作と保存継続に関する前回の未確認事項を解消する。後続の一括診断では ZIP 読込後の合成データ比較も PASS だった。ただし、サイトデータを削除した空の保存領域への完全復旧は試していないため、**空の保存領域からの完全復旧までは確認済みと扱わない**。
 
 ## iPhone Safari で引き続き確認すべき手順
 
-この環境には iPhone がない。**未確認の項目だけ**次の手順で記録する。Safari 終了後の保持、ホーム画面アプリでの保持、ZIP 保存・読み込みと再読込後の保持、`persist()=false` は利用者から報告済みであり、繰り返しを求めない。
+この環境には iPhone がない。主要 API の一括診断、Safari 終了後の保持、ホーム画面アプリでの保持、ZIP 保存・読み込みと再読込後の保持、`persist()=false` は利用者から報告済みであり、繰り返しを求めない。残る手順は次のとおり。
 
-1. iPhone Safari で診断サイトを開いて「一括診断」を押す。再読込後に「結果をコピー」を押して全文を記録する。`crossOriginIsolated`、`SharedArrayBuffer`、Actual local-only 起動、空状態からの Budget 作成、取引、金額、振替、分割、ZIP データ一致を個別に確認できる。失敗時は画面の FAIL とエラーをそのまま残す。既存 Budget がある場合、「空の保存領域」は WARN となるため、この項目だけ初期状態では未検証と扱う。既存のサイトデータを消してまで再試験する必要はない。
-2. オンラインで一度開いた後、機内モードにして Safari またはホーム画面のアプリを開き直す。「オフライン確認」を押す。既存取引の取得とメモ更新・読み戻しが PASS になれば、その結果をコピーする。Safari とホーム画面アプリのどちらで試したかも記録する。
-3. 容量不足を人工的に作る必要はない。通常の使用中に `QuotaExceededError` 等が起きた場合は、エラー名、ZIP 書き出し可否、再読込後の状態を記録する。端末容量を大量に消費する試験は禁止する。
+1. **オフラインのみ**: オンラインで診断ページを開いた後、機内モードにして Safari またはホーム画面のアプリを開き直す。「オフライン確認」を押す。既存取引の取得とメモ更新・読み戻しが PASS になれば、その結果をコピーする。Safari とホーム画面アプリのどちらで試したかも記録する。
+2. 容量不足を人工的に作る必要はない。通常の使用中に `QuotaExceededError` 等が起きた場合は、エラー名、ZIP 書き出し可否、再読込後の状態を記録する。端末容量を大量に消費する試験は禁止する。
 
 iPhone で必須項目またはオフライン起動・編集が FAIL となった場合や、再読込後のデータ消失が再現した場合は NO-GO を検討し、#32 以降の端末内データ正本化を進めない。サイト側もオフライン FAIL を暫定 NO-GO に反映する。空の保存領域からの作成は Chromium で実測済みだが、Safari では既存 Budget があると判定できない制約を明記する。
 
@@ -108,8 +125,8 @@ iPhone で必須項目またはオフライン起動・編集が FAIL となっ�
 
 現行の家計簿読み書きはサーバー側の `@actual-app/cli`、Actual Sync Server、利用者と Budget の対応表に依存する。レシート画像、分類、明細取り込み、照合はサーバー側にある。[KakeiMatch Architecture (2026/09), Actual連携 / レシート処理] この spike は Actual のブラウザ内家計簿操作だけを試した。利用者認証、レシート、Gemini/Jev、明細、照合、KakeiMatch 独自データ、複数端末同期は実装していない。
 
-- #32: iPhone での ZIP 操作と再読込後の保持は利用者報告で確認された。家計簿の空状態からの作成、主要 API、cross-origin isolation の実機結果を確認してから PWA 配信基盤へ進む。現行 spike の静的配信設定と COOP/COEP を再利用候補にする。
-- #33: `@actual-app/cli` の操作を browser API に対応付ける。`imported_id`、JPY、振替、分割の Chromium 結果は参考になるが、Safari の追試が必要。
+- #32: iPhone Safari で主要 API、cross-origin isolation、ZIP 内容一致、再読込後保持が確認された。オフライン起動・編集と、初期データを失わない空状態導入手段の設計を残す。現行 spike の静的配信設定と COOP/COEP を再利用候補にする。
+- #33: `@actual-app/cli` の操作を browser API に対応付ける。`imported_id`、JPY、振替、分割は iPhone Safari でも成功した。閉じた口座の取得方法と split 親子の集計を設計時に明示する。
 - #34 と #35: Actual 以外のレシート・明細・照合データはこの spike では端末保存を試していない。保存領域と容量超過時の扱いを別途設計する。
 - #36: この spike には外部 AI API を含めない。秘密鍵をブラウザへ出さない境界を維持する。
 - #37: ZIP の書き出しと読み込みは Chromium で成立し、iPhone Safari とホーム画面アプリでも利用者から成功報告を受けた。サイトデータ削除後の完全復旧と KakeiMatch 独自データの同時復旧は未確認。
