@@ -1,0 +1,7 @@
+:root { font-family: system-ui, sans-serif; color: #222; background: #faf7f2; }
+body { margin: 0; }
+main { max-width: 48rem; padding: 1.5rem; margin: auto; }
+button, input { display: block; min-height: 44px; margin: 0.75rem 0; font: inherit; }
+button { padding: 0.5rem 1rem; border: 1px solid #555; border-radius: 0.4rem; background: white; }
+button:focus-visible, input:focus-visible { outline: 3px solid #2858ab; }
+li { overflow-wrap: anywhere; padding: 0.4rem 0; border-bottom: 1px solid #ccc; }
