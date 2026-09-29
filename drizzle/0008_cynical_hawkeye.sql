@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX `reconciliation_receipt_result_match_unique` ON `reconciliation_receipt_result` (`run_id`,`statement_transaction_id`) WHERE statement_transaction_id is not null;--> statement-breakpoint
+CREATE UNIQUE INDEX `reconciliation_statement_result_match_unique` ON `reconciliation_statement_result` (`run_id`,`matched_receipt_id`) WHERE matched_receipt_id is not null;

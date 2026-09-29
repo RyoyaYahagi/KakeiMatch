@@ -43,7 +43,7 @@
 
 ## Status
 
-家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示、Geminiによるレシート情報抽出、カテゴリ提案とユーザー確定、確認済みレシートのActual Budget登録に対応しています。レシート登録は本人のBudget内の口座を選び、店名・日付・整数円金額を確認してから実行します。`/statements/import` から明細CSVを取り込めます。現時点でPayPayの公式13列形式を受け付けます。三井住友カードと楽天カードの実exportでは文字コードと構造を確認しましたが、取引へ変換するための行の意味が未確定なので取り込みを拒否します。イオンカードも形式未確認のため拒否します。詳細は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。明細の照合とActualへの明細登録は後続Issueで実装します。Actualへのレシート登録のライブ試験は未実施です。手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)を参照してください。
+家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示、Geminiによるレシート情報抽出、カテゴリ提案とユーザー確定、確認済みレシートのActual Budget登録に対応しています。レシート登録は本人のBudget内の口座を選び、店名・日付・整数円金額を確認してから実行します。`/statements/import` から明細CSVを取り込めます。現時点でPayPayの公式13列形式を受け付けます。三井住友カードと楽天カードの実exportでは文字コードと構造を確認しましたが、取引へ変換するための行の意味が未確定なので取り込みを拒否します。イオンカードも形式未確認のため拒否します。詳細は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。登録済みレシートとcanonical明細の決定的な照合engineと、本人単位のrun snapshot保存を実装しています。review UIと人間による確認、Actualへの反映はIssue #13です。Actualへのレシート登録のライブ試験は未実施です。手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)を参照してください。
 
 支出一覧は、本人の家計簿から日付の新しい取引を最大50件取得し、その中の支出だけを表示します。ホームの最近の支出は同じ取得結果から最大5件を表示します。収入と口座間振替は支出一覧へ表示しません。「今月」は `APP_TIME_ZONE`（既定値 `Asia/Tokyo`）で判定します。取引に保存された日付は変換しません。
 
@@ -163,3 +163,13 @@ KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削�
 分類のしきい値を検証する場合は、人工データ22件を使う `corepack pnpm eval:category` を実行します。実行には `TYPESAFE_API_KEY` が必要です。このコマンドは通常の `pnpm test` から独立しており、評価入力をTypeSafe APIへ送信します。出力にはカテゴリ正解率、自動提案率、要確認率、選択カテゴリの確率、上位2カテゴリの確率差が含まれます。しきい値を変えた場合も同じデータで比較できます。実データは評価に使用しません。
 
 実際の秘密情報は `.env` や `.env.local` に設定し、Gitへ登録しないでください。
+
+## Reconciliation evaluation
+
+照合ルールの変更時は、完全に人工データの33シナリオを再評価できます。
+
+```sh
+pnpm eval:reconciliation
+```
+
+評価はauto-match precision（誤った自動一致を最優先で検出）、matchable pairに対するcoverage、statementのneeds-review率、unmatched statement/receipt件数、期待状態との一致率を出します。各scenarioは独立して実行し、配列順や他ケースのデータが結果に影響しません。現行ルールはamount/date/merchantを55%/25%/20%で加重し、候補日付windowは±7日、自動一致はamount exact、日付差2日以内、merchant similarity 0.72以上または明示alias、score 0.88以上、mutual best、双方のmargin 0.15以上を要求します。現行ルールで33シナリオを評価した結果は、auto-match precision 1.00、coverage 1.00（19件中19件）、needs-review率 31.4%、unmatched statement 5件、unmatched receipt 5件、期待状態との一致率 1.00です。precisionを落としてcoverageを上げる目的には使いません。

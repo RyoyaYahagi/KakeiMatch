@@ -1,4 +1,4 @@
-import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { foreignKey, index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 // Better Auth's email/password and database-session tables.
@@ -68,7 +68,10 @@ export const receipt = sqliteTable("receipt", {
   contentType: text("content_type").notNull(),
   fileSize: integer("file_size").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-}, (table) => [index("receipt_owner_created_at_idx").on(table.ownerUserId, table.createdAt)]);
+}, (table) => [
+  index("receipt_owner_created_at_idx").on(table.ownerUserId, table.createdAt),
+  uniqueIndex("receipt_owner_id_unique").on(table.ownerUserId, table.id),
+]);
 
 // Extraction state is separate from receipt metadata so retries never affect stored image bytes.
 export const receiptExtraction = sqliteTable("receipt_extraction", {
@@ -190,7 +193,93 @@ export const statementTransaction = sqliteTable("statement_transaction", {
 }, (table) => [
   uniqueIndex("statement_transaction_external_unique").on(table.userId, table.provider, table.externalId).where(sql`external_id is not null`),
   uniqueIndex("statement_transaction_fingerprint_ordinal_unique").on(table.userId, table.provider, table.sourceFingerprint, table.duplicateOrdinal).where(sql`external_id is null`),
+  uniqueIndex("statement_transaction_user_id_unique").on(table.userId, table.id),
   index("statement_transaction_user_date_idx").on(table.userId, table.usedDate),
 ]);
 
-export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference, statementImport, statementTransaction };
+// Only explicit user confirmation may create a merchant alias. Reconciliation never learns aliases automatically.
+export const merchantAlias = sqliteTable("merchant_alias", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  normalizedMerchant: text("normalized_merchant").notNull(),
+  normalizedAlias: text("normalized_alias").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+}, (table) => [
+  uniqueIndex("merchant_alias_user_pair_unique").on(table.userId, table.normalizedMerchant, table.normalizedAlias),
+  index("merchant_alias_user_merchant_idx").on(table.userId, table.normalizedMerchant),
+]);
+
+export const reconciliationRun = sqliteTable("reconciliation_run", {
+  id: text("id").primaryKey(),
+  userId: text("user_id").notNull().references(() => user.id, { onDelete: "cascade" }),
+  ruleVersion: text("rule_version").notNull(),
+  status: text("status").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+}, (table) => [
+  uniqueIndex("reconciliation_run_user_id_unique").on(table.userId, table.id),
+  index("reconciliation_run_latest_idx").on(table.userId, table.status, table.completedAt),
+]);
+
+export const reconciliationStatementResult = sqliteTable("reconciliation_statement_result", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  userId: text("user_id").notNull(),
+  statementTransactionId: text("statement_transaction_id").notNull(),
+  status: text("status").notNull(),
+  matchedReceiptId: text("matched_receipt_id"),
+  score: real("score"),
+  reasonCodesJson: text("reason_codes_json").notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.runId, table.userId], foreignColumns: [reconciliationRun.id, reconciliationRun.userId] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.statementTransactionId], foreignColumns: [statementTransaction.userId, statementTransaction.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.matchedReceiptId], foreignColumns: [receipt.ownerUserId, receipt.id] }).onDelete("cascade"),
+  uniqueIndex("reconciliation_statement_result_unique").on(table.runId, table.statementTransactionId),
+  uniqueIndex("reconciliation_statement_result_match_unique").on(table.runId, table.matchedReceiptId).where(sql`matched_receipt_id is not null`),
+  index("reconciliation_statement_result_user_run_idx").on(table.userId, table.runId),
+]);
+
+export const reconciliationReceiptResult = sqliteTable("reconciliation_receipt_result", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  userId: text("user_id").notNull(),
+  receiptId: text("receipt_id").notNull(),
+  status: text("status").notNull(),
+  statementTransactionId: text("statement_transaction_id"),
+  score: real("score"),
+  reasonCodesJson: text("reason_codes_json").notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.runId, table.userId], foreignColumns: [reconciliationRun.id, reconciliationRun.userId] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.receiptId], foreignColumns: [receipt.ownerUserId, receipt.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.statementTransactionId], foreignColumns: [statementTransaction.userId, statementTransaction.id] }).onDelete("cascade"),
+  uniqueIndex("reconciliation_receipt_result_unique").on(table.runId, table.receiptId),
+  uniqueIndex("reconciliation_receipt_result_match_unique").on(table.runId, table.statementTransactionId).where(sql`statement_transaction_id is not null`),
+  index("reconciliation_receipt_result_user_run_idx").on(table.userId, table.runId),
+]);
+
+export const reconciliationCandidate = sqliteTable("reconciliation_candidate", {
+  id: text("id").primaryKey(),
+  runId: text("run_id").notNull(),
+  userId: text("user_id").notNull(),
+  statementTransactionId: text("statement_transaction_id").notNull(),
+  receiptId: text("receipt_id").notNull(),
+  rank: integer("rank").notNull(),
+  score: real("score").notNull(),
+  amountDeltaYen: integer("amount_delta_yen").notNull(),
+  dateDistanceDays: integer("date_distance_days").notNull(),
+  merchantSimilarity: real("merchant_similarity").notNull(),
+  amountExact: integer("amount_exact", { mode: "boolean" }).notNull(),
+  dateClose: integer("date_close", { mode: "boolean" }).notNull(),
+  merchantSimilar: integer("merchant_similar", { mode: "boolean" }).notNull(),
+  reasonCodesJson: text("reason_codes_json").notNull(),
+}, (table) => [
+  foreignKey({ columns: [table.runId, table.userId], foreignColumns: [reconciliationRun.id, reconciliationRun.userId] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.statementTransactionId], foreignColumns: [statementTransaction.userId, statementTransaction.id] }).onDelete("cascade"),
+  foreignKey({ columns: [table.userId, table.receiptId], foreignColumns: [receipt.ownerUserId, receipt.id] }).onDelete("cascade"),
+  uniqueIndex("reconciliation_candidate_statement_rank_unique").on(table.runId, table.statementTransactionId, table.rank),
+  uniqueIndex("reconciliation_candidate_pair_unique").on(table.runId, table.statementTransactionId, table.receiptId),
+  index("reconciliation_candidate_user_run_idx").on(table.userId, table.runId),
+]);
+
+export const authSchema = { user, session, account, verification, actualBudgetMapping, receipt, receiptExtraction, merchantCategoryMapping, receiptCategory, receiptRegistration, actualCategoryMapping, actualAccountPreference, statementImport, statementTransaction, merchantAlias, reconciliationRun, reconciliationCandidate, reconciliationStatementResult, reconciliationReceiptResult };
