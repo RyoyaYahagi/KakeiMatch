@@ -88,21 +88,26 @@ corepack pnpm --dir apps/pwa exec cf workers versions create \
 
 ## A. 所有者によるsecret登録
 
-本人のターミナルで、リポジトリrootから次を実行します。各commandが秘密値を非表示で対話入力します。値を引数へ書かず、チャットへ送らないでください。現行commandの `--help` とインストール済みCLIの入力処理で、`--text` を省略するとsecret用の対話入力になることを確認しました。
+本人のターミナルで、リポジトリrootから次を実行します。[所有者用登録スクリプト](../scripts/register-production-secrets.py)が5個の秘密値を非表示で入力し、PWAとAPIのコードと一緒に未公開versionへ登録します。本番公開は行いません。Python 3と既存のCorepack / cfを使用します。
 
 ```sh
-for binding in BETTER_AUTH_SECRET ACCOUNT_BOOTSTRAP_SECRET AI_GATEWAY_AUTH_SECRET GEMINI_API_KEY TYPESAFE_API_KEY; do
-  corepack pnpm --dir apps/pwa exec cf workers secrets update "$binding" \
-    --worker kakeimatch --type secret_text || break
-done
+python3 scripts/register-production-secrets.py
 ```
 
-この5個だけを登録してください。最初の3個は所有者のパスワード管理ツール等で個別に作成し、少なくとも32文字のランダム値を使います。後の2個は本人が取得したGemini / TypeSafeのAPI keyです。previewの値をコピーしないでください。`.env`、Git、PR本文、コマンド履歴へ保存しないでください。対話入力が使えない場合は `--text` に切り替えず、本人のターミナルで実行してください。
+入力する5個は `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`GEMINI_API_KEY`、`TYPESAFE_API_KEY` です。最初の3個は所有者のパスワード管理ツール等で個別に作成し、少なくとも32文字のランダム値を使います。後の2個は本人が取得したGemini / TypeSafeのAPI keyです。previewの値をコピーしないでください。`.env`、Git、PR本文、コマンド履歴へ保存しないでください。秘密値をチャットへ送らないでください。
 
-登録後は「production secretを登録した」と報告してください。エージェントは値を聞かず、次のcommandで名前だけを確認して公開を続けます。
+スクリプトは対話ターミナル以外の実行と、getpassによる表示入力へのfallbackを拒否します。入力値はrepository外の権限700の一時ディレクトリに、権限600のJSONファイルとして保存します。CLIには値ではなくファイルパスだけを渡し、通常の完了・失敗・Ctrl+C時に一時ファイルを削除します。CLI出力に入力値が含まれた場合も、その値を伏せて表示します。production D1のnameとID、production-deploy modeをスクリプトが明示します。
+
+2026-09-30に、以前の `cf workers secrets update` 手順は本人の最初の入力後にHTTP 500 / code 10013で失敗しました。再確認時もsecret名一覧とdeployment一覧は空で、最新versionにもsecret bindingはありませんでした。未公開Workerと通常secret更新APIの組み合わせが原因である可能性を考えていますが、Cloudflare内部の500原因は未確定です。秘密値を書き込む再現試験は、本人操作という境界を守るため行っていません。
+
+代わりに、現行 `cf workers versions create --help` の `--secrets-file` と[公式のコード・secret同時アップロード仕様](https://developers.cloudflare.com/workers/configuration/secrets/#upload-secrets-alongside-code)を確認しました。インストール済みcfがversion uploadへファイルを渡し、その処理がsecret_text bindingを明示的に設定することも確認しました。通常secret putは即時deployを伴うと公式資料にあるため、初回登録には使用しません。
+
+所有者用スクリプトの3テストは、Cloudflare通信を置き換えた合成値だけで成功しました。一時ファイルの権限・削除、公開を伴わないcommand、本番D1選択、出力の値除去、非対話実行の拒否を検証しました。実CLIでも合成値と `--dry-run` だけを使用し、5個がhidden bindingとして構成されることを確認しました。実秘密値の入力・登録は本人操作待ちであり、成功はまだ確認していません。
+
+登録後は「production secretを登録した」と、CLIの返すversion IDだけを報告してください。エージェントは値を聞かず、最新versionのsecret binding名を確認します。通常のsecret一覧は公開versionを参照する可能性があるため、未公開versionの登録確認に単独では使いません。
 
 ```sh
-cf workers secrets list --worker kakeimatch
+cf workers versions get latest --worker-id kakeimatch | python3 -c 'import json,sys; v=json.load(sys.stdin); print(v["id"]); print([b["name"] for b in v["bindings"] if b["type"] == "secret_text"])'
 ```
 
 ## 公開条件とエージェントによる続行

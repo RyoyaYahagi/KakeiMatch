@@ -23,6 +23,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Owner secret handoff safety (synthetic, no Cloudflare writes)
+        run: python3 -B scripts/test_register_production_secrets.py
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
