@@ -165,6 +165,17 @@ async function readProviderJson(response: Response): Promise<unknown | null> {
   if (!bytes) return null;
   try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return null; }
 }
+function geminiOutputText(value: unknown): string | null {
+  if (!isRecord(value)) return null;
+  // Keep accepting SDK-shaped fixtures while parsing the current REST response below.
+  if (typeof value.output_text === "string") return value.output_text;
+  if (!Array.isArray(value.steps)) return null;
+  const lastStep = value.steps.at(-1);
+  if (!isRecord(lastStep) || lastStep.type !== "model_output" || !Array.isArray(lastStep.content)) return null;
+  const text = lastStep.content.filter((part): part is Record<string, unknown> =>
+    isRecord(part) && part.type === "text" && typeof part.text === "string");
+  return text.length > 0 ? text.map((part) => part.text as string).join("") : null;
+}
 
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {
   const url = new URL(request.url);
@@ -225,7 +236,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!response.ok) return providerError(response.status);
     let decoded: unknown;
     try { decoded = await readProviderJson(response); } catch { return json(502, { error: "invalid_provider_response" }); }
-    const outputText = isRecord(decoded) && typeof decoded.output_text === "string" ? decoded.output_text : null;
+    const outputText = geminiOutputText(decoded);
     if (!outputText) return json(502, { error: "invalid_provider_response" });
     let extraction: unknown;
     try { extraction = JSON.parse(outputText) as unknown; } catch { return json(502, { error: "invalid_provider_response" }); }

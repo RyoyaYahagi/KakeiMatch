@@ -206,6 +206,17 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const malformed = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-latest", answers: {} })));
     expect(malformed.status).toBe(502);
   });
+  it("extracts receipt JSON from the current Gemini Interactions REST response", async () => {
+    const flowId = crypto.randomUUID();
+    const currentRestResponse = {
+      status: "completed",
+      steps: [{ type: "model_output", content: [{ type: "text", text: JSON.stringify(receipt) }] }],
+    };
+    const response = await gemini(flowId, now, fetchOk(currentRestResponse));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(receipt);
+    expect(await usage()).toMatchObject({ used: 1 });
+  });
   it("requires same origin, signed AI audience and an account session for token/usage", async () => {
     expect((await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer(), { origin: "https://attacker.invalid" }), env, options())).status).toBe(403);
     for (const claims of [{ exp: now }, { exp: now + 901 }, { aud: "other" }]) expect((await handleRequest(request("gemini", image, bearer("synthetic-user", now, claims)), env, options())).status).toBe(401);
