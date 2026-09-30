@@ -35,4 +35,4 @@ Cloudflare操作では現在の `cf` CLIを使用し、事前に `cf --help` と
 
 ## iPhone確認
 
-Issue #39の変更後に行うiPhone確認は未実施です。ホーム画面からの起動、既存synthetic local profileの表示、オフライン起動、backup導線を確認します。以前の確認結果はIssue #31/#32/#37に記録されています。preview確認にはテスト用profileを使い、家計簿profileを使わないでください。
+Issue #39の変更後に行うiPhone追加実機確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。以前の確認結果はIssue #31/#32/#37に記録されています。preview確認にはテスト用profileを使い、家計簿profileを使わないでください。

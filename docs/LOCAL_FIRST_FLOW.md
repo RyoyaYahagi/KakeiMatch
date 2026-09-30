@@ -4,7 +4,7 @@
 
 Issue #39のpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。previewは合成データ専用で、既存の家計簿profileを開かないでください。Actualブラウザー版によるレシート・明細・照合・offline reloadと、backup/restore・原本整理・全消去のsynthetic E2Eはpreviewで成功しました。rootのlintではlegacyのimg要素に関する既存warningが2件あり、typecheck、283件のroot test、23件のWorker test、2件のPWA service-worker test、33件の照合評価scenarioは失敗0件でした。`cf` はbeta.5でした。
 
-Cloud auth secretsをpreviewに設定していないため、auth要求は403で安全に拒否されました。確認したE2Eはsigned-outのlocal flowとmock AI応答です。Passkey認証と実providerへのAI要求は検証していません。Issue #31/#32/#37で実施したiPhone確認結果は各Issue本文に記録されています。Issue #39のruntime変更後に行う追加iPhone確認は未実施です。Issue #58はActual restore後のorphan cleanup制約を追跡し、Issue #39のruntime移行とは別です。
+Cloud auth secretsをpreviewに設定していないため、auth要求は403で安全に拒否されました。確認したE2Eはsigned-outのlocal flowとmock AI応答です。Passkey認証と実providerへのAI要求は検証していません。Issue #31/#32/#37で実施したiPhone確認結果は各Issue本文に記録されています。Issue #39のruntime変更後に行う追加iPhone実機確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。Issue #58はActual restore後のorphan cleanup制約を追跡し、Issue #39のruntime移行とは別です。
 
 ## 端末内のデータと状態
 
@@ -32,7 +32,7 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 2. preview上で空のローカルBudgetと合成データを作成し、家計データを一度保存します。
 3. 機内モードでホーム画面アプリを終了して再起動し、手順2で保存した合成データを閲覧できることを確認します。
 4. Settingsにbackupの入口が表示されることを確認します。実データのexportやrestoreは不要です。
-5. iOS/Safari versionと各手順の結果を記録します。Issue #39時点ではこの追加確認は未実施です。
+5. iOS/Safari versionと各手順の結果を記録します。Issue #39の追加確認は利用者が実施し、起動・保存済みデータ閲覧・オフライン起動・backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
 この確認はiPhoneでの起動、既存local data、offline起動、backup導線だけを対象にします。実providerへのAI要求は対象外で、別途未確認です。#31/#32/#37の確認結果は各Issue本文を参照してください。
 
@@ -42,4 +42,4 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 
 復元は既存データと合併しません。復元前の端末profileは保持され、設定画面から切り替え前のprofileへ戻せます。通常の全消去はログアウト中にも操作できます。復元中にActual公式APIで認識できないbudgetが生じた場合は、アプリからの全消去を停止します。元データのバックアップ後にブラウザーのサイトデータを削除してください。この操作は同じoriginの他のブラウザーデータやログイン状態にも影響することがあります。Cloud accountとAI利用量は端末内householdデータとは別の境界です。[LOCAL_DATA.md](LOCAL_DATA.md) [ARCHITECTURE.md](ARCHITECTURE.md)
 
-Issue #39では`.kmb`の全操作をiPhoneで再試験する必要はありません。過去のiPhone確認の範囲と結果はIssue #31/#32/#37本文を参照してください。Issue #39後の起動・local data・offline・backup入口の追加確認が未実施であることは、上記のとおりです。バックアップの詳細な確認項目は[端末内データのバックアップと復元](LOCAL_BACKUP.md)に記載しています。
+Issue #39では`.kmb`の全操作をiPhoneで再試験する必要はありません。過去のiPhone確認の範囲と結果はIssue #31/#32/#37本文を参照してください。Issue #39後の起動・保存済みデータ閲覧・オフライン起動・backup入口の追加実機確認は、上記のとおり利用者から4項目とも問題なしと報告されました。バックアップの詳細な確認項目は[端末内データのバックアップと復元](LOCAL_BACKUP.md)に記載しています。
