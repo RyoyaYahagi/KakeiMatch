@@ -22,7 +22,6 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [アーキテクチャ](docs/ARCHITECTURE.md): 本番構成とデータ境界
 - [実装計画](docs/IMPLEMENTATION_PLAN.md): 現在の利用フローと残作業
 - [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、移行方針
-- [本番公開の手順と確認記録](docs/PRODUCTION_ROLLOUT.md): 本番D1、secret登録、公開条件、本人による確認
 - [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhone確認
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1

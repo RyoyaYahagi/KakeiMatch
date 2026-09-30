@@ -33,9 +33,7 @@ Cloudflare configは通常、`kakeimatch-issue-39-preview` Workerとsynthetic te
 
 Cloudflare操作では現在の `cf` CLIを使用し、事前に `cf --help` と `cf cli search` を確認してください。記憶に基づいて古いWrangler commandを使わないでください。
 
-2026-09-30の本番公開準備では、専用D1と0001〜0003のschema、production dry-run、未公開Worker versionを準備しました。所有者によるsecret登録後に公開します。リソースと残る確認は[本番公開の手順と確認記録](../../docs/PRODUCTION_ROLLOUT.md)を参照してください。
-
-2026-10-01に本番公開を完了しました。本番URLのHTTP 200、COOP / COEP、未認証APIの401、Service WorkerのAPI非cacheを確認しました。本人によるPasskey、実AI、iPhone確認は上記の公開記録で管理します。
+本番への更新手順と、招待・Passkey・合成レシート・iPhoneの確認手順は[デプロイ](../../docs/DEPLOYMENT.md)を参照してください。
 
 ## iPhone確認
 
