@@ -48,21 +48,13 @@ KakeiMatch設定に保存しているActual `budgetId` と端末固有の `dataD
 
 通常の全消去では、IndexedDB内の全profile、Actualの既知budget、追跡済み復元先を削除します。復元中にActualの取り込みが家計簿IDを返す前に失敗した場合、その保存先を記録して全消去を停止します。Actual APIはその孤児budgetを列挙・完全削除できる保証がないため、アプリからの全消去を続けると削除できたように誤認させるおそれがあるためです。元の家計データのバックアップを保存したうえで、ブラウザーのサイトデータ削除を利用してください。サイトデータの削除は、このoriginに保存された他のブラウザーデータやログイン状態にも影響することがあります。この残存データの可能性を公式APIだけで否定する方法は未解決です。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts)
 
-## ブラウザー検証とiPhone確認
+## ブラウザー検証とiPhone実機確認
 
 2026年9月30日、Chromiumで合成レシート2件とPayPay明細2行を使い、Actual取引と端末記録の書き出し、新しい保存先への復元、再読込、元データへの切り戻し、破損ファイルの拒否、原本整理、原本欠損状態の再復元、ログアウト状態の全消去を確認しました。確認値、canonical明細行、照合結果、同一支出判断、組み合わせ拒否、店舗対応、設定の保存内容を比較しています。組み合わせ拒否はKakeiMatch側の合成fixtureを使用しています。[ブラウザー試験: `browser-backup.mjs`](../apps/pwa/test/browser-backup.mjs)
 
-設定画面の390px幅の表示は[スクリーンショット](screenshots/issue-37-mobile.png)で確認できます。これはChromiumによる表示確認であり、iPhone実機の確認ではありません。
+設定画面の390px幅の表示は[スクリーンショット](screenshots/issue-37-mobile.png)で確認できます。
 
-確認先は[Issue #37 preview](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev)です。実際の家計簿・レシート・明細を使わず、テスト専用のiPhone profileと合成データだけを使ってください。以下の手順の成功結果はまだ記録されておらず、iPhone実機での検証済みとは扱いません。[PWA確認記録: `LOCAL_FIRST_FLOW.md`](LOCAL_FIRST_FLOW.md)
-
-1. Safariでpreviewを開き、ホーム画面へ追加してアプリを起動します。テスト用の空のActual Budgetを作成し、`Synthetic cash` 口座と合成レシート・PayPay明細を登録します。
-2. 設定からバックアップを書き出し、共有シートでFiles内のテスト用フォルダーへ保存します。生成日時の表示だけでは保存の成功を確認できないため、Filesに `.kmb` が存在することを確認します。
-3. 保存した `.kmb` を同じpreviewの「バックアップを読み込む」から選びます。復元完了後、家計簿・レシート・明細・照合結果が戻り、Safariを再読込した後も新しいprofileで開くことを確認します。
-4. 「切り替え前の家計データに戻る」を使い、復元前のテストprofileへ戻れることを確認します。
-5. 登録済みレシート画像とcanonical明細行を持つ合成CSV原本だけが原本整理の対象になることを確認します。未登録・失敗状態の合成レシート画像が削除候補に出ないことも確認します。
-6. `navigator.storage.persist()` が `false` を返す環境では、PWAが保存維持を保証できない案内を表示し、別の場所へのバックアップ保存を促すことを確認します。`false` の表示結果はまだ確認済みではありません。
-7. テストprofile上で明示確認を行い、全消去を試します。Cloud accountからログアウトした状態でも端末内家計データを消せることを確認します。復元中のActual importが不完全と判定された場合は、全消去が停止し、元データのバックアップ後にブラウザーのサイトデータ削除を案内することを確認します。サイトデータ削除は同じoriginのログイン状態などにも影響することがあります。Cloud account、Passkey、AI利用権限には影響しない通常のアプリ内全消去と区別してください。
+同日、利用者からiPhone実機で合成レシート写真と合成CSVを入力し、それらの原本を含むバックアップの復元まで確認したとの報告がありました。利用者はそれ以外のiPhone項目も問題なかったと報告しています。機種・OS版と個別操作の記録はありません。Actualの不完全取り込みを発生させる試験や `navigator.storage.persist()` が `false` を返す場合の表示など、失敗条件別の確認結果はこの報告からは判断しません。[確認先: Issue #37 preview](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev) [PWA確認記録: `LOCAL_FIRST_FLOW.md`](LOCAL_FIRST_FLOW.md)
 
 ## 出典
 
