@@ -1,3 +1,5 @@
+import { initializeBackupUi } from './local-backup-ui';
+import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt } from './local-receipts';
@@ -23,10 +25,11 @@ function report(error: unknown) {
 
 export async function initializeLocalUi(options: { openAccount: () => void }) {
   const repository = await LocalDataRepository.open();
-  const saved = await repository.get<{ budgetId: string }>('settings:budget');
+  const saved = await repository.get<LocalBudgetSettings>('settings:budget');
   let budgetId = saved?.value.budgetId ?? null;
-  const ledger = createActualBrowserLedger({ getBudgetId: () => budgetId, saveBudgetId: async id => {
-    budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id }, updatedAt: new Date().toISOString() });
+  const dataDir = saved?.value.dataDir ?? '/documents';
+  const ledger = createActualBrowserLedger({ getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
+    budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id, dataDir }, updatedAt: new Date().toISOString() });
   } });
   const receipts = new LocalReceiptService(repository, ledger);
   const statements = new LocalStatementService(repository);
@@ -72,6 +75,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function receiptEditor(receipt: LocalReceipt) {
     open('receipt'); view.append(text('h2', '内容を確認する'));
     const blob = await repository.getBlob(receipt.image?.blobId ?? "missing");
+    if (!blob && receipt.image) view.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。確認値と家計簿の記録は利用できます。'));
     if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; view.append(img); }
     const aiArea = document.createElement('div');
     aiArea.append(text('p', 'AIで読み取るにはアカウントとインターネット接続が必要です。手入力でも登録できます。', 'muted'));
@@ -83,13 +87,13 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       <label for="receipt-category">カテゴリ</label><select id="receipt-category" required></select>
       <label for="receipt-account">支払元</label><select id="receipt-account" required></select>
       <p id="receipt-save-state" role="status"></p>`;
-    view.append(aiArea, form);
     const [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
-    const account = el<HTMLSelectElement>('receipt-account'), category = el<HTMLSelectElement>('receipt-category');
+    const account = form.querySelector<HTMLSelectElement>('#receipt-account')!, category = form.querySelector<HTMLSelectElement>('#receipt-category')!;
     account.replaceChildren(new Option('選択してください', ''), ...accounts.map(a => new Option(a.name, a.id)));
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(c => new Option(c.name, c.id)));
     const draftId = `receipt-draft:${receipt.id}`;
     const draft = await repository.get<{ merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string }>(draftId);
+    view.append(aiArea, form);
     const value = draft?.value ?? receipt.confirmedValue ?? (receipt.extraction?.documentKind === 'receipt' ? receipt.extraction : null);
     if (receipt.extraction?.warnings.length) view.append(text('p', '読み取り結果に不明な項目があります。画像と照らし合わせて確認してください。'));
     el<HTMLInputElement>('receipt-merchant').value = value?.merchant ?? '';
@@ -129,6 +133,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const submit = button('明細を取り込む', async () => { const file = input.files?.[0]; if (!file) { el('message').textContent = 'CSVファイルを選択してください。'; return; } const result = await statements.importFile(file, 'paypay'); await statementPage(); el('message').textContent = `${result.added}件を取り込みました。重複 ${result.duplicates}件。`; }, false);
     view.append(label, input, submit, button('照合する', reviewPage));
     const rows = await statements.list(); view.append(text('p', `取り込み済み ${rows.length}件`));
+    for (const record of await repository.list('statement-import')) if (!await repository.getBlob(`statement-source:${record.id}`)) view.append(text('p', '取込元CSVの原本はありません。原本の確認はできませんが、明細行と照合結果は利用できます。'));
   }
   async function reviewPage() {
     open('reconciliation'); view.append(text('h2', '明細の確認'));
@@ -169,15 +174,16 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   el('home-capture').addEventListener('click', () => { void receiptPage().catch(report); });
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
+  await initializeBackupUi(repository, ledger);
   setup.append(text('h2', 'この端末の家計簿'), el('import-section'), el('budget-section'));
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
   try { await ledger.listOpenAccounts(); } catch (error) { if (!(error instanceof ActualBudgetSelectionRequiredError)) throw error; }
   const actual = await import('@actual-app/api');
   const budgets = await actual.getBudgets(); const selector = el<HTMLSelectElement>('budget'); selector.replaceChildren(...budgets.map(b => new Option(b.name, b.id))); if (!budgetId) selector.prepend(new Option('家計簿を選択してください', '')); selector.value = budgetId ?? ''; el('budget-section').hidden = false;
-  selector.addEventListener('change', () => { void (async () => { if ((await receipts.list()).length || (await statements.list()).length) { selector.value = budgetId ?? ''; throw new Error('記録のある家計簿は切り替えられません。'); } budgetId = selector.value; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId }, updatedAt: new Date().toISOString() }); location.reload(); })().catch(report); });
+  selector.addEventListener('change', () => { void (async () => { if ((await receipts.list()).length || (await statements.list()).length) { selector.value = budgetId ?? ''; throw new Error('記録のある家計簿は切り替えられません。'); } budgetId = selector.value; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId, dataDir }, updatedAt: new Date().toISOString() }); location.reload(); })().catch(report); });
   const zip = el<HTMLInputElement>('import-file'); el('import-section').hidden = false;
   el('import-button').addEventListener('click', () => zip.click());
-  zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); return actual.importBudget(await file.arrayBuffer(), { filename: file.name }); })().then(async b => { budgetId = b.id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId }, updatedAt: new Date().toISOString() }); location.reload(); }).catch(report); });
+  zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); await restoreStandaloneBudget(file, ledger); location.reload(); })().catch(report); });
   setup.append(button('支払元を追加する', async () => { const name = window.prompt('支払元の名前（例：現金、カード）'); if (!name?.trim()) return; await ledger.listOpenAccounts(); await actual.createAccount({ name: name.trim(), offbudget: false, closed: false }); el('message').textContent = '支払元を追加しました。'; }));
   setup.append(button('基本カテゴリを用意する', async () => {
     const { CATEGORY_LABELS } = await import('../../../src/lib/category'); const existing = await ledger.listExpenseCategories();

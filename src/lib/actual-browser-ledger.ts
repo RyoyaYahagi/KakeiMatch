@@ -5,10 +5,12 @@ import { normalizeMerchant } from "./category";
 import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
-  | "init" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
+  | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
   | "getBudgetMonths" | "getTransactions" | "importTransactions" | "updateTransaction"
   | "createCategory" | "updateCategory" | "getPayees" | "batchBudgetUpdates"
+  | "exportBudget" | "importBudget"
 >;
+type ActualSend = Awaited<ReturnType<ActualApi["init"]>>["send"];
 
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
@@ -38,10 +40,26 @@ export class ActualBrowserUnavailableError extends Error {
   }
 }
 
+export class ActualRestoreTargetExistsError extends Error {
+  constructor() {
+    super("The local restore target already contains a budget.");
+    this.name = "ActualRestoreTargetExistsError";
+  }
+}
+
+export class ActualRestoreIncompleteError extends Error {
+  constructor(cause?: unknown) {
+    super("元の家計データは保持されています。復元先にデータの一部が残っている可能性があります。", { cause });
+    this.name = "ActualRestoreIncompleteError";
+  }
+}
+
 export type ActualBrowserLedgerOptions = {
   /** Device-local profile state. Never pass a Cloudflare user or session ID. */
   getBudgetId: () => string | null;
   saveBudgetId: (budgetId: string) => void | Promise<void>;
+  /** Browser Actual virtual filesystem directory. Defaults to Actual's /documents. */
+  getDataDir?: () => string;
   newBudgetName?: () => string;
   /** Injection seam for deterministic unit tests. Production lazily loads the browser export. */
   api?: ActualApi;
@@ -52,7 +70,7 @@ type NativeTransaction = z.infer<typeof actualTransactionSchema> & {
   is_child?: boolean;
 };
 
-type RuntimeState = { initialized: boolean; loadedBudgetId?: string; tail: Promise<void> };
+type RuntimeState = { initialized: boolean; dataDir?: string; loadedBudgetId?: string; send?: ActualSend; tail: Promise<void> };
 const runtimeByApi = new WeakMap<object, RuntimeState>();
 
 function runtimeFor(api: ActualApi): RuntimeState {
@@ -115,6 +133,11 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   }): Promise<ActualTransaction>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
+  exportBackup(): Promise<Uint8Array>;
+  restoreBackup(data: Uint8Array, dataDir: string): Promise<string>;
+  listLocalBudgets(): Promise<Array<{ id: string; name: string }>>;
+  deleteLocalBudget(id: string): Promise<void>;
+  discardDataDirectory(dataDir: string): Promise<void>;
 } {
   let apiPromise: Promise<ActualApi> | undefined;
 
@@ -124,14 +147,66 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return apiPromise;
   };
 
+  const dataDirFor = () => options.getDataDir?.() ?? "/documents";
+
+  const assertDataDir = (dataDir: string) => {
+    if (!dataDir.startsWith("/") || dataDir.includes("\\") || dataDir.includes("\0") ||
+      dataDir.split("/").some((part) => part === "..")) {
+      throw new Error("Invalid Actual data directory.");
+    }
+  };
+
+  const activateDataDir = async (api: ActualApi, runtime: RuntimeState, dataDir: string) => {
+    assertDataDir(dataDir);
+    if (runtime.initialized && runtime.dataDir === dataDir) return;
+    if (runtime.initialized) await api.shutdown();
+    runtime.initialized = false;
+    runtime.dataDir = undefined;
+    runtime.loadedBudgetId = undefined;
+    runtime.send = (await api.init({ dataDir })).send as ActualSend;
+    runtime.initialized = true;
+    runtime.dataDir = dataDir;
+  };
+
+  const localBudgets = async (api: ActualApi) => {
+    const send = runtimeFor(api).send;
+    if (!send) throw new ActualBrowserUnavailableError("storage");
+    return await send("get-budgets") as Array<{ id: string; name: string }>;
+  };
+
+  const cleanupDataDir = async (api: ActualApi, runtime: RuntimeState, dataDir: string) => {
+    if (runtime.dataDir !== dataDir || !runtime.send) await activateDataDir(api, runtime, dataDir);
+    const send = runtime.send!;
+    const closeResult = await send("close-budget");
+    if (closeResult !== "ok") throw new ActualBrowserUnavailableError("operation");
+    runtime.loadedBudgetId = undefined;
+    for (const budget of await localBudgets(api)) {
+      const deleted = await send("delete-budget", { id: budget.id });
+      if (deleted !== "ok") throw new ActualBrowserUnavailableError("operation");
+    }
+  };
+
+  const withApi = <T>(operation: (api: ActualApi, runtime: RuntimeState) => Promise<T>): Promise<T> => getApi().then((api) => {
+    const runtime = runtimeFor(api);
+    const run = async () => {
+      try {
+        await activateDataDir(api, runtime, dataDirFor());
+        return await operation(api, runtime);
+      } catch (error) {
+        if (error instanceof ActualBrowserUnavailableError) throw error;
+        throw new ActualBrowserUnavailableError("operation");
+      }
+    };
+    const result = runtime.tail.then(run, run);
+    runtime.tail = result.then(() => undefined, () => undefined);
+    return result;
+  });
+
   const withBudget = <T>(operation: (api: ActualApi) => Promise<T>): Promise<T> => getApi().then((api) => {
     const runtime = runtimeFor(api);
     const run = async () => {
     try {
-      if (!runtime.initialized) {
-        await api.init({});
-        runtime.initialized = true;
-      }
+      await activateDataDir(api, runtime, dataDirFor());
 
       let budgets = await api.getBudgets();
       let selectedId = options.getBudgetId();
@@ -190,6 +265,110 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   };
 
   return {
+    async exportBackup(): Promise<Uint8Array> {
+      return withBudget(async (api) => new Uint8Array(await api.exportBudget()));
+    },
+
+    async restoreBackup(data: Uint8Array, dataDir: string): Promise<string> {
+      if (!(data instanceof Uint8Array) || data.byteLength === 0 || data.byteLength > 500 * 1024 * 1024) {
+        throw new Error("Invalid Actual backup.");
+      }
+      assertDataDir(dataDir);
+      const api = await getApi();
+      const runtime = runtimeFor(api);
+      const run = async () => {
+        const previousDataDir = dataDirFor();
+        let importStarted = false;
+        let importResolved = false;
+        let failure: Error | undefined;
+        try {
+          await activateDataDir(api, runtime, dataDir);
+          const before = await localBudgets(api);
+          if (before.length > 0) throw new ActualRestoreTargetExistsError();
+          importStarted = true;
+          const imported = await api.importBudget(data, { type: "actual", filename: "kakeimatch-backup.zip" });
+          importResolved = true;
+          runtime.loadedBudgetId = imported.id;
+          const found = (await localBudgets(api)).find((budget) => budget.id === imported.id);
+          if (!found) throw new ActualBrowserUnavailableError("invalid_data");
+          await Promise.all([api.getAccounts(), api.getCategories()]);
+          return imported.id;
+        } catch (error) {
+          if (importStarted) {
+            try {
+              await cleanupDataDir(api, runtime, dataDir);
+            } catch (cleanupError) {
+              failure = new ActualRestoreIncompleteError(cleanupError);
+              throw failure;
+            }
+            if (!importResolved) {
+              failure = new ActualRestoreIncompleteError(error);
+              throw failure;
+            }
+          }
+          failure = error instanceof ActualRestoreTargetExistsError || error instanceof ActualBrowserUnavailableError
+            ? error : new ActualBrowserUnavailableError("invalid_data");
+          throw failure;
+        } finally {
+          try {
+            if (runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
+          } catch (reactivationError) {
+            // The coordinator relies on these error types to protect occupied targets
+            // and remember an import that may have left unenumerable data.
+            if (failure) {
+              failure.cause = new AggregateError([failure.cause, reactivationError], "Actual restore and previous-directory reactivation failed.");
+              throw failure;
+            }
+            throw reactivationError;
+          }
+        }
+      };
+      const result = runtime.tail.then(run, run);
+      runtime.tail = result.then(() => undefined, () => undefined);
+      return result;
+    },
+
+    async deleteLocalBudget(id: string): Promise<void> {
+      const parsed = idSchema.safeParse(id);
+      if (!parsed.success) throw new Error("Invalid Actual budget ID.");
+      return withApi(async (api, runtime) => {
+        if (!(await localBudgets(api)).some((budget) => budget.id === parsed.data)) {
+          throw new ActualBrowserUnavailableError("storage");
+        }
+        const send = runtime.send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        if (runtime.loadedBudgetId === parsed.data) {
+          const result = await send("close-budget");
+          if (result !== "ok") throw new ActualBrowserUnavailableError("operation");
+          runtime.loadedBudgetId = undefined;
+        }
+        const result = await send("delete-budget", { id: parsed.data });
+        if (result !== "ok") throw new ActualBrowserUnavailableError("operation");
+      });
+    },
+
+    async listLocalBudgets(): Promise<Array<{ id: string; name: string }>> {
+      return withApi(localBudgets);
+    },
+
+    async discardDataDirectory(dataDir: string): Promise<void> {
+      assertDataDir(dataDir);
+      const api = await getApi();
+      const runtime = runtimeFor(api);
+      const run = async () => {
+        const previousDataDir = dataDirFor();
+        try {
+          await activateDataDir(api, runtime, dataDir);
+          await cleanupDataDir(api, runtime, dataDir);
+        } finally {
+          if (runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
+        }
+      };
+      const result = runtime.tail.then(run, run);
+      runtime.tail = result.then(() => undefined, () => undefined);
+      return result;
+    },
+
     getRecentTransactions({ limit = 20 } = {}) {
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid transaction limit.");
       return withBudget(async (api) => {

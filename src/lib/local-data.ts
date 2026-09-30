@@ -2,7 +2,7 @@ const DATABASE_NAME = "kakeimatch-local-data";
 const DATABASE_VERSION = 2;
 const RECORDS_STORE = "records";
 const BLOBS_STORE = "blobs";
-const PROFILE_KEY = "kakeimatch.local-profile.v1";
+export const LOCAL_PROFILE_KEY = "kakeimatch.local-profile.v1";
 
 export const LOCAL_DATA_SCHEMA_VERSION = 2;
 
@@ -76,10 +76,10 @@ export class LocalDataStorageError extends Error {
 }
 
 export function getOrCreateLocalProfileId(storage: Pick<Storage, "getItem" | "setItem"> = window.localStorage): string {
-  const existing = storage.getItem(PROFILE_KEY);
+  const existing = storage.getItem(LOCAL_PROFILE_KEY);
   if (existing && /^[0-9a-f-]{36}$/i.test(existing)) return existing;
   const id = crypto.randomUUID();
-  storage.setItem(PROFILE_KEY, id);
+  storage.setItem(LOCAL_PROFILE_KEY, id);
   return id;
 }
 
@@ -253,6 +253,17 @@ export class LocalDataRepository {
           else queueReplacement();
         };
       }
+      await done;
+    } catch (error) { throw storageError(error); }
+  }
+
+  /** Household stores only; Cloud account/session storage lives outside this database. */
+  async clearAllDeviceProfiles(): Promise<void> {
+    try {
+      const transaction = this.database.transaction([RECORDS_STORE, BLOBS_STORE], "readwrite");
+      const done = transactionDone(transaction);
+      transaction.objectStore(RECORDS_STORE).clear();
+      transaction.objectStore(BLOBS_STORE).clear();
       await done;
     } catch (error) { throw storageError(error); }
   }

@@ -2,7 +2,7 @@
 
 現在の主アプリは `apps/pwa` のPWA（Progressive Web App、ブラウザーからホーム画面へ追加できるWebアプリ）です。家計データを端末に保存し、Cloud accountはAIの認証・利用量・プランにだけ使います。Next.jsアプリはlegacy実装としてIssue #39まで残し、この移行作業では削除しません。
 
-Issue #35のpreviewは[こちら](https://kakeimatch-issue-35-kakeimatch-issue-35-preview.yhgry.workers.dev)です。iPhone実機での確認と外部AI providerへの実要求は、まだ検証していません。Chromiumでは、実際の家計簿エンジンと代替AI応答を使った主要フロー・オフライン再起動・手入力登録の自動試験が通っています。専用previewのD1と仮想Passkeyを使った登録・ログイン・セッションからのAI認証・ログアウトも確認しています。以下の確認にはテスト専用のブラウザプロファイルと合成データを使います。実際の家計簿を含むBudgetを開いたり変更したりしないでください。
+Issue #37のpreviewは[こちら](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev)です。iPhone実機での確認と外部AI providerへの実要求は、まだ検証していません。Chromiumでは、実際の家計簿エンジンと代替AI応答を使った主要フロー・オフライン再起動・手入力登録の自動試験が通っています。専用previewのD1と仮想Passkeyを使った登録・ログイン・セッションからのAI認証・ログアウトも確認しています。以下の確認にはテスト専用のブラウザプロファイルと合成データを使います。実際の家計簿を含むBudgetを開いたり変更したりしないでください。
 
 ## 端末内のデータと状態
 
@@ -39,10 +39,14 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 5. 照合画面を開いて実行します。同じ日付・店名・金額の合成データが一致することを確認します。金額または店舗名を変えた別の行も試し、要確認・記録なし画面を確認します。合成明細を実際のActual Budgetへ反映しないでください。
 6. 機内モードにしてホーム画面アプリを終了し、再起動します。Budget、レシート、取り込んだ明細、照合状態が残っていることを確認します。AI要求はオフラインを案内し、端末保存済み画像と入力値が引き続き使えることを確認します。
 7. テスト用Cloud accountにログインしている場合は、設定画面からログアウトします。端末データを保持した旨が表示され、家計画面を引き続き使えることを確認します。AI利用には再ログインが必要です。
-8. iOSとSafariのversion、各手順の結果、表示されたエラー文を記録します。backup機能ができるまではSafariのWebサイトデータやテストprofileを削除しないでください。
+8. iOSとSafariのversion、各手順の結果、表示されたエラー文を記録します。Safariの保存領域の維持を保証できない案内とFiles保存・復元手順は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。バックアップ手順を確認する場合も、実データを使わずテスト専用profileを使用してください。
 
 この手順で確認できるのはクライアント側の挙動です。GeminiやTypeSafeへの実要求、Actual Sync Serverとの同期、iPhone実機上での動作は確認済みになりません。これらは未確認のままです。
 
-## Backupと移行の状態
+## 端末内データのbackupと復元
 
-KakeiMatchの端末recordとレシート画像をまとめてexport/restoreする機能はまだありません。Issue #37で実装する予定です。Actual BudgetのZIP importは初回の家計簿読込機能で、KakeiMatchのレシート画像、明細ファイル、照合run、利用者判断をbackupしません。現在はブラウザー内データがローカル情報の唯一のコピーです。試験中にブラウザー領域を消去しないでください。
+設定画面からActual BudgetとKakeiMatchの端末record、残っている画像・CSV原本を `.kmb` に書き出し、新しい端末profileへ復元できます。ブラウザー内データの消失後に備えて、生成したファイルはFilesなど端末外の場所へ別途保存してください。`.kmb` は暗号化されず、表示される生成日時はFiles保存の完了を証明しません。[端末内データのバックアップと復元](LOCAL_BACKUP.md)
+
+復元は既存データと合併しません。復元前の端末profileは保持され、設定画面から切り替え前のprofileへ戻せます。通常の全消去はログアウト中にも操作できます。復元中にActual公式APIで認識できないbudgetが生じた場合は、アプリからの全消去を停止します。元データのバックアップ後にブラウザーのサイトデータを削除してください。この操作は同じoriginの他のブラウザーデータやログイン状態にも影響することがあります。Cloud accountとAI利用量は端末内householdデータとは別の境界です。[LOCAL_DATA.md](LOCAL_DATA.md) [ARCHITECTURE.md](ARCHITECTURE.md)
+
+`.kmb` ファイルの書き出し、Filesへの保存、復元後の再読込、原本整理、ログアウト中の全消去を組み合わせたiPhone実機手順は未検証です。Chromiumの `test:backup-e2e` の結果も確認が完了するまで成功とは扱いません。実施する場合は[合成確認手順](LOCAL_BACKUP.md#iphone-previewでの合成確認)の専用previewと合成データを使います。

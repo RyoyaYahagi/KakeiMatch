@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ActualBudgetSelectionRequiredError,
+  ActualRestoreIncompleteError,
+  ActualRestoreTargetExistsError,
   createActualBrowserLedger,
   type ActualBrowserLedgerOptions,
 } from "@/lib/actual-browser-ledger";
 
 function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
   const budgets = [...initialBudgets];
+  const budgetsByDir = new Map<string, Array<{ id: string; name: string }>>([["/documents", budgets]]);
+  const sendHandlers: Array<ReturnType<typeof vi.fn>> = [];
+  let activeDataDir = "/documents";
   let activeBudget: string | null = null;
   const accounts = [
     { id: "cash", name: "現金", closed: false },
@@ -23,7 +28,25 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     { id: "transfer-in", account: "cash", date: "2026-09-26", amount: 700, transfer_id: "transfer-out" },
   ];
   const api = {
-    init: vi.fn(async () => ({})),
+    init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
+      activeDataDir = dataDir;
+      if (!budgetsByDir.has(dataDir)) budgetsByDir.set(dataDir, []);
+      const send = vi.fn(async (method: string, args?: { id?: string }) => {
+        const localBudgets = budgetsByDir.get(activeDataDir)!;
+        if (method === "get-budgets") return [...localBudgets];
+        if (method === "close-budget") { activeBudget = null; return "ok"; }
+        if (method === "delete-budget") {
+          const index = localBudgets.findIndex((budget) => budget.id === args?.id);
+          if (index >= 0) localBudgets.splice(index, 1);
+          if (activeBudget === args?.id) activeBudget = null;
+          return "ok";
+        }
+        throw new Error(`Unexpected Actual handler: ${method}`);
+      });
+      sendHandlers.push(send);
+      return { send };
+    }),
+    shutdown: vi.fn(async () => { activeBudget = null; }),
     getBudgets: vi.fn(async () => [...budgets]),
     runImport: vi.fn(async (name: string, create: () => Promise<void>) => {
       await create();
@@ -58,24 +81,118 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     createCategory: vi.fn(async () => "new-category"),
     updateCategory: vi.fn(async () => {}),
     batchBudgetUpdates: vi.fn(async (work: () => Promise<void>) => work()),
+    exportBudget: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    importBudget: vi.fn(async () => {
+      const localBudgets = budgetsByDir.get(activeDataDir)!;
+      localBudgets.push({ id: "restored-budget", name: "Restored" });
+      activeBudget = "restored-budget";
+      return { id: "restored-budget" };
+    }),
   };
   const selectedBudget = { current: initialBudgets.length === 1 ? initialBudgets[0]!.id : null };
+  const saveBudgetId = vi.fn((id: string) => { selectedBudget.current = id; });
   const options = {
     getBudgetId: () => selectedBudget.current,
-    saveBudgetId: (id: string) => { selectedBudget.current = id; },
+    saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, selectedBudget, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
   it("creates and remembers an empty local budget with runImport", async () => {
     const { ledger, api, selectedBudget, getActiveBudget } = fixture();
     await expect(ledger.listOpenAccounts()).resolves.toEqual([{ id: "cash", name: "現金" }]);
-    expect(api.init).toHaveBeenCalledWith({});
+    expect(api.init).toHaveBeenCalledWith({ dataDir: "/documents" });
     expect(api.runImport).toHaveBeenCalledOnce();
     expect(selectedBudget.current).toBe("new-budget");
     expect(getActiveBudget()).toBe("new-budget");
+  });
+
+  it("exports a backup from the selected budget", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.exportBackup()).resolves.toEqual(new Uint8Array([1, 2, 3]));
+    expect(api.loadBudget).toHaveBeenCalledWith("budget");
+    expect(api.exportBudget).toHaveBeenCalledOnce();
+  });
+
+  it("restores into a new empty data directory without changing the selected budget", async () => {
+    const { ledger, api, selectedBudget, saveBudgetId } = fixture([{ id: "budget", name: "Existing" }]);
+    await expect(ledger.restoreBackup(new Uint8Array([4, 5]), "/restored/profile-1"))
+      .resolves.toBe("restored-budget");
+    expect(api.importBudget).toHaveBeenCalledWith(new Uint8Array([4, 5]), {
+      type: "actual", filename: "kakeimatch-backup.zip",
+    });
+    expect(selectedBudget.current).toBe("budget");
+    expect(saveBudgetId).not.toHaveBeenCalled();
+    expect(api.shutdown).toHaveBeenCalled();
+    expect(api.init).toHaveBeenLastCalledWith({ dataDir: "/documents" });
+  });
+
+  it("removes budgets imported into the restore directory when validation fails", async () => {
+    const { ledger, api, sendHandlers, budgetsByDir } = fixture([{ id: "budget", name: "Existing" }]);
+    api.importBudget.mockImplementationOnce(async () => {
+      budgetsByDir.get("/failed/profile")!.push({ id: "partial-budget", name: "Partial" });
+      throw new Error("invalid archive");
+    });
+    await expect(ledger.restoreBackup(new Uint8Array([8]), "/failed/profile"))
+      .rejects.toBeInstanceOf(ActualRestoreIncompleteError);
+    expect(sendHandlers.some((send) => send.mock.calls.some(([method, args]) => method === "delete-budget" && args?.id === "partial-budget"))).toBe(true);
+  });
+
+  it("does not touch a non-empty restore directory", async () => {
+    const { ledger, sendHandlers } = fixture([{ id: "budget", name: "Existing" }]);
+    await expect(ledger.restoreBackup(new Uint8Array([9]), "/documents"))
+      .rejects.toBeInstanceOf(ActualRestoreTargetExistsError);
+    expect(sendHandlers.some((send) => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
+  });
+
+  it("preserves incomplete-import classification when returning to the source directory also fails", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Existing" }]);
+    const reactivationError = new Error("source init failed");
+    api.importBudget.mockRejectedValueOnce(new Error("partial import"));
+    const init = api.init.getMockImplementation()!;
+    api.init.mockImplementation(async (options) => {
+      if (options?.dataDir === "/documents") throw reactivationError;
+      return init(options);
+    });
+    const error = await ledger.restoreBackup(new Uint8Array([8]), "/failed/profile").catch(error => error);
+    expect(error).toBeInstanceOf(ActualRestoreIncompleteError);
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    expect(error.cause.errors).toContain(reactivationError);
+  });
+
+  it("preserves occupied-target classification when returning to the source directory also fails", async () => {
+    const { ledger, api, budgetsByDir, sendHandlers } = fixture([{ id: "budget", name: "Existing" }]);
+    budgetsByDir.set("/occupied/profile", [{ id: "other", name: "Other" }]);
+    const init = api.init.getMockImplementation()!;
+    api.init.mockImplementation(async (options) => {
+      if (options?.dataDir === "/documents") throw new Error("source init failed");
+      return init(options);
+    });
+    await expect(ledger.restoreBackup(new Uint8Array([8]), "/occupied/profile"))
+      .rejects.toBeInstanceOf(ActualRestoreTargetExistsError);
+    expect(api.importBudget).not.toHaveBeenCalled();
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
+  });
+
+  it("lists and deletes local budgets through Actual's typed handlers", async () => {
+    const { ledger, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.listLocalBudgets()).resolves.toEqual([{ id: "budget", name: "Local" }]);
+    await ledger.deleteLocalBudget("budget");
+    expect(sendHandlers.some((send) => send.mock.calls.some(([method, args]) =>
+      method === "delete-budget" && JSON.stringify(args) === JSON.stringify({ id: "budget" })))).toBe(true);
+    await expect(ledger.listLocalBudgets()).resolves.toEqual([]);
+  });
+
+  it("discards every budget in a dedicated restore directory", async () => {
+    const { ledger, api, budgetsByDir, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    budgetsByDir.set("/restore/profile", [{ id: "restored", name: "Restored" }]);
+    await ledger.discardDataDirectory("/restore/profile");
+    expect(budgetsByDir.get("/restore/profile")).toEqual([]);
+    expect(sendHandlers.some((send) => send.mock.calls.some(([method, args]) =>
+      method === "delete-budget" && args?.id === "restored"))).toBe(true);
+    expect(api.init).toHaveBeenLastCalledWith({ dataDir: "/documents" });
   });
 
   it("requires local selection when multiple budgets exist", async () => {

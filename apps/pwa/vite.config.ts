@@ -3,6 +3,7 @@ import { defineConfig } from 'vite';
 import { cloudflare } from '@cloudflare/vite-plugin';
 
 export default defineConfig({
+  server: { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
   plugins: [cloudflare(), {
     name: 'offline-assets',
     generateBundle(_options, bundle) {

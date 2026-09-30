@@ -2,7 +2,7 @@
 
 ## 現行アプリ
 
-現在の主アプリは `apps/pwa` のPWAです。PWAはActual Budget、レシート、明細、照合結果をブラウザー内に保存します。`apps/pwa` はCloudflare Workersのpreviewへ配信され、UIを静的assetとして、認証・AI APIを同一originのWorker routeとして提供します。現在のpreview URLは[Issue #35 preview](https://kakeimatch-issue-35-kakeimatch-issue-35-preview.yhgry.workers.dev)です。
+現在の主アプリは `apps/pwa` のPWAです。PWAはActual Budget、レシート、明細、照合結果をブラウザー内に保存します。`apps/pwa` はCloudflare Workersのpreviewへ配信され、UIを静的assetとして、認証・AI APIを同一originのWorker routeとして提供します。現在のpreview URLは[Issue #37 preview](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev)です。
 
 ルートのNext.jsアプリとそのSQLite・サーバー保管機能は移行前のlegacy実装です。削除せずIssue #39まで保持します。以下にNext.jsやサーバーDBを前提とする節は、legacy実装の設計記録です。PWAの保存と照合には適用しません。
 
@@ -66,7 +66,9 @@ Cloud accountやAI Gatewayが利用できない場合も、PWAのローカル家
 
 明細CSVはPayPayの対応headerだけを端末で解析し、原本とcanonical行をIndexedDBへ保存します。CSV原本や行はCloudflareへ送信しません。三井住友カード、楽天カード、イオンカードは形式の意味が未確認のため拒否します。照合は端末内のconfirmed receiptとcanonical statementだけを使う決定的処理です。自動一致・要確認・記録なしのrun、候補、判断、Actual反映状態を端末に保存します。Web Locksで同一レシートの更新・登録をタブ間で直列化し、Actual登録には安定したimported IDを使います。AIのログアウトは認証sessionとメモリ上のAI tokenを終了しますが、IndexedDBやActualの端末データを削除しません。
 
-現時点ではローカルデータのバックアップ・復元UIを実装していません。Issue #37で端末データをexport/importできる形にするまで、端末内データを唯一の正本として扱う運用に注意してください。PWAの手動確認手順は[ローカル保存フロー](LOCAL_FIRST_FLOW.md)に記載しています。
+Issue #37では、Actual Budget ZIP、端末record、残っている画像・CSV原本を含む `.kmb` ファイルのバックアップを追加します。読み込み時は検証後に新しいIndexedDB profileとActual `dataDir` へstagingし、両方の読み戻し確認後にだけlocalStorageのprofile pointerを切り替えます。成功後は切替前のprofileを保持し、設定画面から戻せます。生成日時はファイルをFilesなどへ保存できたことを示しません。ファイルは暗号化されません。Actual metadataが欠けて公式APIに認識されない孤児budgetの可能性を検出した場合は、アプリの全消去を止めます。元データのバックアップ後にブラウザーのサイトデータ削除が必要です。[端末内データのバックアップと復元](LOCAL_BACKUP.md)
+
+Cloud accountはバックアップにも復元にも使いません。ログアウト中にhouseholdデータを復元・消去できます。端末内IndexedDB、Actualの既知budget、Cloud accountの認証・AI利用情報は別境界です。[端末内データ基盤](LOCAL_DATA.md)
 
 ## ホスティング
 
@@ -409,7 +411,9 @@ Docker / OCI container runtime
 
 Docker Composeは自宅Linux向けのreference deploymentとして扱い、アプリ内部からComposeのservice name等へ強く依存しないでください。
 
-### Backup / restore
+### Legacy server backup / restore
+
+以下は移行前のNext.jsアプリとホスト運用に関するbackup/restore要件です。PWAの端末内backupとは別の機能です。
 
 将来のホスト移行もバックアップ/リストアの一種として扱います。
 

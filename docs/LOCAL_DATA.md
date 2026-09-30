@@ -27,9 +27,11 @@ IndexedDB の書き込み例外は `LocalDataStorageError` に包みます。`Qu
 
 `delete(id)` は profile 内の対象 record と、それを owner とする receipt / statement Blob を1つの read-write transaction で削除します。`restore(snapshot)` は snapshot の profile 内 record と Blob を置き換え、他 profile のデータを変更しません。いずれも失敗すれば transaction が commit されないため、途中までの復元結果は保存しません。
 
-## #37 との境界
+## Portable backupとの境界
 
-`serialize()` と `restore()` は repository 単位の versioned primitive です。Blob を含む snapshot を返します。画面、ファイル選択、Actual と合わせた portable backup、corrupt backup からの全体復旧は実装しません。これらは Issue #37 の範囲です。
+`serialize()` と `restore()` はrepository単位のschema version付きprimitiveです。Blobを含むsnapshotを返します。portable fileの生成・検証、Actual ZIPとの組み合わせ、ファイル選択、profile切替は別の層が担当します。[実装: `local-backup-format.ts`](../src/lib/local-backup-format.ts) [実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts)
+
+Issue #37のportable fileは`.kmb`です。外側containerは非圧縮で、Actual ZIP、record JSON、残っている原本Blobを別entryに置きます。readerはschema version、record kindごとのstrict schema、path、重複ID、entry数・サイズ、SHA-256を検証してから返します。端末保存とActualの復元手順、サイズ上限、消去時の制約は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。
 
 ## 出典
 

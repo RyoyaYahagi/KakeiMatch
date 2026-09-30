@@ -54,6 +54,17 @@ jobs:
       - run: pnpm --dir apps/pwa typecheck
       - run: pnpm --dir apps/pwa test
       - run: pnpm --dir apps/pwa build
+      - run: pnpm --dir apps/pwa exec playwright-core install --with-deps chromium
+      - name: Synthetic backup and restore through the browser ledger
+        run: |
+          pnpm --dir apps/pwa dev --host 127.0.0.1 > /tmp/kakeimatch-pwa-dev.log 2>&1 &
+          pwa_pid=$!
+          trap 'kill "$pwa_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5173/ > /dev/null; then break; fi
+            sleep 1
+          done
+          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:backup-e2e
       - run: npm ci --prefix workers/ai-gateway
       - run: npm test --prefix workers/ai-gateway
       - run: npm run typecheck --prefix workers/ai-gateway
