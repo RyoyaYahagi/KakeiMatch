@@ -30,7 +30,7 @@ export type LocalReceipt = {
   extraction: ReceiptExtractionResult | null;
   /** Usage flow for the latest successful extraction; older receipts may lack it. */
   aiFlowId?: string;
-  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null };
+  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
   confirmedValue: ConfirmedReceiptValue | null;
   registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
 };
@@ -159,7 +159,8 @@ export class LocalReceiptService {
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
-      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp };
+      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp,
+        aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;
     } catch (error) { throw safeError(error); }
@@ -181,6 +182,15 @@ export class LocalReceiptService {
       return suggestion.categoryId;
       }
       if (!receipt.extraction) return null;
+      // Reuse the validated local answer, including an uncertain result, rather
+      // than spending another provider attempt for identical receipt facts.
+      if (receipt.aiSuggestion.attemptedAt && receipt.aiSuggestion.probabilities && receipt.aiSuggestion.model) {
+        if (receipt.aiSuggestion.flowId === receipt.aiFlowId) return receipt.aiSuggestion.categoryId;
+        if (!receipt.aiSuggestion.flowId) {
+          const extraction = await this.repository.get<{ analyzedAt: string }>(`receipt-extraction:${id}`);
+          if (extraction && receipt.aiSuggestion.attemptedAt >= extraction.value.analyzedAt) return receipt.aiSuggestion.categoryId;
+        }
+      }
       if (!receipt.aiFlowId) throw gatewayError("invalid_flow");
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのためカテゴリを提案できません。保存済みの内容は端末にあります。");
       const items = receipt.extraction.items.slice(0, MAX_ITEMS_FOR_JEV).map(({ name, amountYen }) => ({ name: name.trim().slice(0, MAX_TEXT_FOR_JEV), amountYen }));
@@ -191,7 +201,7 @@ export class LocalReceiptService {
       if (!response.ok) throw gatewayError(await readGatewayCode(response));
       const parsed = safeCategoryResponse(await response.json());
       if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
-      const suggestion = { categoryId: parsed.choice, source: parsed.choice ? "jev" as const : "unclassified" as const, probabilities: parsed.probabilities, model: parsed.model, attemptedAt: nowIso(this.options) };
+      const suggestion = { categoryId: parsed.choice, source: parsed.choice ? "jev" as const : "unclassified" as const, probabilities: parsed.probabilities, model: parsed.model, attemptedAt: nowIso(this.options), flowId: receipt.aiFlowId };
       await this.save({ ...receipt, aiSuggestion: suggestion, updatedAt: suggestion.attemptedAt });
       return parsed.choice;
     } catch (error) { throw safeError(error); }
