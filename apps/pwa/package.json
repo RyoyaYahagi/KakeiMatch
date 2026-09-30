@@ -10,7 +10,9 @@
     "build": "tsc --noEmit && vite build"
   },
   "dependencies": {
-    "@actual-app/api": "26.9.0"
+    "@actual-app/api": "26.9.0",
+    "@better-auth/passkey": "1.7.6",
+    "better-auth": "1.7.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.0",

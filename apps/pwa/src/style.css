@@ -3,6 +3,9 @@
 body { margin: 0; }
 main { max-width: 640px; margin: 0 auto; padding: max(24px, env(safe-area-inset-top)) 20px max(32px, env(safe-area-inset-bottom)); }
 header { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #d8ddd6; padding-bottom: 16px; }
+.app-nav { display: flex; gap: 8px; border-bottom: 1px solid #d8ddd6; padding: 12px 0; }
+.nav-button { background: transparent; color: #2f5144; border: 1px solid transparent; }
+.nav-button.active { border-color: #9fb8aa; background: white; }
 h1 { margin: 0; font-size: 1.35rem; }
 h2 { font-size: 1.1rem; margin: 28px 0 12px; }
 p { line-height: 1.6; }
@@ -12,6 +15,9 @@ select, button { font: inherit; border-radius: 9px; min-height: 44px; }
 select { width: 100%; padding: 8px; background: white; border: 1px solid #a8b9ad; }
 button { background: #2f6959; color: white; border: 0; padding: 8px 16px; cursor: pointer; }
 button:disabled { opacity: .55; }
+.secondary { background: white; color: #2f6959; border: 1px solid #9fb8aa; margin: 8px 8px 0 0; }
+.text-button { background: transparent; color: #2f6959; padding: 4px 8px; }
+nav + p { min-height: 1.5em; }
 ul { list-style: none; padding: 0; margin: 0; }
 li { padding: 12px 0; border-bottom: 1px solid #d8ddd6; }
 .row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }

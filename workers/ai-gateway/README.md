@@ -1,18 +1,21 @@
 # AI Gateway Worker
 
-Small Cloudflare Worker handler for the PWA's same-origin `POST /api/ai/gemini` and `POST /api/ai/jev` paths. It has no database, object storage, or logging of request, provider, or response bodies. The receipt image exists only in the in-flight Gemini request. Jev receives only merchant, total JPY, and up to 30 item names and amounts.
+Cloudflare Worker handlers for the PWA's same-origin Cloud account and AI routes. The D1 binding stores only account authentication, entitlement, and monthly usage metadata. No request, provider, or response body is logged or persisted. The receipt image exists only in the in-flight Gemini request. Jev receives only merchant, total JPY, and up to 30 item names and amounts.
 
-## Identity boundary
+## Identity boundary and account routes
 
-Both routes require an `Authorization: Bearer <JWT>` token signed with `AI_GATEWAY_AUTH_SECRET`. The gateway accepts HS256 tokens with `aud: "kakeimatch-ai"`, an opaque URL-safe `sub`, and an expiry no more than 10 minutes away. A trusted same-origin identity issuer must mint this token after authenticating the person. The token is for AI calls only; local data access does not use it. Never put the signing secret or provider keys in the PWA bundle. The PWA integration should use these same-origin paths, so its request stays within the app origin and preserves COOP/COEP behavior.
+Both provider routes require an `Authorization: Bearer <JWT>` token signed with `AI_GATEWAY_AUTH_SECRET`. The gateway accepts HS256 tokens with `aud: "kakeimatch-ai"`, an opaque URL-safe `sub`, and an expiry no more than 10 minutes away. The same-origin `/api/ai/token` route signs this token after checking the Better Auth session. The token is for AI calls only; local data access does not use it. Never put the signing secret or provider keys in the PWA bundle. `apps/pwa/src/worker.ts` mounts the handlers under the app origin and preserves COOP/COEP behavior.
 
-The existing server session can be the initial trusted issuer while that server remains in use. A future local-first issuer must establish user identity without relying on an ID supplied by the client. This Worker deliberately has no token-minting route.
+`POST /api/ai/token` and `GET /api/ai/usage` use the Better Auth session from the account cookie. The token endpoint does not accept an identity in the request; it signs the server-resolved account ID. The token is valid for 10 minutes, while account sessions use the separately configured 14-day lifetime with 24-hour refresh age. A valid session can silently mint a new token after expiry.
+
+The account D1 database contains identity/auth records, `account_entitlements`, and monthly `ai_usage` counters only. It does not contain household data. Missing entitlement rows use the configured `AI_FREE_MONTHLY_LIMIT` (30 by default). Family has a null monthly limit, meaning no monthly product quota; the existing per-user/provider rate limit remains active. Pro is admin-set only and has a finite limit. Monthly buckets follow UTC calendar months.
 
 ## Limits and errors
 
 - JSON request body: 9 MiB maximum; Gemini image: 6 MiB maximum and JPEG/PNG/WebP signature checked.
 - Provider response: 1 MiB maximum; fixed provider URLs/configuration and timeouts; no provider error body is returned.
 - Cloudflare `AI_USER_RATE_LIMIT` binding: 20 requests per user/provider per minute. Cloudflare's built-in limit is location-local and permissive, so it is an abuse guard rather than exact billing.
+- Monthly quota increments once after request validation and immediately before a provider request. Validation/auth/quota failures do not increment. Provider timeouts and failures after the request starts count. A client retry is a new provider attempt and counts again.
 - Safe error JSON uses only stable codes such as `unauthorized`, `invalid_request`, `rate_limited`, `provider_timeout`, and `provider_unavailable`.
 - Gemini structured output and Jev category probabilities are validated before return. Application code must still perform its own domain validation before saving.
 
@@ -28,6 +31,8 @@ npm run typecheck
 npm run build
 ```
 
-The `cloudflare.config.ts` declares only secret bindings, non-sensitive model settings, and a rate-limit binding. Provision real secret values with the current `cf workers secrets` commands after checking `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees. The dedicated Worker name is `kakeimatch-pr-36`; deploy it only as a Worker Preview with `cf previews deploy kakeimatch-pr-36`. Do not run `cf deploy` for this isolated preview Worker.
+The PWA Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_FREE_MONTHLY_LIMIT` with the existing provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
 
-This isolated preview has its own origin. The same-origin route must be integrated with the #32 PWA Worker after #32 is merged. The identity issuer is intentionally not included because the PWA and identity flow are being implemented separately. Until the issuer and secret bindings exist, requests fail closed with `not_configured`.
+Apply versioned SQL under `migrations/` before deployment. From `workers/ai-gateway`, administrators can assign plans with `ACCOUNT_D1_ID=<database-uuid> npm run account:set-plan -- <opaque-user-id> family`; `family` is unlimited at the product-quota layer. The Worker uses `AI_FREE_MONTHLY_LIMIT` (30 by default) for accounts without an explicit entitlement. Explicit `free` or `pro` assignments require `AI_FREE_MONTHLY_LIMIT` or `AI_PRO_MONTHLY_LIMIT` in the operator environment. The command is administrative; there is no client plan mutation route.
+
+The PWA and API handlers run in one Issue #6 Preview Worker. This Preview uses its own D1 database and trusted origin. Issue #35 will connect receipt and category actions to the token and provider routes.
