@@ -4,7 +4,7 @@
 
 ## 本番URLとデータ
 
-アプリが前提とする本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザーの保存領域はoriginごとに分かれます。利用開始後にWorker名やoriginを変更すると、保存済みデータをアプリから参照できなくなる可能性があります。Worker名とoriginを安定して維持してください。ただし、configでproduction Worker名を `kakeimatch` に設定しただけでは、正規originへのroutingが成立したことを意味しません。Cloudflare側のroute、D1、secretはIssue #39ではprovisioningも実接続確認もしていないため、正規originから本番Workerへ接続できることは未検証です。正規origin自体は変更しません。
+アプリが前提とする本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザーの保存領域はoriginごとに分かれます。利用開始後にWorker名やoriginを変更すると、保存済みデータをアプリから参照できなくなる可能性があります。Worker名とoriginを安定して維持してください。ただし、configでproduction Worker名を `kakeimatch` に設定しただけでは、正規originへのroutingが成立したことを意味しません。Cloudflare側のroute、D1、secretはIssue #39ではprovisioningも実接続確認もしていないため、正規originから本番Workerへ接続できることは未検証です。本番Worker名 `kakeimatch` とCloudflareアカウントのsubdomain `yhgry` に対応するURLを正規originとして使います。
 
 同一WorkerがPWAと `/api/auth/*`、`/api/account/*`、`/api/ai/*` を配信します。WorkerのD1 bindingは、本人確認、session、Passkey、招待・回復、利用権限、AI利用量の保存だけに使います。家計データは保存しません。GeminiとJevの認証情報はWorker secretに設定します。WorkerはCOOP/COEP headerを維持し、Service Workerは `/api/*` をcacheしません。
 
@@ -40,4 +40,4 @@ AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace�
 
 旧Actual ServerからexportしたZIPにはActual Budgetの家計簿データだけが含まれます。PWAのブラウザー版Actualへimportしてください。旧Next.jsにはKakeiMatch `.kmb` export機能がなく、旧receipt/statement metadataも自動移行されません。local-first PWAで作成した `.kmb` には、Actual BudgetとKakeiMatch端末記録、残っているreceipt/statement原本が含まれます。PWAは旧server SQLiteや旧receipt/statement directoryを直接読みません。新しい端末profileを確認するまで旧環境の検証済みbackupを保管してください。対応するexportに含まれないlegacy記録は個別に手動移行してください。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。Actual orphan cleanupの特殊制約はIssue #58で管理します。
 
-2026-09-30の読み取り確認では、指定された本番origin `https://kakeimatch.workers.dev` をこの実行環境からDNS解決できませんでした。Issue #39専用previewはHTTPS 200で応答し、COOP/COEPを維持していました。本番originの指定は変更せず、公開前にDNSと配信経路、account専用D1、secretの設定を別途確認します。本番への書き込みは実施していません。
+2026-09-30に本番の正規originを `https://kakeimatch.yhgry.workers.dev` へ変更しました。Cloudflareのworkers.dev URLは `<Worker名>.<アカウントのsubdomain>.workers.dev` の形式です。[Cloudflare公式資料](https://developers.cloudflare.com/workers/configuration/routing/workers-dev/)を参照してください。同日の読み取り確認では、新URLはHTTPS 404で応答しました。Cloudflare上に本番Worker `kakeimatch` とaccount専用の本番D1はまだ存在せず、この変更では本番deployを実施していません。公開には本番D1とsecretを準備し、上記のproduction modeでdeployする必要があります。previewのデータやsecretを本番用として流用しないでください。

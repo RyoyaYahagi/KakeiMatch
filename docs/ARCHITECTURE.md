@@ -13,7 +13,7 @@
 └─ Cloud account / AI利用時の同一origin要求
        │
        ▼
-Cloudflare Worker: https://kakeimatch.workers.dev
+Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
 ├─ PWA配信
 ├─ /api/auth/* と /api/account/*
 ├─ /api/ai/*
@@ -21,7 +21,7 @@ Cloudflare Worker: https://kakeimatch.workers.dev
        利用権限 / AI利用量のみ
 ```
 
-本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後にWorker名やoriginを変えると、保存済みデータが見えなくなることがあります。このoriginを安定して維持してください。previewは別originを使い、合成データ専用とします。家計データをpreviewで開かないでください。
+本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後にWorker名やoriginを変えると、保存済みデータが見えなくなることがあります。このoriginを安定して維持してください。previewは別originを使い、合成データ専用とします。家計データをpreviewで開かないでください。
 
 ## データ境界
 

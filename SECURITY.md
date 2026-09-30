@@ -32,7 +32,7 @@ Avoid logging financial data, raw AI request/response bodies, provider errors th
 
 ## Deployment
 
-The application assumes the canonical production origin is `https://kakeimatch.workers.dev`. Browser storage belongs to its origin, so keep the Worker name and origin stable after production use. Configuring a Worker named `kakeimatch` does not verify that Cloudflare routes this canonical origin to it. Production routes, D1, and secrets remain unprovisioned and unverified by Issue #39. Preview deployments are for synthetic tests only. The Service Worker must not cache `/api/*`; the Worker must retain its configured COOP and COEP headers for the browser-side Actual engine.
+The application assumes the canonical production origin is `https://kakeimatch.yhgry.workers.dev`. Browser storage belongs to its origin, so keep the Worker name and origin stable after production use. Configuring a Worker named `kakeimatch` does not verify that Cloudflare routes this canonical origin to it. Production routes, D1, and secrets remain unprovisioned and unverified by Issue #39. Preview deployments are for synthetic tests only. The Service Worker must not cache `/api/*`; the Worker must retain its configured COOP and COEP headers for the browser-side Actual engine.
 
 The production application does not require a home Linux server, Docker, Next.js server, Actual Sync Server, server household SQLite, or receipt/statement filesystem volumes. Legacy server components are not production security boundaries. Production route, D1, and secret provisioning must be verified before production use; Issue #39 does not deploy to or reconfigure production.
 

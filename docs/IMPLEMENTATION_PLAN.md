@@ -4,7 +4,7 @@
 
 ## 本番構成
 
-本番clientは `apps/pwa` で、Cloudflare Workerから配信します。本番の正規URLは `https://kakeimatch.workers.dev` です。ブラウザー保存領域はURLごとに分かれるため、利用開始後もこのURLを維持してください。previewは合成データだけで使用します。
+本番clientは `apps/pwa` で、Cloudflare Workerから配信します。本番の正規URLは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はURLごとに分かれるため、利用開始後もこのURLを維持してください。previewは合成データだけで使用します。
 
 家計簿、レシート、明細、照合状態は利用者の端末に保存します。ブラウザー版Actualエンジンが家計簿を管理し、KakeiMatchのIndexedDBが記録と原本を保存します。Cloud accountは家計操作に不要です。CloudflareのBetter AuthとD1は、本人確認、session、Passkey、招待・回復、利用権限、AI利用量だけに使います。GeminiとJevへの要求は同一originのWorker routeを通します。
 

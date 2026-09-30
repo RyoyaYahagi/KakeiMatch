@@ -1,6 +1,6 @@
 # KakeiMatch PWA
 
-`apps/pwa` は本番clientです。ViteでPWAをbuildし、Cloudflare Vite Pluginで静的assetと同一originのWorker routeを配信します。本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後はoriginを維持してください。
+`apps/pwa` は本番clientです。ViteでPWAをbuildし、Cloudflare Vite Pluginで静的assetと同一originのWorker routeを配信します。本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後はoriginを維持してください。
 
 ## 機能
 
