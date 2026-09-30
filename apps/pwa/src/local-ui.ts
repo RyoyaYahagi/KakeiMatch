@@ -94,7 +94,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const draftId = `receipt-draft:${receipt.id}`;
     const draft = await repository.get<{ merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string }>(draftId);
     view.append(aiArea, form);
-    const value = draft?.value ?? receipt.confirmedValue ?? (receipt.extraction?.documentKind === 'receipt' ? receipt.extraction : null);
+    // Saving before an AI request also persists untouched fields (including amount 0).
+    // Such a draft must not hide a successful extraction, even after reopening it.
+    const hasDraftContent = draft && (draft.value.merchant.trim() !== '' || draft.value.totalAmountYen > 0 || draft.value.purchasedTime !== null);
+    const value = (hasDraftContent ? draft.value : null) ?? receipt.confirmedValue ?? (receipt.extraction?.documentKind === 'receipt' ? receipt.extraction : null) ?? draft?.value;
     if (receipt.extraction?.warnings.length) view.append(text('p', '読み取り結果に不明な項目があります。画像と照らし合わせて確認してください。'));
     el<HTMLInputElement>('receipt-merchant').value = value?.merchant ?? '';
     el<HTMLInputElement>('receipt-date').value = value?.purchasedDate ?? today();
@@ -110,7 +113,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const ai = button('AIで読み取る', async () => {
       await saveDraft();
       try { await receipts.analyze(receipt.id);
-        if (!draft && !receipt.confirmedValue && !el<HTMLInputElement>('receipt-merchant').value && !el<HTMLInputElement>('receipt-amount').value) await repository.delete(draftId);
         await receiptEditor((await receipts.get(receipt.id))!); }
       catch (error) { report(error); if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount)); }
     });
