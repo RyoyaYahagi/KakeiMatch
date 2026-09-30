@@ -2,7 +2,7 @@ import { bindings, defineConfig } from 'cf/config';
 
 export default defineConfig({
   worker: {
-    name: 'kakeimatch-issue-35-preview',
+    name: 'kakeimatch-issue-37-preview',
     compatibilityDate: '2026-09-29',
     compatibilityFlags: ['nodejs_compat'],
     entrypoint: './src/worker.ts',

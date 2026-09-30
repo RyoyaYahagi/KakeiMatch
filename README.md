@@ -44,12 +44,13 @@ Issue #35以降の主アプリは、Cloudflare Workersで配信するスマー�
 - [SECURITY.md](SECURITY.md): 家計データを扱う際のセキュリティ方針
 - [CLOUD_ACCOUNT.md](docs/CLOUD_ACCOUNT.md): Cloud account、Passkey、AI利用量の境界と運用
 - [LOCAL_FIRST_FLOW.md](docs/LOCAL_FIRST_FLOW.md): PWAの現在の機能、データ境界、iPhoneでのsynthetic確認手順
+- [LOCAL_BACKUP.md](docs/LOCAL_BACKUP.md): 端末内データの書き出し・復元・消去と未確認事項
 
 ## Status
 
-PWAはActual Budgetを端末内で開き、支出を表示します。レシート画像と入力値を端末に保存し、希望時にAI抽出とカテゴリ提案を使えます。ユーザーが店名・日付・金額・カテゴリ・口座を確認してから、端末内のActual Budgetへ登録します。明細画面はPayPay CSVの対応形式を端末内で読み込みます。照合は登録済みレシートと明細を端末内で比較し、自動一致、要確認、記録なしを表示します。判断のActualへの反映や再試行状態も端末に保存します。AI Gatewayへは認証済み要求だけを送信し、Cloud accountやAI Gatewayに接続できない場合も手入力、ローカル明細の取扱い、照合を利用できます。
+PWAはActual Budgetを端末内で開き、支出を表示します。レシート画像と入力値を端末に保存し、希望時にAI抽出とカテゴリ提案を使えます。ユーザーが店名・日付・金額・カテゴリ・口座を確認してから、端末内のActual Budgetへ登録します。明細画面はPayPay CSVの対応形式を端末内で読み込みます。照合は登録済みレシートと明細を端末内で比較し、自動一致、要確認、記録なしを表示します。判断のActualへの反映や再試行状態も端末に保存します。設定画面からActual家計簿、端末記録、残っているレシート画像・CSV原本を`.kmb`ファイルへ書き出し、新しい保存先へ復元できます。AI Gatewayへは認証済み要求だけを送信し、Cloud accountやAI Gatewayに接続できない場合も手入力、ローカル明細の取扱い、照合を利用できます。
 
-三井住友カード、楽天カード、イオンカードの実exportは、列の意味や形式を安全に確定できていないため取り込めません。PayPayの対応範囲と他社形式の確認状況は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。Actual Serverを使う実データ連携のライブ確認とiPhone実機での一連の確認は未実施です。確認手順は[ローカル保存フロー](docs/LOCAL_FIRST_FLOW.md)を参照してください。
+三井住友カード、楽天カード、イオンカードの実exportは、列の意味や形式を安全に確定できていないため取り込めません。PayPayの対応範囲と他社形式の確認状況は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。Actual Serverを使う実データ連携のライブ確認とiPhone実機での一連の確認は未実施です。バックアップのiPhone Files保存・復元・原本整理・消去も成功結果を確認できていません。端末保存の消失リスク、既知のActual孤児データの制約、合成確認手順は[端末内データのバックアップと復元](docs/LOCAL_BACKUP.md)を参照してください。
 
 ### Legacy Next.jsアプリ
 
