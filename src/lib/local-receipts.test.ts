@@ -85,8 +85,10 @@ describe("LocalReceiptService", () => {
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("food");
     const body = JSON.parse(String(fetchImpl.mock.calls[1][0] && (fetchImpl.mock.calls[1][1] as RequestInit).body));
-    expect(body).toEqual({ receipt: { merchant: "Synthetic Shop", totalAmountYen: 3284, items: [{ name: "Synthetic Item", amountYen: 3284 }] } });
+    expect(body).toEqual({ flowId: (await service.get(receipt.id))?.aiFlowId, receipt: { merchant: "Synthetic Shop", totalAmountYen: 3284, items: [{ name: "Synthetic Item", amountYen: 3284 }] } });
     expect((await service.get(receipt.id))?.confirmedValue).toBeNull();
+    const imageBody = JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body));
+    expect(body.flowId).toBe(imageBody.flowId);
   });
 
   it("prefers a saved merchant mapping without calling Jev", async () => {
@@ -130,6 +132,7 @@ describe("LocalReceiptService", () => {
     const confirmed = await service.confirm(receipt.id, { merchant: "Corrected Shop", purchasedDate: "2026-09-29", purchasedTime: null, totalAmountYen: 100, categoryId: "food", accountId: "cash" });
     const reanalyzed = await service.analyze(receipt.id);
     expect(reanalyzed.confirmedValue).toEqual(confirmed.confirmedValue);
+    expect(reanalyzed.aiFlowId).not.toBe(confirmed.aiFlowId);
   });
 
   it("rejects impossible dates and empty Actual category/account IDs without persisting a confirmation", async () => {
@@ -235,6 +238,17 @@ describe("LocalReceiptService", () => {
     expect(saved?.extraction).toBeNull();
     expect(saved?.registration.status).toBe("pending");
     expect(new Uint8Array(await (await repository.getBlob(receipt.image!.blobId))!.blob.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+  });
+
+  it("offers manual registration after an expired category flow", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(extraction)).mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
+    const { service, ledger } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    await expect(service.suggestCategory(receipt.id)).rejects.toMatchObject({ code: "invalid_flow" });
+    await service.confirm(receipt.id, { merchant: "Manual Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 500, categoryId: "food", accountId: "cash" });
+    expect((await service.register(receipt.id)).registration.status).toBe("applied");
+    expect(ledger.importReceipt).toHaveBeenCalledOnce();
   });
 
   it("rejects a category response with missing confidence without storing a suggestion", async () => {

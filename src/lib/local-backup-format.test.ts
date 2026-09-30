@@ -85,6 +85,14 @@ async function rewriteEntry(file: Blob, path: string, replacement: Uint8Array): 
 }
 
 describe("portable local backup format", () => {
+  it("round-trips new receipt flow IDs while accepting receipts written before the cutover", async () => {
+    const data = fixture();
+    data.records[0].value = { ...(data.records[0].value as Record<string, unknown>), aiFlowId: "00000000-0000-4000-8000-000000000001" };
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records[0].value).toMatchObject({ aiFlowId: "00000000-0000-4000-8000-000000000001" });
+    expect((await readPortableBackup(await create())).localData.records[0].value).not.toHaveProperty("aiFlowId");
+  });
+
   it("round-trips Actual ZIP bytes, structured records, and raw files", async () => {
     const result = await readPortableBackup(await create());
     expect([...result.actualBackup]).toEqual([...actualBackup]);

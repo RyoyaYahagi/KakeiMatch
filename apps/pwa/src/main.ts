@@ -42,6 +42,7 @@ root.innerHTML = `
       <p>家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       <section id="local-settings"></section>
       <h2>AI利用</h2>
+      <p class="muted">レシートの読み取りからカテゴリ提案までで1回です。読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
       <p id="account-status" class="muted"></p>
       <div id="signed-out-actions" hidden>

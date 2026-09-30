@@ -1,3 +1,4 @@
+import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory } from "./receipt-ai-usage";
 import { getAccountSession, type AccountEnv } from "./account-auth";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
@@ -33,12 +34,10 @@ export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB"> {
 type HandlerOptions = { fetchImpl?: typeof fetch; nowSeconds?: () => number };
 
 type Plan = "free" | "pro" | "family";
-type Provider = "gemini" | "jev";
 function freeLimit(env: GatewayEnv): number {
   const configured = Number(env.AI_FREE_MONTHLY_LIMIT);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_FREE_MONTHLY_AI_LIMIT;
 }
-function monthKey(nowSeconds: number): string { return new Date(nowSeconds * 1000).toISOString().slice(0, 7); }
 function readPlan(value: unknown): Plan {
   if (value === "free" || value === "pro" || value === "family") return value;
   throw new Error("invalid_entitlement");
@@ -57,29 +56,6 @@ async function entitlement(db: AccountD1Binding, userId: string, defaultLimit: n
   const row = await db.prepare("SELECT plan, monthly_ai_limit AS monthlyAiLimit FROM account_entitlements WHERE user_id = ?").bind(userId).first<{ plan: string; monthlyAiLimit: number | null }>();
   if (!row) return { plan: "free", limit: defaultLimit };
   return { plan: readPlan(row.plan), limit: row.monthlyAiLimit === null ? null : row.monthlyAiLimit };
-}
-async function usage(db: AccountD1Binding, userId: string, month: string): Promise<{ gemini: number; jev: number }> {
-  const row = await db.prepare("SELECT gemini_used AS gemini, jev_used AS jev FROM ai_usage WHERE user_id = ? AND month = ?").bind(userId, month).first<{ gemini: number; jev: number }>();
-  return row ?? { gemini: 0, jev: 0 };
-}
-async function consumeUsage(db: AccountD1Binding, userId: string, month: string, provider: Provider, defaultLimit: number): Promise<boolean> {
-  const g = provider === "gemini" ? 1 : 0; const j = provider === "jev" ? 1 : 0;
-  const result = await db.prepare(`INSERT INTO ai_usage(user_id, month, gemini_used, jev_used)
-    SELECT ?, ?, ?, ? WHERE CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-         THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-         ELSE ? END IS NULL
-       OR 0 < CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-         THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-         ELSE ? END
-    ON CONFLICT(user_id, month) DO UPDATE SET gemini_used = gemini_used + excluded.gemini_used, jev_used = jev_used + excluded.jev_used
-    WHERE CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-         THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-         ELSE ? END IS NULL
-       OR ai_usage.gemini_used + ai_usage.jev_used < CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-         THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-         ELSE ? END`)
-    .bind(userId, month, g, j, userId, userId, defaultLimit, userId, userId, defaultLimit, userId, userId, defaultLimit, userId, userId, defaultLimit).run();
-  return (result.meta?.changes ?? 0) > 0;
 }
 
 function json(status: number, value: unknown): Response {
@@ -208,8 +184,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     }
     try {
       const month = monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
-      const [ent, count] = await Promise.all([entitlement(env.ACCOUNT_DB, account.user.id, freeLimit(env)), usage(env.ACCOUNT_DB, account.user.id, month)]);
-      const used = count.gemini + count.jev;
+      const [ent, used] = await Promise.all([entitlement(env.ACCOUNT_DB, account.user.id, freeLimit(env)), flowUsage(env.ACCOUNT_DB, account.user.id, month)]);
       return json(200, { plan: ent.plan, month, used, limit: ent.limit, remaining: ent.limit === null ? null : Math.max(0, ent.limit - used) });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
   }
@@ -229,6 +204,9 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   if (!bytes) return json(413, { error: "request_too_large" });
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return json(400, { error: "invalid_request" }); }
+  if (!isRecord(body) || typeof body.flowId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.flowId)) return json(400, { error: "invalid_flow" });
+  const flowId = body.flowId;
+  const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
   const fetchImpl = options.fetchImpl ?? fetch;
 
   if (provider === "gemini") {
@@ -236,9 +214,11 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!image) return json(400, { error: "invalid_request" });
     if (!env.GEMINI_API_KEY) return json(503, { error: "not_configured" });
     if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
-    let allowed: boolean;
-    try { allowed = await consumeUsage(env.ACCOUNT_DB, identity, monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))()), provider, freeLimit(env)); } catch { return json(503, { error: "temporarily_unavailable" }); }
-    if (!allowed) return json(429, { error: "ai_quota_exceeded" });
+    try {
+      const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", image);
+      if (!await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, freeLimit(env))) return json(429, { error: "ai_quota_exceeded" });
+      if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "gemini", mac, now)) return json(409, { error: "invalid_flow" });
+    } catch { return json(503, { error: "temporarily_unavailable" }); }
     const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, store: false };
     let response: Response;
     try { response = await callProvider("https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl); } catch { return json(504, { error: "provider_timeout" }); }
@@ -249,16 +229,24 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!outputText) return json(502, { error: "invalid_provider_response" });
     let extraction: unknown;
     try { extraction = JSON.parse(outputText) as unknown; } catch { return json(502, { error: "invalid_provider_response" }); }
-    return isReceiptResult(extraction) ? json(200, extraction) : json(502, { error: "invalid_provider_response" });
+    if (!isReceiptResult(extraction) || !isRecord(extraction)) return json(502, { error: "invalid_provider_response" });
+    const items = (extraction.items as Array<{ name: string; amountYen: number | null }>).slice(0, 30).map(item => ({ name: item.name.trim().slice(0, 200), amountYen: item.amountYen }));
+    const categoryInput = parseCategoryInput({ receipt: { merchant: typeof extraction.merchant === "string" ? extraction.merchant.trim().slice(0, 200) || null : null, totalAmountYen: extraction.totalAmountYen, items } });
+    if (categoryInput) {
+      try { await allowCategory(env.ACCOUNT_DB, identity, flowId, await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "jev", categoryInput)); }
+      catch { return json(503, { error: "temporarily_unavailable" }); }
+    }
+    return json(200, extraction);
   }
 
   const normalized = parseCategoryInput(body);
   if (!normalized) return json(400, { error: "invalid_request" });
   if (!env.TYPESAFE_API_KEY) return json(503, { error: "not_configured" });
   if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
-  let allowed: boolean;
-  try { allowed = await consumeUsage(env.ACCOUNT_DB, identity, monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))()), provider, freeLimit(env)); } catch { return json(503, { error: "temporarily_unavailable" }); }
-  if (!allowed) return json(429, { error: "ai_quota_exceeded" });
+  try {
+    const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "jev", normalized);
+    if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "jev", mac, now)) return json(409, { error: "invalid_flow" });
+  } catch { return json(503, { error: "temporarily_unavailable" }); }
   const payload = { model: env.JEV_MODEL?.trim() || "jev-latest", state: normalized, questions: { category: { type: "choice", instructions: "この購入を家計簿の基本カテゴリから1つ選んでください。店舗名だけでなく商品明細を優先してください。複数カテゴリが混在し代表カテゴリを決めにくい場合は other を選んでください。", criteria: CATEGORY_CRITERIA } } };
   let response: Response;
   try { response = await callProvider(env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl); } catch { return json(504, { error: "provider_timeout" }); }

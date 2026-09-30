@@ -16,12 +16,28 @@ const errors = [];
 page.on('console', message => { if (message.type() === 'error') console.log('Browser error', message.text()); });
 page.on('requestfailed', request => console.log('Failed request', new URL(request.url()).pathname, request.failure()?.errorText));
 page.on('request', request => { if (request.url().includes('/api/ai/')) console.log('AI test request', new URL(request.url()).pathname); });
-page.on('response', response => { if (response.url().includes('/api/ai/')) console.log('AI test response', new URL(response.url()).pathname, response.status()); });
+page.on('response', response => { if (response.status() >= 400) console.log('HTTP test response', new URL(response.url()).pathname, response.status()); if (response.url().includes('/api/ai/')) console.log('AI test response', new URL(response.url()).pathname, response.status()); });
 page.on('pageerror', error => errors.push(error.message));
 const aiRequests = [];
+const categoryRequests = [];
+const usedFlows = new Set();
+let quotaExceeded = false;
+await context.route('**/api/auth/get-session', route => route.fulfill({ json: { user: { id: 'synthetic-user', name: 'Synthetic User' }, session: { id: 'synthetic-session', expiresAt: '2099-01-01T00:00:00Z' } } }));
+await context.route('**/api/auth/passkey/list-user-passkeys', route => route.fulfill({ json: [] }));
+await context.route('**/api/ai/usage', route => route.fulfill({ json: { plan: 'free', month: '2026-09', used: usedFlows.size, limit: 30, remaining: 30 - usedFlows.size } }));
+await context.route('**/api/ai/jev', async route => {
+  const body = route.request().postDataJSON();
+  categoryRequests.push(body);
+  assert.ok(usedFlows.has(body.flowId));
+  await route.fulfill({ json: { model: 'synthetic-model', answers: { category: { type: 'choice', choice: 'food', confidence: 1, probabilities: { food: 1, household: 0, transport: 0, medical: 0, clothing: 0, entertainment: 0, utilities: 0, communications: 0, other: 0 } } } } });
+});
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
 await context.route('**/api/ai/gemini', async route => {
-  aiRequests.push(JSON.parse(route.request().postData()));
+  const body = route.request().postDataJSON();
+  aiRequests.push(body);
+  assert.match(body.flowId, /^[a-f0-9-]{36}$/);
+  if (quotaExceeded) { await route.fulfill({ status: 429, json: { error: 'ai_quota_exceeded' } }); return; }
+  usedFlows.add(body.flowId);
   await route.fulfill({ json: { documentKind: 'receipt', merchant: 'Diagnostic Store', purchasedDate: '2026-09-30', purchasedTime: '12:00', totalAmountYen: 1280, taxAmountYen: null, items: [], warnings: [] } });
 });
 try {
@@ -38,11 +54,30 @@ try {
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
   await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Diagnostic Store', null, { timeout: 10000 });
+  await page.getByRole('button', { name: 'カテゴリを提案する', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#receipt-category')?.value !== '');
+  assert.equal(categoryRequests[0].flowId, aiRequests[0].flowId);
+  await page.locator('#settings-tab').click();
+  await page.getByText('AI利用 · 1 / 30回 · Free', { exact: true }).waitFor();
+  await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: /Diagnostic Store/ }).click();
+  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === 'AIで読み取る' && b.disabled));
+  assert.notEqual(aiRequests[1].flowId, aiRequests[0].flowId);
+  await page.locator('#settings-tab').click();
+  await page.getByText('AI利用 · 2 / 30回 · Free', { exact: true }).waitFor();
+  if (process.env.PWA_USAGE_SCREENSHOT_PATH) { await page.locator('#usage-summary').scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_USAGE_SCREENSHOT_PATH }); }
+  await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: /Diagnostic Store/ }).click();
+  quotaExceeded = true;
+  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
+  await page.getByText('AI利用上限に達しました。手動で入力できます。', { exact: true }).waitFor();
+  assert.equal(usedFlows.size, 2);
   await page.locator('#receipt-merchant').fill('Diagnostic Store corrected');
   await page.locator('#receipt-category').selectOption({ label: '食費' });
   await page.getByRole('button', { name: '確認して家計簿へ登録する', exact: true }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor({ timeout: 10000 });
-  assert.deepEqual(Object.keys(aiRequests[0]).sort(), ['contentType', 'imageBase64']);
+  assert.deepEqual(Object.keys(aiRequests[0]).sort(), ['contentType', 'flowId', 'imageBase64']);
   await page.reload();
   await page.getByText(/Diagnostic Store Corrected/i).first().waitFor();
   const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
@@ -97,5 +132,5 @@ try {
   await page.getByText('今月の支出 ¥1,980', { exact: false }).waitFor();
   if (process.env.PWA_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREENSHOT_PATH, fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: real browser ledger, mocked AI, receipt correction, stable reload, PayPay duplicates, automatic reconciliation, no-receipt review, offline reload/write.');
+  console.log('PASS: real browser ledger, mocked AI flow IDs and usage display, Gemini/Jev counted once, explicit reanalysis, manual registration after quota, receipt correction, stable reload, PayPay duplicates, automatic reconciliation, no-receipt review, offline reload/write.');
 } catch (error) { console.error(await page.locator('body').innerText()); console.error('Page errors:', errors); throw error; } finally { await browser.close(); }

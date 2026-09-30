@@ -30,6 +30,7 @@ const receipt = z.object({
   id: z.string().min(1), createdAt: isoDateTime, updatedAt: isoDateTime,
   image: z.object({ blobId: z.string().min(1), contentType: z.string().min(1), sizeBytes: z.number().int().safe().nonnegative() }).strict().nullable(),
   extraction: extraction.nullable(),
+  aiFlowId: z.uuid().optional(),
   aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable() }).strict(),
   confirmedValue: z.object({ merchant: z.string(), purchasedDate: date, purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen, categoryId: z.string(), accountId: z.string() }).strict().nullable(),
   registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
