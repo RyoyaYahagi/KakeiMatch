@@ -1,12 +1,14 @@
 # Actual レシート登録ライブ試験
 
+この文書は旧Next.jsサーバー構成の開発・検証記録です。現在の本番PWAの起動要件ではありません。現行構成は[アーキテクチャ](ARCHITECTURE.md)、旧構成の任意実行は[legacy手順](../legacy/README.md)を参照してください。
+
 この手順は、一時的なActual Serverと合成データだけを使って、レシート1件の登録、再試行時の重複防止、ユーザー別Budget分離を確認するためのものです。既存または本番のBudget・レシート・家計情報は使わないでください。**この手順によるライブ試験はまだ実施していません。**
 
 ## 実装上の登録契約
 
 登録対象は、利用者が画面で確認した店名、購入日、1円以上の整数円金額、本人Budget内で選んだopen account、明示的に確定済みのKakeiMatchカテゴリです。サーバーはセッション利用者のActual Budget mappingを使い、送信された口座IDがそのBudgetのopen accountにあることを再確認します。前回使った口座はユーザー別に記憶しますが、次回もその口座がopen accountに存在するときだけ初期選択します。
 
-KakeiMatchカテゴリはActualカテゴリIDへ変換します。ユーザー別mappingがなければ、Actualの表示中の支出カテゴリからKakeiMatchの日本語カテゴリ名との完全一致を探し、1件のときだけmappingを保存します。一致しない場合や同名が複数ある場合は登録を止めます。管理者は `pnpm actual:map-categories` を対話端末で実行し、KakeiMatchユーザーを選択してから、Actualカテゴリ一覧に表示される番号を各日本語カテゴリへ割り当てられます。Enterは既存mappingを維持します。試験では、各Budgetに対応カテゴリを一つだけ作るか、このコマンドで各ユーザーのmappingを設定してください。
+KakeiMatchカテゴリはActualカテゴリIDへ変換します。ユーザー別mappingがなければ、Actualの表示中の支出カテゴリからKakeiMatchの日本語カテゴリ名との完全一致を探し、1件のときだけmappingを保存します。一致しない場合や同名が複数ある場合は登録を止めます。管理者は `pnpm legacy:actual:map-categories` を対話端末で実行し、KakeiMatchユーザーを選択してから、Actualカテゴリ一覧に表示される番号を各日本語カテゴリへ割り当てられます。Enterは既存mappingを維持します。試験では、各Budgetに対応カテゴリを一つだけ作るか、このコマンドで各ユーザーのmappingを設定してください。
 
 書き込みは公式 `@actual-app/cli` の `transactions import --account <id> --file -` を使い、取引JSONを標準入力から渡します。標準入力に渡すJSONには、日付、負数の整数円金額、`payee_name`、ActualカテゴリID、安定した `imported_id`、`cleared: false` が入ります。店名や金額をプロセス引数へ含めません。Actualのimportは重複照合とルール適用を行うため、登録後に同じ `imported_id` で検索し、口座・日付・金額・payee・カテゴリを読み戻して検証します。ルールがカテゴリやcleared状態を変えた場合は公式CLIの `transactions update` を標準入力経由で実行し、カテゴリを確定済みmappingへ戻し、`cleared: false` にして再確認します。[Actual CLI資料](https://actualbudget.org/docs/api/cli/)と[Actual API資料](https://actualbudget.org/docs/api/reference/)を参照してください。
 
@@ -22,8 +24,8 @@ KakeiMatchの `receipt_registration` にはレシートごとに1行を保存し
    ```
 
 3. 一時ServerにBudget AとBudget Bを作成します。各Budgetに別々のopen accountを作成します。試験対象カテゴリを一つ選び、そのKakeiMatch表示名と完全一致する支出カテゴリを各Budgetに一つだけ作成します。たとえば `food` を試す場合は両Budgetに `食費` を作成します。
-4. 試験専用KakeiMatch DBで `pnpm user:create` を2回実行し、Synthetic AとSynthetic Bを作成します。`pnpm actual:link-user` を各ユーザーに対して実行し、Budget A/BのSync IDをそれぞれ紐付けます。Sync IDの入力値は画面に表示されません。
-5. 自動の完全一致ではなく手動設定を確認する場合は、`pnpm actual:map-categories` を実行し、Synthetic A/Bのemailをそれぞれ指定してカテゴリ対応を設定します。各Budgetに同名カテゴリを用意した試験では、この手順を省略できます。
+4. 試験専用KakeiMatch DBで `pnpm legacy:user:create` を2回実行し、Synthetic AとSynthetic Bを作成します。`pnpm legacy:actual:link-user` を各ユーザーに対して実行し、Budget A/BのSync IDをそれぞれ紐付けます。Sync IDの入力値は画面に表示されません。
+5. 自動の完全一致ではなく手動設定を確認する場合は、`pnpm legacy:actual:map-categories` を実行し、Synthetic A/Bのemailをそれぞれ指定してカテゴリ対応を設定します。各Budgetに同名カテゴリを用意した試験では、この手順を省略できます。
 6. KakeiMatchを試験専用の環境変数とDBで起動します。Actual server URLは一時Server、Actual passwordは試験用のものを設定してください。ログイン後、Synthetic Aでレシートを1枚アップロードします。実際の家計情報を含まない紙面または画像を使用し、読み取り結果を `Synthetic Receipt A`、`2026-09-29`、`¥1,234` に修正します。カテゴリを確定し、Budget Aのopen accountを選びます。
 
 ## 登録と重複防止

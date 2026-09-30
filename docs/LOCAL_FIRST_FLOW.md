@@ -1,8 +1,10 @@
 # PWAのローカル保存フローとiPhoneでの合成データ確認
 
-現在の主アプリは `apps/pwa` のPWA（Progressive Web App、ブラウザーからホーム画面へ追加できるWebアプリ）です。家計データを端末に保存し、Cloud accountはAIの認証・利用量・プランにだけ使います。Next.jsアプリはlegacy実装としてIssue #39まで残し、この移行作業では削除しません。
+現在の主アプリは `apps/pwa` のPWA（Progressive Web App、ブラウザーからホーム画面へ追加できるWebアプリ）です。家計データを端末に保存し、Cloud accountはAIの認証・利用量・プランにだけ使います。旧Next.jsとserver-side household storageはlegacy参照として残り、production起動経路から外れています。
 
-Issue #37のpreviewは[こちら](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev)です。iPhone実機での確認と外部AI providerへの実要求は、まだ検証していません。Chromiumでは、実際の家計簿エンジンと代替AI応答を使った主要フロー・オフライン再起動・手入力登録の自動試験が通っています。専用previewのD1と仮想Passkeyを使った登録・ログイン・セッションからのAI認証・ログアウトも確認しています。以下の確認にはテスト専用のブラウザプロファイルと合成データを使います。実際の家計簿を含むBudgetを開いたり変更したりしないでください。
+Issue #39のpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。previewは合成データ専用で、既存の家計簿profileを開かないでください。Actualブラウザー版によるレシート・明細・照合・offline reloadと、backup/restore・原本整理・全消去のsynthetic E2Eはpreviewで成功しました。rootのlintではlegacyのimg要素に関する既存warningが2件あり、typecheck、283件のroot test、23件のWorker test、2件のPWA service-worker test、33件の照合評価scenarioは失敗0件でした。`cf` はbeta.5でした。
+
+Cloud auth secretsをpreviewに設定していないため、auth要求は403で安全に拒否されました。確認したE2Eはsigned-outのlocal flowとmock AI応答です。Passkey認証と実providerへのAI要求は検証していません。Issue #31/#32/#37で実施したiPhone確認結果は各Issue本文に記録されています。Issue #39のruntime変更後に行う追加iPhone実機確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。Issue #58はActual restore後のorphan cleanup制約を追跡し、Issue #39のruntime移行とは別です。
 
 ## 端末内のデータと状態
 
@@ -14,7 +16,7 @@ AI要求を始める前に、レシート画像とレシートrecordを端末へ
 
 PayPay CSVはブラウザー内で解析します。元ファイル、canonical行、import情報、照合run、候補、利用者の判断、候補の却下、Actualへの反映状態を端末に保存します。取引の意味を確認できていない他社形式は取り込みません。照合には確認済みレシートとcanonical明細を使います。AIは照合に関与しません。自動一致はActualへ反映し、判断が必要な明細は確認画面に残します。
 
-レシート登録状態は `pending`、`processing`、`applied`、`failed` で管理し、登録後はActualの取引IDを保存します。再試行では同じ `kakeimatch:${receiptId}` imported IDを使います。Actualへの反映結果が不明な失敗後は、再試行で状態を回復するまで確認値を変更できません。Web Locks APIを使い、複数タブから同じレシートを同時更新しないようにします。
+レシート登録状態は `pending`、`processing`、`applied`、`failed` で管理し、登録後はActualの取引IDを保存します。再試行では同じ `kakeimatch:${receiptId}` imported IDを使います（PWA実装ではreceipt IDを `id` として補間します）。Actualへの反映結果が不明な失敗後は、再試行で状態を回復するまで確認値を変更できません。Web Locks APIを使い、複数タブから同じレシートを同時更新しないようにします。
 
 ## Cloud accountとログアウト
 
@@ -22,26 +24,17 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 
 ログアウトするとCloud account sessionを終了し、メモリ上のAI tokenを消します。Actualのブラウザ用データベース、端末profile、レシート画像、明細、照合データは端末に残ります。次のAI要求には再ログインが必要ですが、通常の家計操作には不要です。
 
-## iPhoneで合成データを確認する手順
+## Issue #39後のiPhone確認
 
-実際の家計簿を含まないテスト専用iPhoneプロファイルを使ってください。既存の家計簿profileとデータをそのまま保ちます。以下の `Synthetic` 値だけを使い、実レシートや実明細を使わないでください。
+このIssueで必要な追加確認は、テスト専用iPhone profileとsynthetic preview dataだけを使う短いsmoke checkです。既存の本番profileや実家計簿を使わないでください。
 
-1. Safariでpreview URLをオンライン表示します。ホーム画面へ追加し、一度起動してアプリ画面をキャッシュします。
-2. このテスト用profileに作成された空のBudgetを選び、設定画面を開きます。`Synthetic cash` という支払元を追加し、基本カテゴリを用意します。実家計簿のActual ZIPを読み込まないでください。
-3. レシート画面で手入力を選び、店名 `Synthetic Cafe`、日付 `2026-09-28`、金額 `3284`、カテゴリ `食費`、口座 `Synthetic cash` を入力します。確認値を保存して取引を登録します。
-4. 下記の完全一致PayPay headerと合成購入行を使い、UTF-8 CSVを作成します。オンラインまたはオフラインで取り込みます。CSVの解析と保存は端末内で行います。
+1. SafariでIssue #39専用previewを開き、ホーム画面へ追加して起動します。previewは別originなので、過去のproductionやpreviewで保存したデータは表示されません。
+2. preview上で空のローカルBudgetと合成データを作成し、家計データを一度保存します。
+3. 機内モードでホーム画面アプリを終了して再起動し、手順2で保存した合成データを閲覧できることを確認します。
+4. Settingsにbackupの入口が表示されることを確認します。実データのexportやrestoreは不要です。
+5. iOS/Safari versionと各手順の結果を記録します。Issue #39の追加確認は利用者が実施し、起動・保存済みデータ閲覧・オフライン起動・backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-```csv
-取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号
-2026/09/28 12:34,"3,284",,,,,,支払い,Synthetic Cafe,PayPay残高,一回払い,本人,synthetic-35-001
-```
-
-5. 照合画面を開いて実行します。同じ日付・店名・金額の合成データが一致することを確認します。金額または店舗名を変えた別の行も試し、要確認・記録なし画面を確認します。合成明細を実際のActual Budgetへ反映しないでください。
-6. 機内モードにしてホーム画面アプリを終了し、再起動します。Budget、レシート、取り込んだ明細、照合状態が残っていることを確認します。AI要求はオフラインを案内し、端末保存済み画像と入力値が引き続き使えることを確認します。
-7. テスト用Cloud accountにログインしている場合は、設定画面からログアウトします。端末データを保持した旨が表示され、家計画面を引き続き使えることを確認します。AI利用には再ログインが必要です。
-8. iOSとSafariのversion、各手順の結果、表示されたエラー文を記録します。Safariの保存領域の維持を保証できない案内とFiles保存・復元手順は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。バックアップ手順を確認する場合も、実データを使わずテスト専用profileを使用してください。
-
-この手順で確認できるのはクライアント側の挙動です。GeminiやTypeSafeへの実要求、Actual Sync Serverとの同期、iPhone実機上での動作は確認済みになりません。これらは未確認のままです。
+この確認はiPhoneでの起動、既存local data、offline起動、backup導線だけを対象にします。実providerへのAI要求は対象外で、別途未確認です。#31/#32/#37の確認結果は各Issue本文を参照してください。
 
 ## 端末内データのbackupと復元
 
@@ -49,4 +42,4 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 
 復元は既存データと合併しません。復元前の端末profileは保持され、設定画面から切り替え前のprofileへ戻せます。通常の全消去はログアウト中にも操作できます。復元中にActual公式APIで認識できないbudgetが生じた場合は、アプリからの全消去を停止します。元データのバックアップ後にブラウザーのサイトデータを削除してください。この操作は同じoriginの他のブラウザーデータやログイン状態にも影響することがあります。Cloud accountとAI利用量は端末内householdデータとは別の境界です。[LOCAL_DATA.md](LOCAL_DATA.md) [ARCHITECTURE.md](ARCHITECTURE.md)
 
-`.kmb` ファイルの書き出し、Filesへの保存、復元後の再読込、原本整理、ログアウト中の全消去を組み合わせたiPhone実機手順は未検証です。Chromiumの `test:backup-e2e` の結果も確認が完了するまで成功とは扱いません。実施する場合は[合成確認手順](LOCAL_BACKUP.md#iphone-previewでの合成確認)の専用previewと合成データを使います。
+Issue #39では`.kmb`の全操作をiPhoneで再試験する必要はありません。過去のiPhone確認の範囲と結果はIssue #31/#32/#37本文を参照してください。Issue #39後の起動・保存済みデータ閲覧・オフライン起動・backup入口の追加実機確認は、上記のとおり利用者から4項目とも問題なしと報告されました。バックアップの詳細な確認項目は[端末内データのバックアップと復元](LOCAL_BACKUP.md)に記載しています。
