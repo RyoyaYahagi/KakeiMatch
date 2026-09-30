@@ -35,6 +35,8 @@ Cloudflare操作では現在の `cf` CLIを使用し、事前に `cf --help` と
 
 2026-09-30の本番公開準備では、専用D1と0001〜0003のschema、production dry-run、未公開Worker versionを準備しました。所有者によるsecret登録後に公開します。リソースと残る確認は[本番公開の手順と確認記録](../../docs/PRODUCTION_ROLLOUT.md)を参照してください。
 
+2026-10-01に本番公開を完了しました。本番URLのHTTP 200、COOP / COEP、未認証APIの401、Service WorkerのAPI非cacheを確認しました。本人によるPasskey、実AI、iPhone確認は上記の公開記録で管理します。
+
 ## iPhone確認
 
 Issue #39の変更後に行うiPhone追加実機確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。以前の確認結果はIssue #31/#32/#37に記録されています。preview確認にはテスト用profileを使い、家計簿profileを使わないでください。
