@@ -12,6 +12,8 @@ await context.addInitScript(() => {
   }
 });
 const page = await context.newPage();
+// Keep monthly totals aligned with the synthetic receipts, regardless of the run date.
+await page.clock.setFixedTime(new Date('2026-09-30T03:00:00Z'));
 const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(error.message));
 page.on('console', message => { if (message.type() === 'error') console.log('Browser error', message.text()); });

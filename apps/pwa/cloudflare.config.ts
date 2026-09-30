@@ -20,7 +20,7 @@ export default defineConfig(({ mode, isPreview }) => {
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),
         BETTER_AUTH_SECRET: bindings.secret(),
         ACCOUNT_BOOTSTRAP_SECRET: bindings.secret(),
-        CLOUD_ACCOUNT_ORIGIN: production ? bindings.text('https://kakeimatch.workers.dev') : bindings.secret(),
+        CLOUD_ACCOUNT_ORIGIN: production ? bindings.text('https://kakeimatch.yhgry.workers.dev') : bindings.secret(),
         AI_GATEWAY_AUTH_SECRET: bindings.secret(),
         AI_FREE_MONTHLY_LIMIT: bindings.text('30'),
         GEMINI_API_KEY: bindings.secret(),

@@ -4,7 +4,7 @@
 
 ## 本番URLとデータ
 
-アプリが前提とする本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザーの保存領域はoriginごとに分かれます。利用開始後にWorker名やoriginを変更すると、保存済みデータをアプリから参照できなくなる可能性があります。Worker名とoriginを安定して維持してください。ただし、configでproduction Worker名を `kakeimatch` に設定しただけでは、正規originへのroutingが成立したことを意味しません。Cloudflare側のroute、D1、secretはIssue #39ではprovisioningも実接続確認もしていないため、正規originから本番Workerへ接続できることは未検証です。正規origin自体は変更しません。
+アプリが前提とする本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザーの保存領域はoriginごとに分かれます。利用開始後にWorker名やoriginを変更すると、保存済みデータをアプリから参照できなくなる可能性があります。Worker名とoriginを安定して維持してください。本番の配信経路、専用D1、secret bindingは準備済みです。本番Worker名 `kakeimatch` とCloudflareアカウントのsubdomain `yhgry` に対応するURLを正規originとして使います。
 
 同一WorkerがPWAと `/api/auth/*`、`/api/account/*`、`/api/ai/*` を配信します。WorkerのD1 bindingは、本人確認、session、Passkey、招待・回復、利用権限、AI利用量の保存だけに使います。家計データは保存しません。GeminiとJevの認証情報はWorker secretに設定します。WorkerはCOOP/COEP headerを維持し、Service Workerは `/api/*` をcacheしません。
 
@@ -40,4 +40,64 @@ AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace�
 
 旧Actual ServerからexportしたZIPにはActual Budgetの家計簿データだけが含まれます。PWAのブラウザー版Actualへimportしてください。旧Next.jsにはKakeiMatch `.kmb` export機能がなく、旧receipt/statement metadataも自動移行されません。local-first PWAで作成した `.kmb` には、Actual BudgetとKakeiMatch端末記録、残っているreceipt/statement原本が含まれます。PWAは旧server SQLiteや旧receipt/statement directoryを直接読みません。新しい端末profileを確認するまで旧環境の検証済みbackupを保管してください。対応するexportに含まれないlegacy記録は個別に手動移行してください。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。Actual orphan cleanupの特殊制約はIssue #58で管理します。
 
-2026-09-30の読み取り確認では、指定された本番origin `https://kakeimatch.workers.dev` をこの実行環境からDNS解決できませんでした。Issue #39専用previewはHTTPS 200で応答し、COOP/COEPを維持していました。本番originの指定は変更せず、公開前にDNSと配信経路、account専用D1、secretの設定を別途確認します。本番への書き込みは実施していません。
+## 本番更新の手順
+
+本番D1のIDと名前は運用者が管理し、下記の環境変数へ設定します。preview D1を流用しません。公開日時、Worker・D1・version・deploymentの識別子、個別の検証結果は、Git管理対象外のローカル運用記録で管理します。
+
+```sh
+export ACCOUNT_D1_ID='<production-d1-id>'
+export ACCOUNT_D1_NAME='<production-d1-name>'
+```
+
+実行時点のCLIを確認します。新しい操作は `cf cli search` で検索し、現行のhelpと公式資料を確認してから実行します。
+
+```sh
+corepack pnpm --dir apps/pwa exec cf --help
+corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
+```
+
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+
+```sh
+corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
+corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
+```
+
+secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は上記の5個です。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
+
+検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、PWAとAPIが同じversionに含まれることを確認してから公開します。
+
+```sh
+corepack pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run
+corepack pnpm --dir apps/pwa exec cf deploy --mode production-deploy
+```
+
+公開後は本番の `GET /` が200、COOPが `same-origin`、COEPが `require-corp` であることを確認します。未認証のaccount / AI APIは401 / 403等で拒否し、500や秘密値、provider本文を返さないことを確認します。Service WorkerのAPIキャッシュ除外も維持します。認証済みの実AI確認は本人が行います。
+
+## 本人による招待と実機確認
+
+リポジトリrootのzshで次を実行すると、bootstrap secretとメールアドレス・表示名を対話入力して招待を発行できます。招待URLは本人だけが使用し、Gitや公開ログへ保存しません。
+
+```sh
+read -rs 'ACCOUNT_BOOTSTRAP_SECRET?本番bootstrap secret: '
+echo
+export ACCOUNT_BOOTSTRAP_SECRET
+read -r 'account_email?招待先メールアドレス: '
+read -r 'account_name?表示名: '
+ACCOUNT_ADMIN_URL=https://kakeimatch.yhgry.workers.dev \
+node workers/ai-gateway/scripts/account-invite.mjs invite "$account_email" "$account_name"
+unset ACCOUNT_BOOTSTRAP_SECRET account_email account_name
+```
+
+本人が招待URLからPasskey / Face IDを登録してログインします。家族の招待にも同じ手順を使えます。Familyの付与には既存の `account:set-plan` を使い、本人の明示指示なしに実ユーザーのplanを変更しません。
+
+実家計データを使わず、「テストマート、牛乳220円、パン180円、合計400円」の合成レシート画像で確認します。Gemini解析は利用量が1回増え、同じflowのJevカテゴリ提案では増えず、明示的な再解析ではさらに1回増えることを確認します。
+
+iPhoneでは本人が次を確認します。
+
+1. 本番URLをSafariで開き、ホーム画面へ追加してPasskeyでログインする。
+2. 合成レシートをAI解析し、Actualへ登録する。
+3. 初回解析で利用量が1回増え、同じflowのJevでは増えず、再解析ではさらに1回増える。
+4. アプリを終了・再起動し、端末内データが保持される。
+5. 機内モードで端末内の家計データを閲覧できる。
+6. `.kmb`バックアップを作成できる。

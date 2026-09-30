@@ -1,6 +1,6 @@
 # KakeiMatch PWA
 
-`apps/pwa` は本番clientです。ViteでPWAをbuildし、Cloudflare Vite Pluginで静的assetと同一originのWorker routeを配信します。本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後はoriginを維持してください。
+`apps/pwa` は本番clientです。ViteでPWAをbuildし、Cloudflare Vite Pluginで静的assetと同一originのWorker routeを配信します。本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後はoriginを維持してください。
 
 ## 機能
 
@@ -32,6 +32,8 @@ corepack pnpm --dir apps/pwa build
 Cloudflare configは通常、`kakeimatch-issue-39-preview` Workerとsynthetic test用D1を選びます。Issue #39専用preview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。previewでは合成データだけを使ってください。browser storageはdeploy先のoriginごとに分かれています。本番configはpreviewではない `production-deploy` modeを明示した場合だけ選ばれ、本番D1のnameとIDが必要です。Issue #39では本番route、D1、secretの準備を完了していません。production deployは実施していません。
 
 Cloudflare操作では現在の `cf` CLIを使用し、事前に `cf --help` と `cf cli search` を確認してください。記憶に基づいて古いWrangler commandを使わないでください。
+
+本番への更新手順と、招待・Passkey・合成レシート・iPhoneの確認手順は[デプロイ](../../docs/DEPLOYMENT.md)を参照してください。
 
 ## iPhone確認
 

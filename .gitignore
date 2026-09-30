@@ -96,5 +96,10 @@ spikes/actual-browser/.wrangler/
 .codex/
 .worktrees/
 
+# Local production rollout records and one-time owner setup tools
+/docs/PRODUCTION_ROLLOUT.md
+/scripts/register-production-secrets.py
+/scripts/test_register_production_secrets.py
+
 # KakeiMatch development database
 *.sqlite-journal
