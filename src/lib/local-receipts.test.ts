@@ -105,7 +105,10 @@ describe("LocalReceiptService", () => {
       delete saved.aiSuggestion.flowId;
       await repository.put({ id: saved.id, kind: "receipt-metadata", value: saved, updatedAt: saved.updatedAt });
     }
-    const reopened = new LocalReceiptService(repository, ledger as never, { fetchImpl, getToken: async () => "synthetic-token" });
+    const reopened = new LocalReceiptService(repository, ledger as never, {
+      fetchImpl, getToken: async () => "synthetic-token",
+      withRegistrationLock: async (_id, operation) => operation(),
+    });
     expect(await reopened.suggestCategory(receipt.id)).toBe("food");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
