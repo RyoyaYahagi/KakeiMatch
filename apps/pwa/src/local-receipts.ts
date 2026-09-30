@@ -28,6 +28,8 @@ export type LocalReceipt = {
   updatedAt: string;
   image: { blobId: string; contentType: ReceiptContentType; sizeBytes: number } | null;
   extraction: ReceiptExtractionResult | null;
+  /** Usage flow for the latest successful extraction; older receipts may lack it. */
+  aiFlowId?: string;
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null };
   confirmedValue: ConfirmedReceiptValue | null;
   registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
@@ -147,16 +149,17 @@ export class LocalReceiptService {
       if (bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。");
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのため読み取れません。レシート画像は端末に保存されています。接続後に再試行してください。");
       const token = await (this.options.getToken ?? getAiAccessToken)();
+      const flowId = crypto.randomUUID();
       const response = await this.fetchImpl(this.options.geminiUrl ?? "/api/ai/gemini", {
         method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
+        body: JSON.stringify({ flowId, contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
       });
       if (!response.ok) throw gatewayError(await readGatewayCode(response));
       const extraction = validateReceiptExtraction(await response.json());
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
-      const updated: LocalReceipt = { ...receipt, extraction, updatedAt: timestamp };
+      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp };
       await this.save(updated);
       return updated;
     } catch (error) { throw safeError(error); }
@@ -178,12 +181,13 @@ export class LocalReceiptService {
       return suggestion.categoryId;
       }
       if (!receipt.extraction) return null;
+      if (!receipt.aiFlowId) throw gatewayError("invalid_flow");
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのためカテゴリを提案できません。保存済みの内容は端末にあります。");
       const items = receipt.extraction.items.slice(0, MAX_ITEMS_FOR_JEV).map(({ name, amountYen }) => ({ name: name.trim().slice(0, MAX_TEXT_FOR_JEV), amountYen }));
       const state = { receipt: { merchant: merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: receipt.extraction.totalAmountYen, items } };
       if (!state.receipt.merchant && items.length === 0) return null;
       const token = await (this.options.getToken ?? getAiAccessToken)();
-      const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(state) });
+      const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ ...state, flowId: receipt.aiFlowId }) });
       if (!response.ok) throw gatewayError(await readGatewayCode(response));
       const parsed = safeCategoryResponse(await response.json());
       if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
@@ -271,6 +275,7 @@ async function readGatewayCode(response: Response): Promise<string> {
   catch { return "request_failed"; }
 }
 function gatewayError(code: string): LocalReceiptServiceError {
+  if (code === "invalid_flow") return new LocalReceiptServiceError("invalid_flow", "この読み取りのカテゴリ提案は終了しました。手動で選ぶか、AIで読み取り直してください。");
   if (code === "unauthorized") return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。");
   if (code === "ai_quota_exceeded") return new LocalReceiptServiceError("quota", "AI利用上限に達しました。手動で入力できます。");
   if (code === "rate_limited") return new LocalReceiptServiceError("rate_limited", "AIへの要求が集中しています。しばらく待つか、手動で入力してください。");
