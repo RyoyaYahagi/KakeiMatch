@@ -1,16 +1,44 @@
-# KakeiMatch PWA（Issue #32）
+# KakeiMatch PWA
 
-Viteの静的画面をCloudflare Workers Static Assetsで配信します。Cloudflare Vite Pluginと`cloudflare.config.ts`はIssue #31の実測設定を基にしています。既存のNext.jsアプリは移行途中のため、現段階では別の起動入口です。
+`apps/pwa` は現在の主アプリです。Viteで生成したPWAをCloudflare Workers Static Assetsで配信し、認証・AI用APIを同一originのWorker routeで提供します。移行前のNext.jsアプリはlegacy実装として残し、Issue #39で削除を判断します。
+
+Issue #35 preview: [https://kakeimatch-issue-35-kakeimatch-issue-35-preview.yhgry.workers.dev](https://kakeimatch-issue-35-kakeimatch-issue-35-preview.yhgry.workers.dev)
+
+## 現在利用できる機能
+
+- Actual Budgetを端末内で開き、支出を表示する
+- レシート画像を端末内へ保存し、手入力または任意のAI抽出を行う
+- ユーザーが確認したレシートをActual Budgetへ登録する
+- PayPayの対応CSVを端末内で読み込み、重複を除いて保存する
+- 保存済みレシートとPayPay明細を照合し、判断とActualへの反映状態を端末に保存する
+- Cloud accountへログインしてAIを利用する。ログアウト後も端末内の家計データを保持する
+
+レシート画像は10 MiBまで端末に保存できます。AI Gatewayの画像上限は6 MiBです。上限を超えた画像も手入力に使えますが、AIへは送信できません。CSVは端末内で処理し、CloudflareやAI providerへ送りません。明細CSVは現在PayPayの限定された公式形式のみ対応し、三井住友カード、楽天カード、イオンカードは安全に解釈できる列仕様が未確認のため取り込めません。
+
+## 開発
+
+リポジトリのルートで次を実行します。
 
 ```sh
-cd apps/pwa
-pnpm install --frozen-lockfile
-pnpm build
-cf deploy
+corepack pnpm --dir apps/pwa typecheck
+corepack pnpm --dir apps/pwa build
 ```
 
-`cloudflare.config.ts`のWorker名は`kakeimatch-pr-32`です。既存の本番Workerは更新しません。配信後にオンラインで一度開くと、Service Workerが画面と静的資産を保存します。保存済みのActual Budgetは端末内のIndexedDBから読み込みます。最初に家計簿がない場合はActualのZIPを読み込めます。取引メモの編集は端末内で完了します。初回Budget作成と現行機能の移行はIssue #33/#35が担当します。
+Preview Workerの設定は `cloudflare.config.ts` にあります。previewは `kakeimatch-issue-35-preview` というWorker名を使います。deploy操作はこの文書の開発手順には含めません。
 
-## iPhoneでの残る確認
+## iPhoneでの確認
 
-オンラインでページを開いて家計簿と取引を表示します。ホーム画面へ追加した後、機内モードでアプリを終了・再起動し、既存取引を読み込みます。メモを編集し、アプリ再起動後も同じ内容が残ることを確認します。Safariのタブでも同様に確認し、結果とiOS/Safariのバージョンを記録します。端末内の既存家計簿は削除しません。
+実機での確認はまだ完了していません。合成データを使う手順は[ローカル保存フロー](../../docs/LOCAL_FIRST_FLOW.md)にあります。Gemini/TypeSafeへの実要求とActual Sync Serverとの同期も未確認です。ローカルデータの書き出し・復元画面は未実装で、Issue #37の作業対象です。確認に使ったレシート・家計簿・CSVを消さないでください。
+
+## 合成データによるブラウザー試験
+
+`test:e2e` は新しいブラウザープロファイルで実際の家計簿エンジンを使います。AIの応答だけを代替し、レシート保存・修正・登録、PayPay重複取込、照合と判断、オフライン再起動・手入力登録を確認します。AIの代替応答がService Workerを経由しないよう、試験ではAI操作後にService Workerを登録します。
+
+```sh
+corepack pnpm --dir apps/pwa exec playwright-core install chromium
+PWA_E2E_URL=https://<専用preview> corepack pnpm --dir apps/pwa test:e2e
+```
+
+必要なら `PWA_BROWSER_PATH` でChromiumの実行ファイルを指定できます。実AIへの通信やiPhone実機の検証を代替する試験ではありません。
+
+`test:auth-e2e` は専用previewに合成アカウントを作り、仮想Passkeyによる登録・ログイン・sessionからのAI認証・ログアウトを確認します。`PWA_ACCOUNT_SECRET_FILE` にpreview専用bootstrap secretのJSONファイルを指定してください。秘密情報のファイルはリポジトリ外へ置きます。この試験は実際のiPhoneのPasskey操作を代替しません。

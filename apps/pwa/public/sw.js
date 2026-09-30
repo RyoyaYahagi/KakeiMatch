@@ -1,5 +1,5 @@
 /* The app shell is cached after an online visit. Local budget data stays in Actual's IndexedDB. */
-const CACHE_NAME = 'kakeimatch-shell-v1';
+const CACHE_NAME = 'kakeimatch-shell-v35';
 const SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', event => {
@@ -9,8 +9,11 @@ self.addEventListener('install', event => {
     if (!response.ok) throw new Error('App shell download failed');
     await cache.put('/', response.clone());
     const html = await response.text();
+    const bundled = await fetch('/offline-assets.json', { cache: 'reload' });
+    if (!bundled.ok) throw new Error('Offline asset list download failed');
+    const bundles = await bundled.json();
     const assets = [...html.matchAll(/(?:src|href)="(\/[^"?#]+)"/g)].map(match => match[1]);
-    await cache.addAll([...new Set([...SHELL.slice(1), ...assets])]);
+    await cache.addAll([...new Set([...SHELL.slice(1), ...assets, ...bundles])]);
     await self.skipWaiting();
   })());
 });

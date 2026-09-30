@@ -37,3 +37,24 @@ jobs:
           cache-dependency-path: spikes/actual-browser/package-lock.json
       - run: npm ci --prefix spikes/actual-browser
       - run: npm run build --prefix spikes/actual-browser
+
+  local-first:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm eval:reconciliation
+      - run: pnpm --dir apps/pwa typecheck
+      - run: pnpm --dir apps/pwa test
+      - run: pnpm --dir apps/pwa build
+      - run: npm ci --prefix workers/ai-gateway
+      - run: npm test --prefix workers/ai-gateway
+      - run: npm run typecheck --prefix workers/ai-gateway
+      - run: npm run build --prefix workers/ai-gateway

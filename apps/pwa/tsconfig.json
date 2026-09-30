@@ -1,13 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "WebWorker"],
+    "lib": ["ES2023", "DOM", "WebWorker"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": []
+    "types": [],
+    "paths": { "@/*": ["../../src/*"] }
   },
   "include": ["src/**/*.ts", "vite.config.ts", "cloudflare.config.ts"]
 }

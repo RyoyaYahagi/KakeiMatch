@@ -6,6 +6,8 @@ KakeiMatchは一度にMVP全部を実装しません。
 
 機能を小さく分け、各段階で動作確認できる状態を保ちます。特にActual Budget連携とユーザー分離は、UI実装より先に技術検証します。
 
+この計画のPhase 0〜9は、移行前のNext.jsサーバー中心実装に対する履歴と要件を含みます。現在の主アプリはIssue #35の `apps/pwa` です。Next.js実装はlegacyとして削除せずIssue #39まで保持します。PWAの現在状態は[ローカル保存フロー](LOCAL_FIRST_FLOW.md)を参照してください。
+
 ## Phase 0: Foundation / Integration Spike
 
 目的: 後から作り直しになりやすい境界を先に確認する。
@@ -132,7 +134,7 @@ Gemini等で構造化した以下の情報をstateとして使う。
 
 目的: 確定したレシート情報をActualへ取引として登録する。
 
-実装済み: `/receipts/[id]` で店名・日付・整数円金額・本人Budgetの支払元口座を確認し、カテゴリを確定してから登録します。Actual用の書き込みadapterは公式CLIのstdin import/updateを使います。`receipt_registration` に一意なreceipt行と安定した `kakeimatch:receipt:<receipt-id>` を保存し、Actual read-backで結果を検証します。日本語カテゴリ名の一意な完全一致を自動利用し、一致しない場合や曖昧な場合は管理者が `pnpm actual:map-categories` でユーザー別mappingを設定できます。Actual登録の一時Serverを使ったライブ試験は未実施です。実施手順は[ACTUAL_RECEIPT_LIVE_TEST.md](ACTUAL_RECEIPT_LIVE_TEST.md)に記録しています。
+legacy Next.jsの実装済み機能: `/receipts/[id]` で店名・日付・整数円金額・本人Budgetの支払元口座を確認し、カテゴリを確定してから登録します。公式CLIと `receipt_registration` を使うサーバー側方式です。現在のPWAは別に、端末内IndexedDBへレシートと登録状態を保存し、ブラウザーのActual adapterへ安定したimported IDで登録します。どちらの方式も実Actual Serverを使ったライブ登録は未確認です。PWAの状態は[ローカル保存フロー](LOCAL_FIRST_FLOW.md)に記載します。
 
 ### 要件
 
@@ -147,7 +149,7 @@ Gemini等で構造化した以下の情報をstateとして使う。
 
 目的: カード・決済明細を取り込めるようにする。
 
-Issue #11ではPayPayの公式13列headerを厳密に検証し、購入・返金と既知の対象外行を区別します。楽天カードの実exportではUTF-8 BOMと11列headerを確認しましたが、継続行・部分行と金額列の意味を確認できないため取り込みを拒否します。三井住友カードの実exportはCP932でheaderがなく、列の意味が未確定です。イオンカードは形式未確認です。各社の確認状況は[STATEMENT_FORMATS.md](STATEMENT_FORMATS.md)に記録します。照合とActualへの明細登録はこの段階に含めません。
+legacy Next.js APIのIssue #11ではPayPayの公式13列headerを厳密に検証し、購入・返金と既知の対象外行を区別します。現在のPWAのPayPay adapterも同じ限定的な対応形式を端末内で解析します。楽天カードの実exportではUTF-8 BOMと11列headerを確認しましたが、継続行・部分行と金額列の意味を確認できないため取り込みを拒否します。三井住友カードの実exportはCP932でheaderがなく、列の意味が未確定です。イオンカードは形式未確認です。各社の確認状況は[STATEMENT_FORMATS.md](STATEMENT_FORMATS.md)に記録します。
 
 ### Adapter
 
@@ -183,15 +185,15 @@ type CanonicalStatementTransaction = {
 
 ## Phase 7: Reconciliation
 
-実装済み: `src/lib/reconciliation-engine.ts` が登録済みreceiptとcanonical statementを決定的に照合します。ユーザーの登録済み値を使い、Gemini/Jev/LLMやprovider固有CSVを照合判定から除外します。候補探索は日付bucketの±7日、amount exactまたは `max(100円, 3%)` 以内かつmerchant similarity 0.70以上です。scoreはamount/date/merchantの55%/25%/20%、rule versionは `1.0.0` です。自動一致は金額exact、日付差2日以内、merchant similarity 0.72以上または明示alias、score 0.88以上、statement/receiptのmutual best、双方のmargin 0.15以上を要求します。曖昧候補と金額差のある候補は `needs_review` です。refundは `unmatched_statement` / `refund_not_supported` になります。
+照合engineの原実装はlegacy Next.js側にあります。PWAでは同じ決定的な照合engineを利用し、IndexedDBのconfirmed receiptとPayPay canonical statementだけを照合します。Gemini/JevやCSV原本は照合判定に使いません。候補の閾値と状態は実装共通のruleに従います。
 
-`POST /api/reconciliation/run` はsession userのデータで新しいsnapshotを作り、`GET /api/reconciliation/latest` は本人のlatest completed snapshotを返します。run、candidate、statement result、receipt resultは履歴を上書きせず保存します。machine runは `confirmed` を作りません。次回runでは解決済みの明細、同じ支出で使ったレシート、拒否済みの組を除外します。合成シナリオによる再現可能な評価は `pnpm eval:reconciliation` で行います。評価結果と指標はREADMEに記録します。
+legacy Next.js APIはsession user単位でsnapshotを返します。PWAはrun、候補、明細・レシート結果、ユーザー判断、Actual反映状態を端末のIndexedDBにsnapshotとして保存し、以前のrunを上書きしません。判断済みの明細、使用済みレシート、拒否済み候補を次のrunから除外します。
 
 ## Phase 8: Review UX
 
 目的: 要確認だけを短時間で処理できるようにする。
 
-実装済み: `/reconciliation` は自動確認済み・要確認・記録なしの件数を示し、反映エラーを優先します。`reconciliation_resolution` が判断とActual反映状態を保持し、`reconciliation_pair_rejection` が「別の支出」を組単位で保持します。自動一致は公式Actual APIで複数取引を一括で `cleared=true` にします。明示的な「同じ支出」は金額差がある場合に明細金額へ更新します。レシートなしはカテゴリと本人Budgetの口座を確認し、安定した取り込みIDで登録します。失敗した反映は保存した判断から再試行します。
+legacy Next.jsの画面と保存方式については従来の記録を残します。PWAの照合画面では自動一致・要確認・記録なし・明細待ちの件数を示します。候補に対して「同じ支出」「別の支出」を選べます。候補がない明細は支払元とカテゴリを指定してActualへ登録できます。失敗したActual反映は判断状態を端末に残し、同じ安定IDで再試行します。
 
 ### 画面
 
