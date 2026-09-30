@@ -1,186 +1,52 @@
 # KakeiMatch
 
-家族向けのシンプルな家計簿・レシート照合Webアプリです。
+KakeiMatchは、レシートから支出を記録し、後日取り込んだカード・決済明細と照合する家族向けアプリです。自動で一致した取引は処理し、判断が必要な取引だけを利用者に確認します。
 
-レシートを撮影して支出を記録し、後からクレジットカード・決済サービスの明細と照合します。
-一致した取引は自動で処理し、確認が必要な取引だけをユーザーに見せることで、家計簿入力と明細確認の手間を減らすことを目指します。
+## 本番アプリ
 
-レシート解析では、保存した画像をGoogleのGemini APIへ送信します。カテゴリ提案ではGeminiが検証した店名・合計金額・商品明細の必要な範囲をTypeSafe Jev APIへ送信します。Jevへ画像、ユーザー情報、家計履歴、Actual Budget情報は送信しません。各APIキーとモデル設定はサーバー側の環境変数で管理します。
+本番アプリは `apps/pwa` のPWAです。同一のCloudflare WorkerがアプリとAPIを配信します。本番の正規URLは <https://kakeimatch.workers.dev> です。ブラウザーの保存領域はURLごとに分かれるため、利用開始後はWorker名やURLを変更しないでください。
 
-## コンセプト
+家計簿、レシート、明細、照合データは利用者の端末に保存します。家計簿エンジンにはActual Budgetのブラウザー版を使います。Cloud accountは通常の家計操作には不要で、AIを使うときの本人確認と利用枠に使います。D1には本人確認、session、Passkey、招待・回復、利用権限、AI利用量だけを保存します。端末内データは `.kmb` ファイルに書き出せます。
 
-Issue #35以降の主アプリは、Cloudflare Workersで配信するスマートフォン向けPWAです。家計簿、レシート、明細、照合の正本は利用者の端末に保存します。Cloud accountはAI利用量やプラン管理などに使い、通常の家計操作には要求しません。Cloud accountの範囲とPasskeyの流れは[Cloud account](docs/CLOUD_ACCOUNT.md)を参照してください。移行前のNext.jsアプリはIssue #39で削除を判断するまでlegacy実装として残します。
+本番利用に自宅Linux、Docker Compose、Next.jsサーバー、Actual Sync Server、サーバー側の家計簿SQLiteやファイル保存領域は必要ありません。previewは合成データの確認専用です。deploy前に[デプロイ](docs/DEPLOYMENT.md)を確認してください。
 
-- 親を含む家族がスマートフォンから迷わず使えることを最優先する
-- 家計簿の基盤にはActual Budgetを使い、PWAは端末内のデータを扱う
-- 親向けUIは KakeiMatch 側で提供し、Actual Budget の複雑さを隠す
-- レシート解析には Gemini を利用する
-- 支出カテゴリの提案には Jev を利用し、ユーザーが確認・確定する
-- カード明細との一致判定は、原則として決定的なルール・スコアリングで行う
-- 「未照合 = 不正利用」とは判定せず、確認が必要な取引として提示する
-- 家計データとレシート画像は利用者の端末に保存する
+## 現在の機能と確認状況
 
-## MVP
+PWAでは、レシートの端末内保存と確認、任意のAI抽出・カテゴリ提案、確認済み支出の端末内Actual Budgetへの登録、対応するPayPay CSVの読み込み、明細との照合、`.kmb` の書き出しと復元ができます。列の意味を確認できていない他社カードの形式は取り込めません。AI以外の家計操作はCloud accountなしで利用できます。
 
-- レシート撮影・画像保存
-- Geminiによるレシート情報の構造化抽出
-- 基本カテゴリの提案とユーザー確定
-- 端末内profileごとの家計データ。Cloud accountはAI利用に使う
-- 三井住友カード / 楽天カード / イオンカード / PayPay の明細取り込み
-- 家計簿記録と明細の自動照合
-- 一致 / 要確認 / 記録なし の確認画面
-- Actual Budgetとの連携
+Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本文に記録されています。Issue #39のpreviewではActualブラウザー版を使ったレシート・明細・照合・オフライン再起動と、backup/restore・原本整理・全消去のsynthetic E2Eを確認しました。Issue #39変更後のiPhone確認は未実施です。追加確認の範囲はホーム画面からの起動、既存の合成データ表示、オフライン起動、バックアップ画面の入口です。previewではCloud auth secretが未設定のため認証要求は403で拒否されました。実Passkey認証と実AI provider要求は未確認です。これはIssue #58で追跡するActual孤児データの制約とは別の確認事項です。現在の確認状況は[ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md)と[バックアップと復元](docs/LOCAL_BACKUP.md)を参照してください。
 
 ## ドキュメント
 
-- [PRODUCT.md](docs/PRODUCT.md): プロダクト目的・MVP・非目標
-- [ARCHITECTURE.md](docs/ARCHITECTURE.md): システム構成と責務分離
-- [UX.md](docs/UX.md): ユーザーフローと画面設計
-- [DESIGN.md](docs/DESIGN.md): UIデザイン原則
-- [IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md): 段階的な実装計画
-- [DEPLOYMENT.md](docs/DEPLOYMENT.md): 自宅LinuxからVPS/PaaSへ移行できるデプロイ方針
-- [CODING_AGENT_PROMPT.md](docs/CODING_AGENT_PROMPT.md): 初期実装を依頼するためのプロンプト
-- [CONTRIBUTING.md](CONTRIBUTING.md): ブランチ・コミット・PR運用
-- [SECURITY.md](SECURITY.md): 家計データを扱う際のセキュリティ方針
-- [CLOUD_ACCOUNT.md](docs/CLOUD_ACCOUNT.md): Cloud account、Passkey、AI利用量の境界と運用
-- [LOCAL_FIRST_FLOW.md](docs/LOCAL_FIRST_FLOW.md): PWAの現在の機能、データ境界、iPhoneでのsynthetic確認手順
-- [LOCAL_BACKUP.md](docs/LOCAL_BACKUP.md): 端末内データの書き出し・復元・消去と未確認事項
+- [プロダクト](docs/PRODUCT.md): 目的、MVP、対象外の機能
+- [アーキテクチャ](docs/ARCHITECTURE.md): 本番構成とデータ境界
+- [実装計画](docs/IMPLEMENTATION_PLAN.md): 現在の利用フローと残作業
+- [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、移行方針
+- [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhone確認
+- [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
+- [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
+- [セキュリティ](SECURITY.md): データとサービスの保護
+- [明細形式](docs/STATEMENT_FORMATS.md): 確認済みのCSV形式
+- [UX](docs/UX.md)と[デザイン](docs/DESIGN.md): 画面設計の方針
+- [コントリビューション](CONTRIBUTING.md): branchとPull Requestの運用
 
-## Status
+以前のサーバー中心構成の記録とlegacy runtimeの分類は[legacy文書index](docs/legacy/README.md)と[legacy runtime inventory](docs/LEGACY_RUNTIME_INVENTORY.md)を参照してください。legacyコードは本番アプリではありません。
 
-PWAはActual Budgetを端末内で開き、支出を表示します。レシート画像と入力値を端末に保存し、希望時にAI抽出とカテゴリ提案を使えます。ユーザーが店名・日付・金額・カテゴリ・口座を確認してから、端末内のActual Budgetへ登録します。明細画面はPayPay CSVの対応形式を端末内で読み込みます。照合は登録済みレシートと明細を端末内で比較し、自動一致、要確認、記録なしを表示します。判断のActualへの反映や再試行状態も端末に保存します。設定画面からActual家計簿、端末記録、残っているレシート画像・CSV原本を`.kmb`ファイルへ書き出し、新しい保存先へ復元できます。AI Gatewayへは認証済み要求だけを送信し、Cloud accountやAI Gatewayに接続できない場合も手入力、ローカル明細の取扱い、照合を利用できます。
+## 開発
 
-三井住友カード、楽天カード、イオンカードの実exportは、列の意味や形式を安全に確定できていないため取り込めません。PayPayの対応範囲と他社形式の確認状況は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。Actual Serverを使う実データ連携のライブ確認とiPhone実機での一連の確認は未実施です。バックアップのiPhone Files保存・復元・原本整理・消去も成功結果を確認できていません。端末保存の消失リスク、既知のActual孤児データの制約、合成確認手順は[端末内データのバックアップと復元](docs/LOCAL_BACKUP.md)を参照してください。
-
-### Legacy Next.jsアプリ
-
-以下は移行前のNext.jsアプリに関する機能記録と起動手順です。Next.jsアプリはIssue #39まで削除せず残します。PWAの開発手順は[apps/pwa README](apps/pwa/README.md)を参照してください。
-
-支出一覧は、本人の家計簿から日付の新しい取引を最大50件取得し、その中の支出だけを表示します。ホームの最近の支出は同じ取得結果から最大5件を表示します。収入と口座間振替は支出一覧へ表示しません。「今月」は `APP_TIME_ZONE`（既定値 `Asia/Tokyo`）で判定します。取引に保存された日付は変換しません。
-
-## Development workflow
-
-仕様・設計は `docs/` を正本とし、実装作業はGitHub Issuesで管理します。
-
-- [MVP Epic](https://github.com/RyoyaYahagi/KakeiMatch/issues/15)
-- [最初の実装Issue: MVP基盤](https://github.com/RyoyaYahagi/KakeiMatch/issues/1)
-
-基本の流れ:
-
-```text
-docs = 長期仕様
-  ↓
-GitHub Issue = 1つの作業
-  ↓
-feature branch
-  ↓
-Pull Request
-  ↓
-squash merge
-```
-
-AIコーディングエージェントには原則として1 Issueずつ実装させます。
-
-## Legacy Next.jsのローカル開発
-
-必要なものはNode.js 22以降とCorepackです。CorepackはNode.jsに同梱され、プロジェクト指定のpnpmを利用できるようにします。
+Node.jsとCorepackを使い、リポジトリで固定したpnpmを実行してください。リポジトリのrootで次を実行します。
 
 ```sh
-corepack enable
-pnpm install
-cp .env.example .env.local
-openssl rand -base64 32  # 出力を .env.local の AUTH_SECRET に設定する
-# .env.local の APP_URL を http://localhost:3000 に変更する
-pnpm user:create
-pnpm dev
+corepack pnpm install
+corepack pnpm dev
+corepack pnpm --dir apps/pwa typecheck
+corepack pnpm --dir apps/pwa test
+corepack pnpm build
+corepack pnpm start
 ```
 
-アカウント作成コマンドは管理者がサーバー上の対話端末で実行します。表示名、メールアドレス、パスワードを順に入力します。パスワードの入力内容は画面に表示されません。家族の人数分だけコマンドを実行してください。パスワードをコマンド引数や環境変数へ書かないでください。
+rootの `dev` はCloudflare Vite Plugin経由でPWAと同一origin APIを起動します。`build` はPWAをbuildし、`start` はそのCloudflare build出力を使うローカルpreviewを起動します。legacy Next.jsアプリやActual Serverは起動しません。Worker単体の確認方法は[AI GatewayのREADME](workers/ai-gateway/README.md)を、PWAの合成確認は[PWAのREADME](apps/pwa/README.md)を参照してください。テストprofileやfixtureに実際の家計情報を入れないでください。
 
-Actualでユーザー用Budgetを作成した後、KakeiMatch userとBudgetを管理者commandで紐付けます。開発環境では `pnpm actual:link-user` を実行し、KakeiMatch userのemailとActual Sync IDを対話入力してください。Sync ID入力は画面に表示されません。既にmappingがあるuserは上書きされないため、誤ったmappingの修正は管理者が別途対応してください。
+## legacyサーバー実装
 
-開発サーバーは <http://localhost:3000> で起動します。SQLiteデータベースは初期設定では `./data/kakeimatch.db` に保存されます。認証テーブルのマイグレーションはアプリ起動時にも適用されます。データを消去する場合は開発サーバーを停止してから `data/` を削除してください。
-
-## Legacy Next.jsとActual ServerのDocker Compose起動
-
-Docker Composeはアプリと公式Actual Serverを別serviceとして起動します。アプリは `127.0.0.1` に、Actual管理UIも `127.0.0.1` にだけ公開し、それぞれSQLiteとActual `/data` を別の名前付きvolumeへ保存します。外部公開にはHTTPSを終端するリバースプロキシが必要です。Actual管理UIは一般ユーザー向けに公開しないでください。
-
-```sh
-cp .env.example .env
-# openssl rand -base64 32 の出力を .env の AUTH_SECRET に設定する
-# Actual管理UIで設定したserver passwordを .env の ACTUAL_SERVER_PASSWORD に設定する
-docker compose up --build -d
-docker compose run --rm bootstrap
-curl http://127.0.0.1:3002/api/health
-```
-
-`bootstrap` は同じ永続volumeを使う管理者用コマンドです。家族のアカウントごとに実行してください。通常の画面に登録機能はなく、公開の新規登録APIは無効です。Actual管理UIは <http://127.0.0.1:5006> で開けます。初回起動時にActualのserver passwordを設定してください。正常時のKakeiMatchヘルスチェック応答は `{"status":"ok"}` です。停止するには `docker compose down` を実行します。データ用volumeはこの操作では削除されません。データを含めて削除する場合は `docker compose down --volumes` を実行してください。
-
-ActualでBudgetを作成した後、各ユーザーを紐付けます。Composeでは管理用imageを使って `docker compose run --rm bootstrap pnpm actual:link-user` を実行し、画面の案内に従ってuser emailと非表示のSync IDを入力してください。既にmappingがあるuserは上書きされません。
-
-ホスト側の保存先はDockerが管理します。KakeiMatch SQLiteとActual CLI cache (`app-data`)、レシート画像 (`receipt-data`)、明細CSV原本 (`statement-data`)、Actual (`actual-data`) は別のvolumeです。DBとレシート画像・明細CSV原本は同じ時点の組としてバックアップ・復元してください。Actualのvolumeには家計簿データとサーバー設定が含まれます。バックアップ手順は運用開始前に整備が必要です。
-
-## 確認コマンド
-
-```sh
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-```
-
-## Actual Gatewayの検証
-
-`src/lib/actual-gateway.ts` はBetter Authのログインセッションからユーザーを特定し、`actual_budget_mapping` に保存された本人のSync IDをサーバー側で取得します。`getRecentTransactions`、`getTransactions`、`getTransactionById`、`getMonthlySpending` が読み取り専用の公開インターフェースです。各呼び出しでは公式 `@actual-app/cli` のActualQL照会を1回実行します。CLIのJSONを検証し、金額を整数円に変換してから返します。取引種別はGateway内で支出・収入・口座間振替へ変換し、画面には支出だけを表示します。ID指定の取得も本人のBudget内だけで行います。認証が必要な `GET /api/actual` は `view=recent`、`view=range&startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`、`view=monthly&yearMonth=YYYY-MM` を受け付けます。Sync IDとパスワードはブラウザーへ返しません。CLIの接続設定とJSON形式は[Actual公式CLI資料](https://actualbudget.org/docs/api/cli/)に従います。
-
-レシート登録は別の `src/lib/actual-receipt-writer.ts` が担当します。Actual公式CLIの `transactions import` と `transactions update` を使い、取引情報を引数ではなく標準入力からJSONで渡します。KakeiMatchとActualのカテゴリ名が一致しないBudgetでは、管理者が対話端末で `pnpm actual:map-categories` を実行してユーザー別の対応を設定します。詳細な状態保存と再試行手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)に記載しています。
-
-通常の `pnpm test` は人工データによる単体テストを実行します。実Actual Serverを使ったA/B分離テストは、次の手順で別途実行します。
-
-1. 一時的なActual Serverを起動し、Actualの画面でJPY設定のBudget AとBudget Bを作成します。既存の家計簿は使用しないでください。
-2. Budget Aへ `2026-09-28`、支出 `¥3,284`、支払先 `Synthetic A` の人工取引を登録します。同じ日付に合計 `¥500` のsplit transaction（`¥200` と `¥300` の子取引）と、別の口座への `¥400` のtransferも登録します。Budget Bへ同日、支出 `¥710`、支払先 `Synthetic B` の人工取引を登録します。
-3. 2つのSync IDをActualの設定画面で確認します。テスト用Actual ServerのURLとパスワードも用意します。
-4. リポジトリ外の `/tmp/kakeimatch-actual-test.env` を権限 `600` で作成し、以下の4変数を設定します。実際の値をGitへ登録しないでください。
-
-```text
-ACTUAL_SERVER_URL=http://127.0.0.1:5006
-ACTUAL_SERVER_PASSWORD=<test-server-password>
-ACTUAL_TEST_SYNC_ID_A=<budget-a-sync-id>
-ACTUAL_TEST_SYNC_ID_B=<budget-b-sync-id>
-```
-
-```sh
-chmod 600 /tmp/kakeimatch-actual-test.env
-set -a
-. /tmp/kakeimatch-actual-test.env
-set +a
-pnpm exec vitest run src/lib/actual-gateway.live.test.ts
-```
-
-このテストは一時SQLiteへテストユーザーA/Bとそれぞれのmappingを作成します。認証ユーザーをA/Bへ切り替えてそれぞれのBudgetの取引だけを取得し、mappingのないユーザーでは明示的に失敗することを確認します。Aの月間支出はsplitの親を重複計上せず、transferを除いた `¥3,784` です。Actual CLIのJSONでAの最初の支出が `-3284`、Bの支出が `-710` となることも確認します。CLIが返すJPY金額の扱いは、[Actualの通貨定義](https://github.com/actualbudget/actual/blob/master/packages/loot-core/src/shared/currencies.ts)とこの人工Budgetでの往復結果に基づき、整数値1単位を1円としています。
-
-本番Dockerイメージ内のCLIを確認するには、`docker compose build app` の後、`docker compose run --rm --no-deps app node /app/node_modules/@actual-app/cli/dist/cli.js --version` を実行します。実接続の確認は、テスト専用の資格情報ファイルを `docker run --env-file` で渡し、`node /app/node_modules/@actual-app/cli/dist/cli.js --format json query run --table transactions --select id,date,amount --order-by date:desc` を実行します。CLI用キャッシュディレクトリをコンテナ内の書き込み可能な `/app/data/actual-cli` 以下に設定してください。
-
-## 環境変数
-
-`.env.example` にある `APP_URL` はアプリの公開URL、`PORT` はComposeでホストへ割り当てるポート、`DATABASE_PATH` はSQLiteファイルの場所です。`RECEIPT_STORAGE_DIR` は公開ディレクトリ外のレシート原本保存先で、ローカル開発では `./data/receipts`、Composeでは `/app/receipts` を使います。`AUTH_SECRET` は認証セッションの署名に使う秘密鍵です。`ACTUAL_SERVER_URL` と `ACTUAL_SERVER_PASSWORD` はサーバー側のActual接続設定であり、ブラウザーへ渡さないでください。`ACTUAL_DATA_DIR` はActual Serverコンテナ内のデータディレクトリです。`ACTUAL_CLI_DATA_DIR` はKakeiMatch内のCLIクライアント用キャッシュディレクトリです。Composeでは前者をActual専用volumeの `/data`、後者をアプリ専用volumeの `/app/data/actual-cli` に分けます。CLIのキャッシュはmapping IDとSync IDのハッシュごとに別ディレクトリへ保存し、生のメールアドレスやSync IDをパスに使用しません。
-
-KakeiMatch userを削除すると、そのuserのmapping行だけがDBから削除されます。対応するActual Budgetとその家計データはActual Server上に残るため、不要になったBudgetはActual管理UIで別途削除してください。
-
-`GEMINI_API_KEY` はGemini APIへの接続に使う秘密情報です。`GEMINI_MODEL` はレシート解析モデルで、既定値は `gemini-3.5-flash-lite` です。どちらもサーバーだけが読み取り、ブラウザーへ公開しません。Gemini APIを有効にすると、ユーザーが保存したレシート画像が解析のためGoogleへ送信されます。画像と形式、抽出指示以外のユーザー情報は送信しません。
-
-`TYPESAFE_API_KEY` はTypeSafe APIへの接続に使う秘密情報です。`TYPESAFE_API_URL` はSystem One endpoint（既定値 `https://api.typesafe.ai/v1/systemone`）、`JEV_MODEL` は分類モデル（既定値 `jev-latest`）です。`JEV_CATEGORY_MIN_PROBABILITY`（既定値 `0.75`）と `JEV_CATEGORY_MIN_MARGIN`（既定値 `0.15`）は自動提案の初期しきい値です。選択カテゴリの確率が前者以上で、1位と2位の確率差が後者以上の場合だけ自動提案し、それ以外は確認を求めます。どれもサーバー専用で、ブラウザーへ公開しません。Jevへ送るのは抽出済みデータの店名・合計金額・商品明細だけで、画像やレシートIDは送りません。
-
-分類のしきい値を検証する場合は、人工データ22件を使う `corepack pnpm eval:category` を実行します。実行には `TYPESAFE_API_KEY` が必要です。このコマンドは通常の `pnpm test` から独立しており、評価入力をTypeSafe APIへ送信します。出力にはカテゴリ正解率、自動提案率、要確認率、選択カテゴリの確率、上位2カテゴリの確率差が含まれます。しきい値を変えた場合も同じデータで比較できます。実データは評価に使用しません。
-
-実際の秘密情報は `.env` や `.env.local` に設定し、Gitへ登録しないでください。
-
-## Reconciliation evaluation
-
-照合ルールの変更時は、完全に人工データの33シナリオを再評価できます。
-
-```sh
-pnpm eval:reconciliation
-```
-
-評価はauto-match precision（誤った自動一致を最優先で検出）、matchable pairに対するcoverage、statementのneeds-review率、unmatched statement/receipt件数、期待状態との一致率を出します。各scenarioは独立して実行し、配列順や他ケースのデータが結果に影響しません。現行ルールはamount/date/merchantを55%/25%/20%で加重し、候補日付windowは±7日、自動一致はamount exact、日付差2日以内、merchant similarity 0.72以上または明示alias、score 0.88以上、mutual best、双方のmargin 0.15以上を要求します。現行ルールで33シナリオを評価した結果は、auto-match precision 1.00、coverage 1.00（19件中19件）、needs-review率 31.4%、unmatched statement 5件、unmatched receipt 5件、期待状態との一致率 1.00です。precisionを落としてcoverageを上げる目的には使いません。
+以前のNext.js、SQLite、ファイル保存、Actual CLIのコードは、テストや移行時の参照用に残しています。`legacy:` で始まるscriptは開発専用で、PWAの利用やdeployには不要です。過去の説明は[legacy文書index](docs/legacy/README.md)、[legacy architecture](docs/legacy/ARCHITECTURE.md)、[legacy implementation plan](docs/legacy/IMPLEMENTATION_PLAN.md)にあります。PWAは旧サーバーのSQLiteを直接読みません。旧Actual ZIPに含まれるのはActual Budgetの取引です。旧Next.jsに `.kmb` export機能はなく、旧receipt/statement metadataの自動移行にも対応しません。local-first PWAが作成した `.kmb` にはKakeiMatchの端末記録が含まれ、復元できます。

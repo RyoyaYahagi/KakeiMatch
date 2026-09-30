@@ -3,11 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "cf dev",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node test/sw.test.mjs",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && cf build",
     "test:e2e": "node test/browser-flow.mjs",
     "test:auth-e2e": "node test/browser-account.mjs",
     "test:backup-e2e": "node test/browser-backup.mjs"

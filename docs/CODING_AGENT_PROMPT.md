@@ -1,5 +1,7 @@
 # Coding Agent Prompt — Initial Implementation
 
+この文書は旧Next.jsサーバー構成の開発・検証記録です。現在の本番PWAの起動要件ではありません。現行構成は[アーキテクチャ](ARCHITECTURE.md)、旧構成の任意実行は[legacy手順](../legacy/README.md)を参照してください。
+
 あなたは `RyoyaYahagi/KakeiMatch` の初期実装を担当してください。
 
 ## 最初に必ず読む

@@ -21,18 +21,18 @@ The account D1 database contains identity/auth records, `account_entitlements`, 
 
 ## Local development and checks
 
-Copy `.dev.vars.example` to `.dev.vars` and provide synthetic values for tests/local development. Real provider keys are only needed for live calls and must never be committed.
+This package has its own `package-lock.json` and is outside the pnpm workspace. Install its dependencies with `npm ci --prefix workers/ai-gateway`. Copy `.dev.vars.example` to `.dev.vars` only when local Worker routes need bindings, and use synthetic values. Real provider keys are needed only for live calls and must never be committed.
 
 ```sh
-npm ci
-npm run dev
-npm test
-npm run typecheck
-npm run build
+npm run --prefix workers/ai-gateway test
+npm run --prefix workers/ai-gateway typecheck
+npm run --prefix workers/ai-gateway build
 ```
 
-The PWA Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_FREE_MONTHLY_LIMIT` with the existing provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
+`npm run --prefix workers/ai-gateway dev` runs Vite directly and does not load the PWA's `cf` configuration. For local checks of the production PWA and its same-origin API routes, use root `pnpm dev` or build then use root `pnpm start`. Use the standalone Worker commands for its isolated tests and build.
+
+The PWA Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_FREE_MONTHLY_LIMIT` with the provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf --help` and `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
 
 Apply versioned SQL under `migrations/` before deployment. From `workers/ai-gateway`, administrators can assign plans with `ACCOUNT_D1_ID=<database-uuid> npm run account:set-plan -- <opaque-user-id> family`; `family` is unlimited at the product-quota layer. The Worker uses `AI_FREE_MONTHLY_LIMIT` (30 by default) for accounts without an explicit entitlement. Explicit `free` or `pro` assignments require `AI_FREE_MONTHLY_LIMIT` or `AI_PRO_MONTHLY_LIMIT` in the operator environment. The command is administrative; there is no client plan mutation route.
 
-The PWA and API handlers run in one Issue #6 Preview Worker. This Preview uses its own D1 database and trusted origin. Issue #35 will connect receipt and category actions to the token and provider routes.
+The PWA and account/AI handlers run on the same origin. The default Issue #39 preview uses its own synthetic-test D1 database. Production uses the canonical origin `https://kakeimatch.workers.dev`; its route, D1, and secrets must be provisioned for production use. Preview origin and data are never for household use. The Service Worker does not cache `/api/*`, and the Worker must preserve COOP/COEP behavior for the browser-side Actual engine.

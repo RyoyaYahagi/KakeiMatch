@@ -1,46 +1,38 @@
 # KakeiMatch PWA
 
-`apps/pwa` は現在の主アプリです。Viteで生成したPWAをCloudflare Workers Static Assetsで配信し、認証・AI用APIを同一originのWorker routeで提供します。移行前のNext.jsアプリはlegacy実装として残し、Issue #39で削除を判断します。
+`apps/pwa` は本番clientです。ViteでPWAをbuildし、Cloudflare Vite Pluginで静的assetと同一originのWorker routeを配信します。本番の正規originは `https://kakeimatch.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後はoriginを維持してください。
 
-Issue #37 preview: [https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev](https://kakeimatch-issue-37-kakeimatch-issue-37-preview.yhgry.workers.dev)
+## 機能
 
-## 現在利用できる機能
+- Actual Budgetのブラウザー版を開き、端末内で家計簿を管理する
+- レシート画像と入力値を端末へ保存し、手入力または任意のAI提案を利用する
+- 確認済みレシートを端末内Actual Budgetへ登録する
+- 対応するPayPay CSVをブラウザー内で読み込む
+- レシートと明細を端末内で照合し、判断を保存する
+- portable `.kmb` backupを作成し、復元する
+- Cloud accountなしで家計機能を使い、AI利用時にログインする
 
-- Actual Budgetを端末内で開き、支出を表示する
-- レシート画像を端末内へ保存し、手入力または任意のAI抽出を行う
-- ユーザーが確認したレシートをActual Budgetへ登録する
-- PayPayの対応CSVを端末内で読み込み、重複を除いて保存する
-- 保存済みレシートとPayPay明細を照合し、判断とActualへの反映状態を端末に保存する
-- 設定画面からActual家計簿と端末データ、残っている画像・CSV原本を `.kmb` に書き出し、新しいprofileへ復元する
-- 保存済み原本を条件付きで整理し、確認後に端末内の家計データをまとめて削除する
-- Cloud accountへログインしてAIを利用する。ログアウト後も端末内の家計データを保持する
+レシート画像は10 MiBまで端末に保存できます。AI Gatewayは6 MiBまで受け付けます。明細CSVは端末内で処理し、CloudflareやAI providerへ送信しません。現在は検証済みのPayPay形式だけに対応します。他社カードのexportは列の意味が確認できるまで受け付けません。
 
-レシート画像は10 MiBまで端末に保存できます。AI Gatewayの画像上限は6 MiBです。上限を超えた画像も手入力に使えますが、AIへは送信できません。CSVは端末内で処理し、CloudflareやAI providerへ送りません。明細CSVは現在PayPayの限定された公式形式のみ対応し、三井住友カード、楽天カード、イオンカードは安全に解釈できる列仕様が未確認のため取り込めません。
+## 開発と確認
 
-## 開発
-
-リポジトリのルートで次を実行します。
+リポジトリrootで固定したpnpmを使います。
 
 ```sh
+corepack pnpm --dir apps/pwa dev
 corepack pnpm --dir apps/pwa typecheck
+corepack pnpm --dir apps/pwa test
 corepack pnpm --dir apps/pwa build
 ```
 
-Preview Workerの設定は `cloudflare.config.ts` にあります。previewは `kakeimatch-issue-37` というWorker名を使います。deploy操作はこの文書の開発手順には含めません。
+ブラウザーテストは新規profileと合成データを使います。`test:e2e` はAI応答だけを置き換え、レシート、明細、照合、オフライン操作を確認します。`test:auth-e2e` はsynthetic previewでaccount routeを確認します。`test:backup-e2e` は合成データでbackupとrestoreを確認します。Issue #39専用previewではActualブラウザー版によるレシート・明細・照合・オフライン再起動と、backup/restore・原本整理・全消去のsynthetic E2Eが成功しました。previewにはCloud auth secretを設定していないため、auth要求は403で安全に拒否されました。実Passkey認証と実provider要求は未検証です。
 
-## iPhoneでの確認
+## Previewと本番
 
-実機での確認はまだ完了していません。`.kmb` のFiles保存、復元後の再読込、原本整理、全消去の合成手順は[端末内バックアップの確認手順](../../docs/LOCAL_BACKUP.md#iphone-previewでの合成確認)にあります。Gemini/TypeSafeへの実要求とActual Sync Serverとの同期も未確認です。復元途中のActual importを完全削除できない可能性が検出された場合は、アプリからの全消去を停止し、元データのバックアップ後にブラウザーのサイトデータ削除を案内します。確認に使ったレシート・家計簿・CSVはテスト専用profileでのみ扱ってください。
+Cloudflare configは通常、`kakeimatch-issue-39-preview` Workerとsynthetic test用D1を選びます。Issue #39専用preview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。previewでは合成データだけを使ってください。browser storageはdeploy先のoriginごとに分かれています。本番configはpreviewではない `production-deploy` modeを明示した場合だけ選ばれ、本番D1のnameとIDが必要です。Issue #39では本番route、D1、secretの準備を完了していません。production deployは実施していません。
 
-## 合成データによるブラウザー試験
+Cloudflare操作では現在の `cf` CLIを使用し、事前に `cf --help` と `cf cli search` を確認してください。記憶に基づいて古いWrangler commandを使わないでください。
 
-`test:e2e` は新しいブラウザープロファイルで実際の家計簿エンジンを使います。AIの応答だけを代替し、レシート保存・修正・登録、PayPay重複取込、照合と判断、オフライン再起動・手入力登録を確認します。AIの代替応答がService Workerを経由しないよう、試験ではAI操作後にService Workerを登録します。
+## iPhone確認
 
-```sh
-corepack pnpm --dir apps/pwa exec playwright-core install chromium
-PWA_E2E_URL=https://<専用preview> corepack pnpm --dir apps/pwa test:e2e
-```
-
-必要なら `PWA_BROWSER_PATH` でChromiumの実行ファイルを指定できます。実AIへの通信やiPhone実機の検証を代替する試験ではありません。
-
-`test:auth-e2e` は専用previewに合成アカウントを作り、仮想Passkeyによる登録・ログイン・sessionからのAI認証・ログアウトを確認します。`PWA_ACCOUNT_SECRET_FILE` にpreview専用bootstrap secretのJSONファイルを指定してください。秘密情報のファイルはリポジトリ外へ置きます。この試験は実際のiPhoneのPasskey操作を代替しません。
+Issue #39の変更後に行うiPhone確認は未実施です。ホーム画面からの起動、既存synthetic local profileの表示、オフライン起動、backup導線を確認します。以前の確認結果はIssue #31/#32/#37に記録されています。preview確認にはテスト用profileを使い、家計簿profileを使わないでください。

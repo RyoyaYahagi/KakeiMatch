@@ -1,6 +1,8 @@
 services:
   app:
-    build: .
+    build:
+      context: ..
+      dockerfile: legacy/Dockerfile
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -51,7 +53,8 @@ services:
   bootstrap:
     profiles: ["tools"]
     build:
-      context: .
+      context: ..
+      dockerfile: legacy/Dockerfile
       target: maintenance
     environment:
       NODE_ENV: production

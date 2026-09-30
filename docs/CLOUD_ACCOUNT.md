@@ -35,13 +35,17 @@ Familyは月間AI利用量の上限を持ちません。無制限は月間produc
 
 同一originの `/api/auth/*`、`/api/account/*`、`/api/ai/token`、`/api/ai/usage`、`/api/ai/gemini`、`/api/ai/jev` を使います。Service Workerは `/api/*` をキャッシュしません。
 
-認証・AIサービスが利用できない場合でも実装済みの端末内機能は利用できます。Issue #35で接続するレシート画面では、quota超過やprovider failure後も手動入力へ進め、保存済み画像を削除しません。Cloud accountのlogoutは端末内データに影響しません。
+認証・AIサービスが利用できない場合でも実装済みの端末内機能は利用できます。現在のPWAのレシート画面では、quota超過やprovider failure後も手動入力へ進め、保存済み画像を削除しません。Cloud accountのlogoutは端末内データに影響しません。
 
-このIssueのPWAはaccount状態、AI利用量、Passkey操作とtoken発行を接続します。レシート画像からの解析・カテゴリ提案など既存家計機能からのAI呼び出し統合はIssue #35へ引き継ぎます。
+PWAはaccount状態、AI利用量、Passkey操作、token発行とレシート解析・カテゴリ提案を同一originで接続しています。現行の起動・配信手順は[デプロイ](DEPLOYMENT.md)を正本とします。
 
 ## 運用上の注意
 
 Cloudflare WorkerのsecretにはBetter Auth signing secret、AI Gateway signing secret、bootstrap/invite secret、provider API keysを設定します。secret値や認証/request bodyをGit、browser bundle、通常ログへ出しません。D1 schemaは `workers/ai-gateway/migrations/` のversion管理されたmigrationで再現します。Issue #6のpreview環境はproduction Workerと分けます。
+
+### Issue #6時点のpreview準備記録（履歴・フォールバック）
+
+以下はIssue #6の実施記録です。Worker名とD1を現在の本番設定へそのまま流用しないでください。現在のpreviewと本番の選択は[デプロイ](DEPLOYMENT.md)に従います。`wrangler` の例は当時の `cf` 未対応操作のフォールバックであり、通常のdeploy手順ではありません。
 
 プレビュー環境の準備では、まず `cf --help` と `cf cli search` で現行コマンドを確認します。プレビュー専用D1を `cf d1 create --name <preview-db-name>` で作成し、`apps/pwa/cloudflare.config.ts` の `ACCOUNT_DB` にその名前とIDを設定します。次に `workers/ai-gateway` から `cf d1 migrations apply <preview-db-id> --dir ./migrations` を実行します。PWAは `apps/pwa` から `cf previews deploy kakeimatch-issue-6` で配信します。これらの操作は本番Workerと本番D1を更新しません。[Cloudflare D1 migration資料](https://developers.cloudflare.com/d1/reference/migrations/)を参照してください。
 

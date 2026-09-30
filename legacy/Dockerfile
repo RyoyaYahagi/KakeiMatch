@@ -6,21 +6,24 @@ WORKDIR /app
 
 FROM base AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/pwa/package.json ./apps/pwa/package.json
 RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
+COPY --from=dependencies /app/apps/pwa/node_modules ./apps/pwa/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN mkdir -p data && pnpm db:migrate && pnpm build
+RUN mkdir -p data && pnpm legacy:db:migrate && pnpm legacy:build
 
+# This optional legacy example needs tools now classified as development-only.
+# Do not prune them: its CLI subprocess and SQLite adapter still use them.
 FROM dependencies AS runtime-dependencies
-RUN pnpm prune --prod
 
 # Run the account bootstrap command against the same persistent database volume.
 FROM dependencies AS maintenance
 COPY . .
-CMD ["pnpm", "user:create"]
+CMD ["pnpm", "legacy:user:create"]
 
 FROM node:22-bookworm-slim AS runner
 ENV NODE_ENV=production
