@@ -27,6 +27,9 @@ const runtimeBoundary: Plugin = {
 
 export default defineConfig({
   server: { host: '127.0.0.1', headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
+  // Built assets are served from the app's own origin, as on Cloudflare.
+  // Vite's default CORS adds Vary: Origin, unlike the deployed asset response.
+  preview: { cors: false },
   plugins: [cloudflare({ experimental: { newConfig: { cfBuildOutput: true } } }), runtimeBoundary, {
     name: 'offline-assets',
     generateBundle(_options, bundle) {

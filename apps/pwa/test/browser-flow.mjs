@@ -66,7 +66,15 @@ try {
   await page.getByText(/記録なし 0件/).waitFor();
   await page.locator('#home-tab').click();
   await page.getByText('今月の支出 ¥1,780', { exact: false }).waitFor();
-  await page.evaluate(async () => { sessionStorage.setItem('synthetic-enable-offline', 'true'); await window.syntheticRegisterOffline('/sw.js'); await navigator.serviceWorker.ready; });
+  await page.evaluate(async () => {
+    sessionStorage.setItem('synthetic-enable-offline', 'true');
+    await window.syntheticRegisterOffline('/sw.js');
+    await navigator.serviceWorker.ready;
+    // An active registration alone does not guarantee that this page is controlled.
+    if (!navigator.serviceWorker.controller) {
+      await new Promise(resolve => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true }));
+    }
+  });
   await page.reload();
   await page.getByText('今月の支出 ¥1,780', { exact: false }).waitFor();
   await context.setOffline(true);
