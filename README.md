@@ -9,6 +9,8 @@
 
 ## コンセプト
 
+Issue #30以降のPWAでは、家計簿データを利用者の端末に置きます。Cloud accountはAI利用量・プランなどのクラウド機能にだけ使います。ログインやCloudflareへの接続に失敗しても、実装済みの端末内機能は引き続き利用できます。レシート、明細、照合のPWA画面への接続はIssue #35で行います。Cloud accountの範囲とPasskeyの流れは[Cloud account](docs/CLOUD_ACCOUNT.md)を参照してください。
+
 - 親を含む家族がスマートフォンから迷わず使えることを最優先する
 - 家計簿の基盤にはセルフホストした Actual Budget を利用する
 - 親向けUIは KakeiMatch 側で提供し、Actual Budget の複雑さを隠す
@@ -40,6 +42,7 @@
 - [CODING_AGENT_PROMPT.md](docs/CODING_AGENT_PROMPT.md): 初期実装を依頼するためのプロンプト
 - [CONTRIBUTING.md](CONTRIBUTING.md): ブランチ・コミット・PR運用
 - [SECURITY.md](SECURITY.md): 家計データを扱う際のセキュリティ方針
+- [CLOUD_ACCOUNT.md](docs/CLOUD_ACCOUNT.md): Cloud account、Passkey、AI利用量の境界と運用
 
 ## Status
 

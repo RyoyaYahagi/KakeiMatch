@@ -87,11 +87,14 @@ Thumbs.db
 spikes/actual-browser/.cloudflare/
 apps/pwa/.cloudflare/
 apps/pwa/.wrangler/
+workers/ai-gateway/.cloudflare/
+workers/ai-gateway/.wrangler/
 spikes/actual-browser/.wrangler/
 
 # Local AI / agent artifacts
 .claude/settings.local.json
 .codex/
+.worktrees/
 
 # KakeiMatch development database
 *.sqlite-journal

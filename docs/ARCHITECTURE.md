@@ -46,6 +46,16 @@ KakeiMatch Web App
                          +-- User C Budget
 ```
 
+## Local-firstとCloud account
+
+PWAの通常の家計機能は端末内で動き、Cloud accountのセッションを必要としません。Actual Budgetのローカルデータ、レシート、明細、照合状態、バックアップは端末側の保存領域に置きます。Cloudflareの利用者IDをローカルprofile、Actual Budget ID、レシート所有者IDとして使いません。
+
+Cloud accountはPasskey認証、AI利用量、プラン権限のための境界です。アカウント用D1にはBetter Authのusers・sessions・passkeysとentitlement、月単位のAI利用量だけを保存します。取引、レシート画像、明細CSV、明細行、照合結果、Actual Budgetデータは保存しません。APIの詳細、初期登録、回復方法、利用量の扱いは[Cloud account](CLOUD_ACCOUNT.md)に記載します。
+
+PWAとCloud account APIとAI Gatewayは同一originの `/api/` 配下で提供します。Service Workerは `/api/*` をキャッシュしません。AIを使う場合は認証済みアカウントsessionから10分以内のJWTを取得し、GeminiまたはJevのrouteへ送ります。JWTが失効してもaccount sessionが有効なら、Passkey操作を出さずにJWTを再取得できます。
+
+Cloud accountやAI Gatewayが利用できない場合も、PWAのローカル家計機能を閉じません。Issue #35で接続するレシート画面では、AIの上限到達やprovider障害後も手動入力へ進め、レシート原画像を端末に保持します。ログアウトは端末データを消しません。
+
 ## ホスティング
 
 MVPは自宅の常時稼働Linux上でセルフホストします。

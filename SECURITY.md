@@ -32,6 +32,14 @@ Never commit:
 
 Use environment variables or an appropriate secret store.
 
+## Cloud account and local data boundary
+
+The local PWA household experience does not require a Cloud account. Local Actual Budget data, receipts, statements, reconciliation results, and backups remain on the device. A Cloud account is used for Passkey identity, AI access, and entitlements. Its D1 database stores only account authentication records, entitlement settings, and monthly AI usage counters. It must not store household transactions, receipt content or images, statement files or rows, reconciliation results, or Actual Budget data. See [Cloud account operations](docs/CLOUD_ACCOUNT.md).
+
+The public signup path is disabled. Account creation uses a controlled, one-time invite/bootstrap process. Invites expire after 7 days. Passkey verification and challenge handling are delegated to Better Auth's Passkey plugin. The account cookie is HttpOnly and SameSite=Lax, and Secure over HTTPS; auth routes validate trusted origins and protect state-changing requests against CSRF. Account sessions last 14 days with a rolling refresh age of 24 hours. AI JWTs have a maximum 10-minute lifetime and are signed only on the server. A valid account session can renew an expired AI JWT without prompting for a Passkey again. The signing secret must never enter the PWA bundle.
+
+AI quota checks run on the server independently of the short-window abuse rate limit. The monthly counter increments once after request validation and immediately before a provider request. Provider failures after dispatch count as usage; validation, authentication, and quota rejections do not. Client retries are new provider attempts. Family entitlement removes the monthly product quota only; it does not remove the abuse rate limit.
+
 ## Uploaded files
 
 Receipt images and imported statement files are untrusted input.

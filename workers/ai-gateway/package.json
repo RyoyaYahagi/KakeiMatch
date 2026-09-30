@@ -6,14 +6,22 @@
     "dev": "vite",
     "build": "tsc --noEmit && cf build",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --config vitest.config.ts"
+    "test": "vitest run --config vitest.config.ts",
+    "account:set-plan": "node ./scripts/account-set-plan.mjs",
+    "account:invite": "node ./scripts/account-invite.mjs invite",
+    "account:recover": "node ./scripts/account-invite.mjs recover"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.0",
     "@types/node": "22.18.6",
     "cf": "1.0.0-beta.5",
+    "miniflare": "3.20250718.2",
     "typescript": "5.9.2",
     "vite": "8.3.1",
     "vitest": "3.2.4"
+  },
+  "dependencies": {
+    "@better-auth/passkey": "1.7.6",
+    "better-auth": "1.7.6"
   }
 }
