@@ -1,5 +1,11 @@
 # Architecture
 
+## 現行アプリ
+
+現在の主アプリは `apps/pwa` のPWAです。PWAはActual Budget、レシート、明細、照合結果をブラウザー内に保存します。`apps/pwa` はCloudflare Workersのpreviewへ配信され、UIを静的assetとして、認証・AI APIを同一originのWorker routeとして提供します。現在のpreview URLは[Issue #35 preview](https://kakeimatch-issue-35-kakeimatch-issue-35-preview.yhgry.workers.dev)です。
+
+ルートのNext.jsアプリとそのSQLite・サーバー保管機能は移行前のlegacy実装です。削除せずIssue #39まで保持します。以下にNext.jsやサーバーDBを前提とする節は、legacy実装の設計記録です。PWAの保存と照合には適用しません。
+
 ## 基本方針
 
 KakeiMatch本体とActual Budgetを疎結合にします。
@@ -7,6 +13,8 @@ KakeiMatch本体とActual Budgetを疎結合にします。
 Actual Budgetをforkしたりiframeで埋め込んだりせず、家計簿エンジン・管理UIとして利用します。通常利用者にはKakeiMatchの簡単なWeb UIだけを提供します。
 
 ## 概念構成
+
+以下の図は移行前Next.jsアプリのサーバー中心構成です。現在のPWA構成とデータ境界は「現行アプリ」と「Local-firstとCloud account」を正とします。
 
 ```text
 スマートフォン / PC
@@ -54,11 +62,15 @@ Cloud accountはPasskey認証、AI利用量、プラン権限のための境界�
 
 PWAとCloud account APIとAI Gatewayは同一originの `/api/` 配下で提供します。Service Workerは `/api/*` をキャッシュしません。AIを使う場合は認証済みアカウントsessionから10分以内のJWTを取得し、GeminiまたはJevのrouteへ送ります。JWTが失効してもaccount sessionが有効なら、Passkey操作を出さずにJWTを再取得できます。
 
-Cloud accountやAI Gatewayが利用できない場合も、PWAのローカル家計機能を閉じません。Issue #35で接続するレシート画面では、AIの上限到達やprovider障害後も手動入力へ進め、レシート原画像を端末に保持します。ログアウトは端末データを消しません。
+Cloud accountやAI Gatewayが利用できない場合も、PWAのローカル家計機能を閉じません。レシート画像は検証後に端末のIndexedDBへ保存し、AIを選んだ場合だけGemini routeへ送ります。アプリは画像を10 MiBまで端末保存し、AI Gatewayが受け付ける6 MiBを超える画像は送信せず手入力へ案内します。抽出JSONは共有schemaで再検証してから端末へ保存します。Jevには店舗名、合計金額、最大30件の商品名・金額のみを送ります。確認済み値とAI提案を分け、再解析で確認済み値を上書きしません。AIの利用上限、認証、通信、schemaエラーの後も画像を保持します。
+
+明細CSVはPayPayの対応headerだけを端末で解析し、原本とcanonical行をIndexedDBへ保存します。CSV原本や行はCloudflareへ送信しません。三井住友カード、楽天カード、イオンカードは形式の意味が未確認のため拒否します。照合は端末内のconfirmed receiptとcanonical statementだけを使う決定的処理です。自動一致・要確認・記録なしのrun、候補、判断、Actual反映状態を端末に保存します。Web Locksで同一レシートの更新・登録をタブ間で直列化し、Actual登録には安定したimported IDを使います。AIのログアウトは認証sessionとメモリ上のAI tokenを終了しますが、IndexedDBやActualの端末データを削除しません。
+
+現時点ではローカルデータのバックアップ・復元UIを実装していません。Issue #37で端末データをexport/importできる形にするまで、端末内データを唯一の正本として扱う運用に注意してください。PWAの手動確認手順は[ローカル保存フロー](LOCAL_FIRST_FLOW.md)に記載しています。
 
 ## ホスティング
 
-MVPは自宅の常時稼働Linux上でセルフホストします。
+移行前Next.jsアプリのMVPは、自宅の常時稼働Linux上でセルフホストする構成でした。現在のPWA previewはCloudflare Workersで配信します。PWA本番の配信先、Actual Sync Serverの運用場所、端末データのbackup手順は別途確定が必要です。
 
 外部から家族が利用するため、公開時には以下を必須とします。
 
@@ -97,7 +109,7 @@ KakeiMatchに持たせるもの:
 
 Actual内部DBへKakeiMatchから直接SQLを書かないでください。公開されたAPI・CLI等の境界を利用します。
 
-## ユーザーとデータ分離
+## ユーザーとデータ分離（legacy Next.js実装）
 
 MVPは**本人だけ見える家計簿**です。
 
@@ -117,7 +129,7 @@ Actualのserver password / session token / budget Sync IDはブラウザへ公�
 
 Actual連携は読み取り用の `actual-gateway.ts` と、レシート書き込み用の `actual-receipt-writer.ts` に分けています。どちらも公式 `@actual-app/cli` の短命プロセスを使います。読み取りはActualQL queryを実行します。書き込みは `transactions import` と `transactions update` を実行し、レシート値や更新JSONは `--file -` を介して標準入力から渡します。Better Authセッションから得たユーザーIDでmappingを検索し、Sync IDとパスワードは子プロセスの環境変数へ渡します。引数は配列で組み立て、CLIのJSON出力をZodで検証します。照合で複数の既存取引を更新するときだけ公式 `@actual-app/api` の `batchBudgetUpdates` と `updateTransaction` を使用します。[公式CLI資料](https://actualbudget.org/docs/api/cli/)と[ActualQL資料](https://actualbudget.org/docs/api/actual-ql/)を参照します。
 
-## レシートからActualへの登録
+## レシートからActualへの登録（legacy Next.js実装）
 
 画面が送る店名、日付、正の整数円金額、口座IDは、セッションユーザーが所有するレシートに対してサーバーで再検証します。口座の選択肢は本人Budgetのopen accountだけです。最後に登録した口座IDはユーザー別設定として記憶し、次回はその口座が引き続きopen accountである場合だけ初期選択に使います。
 
@@ -131,7 +143,7 @@ Gatewayのインターフェースは `getRecentTransactions({ limit? })`、`get
 
 CLIのキャッシュは `ACTUAL_CLI_DATA_DIR` の下にmapping IDとSync IDのハッシュで分離したディレクトリへ保存します。CLI自身のロックを有効なまま使用します。Composeではアプリ側の `/app/data/actual-cli` を使い、Actual Server側の `ACTUAL_DATA_DIR=/data` とは別のvolumeです。JPY設定の人工Budgetへ¥3,284の支出を登録してCLIのJSONが `-3284` を返すことを確認したため、Actualの整数値1単位を1円として変換します。[ActualのJPY通貨定義](https://github.com/actualbudget/actual/blob/master/packages/loot-core/src/shared/currencies.ts)とも一致します。
 
-## レシート処理
+## レシート処理（legacy Next.js実装）
 
 ```text
 画像upload
@@ -168,7 +180,7 @@ schema validation
 
 AIの出力は必ずschema validationを通します。金額・日付など重要項目が不正な場合は自動確定しません。
 
-## カテゴリ分類
+## カテゴリ分類（legacy Next.js実装）
 
 分類の順序は、(1) そのユーザーが以前明示的に確定した店舗カテゴリ、(2) Jev Choice、(3) 閾値未達・入力不足・provider障害なら未分類として確認、です。店舗名はUnicode NFKC、前後trim、連続空白の圧縮、ASCII英字の小文字化だけで正規化し、fuzzy matchingは行いません。提案だけでは店舗mappingを作りません。
 
@@ -182,7 +194,7 @@ Jevへは `merchant`、`totalAmountYen`、商品名と金額からなる最大30
 
 Issue #10へ渡す `getConfirmedReceiptCategory(userId, receiptId)` は、指定したユーザーが所有し、カテゴリが明示的に確定され、現在の検証済み抽出結果がレシートである場合だけ `{ receiptId, categoryId }` を返します。それ以外は `null` を返します。
 
-## 明細import
+## 明細import（legacy Next.js実装）
 
 カード会社ごとにadapterを分離します。
 
@@ -214,7 +226,7 @@ Canonical Transaction
 
 provider固有の列名や文字コードをreconciliationロジックに漏らさないでください。
 
-## Reconciliation
+## Reconciliation（legacy Next.js実装）
 
 照合判定はGemini/Jev/LLMを呼ばない純粋な決定ロジックです。入力は本人の `statement_transaction` canonical行と、`receipt_registration.status=registered` かつ `actual_transaction_id` があるreceiptです。Receiptでは登録時にユーザーが確定した店名・日付・金額・Actual口座ID・取引IDを読み、Geminiのraw extractionへ戻りません。Statementではprovider名を含むcanonical項目だけを読み、CSV原本やprovider固有headerを参照しません。照合はActualへ書き込みません。
 
@@ -228,7 +240,7 @@ provider固有の列名や文字コードをreconciliationロジックに漏ら�
 
 合成データ評価は `pnpm eval:reconciliation` で実行できます。人工シナリオ33件のauto-match precision、coverage、needs-review率、未照合数、状態期待値との一致を出力します。詳細と最新評価値はREADMEの「Reconciliation evaluation」を参照してください。
 
-## レシート画像
+## レシート画像（legacy Next.js実装）
 
 Issue #7ではレシート原本を `ReceiptStorage` 境界の背後に保存します。MVPの実装は `LocalReceiptStorage` です。保存先は `RECEIPT_STORAGE_DIR` で指定し、Composeでは公開ディレクトリの外にある `receipt-data` volumeを使います。UIとドメインはファイルシステムのパスを扱いません。将来S3/R2互換ストレージへ移す際は、この境界の実装を差し替えます。
 
@@ -242,7 +254,7 @@ Issue #7ではレシート原本を `ReceiptStorage` 境界の背後に保存し
 
 原本のEXIFやGPS情報は、この段階では削除しません。原本とDBは一緒にバックアップしてください。ユーザー削除でDBのレシート行がcascade削除された場合、画像は残り得ます。ユーザー削除時の画像一括削除と孤児画像の回収は後続の運用課題です。
 
-## 外部AI
+## 外部AI（provider側の共通境界とlegacy Next.js実装）
 
 Actual Budgetをセルフホストしても、Geminiへ送るレシート画像と、TypeSafeへ送るカテゴリ分類用の抽出データは外部サービスへ送られます。
 

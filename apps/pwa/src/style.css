@@ -24,3 +24,13 @@ li { padding: 12px 0; border-bottom: 1px solid #d8ddd6; }
 .muted { color: #58675d; font-size: .85rem; }
 .note-edit { background: transparent; color: #2f6959; border: 1px solid #9fb8aa; margin-top: 8px; min-height: 36px; }
 .empty { padding: 24px 0; }
+.app-nav { gap: 0; justify-content: space-between; }
+.nav-button { padding: 8px 4px; font-size: .9rem; }
+input { font: inherit; width: 100%; min-height: 44px; padding: 8px; border: 1px solid #a8b9ad; border-radius: 8px; background: white; }
+label { display: block; margin: 16px 0 8px; }
+form button { margin-top: 20px; }
+.receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: 12px auto; object-fit: contain; }
+summary { cursor: pointer; min-height: 44px; padding: 8px 0; }
+button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #c68b2c; outline-offset: 3px; }
+.muted, .status { font-size: .875rem; }
+[hidden] { display: none !important; }

@@ -9,23 +9,23 @@
 
 ## コンセプト
 
-Issue #30以降のPWAでは、家計簿データを利用者の端末に置きます。Cloud accountはAI利用量・プランなどのクラウド機能にだけ使います。ログインやCloudflareへの接続に失敗しても、実装済みの端末内機能は引き続き利用できます。レシート、明細、照合のPWA画面への接続はIssue #35で行います。Cloud accountの範囲とPasskeyの流れは[Cloud account](docs/CLOUD_ACCOUNT.md)を参照してください。
+Issue #35以降の主アプリは、Cloudflare Workersで配信するスマートフォン向けPWAです。家計簿、レシート、明細、照合の正本は利用者の端末に保存します。Cloud accountはAI利用量やプラン管理などに使い、通常の家計操作には要求しません。Cloud accountの範囲とPasskeyの流れは[Cloud account](docs/CLOUD_ACCOUNT.md)を参照してください。移行前のNext.jsアプリはIssue #39で削除を判断するまでlegacy実装として残します。
 
 - 親を含む家族がスマートフォンから迷わず使えることを最優先する
-- 家計簿の基盤にはセルフホストした Actual Budget を利用する
+- 家計簿の基盤にはActual Budgetを使い、PWAは端末内のデータを扱う
 - 親向けUIは KakeiMatch 側で提供し、Actual Budget の複雑さを隠す
 - レシート解析には Gemini を利用する
 - 支出カテゴリの提案には Jev を利用し、ユーザーが確認・確定する
 - カード明細との一致判定は、原則として決定的なルール・スコアリングで行う
 - 「未照合 = 不正利用」とは判定せず、確認が必要な取引として提示する
-- 家計データとレシート画像は原則として自宅の常時稼働Linux上で管理する
+- 家計データとレシート画像は利用者の端末に保存する
 
 ## MVP
 
 - レシート撮影・画像保存
 - Geminiによるレシート情報の構造化抽出
 - 基本カテゴリの提案とユーザー確定
-- ユーザーごとのアカウント（MVPでは本人の家計簿だけ閲覧可能）
+- 端末内profileごとの家計データ。Cloud accountはAI利用に使う
 - 三井住友カード / 楽天カード / イオンカード / PayPay の明細取り込み
 - 家計簿記録と明細の自動照合
 - 一致 / 要確認 / 記録なし の確認画面
@@ -43,10 +43,17 @@ Issue #30以降のPWAでは、家計簿データを利用者の端末に置き�
 - [CONTRIBUTING.md](CONTRIBUTING.md): ブランチ・コミット・PR運用
 - [SECURITY.md](SECURITY.md): 家計データを扱う際のセキュリティ方針
 - [CLOUD_ACCOUNT.md](docs/CLOUD_ACCOUNT.md): Cloud account、Passkey、AI利用量の境界と運用
+- [LOCAL_FIRST_FLOW.md](docs/LOCAL_FIRST_FLOW.md): PWAの現在の機能、データ境界、iPhoneでのsynthetic確認手順
 
 ## Status
 
-家族ごとのメールアドレス・パスワードによるログインと、本人の家計簿を確認する画面を実装しています。ホームには今月の支出と最近の支出を表示します。支出一覧・支出詳細・設定も利用できます。レシート画像の登録・保存・本人限定の再表示、Geminiによるレシート情報抽出、カテゴリ提案とユーザー確定、確認済みレシートのActual Budget登録に対応しています。レシート登録は本人のBudget内の口座を選び、店名・日付・整数円金額を確認してから実行します。`/statements/import` から明細CSVを取り込めます。現時点でPayPayの公式13列形式を受け付けます。三井住友カードと楽天カードの実exportでは文字コードと構造を確認しましたが、取引へ変換するための行の意味が未確定なので取り込みを拒否します。イオンカードも形式未確認のため拒否します。詳細は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。登録済みレシートとcanonical明細の決定的な照合engineと、本人単位のrun snapshot保存を実装しています。`/reconciliation` の確認画面、判断記録、Actualへの反映を実装しています。自動一致はまとめて確認済みにし、判断が必要な明細と反映エラーを優先表示します。Actualへのレシート登録のライブ試験は未実施です。手順は[レシート登録ライブ試験](docs/ACTUAL_RECEIPT_LIVE_TEST.md)を参照してください。
+PWAはActual Budgetを端末内で開き、支出を表示します。レシート画像と入力値を端末に保存し、希望時にAI抽出とカテゴリ提案を使えます。ユーザーが店名・日付・金額・カテゴリ・口座を確認してから、端末内のActual Budgetへ登録します。明細画面はPayPay CSVの対応形式を端末内で読み込みます。照合は登録済みレシートと明細を端末内で比較し、自動一致、要確認、記録なしを表示します。判断のActualへの反映や再試行状態も端末に保存します。AI Gatewayへは認証済み要求だけを送信し、Cloud accountやAI Gatewayに接続できない場合も手入力、ローカル明細の取扱い、照合を利用できます。
+
+三井住友カード、楽天カード、イオンカードの実exportは、列の意味や形式を安全に確定できていないため取り込めません。PayPayの対応範囲と他社形式の確認状況は[明細CSV形式の確認記録](docs/STATEMENT_FORMATS.md)を参照してください。Actual Serverを使う実データ連携のライブ確認とiPhone実機での一連の確認は未実施です。確認手順は[ローカル保存フロー](docs/LOCAL_FIRST_FLOW.md)を参照してください。
+
+### Legacy Next.jsアプリ
+
+以下は移行前のNext.jsアプリに関する機能記録と起動手順です。Next.jsアプリはIssue #39まで削除せず残します。PWAの開発手順は[apps/pwa README](apps/pwa/README.md)を参照してください。
 
 支出一覧は、本人の家計簿から日付の新しい取引を最大50件取得し、その中の支出だけを表示します。ホームの最近の支出は同じ取得結果から最大5件を表示します。収入と口座間振替は支出一覧へ表示しません。「今月」は `APP_TIME_ZONE`（既定値 `Asia/Tokyo`）で判定します。取引に保存された日付は変換しません。
 
@@ -73,7 +80,7 @@ squash merge
 
 AIコーディングエージェントには原則として1 Issueずつ実装させます。
 
-## ローカル開発
+## Legacy Next.jsのローカル開発
 
 必要なものはNode.js 22以降とCorepackです。CorepackはNode.jsに同梱され、プロジェクト指定のpnpmを利用できるようにします。
 
@@ -93,7 +100,7 @@ Actualでユーザー用Budgetを作成した後、KakeiMatch userとBudgetを�
 
 開発サーバーは <http://localhost:3000> で起動します。SQLiteデータベースは初期設定では `./data/kakeimatch.db` に保存されます。認証テーブルのマイグレーションはアプリ起動時にも適用されます。データを消去する場合は開発サーバーを停止してから `data/` を削除してください。
 
-## Docker Composeでの起動
+## Legacy Next.jsとActual ServerのDocker Compose起動
 
 Docker Composeはアプリと公式Actual Serverを別serviceとして起動します。アプリは `127.0.0.1` に、Actual管理UIも `127.0.0.1` にだけ公開し、それぞれSQLiteとActual `/data` を別の名前付きvolumeへ保存します。外部公開にはHTTPSを終端するリバースプロキシが必要です。Actual管理UIは一般ユーザー向けに公開しないでください。
 

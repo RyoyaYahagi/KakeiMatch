@@ -109,4 +109,13 @@ describe("Actual browser ledger", () => {
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
   });
+  it("accepts Actual's case formatting but rejects a different payee on read-back", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Synthetic" }]);
+    api.getPayees.mockResolvedValue([{ id: "payee-receipt:case", name: "Synthetic Cafe" }]);
+    const input = { accountId: "cash", date: "2026-09-29", amountYen: -1200, merchant: "synthetic cafe", categoryId: "food", importedId: "receipt:case" };
+    await expect(ledger.importReceipt(input)).resolves.toMatchObject({ payeeName: "Synthetic Cafe" });
+    api.getPayees.mockResolvedValue([{ id: "payee-receipt:case", name: "Different Store" }]);
+    await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
+  });
+
 });

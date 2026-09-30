@@ -27,6 +27,7 @@ function worker() {
   };
   const fetch = async request => {
     if (!online) throw new Error('offline');
+    if (request === '/offline-assets.json') return new Response(JSON.stringify(['/assets/browser.js']));
     if (request === '/') return new Response('<script src="/assets/app.js"></script>', { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } });
     return new Response('online');
   };
@@ -40,6 +41,7 @@ test('install caches the app shell and offline navigation keeps isolation header
   context.handlers.get('install')({ waitUntil: promise => { pending = promise; } });
   await pending;
   assert.ok(context.entries.has('/assets/app.js'));
+  assert.ok(context.entries.has('/assets/browser.js'));
   assert.ok(context.entries.has('/manifest.webmanifest'));
   context.setOnline(false);
   let response;

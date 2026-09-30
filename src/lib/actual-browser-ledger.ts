@@ -1,6 +1,7 @@
 "use client";
 
 import { z } from "zod";
+import { normalizeMerchant } from "./category";
 import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
@@ -288,7 +289,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         if (!saved) throw new ActualBrowserUnavailableError("invalid_data");
         const transaction = mapTransaction(saved, await namesFor(api));
         if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date ||
-          transaction.amountYen !== parsed.data.amountYen || transaction.payeeName !== parsed.data.merchant ||
+          transaction.amountYen !== parsed.data.amountYen || normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) ||
           saved.category !== parsed.data.categoryId || transaction.kind !== "expense") {
           throw new ActualBrowserUnavailableError("invalid_data");
         }
