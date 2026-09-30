@@ -147,6 +147,35 @@ describe("Actual browser ledger", () => {
     expect(sendHandlers.some((send) => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
   });
 
+  it("preserves incomplete-import classification when returning to the source directory also fails", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Existing" }]);
+    const reactivationError = new Error("source init failed");
+    api.importBudget.mockRejectedValueOnce(new Error("partial import"));
+    const init = api.init.getMockImplementation()!;
+    api.init.mockImplementation(async (options) => {
+      if (options?.dataDir === "/documents") throw reactivationError;
+      return init(options);
+    });
+    const error = await ledger.restoreBackup(new Uint8Array([8]), "/failed/profile").catch(error => error);
+    expect(error).toBeInstanceOf(ActualRestoreIncompleteError);
+    expect(error.cause).toBeInstanceOf(AggregateError);
+    expect(error.cause.errors).toContain(reactivationError);
+  });
+
+  it("preserves occupied-target classification when returning to the source directory also fails", async () => {
+    const { ledger, api, budgetsByDir, sendHandlers } = fixture([{ id: "budget", name: "Existing" }]);
+    budgetsByDir.set("/occupied/profile", [{ id: "other", name: "Other" }]);
+    const init = api.init.getMockImplementation()!;
+    api.init.mockImplementation(async (options) => {
+      if (options?.dataDir === "/documents") throw new Error("source init failed");
+      return init(options);
+    });
+    await expect(ledger.restoreBackup(new Uint8Array([8]), "/occupied/profile"))
+      .rejects.toBeInstanceOf(ActualRestoreTargetExistsError);
+    expect(api.importBudget).not.toHaveBeenCalled();
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
+  });
+
   it("lists and deletes local budgets through Actual's typed handlers", async () => {
     const { ledger, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
     await expect(ledger.listLocalBudgets()).resolves.toEqual([{ id: "budget", name: "Local" }]);

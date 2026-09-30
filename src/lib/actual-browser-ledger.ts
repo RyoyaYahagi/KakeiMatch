@@ -280,6 +280,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const previousDataDir = dataDirFor();
         let importStarted = false;
         let importResolved = false;
+        let failure: Error | undefined;
         try {
           await activateDataDir(api, runtime, dataDir);
           const before = await localBudgets(api);
@@ -297,15 +298,29 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
             try {
               await cleanupDataDir(api, runtime, dataDir);
             } catch (cleanupError) {
-              throw new ActualRestoreIncompleteError(cleanupError);
+              failure = new ActualRestoreIncompleteError(cleanupError);
+              throw failure;
             }
-            if (!importResolved) throw new ActualRestoreIncompleteError(error);
+            if (!importResolved) {
+              failure = new ActualRestoreIncompleteError(error);
+              throw failure;
+            }
           }
-          if (error instanceof ActualRestoreTargetExistsError) throw error;
-          if (error instanceof ActualBrowserUnavailableError) throw error;
-          throw new ActualBrowserUnavailableError("invalid_data");
+          failure = error instanceof ActualRestoreTargetExistsError || error instanceof ActualBrowserUnavailableError
+            ? error : new ActualBrowserUnavailableError("invalid_data");
+          throw failure;
         } finally {
-          if (runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
+          try {
+            if (runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
+          } catch (reactivationError) {
+            // The coordinator relies on these error types to protect occupied targets
+            // and remember an import that may have left unenumerable data.
+            if (failure) {
+              failure.cause = new AggregateError([failure.cause, reactivationError], "Actual restore and previous-directory reactivation failed.");
+              throw failure;
+            }
+            throw reactivationError;
+          }
         }
       };
       const result = runtime.tail.then(run, run);
