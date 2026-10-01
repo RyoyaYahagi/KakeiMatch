@@ -16,6 +16,7 @@ function pngBlob() {
 async function setup(fetchImpl = vi.fn(), ledgerOverrides: Record<string, unknown> = {}) {
   const repository = await LocalDataRepository.open(crypto.randomUUID());
   const ledger = {
+    listOpenAccounts: vi.fn(async () => [{ id: "cash", name: "現金" }]),
     listExpenseCategories: vi.fn(async () => [{ id: "actual-food", name: "食費" }]),
     importReceipt: vi.fn(async () => ({ id: "actual-tx" })),
     ...ledgerOverrides,
@@ -126,11 +127,34 @@ describe("LocalReceiptService", () => {
 
   it("uses a manual receipt's confirmed merchant mapping without requiring an extraction", async () => {
     const fetchImpl = vi.fn();
-    const { service } = await setup(fetchImpl);
+    const { service } = await setup(fetchImpl, { listExpenseCategories: vi.fn(async () => [{ id: "actual-custom", name: "自由カテゴリ" }]) });
     const receipt = await service.createManual();
     await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 200, categoryId: "actual-custom", accountId: "cash" });
     expect(await service.suggestCategory(receipt.id)).toBe("actual-custom");
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a merchant mapping to a deleted or hidden custom category without sending another AI request", async () => {
+    const fetchImpl = vi.fn(async () => Response.json(extraction));
+    const { repository, service } = await setup(fetchImpl);
+    await repository.put({ id: "mapping:removed", kind: "merchant-mapping", value: { normalizedMerchant: "synthetic shop", actualCategoryId: "removed-category" }, updatedAt: "2026-09-30T00:00:00.000Z" });
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBeNull();
+    expect(await repository.get("mapping:removed")).toBeNull();
+    expect((await service.get(receipt.id))?.aiSuggestion.categoryId).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires reselection when a confirmed custom category is no longer available", async () => {
+    const { service } = await setup();
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 200, categoryId: "removed-category", accountId: "cash" });
+    expect(await service.suggestCategory(receipt.id)).toBeNull();
+    await expect(service.register(receipt.id)).rejects.toMatchObject({ code: "category_unavailable" });
+    expect((await service.get(receipt.id))?.registration.status).toBe("pending");
+    await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 200, categoryId: "actual-food", accountId: "cash" });
+    await expect(service.register(receipt.id)).resolves.toMatchObject({ registration: { status: "applied" } });
   });
 
   it("falls back to Jev when no merchant mapping exists, and reports no category when Jev is uncertain", async () => {
@@ -235,7 +259,7 @@ describe("LocalReceiptService", () => {
     };
     const importReceipt = vi.fn(async () => ({ id: "actual-once" }));
     const repository = await LocalDataRepository.open(crypto.randomUUID());
-    const ledger = { listExpenseCategories: vi.fn(async () => [{ id: "actual-food", name: "食費" }]), importReceipt };
+    const ledger = { listOpenAccounts: vi.fn(async () => [{ id: "cash", name: "現金" }]), listExpenseCategories: vi.fn(async () => [{ id: "actual-food", name: "食費" }]), importReceipt };
     const service = new LocalReceiptService(repository, ledger as never, {
       withRegistrationLock,
       now: () => new Date("2026-09-30T00:00:00.000Z"),

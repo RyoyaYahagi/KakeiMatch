@@ -27,6 +27,11 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     { id: "transfer-out", account: "cash", date: "2026-09-26", amount: -700, transfer_id: "transfer-in" },
     { id: "transfer-in", account: "cash", date: "2026-09-26", amount: 700, transfer_id: "transfer-out" },
   ];
+  const categories = [
+      { id: "food", name: "食費", is_income: false, hidden: false, group_id: "expenses" },
+      { id: "home", name: "住居費", is_income: false, hidden: false, group_id: "expenses" },
+      { id: "income-category", name: "給与", is_income: true, hidden: false, group_id: "income" },
+    ];
   const api = {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
@@ -55,11 +60,9 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     }),
     loadBudget: vi.fn(async (id: string) => { activeBudget = id; }),
     getAccounts: vi.fn(async () => accounts),
-    getCategories: vi.fn(async () => [
-      { id: "food", name: "食費", is_income: false, hidden: false, group_id: "expenses" },
-      { id: "home", name: "住居費", is_income: false, hidden: false, group_id: "expenses" },
-      { id: "income-category", name: "給与", is_income: true, hidden: false, group_id: "income" },
-    ]),
+    getCategories: vi.fn(async () => categories),
+    getCategoryGroups: vi.fn(async () => [{ id: "expenses", name: "支出", is_income: false, hidden: false }, { id: "income", name: "収入", is_income: true, hidden: false }]),
+    createCategoryGroup: vi.fn(async () => "new-group"),
     getPayees: vi.fn(async () => [...payees]),
     getBudgetMonths: vi.fn(async () => ["2026-09"]),
     getTransactions: vi.fn(async (accountId: string, start: string, end: string) => rows.filter((row) => row.account === accountId && String(row.date) >= start && String(row.date) <= end)),
@@ -78,8 +81,15 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
       Object.assign(row, fields);
       return [];
     }),
-    createCategory: vi.fn(async () => "new-category"),
-    updateCategory: vi.fn(async () => {}),
+    createCategory: vi.fn(async (input: { name: string; group_id: string; is_income: boolean; hidden: boolean }) => { const id = categories.some(c => c.id === "new-category") ? "new-category-2" : "new-category"; categories.push({ id, ...input }); return id; }),
+    updateCategory: vi.fn(async (id: string, changes: Record<string, unknown>) => { Object.assign(categories.find(c => c.id === id)!, changes); }),
+    deleteCategory: vi.fn(async (id: string) => { categories.splice(categories.findIndex(c => c.id === id), 1); }),
+    createAccount: vi.fn(async (input: { name: string; closed: boolean }) => { accounts.push({ id: "new-account", ...input }); return "new-account"; }),
+    updateAccount: vi.fn(async (id: string, changes: Record<string, unknown>) => { Object.assign(accounts.find(a => a.id === id)!, changes); }),
+    getAccountBalance: vi.fn(async () => 0),
+    closeAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = true; }),
+    reopenAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = false; }),
+    deleteAccount: vi.fn(async (id: string) => { accounts.splice(accounts.findIndex(a => a.id === id), 1); }),
     batchBudgetUpdates: vi.fn(async (work: () => Promise<void>) => work()),
     exportBudget: vi.fn(async () => new Uint8Array([1, 2, 3])),
     importBudget: vi.fn(async () => {
@@ -233,6 +243,69 @@ describe("Actual browser ledger", () => {
     await expect(ledger.importReceipt(input)).resolves.toMatchObject({ payeeName: "Synthetic Cafe" });
     api.getPayees.mockResolvedValue([{ id: "payee-receipt:case", name: "Different Store" }]);
     await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
+  });
+
+  it("separates income categories and keeps custom and hidden categories manageable", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    await ledger.addCategory("  特別手当  ", true);
+    expect(api.createCategory).toHaveBeenLastCalledWith({ name: "特別手当", group_id: "income", is_income: true, hidden: false });
+    expect((await ledger.listExpenseCategories()).some(c => c.name === "特別手当")).toBe(false);
+    const expenseId = await ledger.addCategory("趣味", false);
+    await ledger.renameCategory(expenseId, "余暇");
+    await ledger.setCategoryHidden(expenseId, true);
+    expect(await ledger.listCategories()).toEqual(expect.arrayContaining([expect.objectContaining({ name: "余暇", hidden: true })]));
+    expect((await ledger.listExpenseCategories()).some(c => c.name === "余暇")).toBe(false);
+    await ledger.setCategoryHidden(expenseId, false);
+    expect((await ledger.listExpenseCategories()).some(c => c.name === "余暇")).toBe(true);
+  });
+
+  it("refuses to delete categories used by split children, closed accounts or future transactions", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.push({ id: "future", account: "closed", date: "2099-01-01", amount: -10, category: "income-category" });
+    expect(await ledger.getCategoryUsage("home")).toBe(1);
+    await expect(ledger.deleteCategory("home")).rejects.toThrow("既存の取引");
+    await expect(ledger.deleteCategory("income-category")).rejects.toThrow("既存の取引");
+    expect(api.deleteCategory).not.toHaveBeenCalled();
+    await ledger.addCategory("未使用", false);
+    await ledger.deleteCategory("new-category");
+    expect(api.deleteCategory).toHaveBeenCalledWith("new-category");
+    expect(rows.some(row => row.id === "split-b")).toBe(true);
+  });
+
+  it("keeps history when closing and reopening an account and only deletes empty zero-balance accounts", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    const initialIds = rows.map(r => r.id);
+    expect((await ledger.listAccounts()).find(a => a.id === "closed")?.closed).toBe(true);
+    await ledger.renameAccount("cash", "手持ち現金");
+    await expect(ledger.deleteAccount("cash")).rejects.toThrow("完全削除できません");
+    expect(api.deleteAccount).not.toHaveBeenCalled();
+    api.getAccountBalance.mockResolvedValueOnce(100);
+    await expect(ledger.closeAccount("cash")).rejects.toThrow("残高");
+    await ledger.closeAccount("cash");
+    expect((await ledger.listOpenAccounts()).some(a => a.id === "cash")).toBe(false);
+    await ledger.reopenAccount("cash");
+    expect((await ledger.listOpenAccounts()).some(a => a.name === "手持ち現金")).toBe(true);
+    await ledger.addAccount("空の口座");
+    await ledger.closeAccount("new-account");
+    expect(api.updateAccount).toHaveBeenCalledWith("new-account", { closed: true });
+    expect((await ledger.listAccounts()).find(a => a.id === "new-account")?.closed).toBe(true);
+    await ledger.reopenAccount("new-account");
+    api.getAccountBalance.mockResolvedValueOnce(1);
+    await expect(ledger.deleteAccount("new-account")).rejects.toThrow("完全削除できません");
+    await ledger.deleteAccount("new-account");
+    expect(api.deleteAccount).toHaveBeenCalledWith("new-account");
+    expect(rows.map(r => r.id)).toEqual(initialIds);
+  });
+
+  it("rejects blank names and missing or hidden receipt masters at the adapter boundary", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    expect(() => ledger.addAccount("   ")).toThrow("名前");
+    expect(() => ledger.addCategory("", false)).toThrow("名前");
+    await expect(ledger.renameAccount("missing", "新名称")).rejects.toThrow("見つかりません");
+    await ledger.setCategoryHidden("food", true);
+    await expect(ledger.importReceipt({ accountId: "cash", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "food", importedId: "receipt:hidden" })).rejects.toThrow("支出カテゴリ");
+    await expect(ledger.importReceipt({ accountId: "closed", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "home", importedId: "receipt:closed" })).rejects.toThrow("支払元");
+    expect(api.importTransactions).not.toHaveBeenCalled();
   });
 
 });

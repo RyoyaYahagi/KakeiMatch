@@ -9,6 +9,8 @@ type ActualApi = Pick<typeof import("@actual-app/api"),
   | "getBudgetMonths" | "getTransactions" | "importTransactions" | "updateTransaction"
   | "createCategory" | "updateCategory" | "getPayees" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
+  | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
+  | "createAccount" | "updateAccount" | "closeAccount" | "reopenAccount" | "deleteAccount" | "getAccountBalance"
 >;
 type ActualSend = Awaited<ReturnType<ActualApi["init"]>>["send"];
 
@@ -25,6 +27,13 @@ const actualTransactionSchema = z.object({
   transfer_id: z.string().nullable().optional(),
   is_parent: z.boolean().optional(),
 });
+
+export class ActualMasterValidationError extends Error {
+  constructor(message: string) { super(message); this.name = "ActualMasterValidationError"; }
+}
+
+export type ManagedCategory = { id: string; name: string; isIncome: boolean; hidden: boolean; groupName: string };
+export type ManagedAccount = { id: string; name: string; closed: boolean };
 
 export class ActualBudgetSelectionRequiredError extends Error {
   constructor() {
@@ -121,6 +130,18 @@ function lastDayOfMonth(yearMonth: string): string {
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
+  listCategories(): Promise<ManagedCategory[]>;
+  addCategory(name: string, isIncome: boolean): Promise<string>;
+  setCategoryHidden(id: string, hidden: boolean): Promise<void>;
+  getCategoryUsage(id: string): Promise<number>;
+  deleteCategory(id: string): Promise<void>;
+  listAccounts(): Promise<ManagedAccount[]>;
+  addAccount(name: string): Promise<string>;
+  renameAccount(id: string, name: string): Promise<void>;
+  getAccountUsage(id: string): Promise<{ transactionCount: number; balanceYen: number }>;
+  closeAccount(id: string): Promise<void>;
+  reopenAccount(id: string): Promise<void>;
+  deleteAccount(id: string): Promise<void>;
   createExpenseCategory(name: string, groupId: string): Promise<string>;
   renameCategory(id: string, name: string): Promise<void>;
   importReceipt(input: {
@@ -233,7 +254,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       }
       return await operation(api);
     } catch (error) {
-      if (error instanceof ActualBudgetSelectionRequiredError || error instanceof ActualBrowserUnavailableError) throw error;
+      if (error instanceof ActualBudgetSelectionRequiredError || error instanceof ActualBrowserUnavailableError || error instanceof ActualMasterValidationError) throw error;
       throw new ActualBrowserUnavailableError("operation");
     }
     };
@@ -259,9 +280,41 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   };
 
   const listCategories = async (api: ActualApi) => {
-    const categories = await api.getCategories();
-    return categories.filter((category) => !category.hidden && !category.is_income)
+    const [categories, groups] = await Promise.all([api.getCategories(), api.getCategoryGroups()]);
+    return categories.filter((category) => !category.hidden && !category.is_income && !groups.find(g => g.id === category.group_id)?.hidden)
       .map((category) => ({ id: category.id, name: category.name }));
+  };
+
+  const masterName = (name: string) => {
+    const parsed = z.string().trim().min(1).max(100).safeParse(name);
+    if (!parsed.success) throw new ActualMasterValidationError("名前を1〜100文字で入力してください。");
+    return parsed.data;
+  };
+  const masterId = (id: string) => {
+    if (!idSchema.safeParse(id).success) throw new ActualMasterValidationError("管理対象を選び直してください。");
+    return id;
+  };
+  const requireCategory = async (api: ActualApi, id: string) => {
+    const category = (await api.getCategories()).find(c => c.id === id);
+    if (!category) throw new ActualMasterValidationError("カテゴリが見つかりません。一覧を開き直してください。");
+    return category;
+  };
+  const requireAccount = async (api: ActualApi, id: string) => {
+    const account = (await api.getAccounts()).find(a => a.id === id);
+    if (!account) throw new ActualMasterValidationError("支払元が見つかりません。一覧を開き直してください。");
+    return account;
+  };
+  const categoryUsage = async (api: ActualApi, id: string) => {
+    await requireCategory(api, id);
+    return (await allRows(api, "0001-01-01", "9999-12-31")).filter(row => row.category === id).length;
+  };
+  const accountUsage = async (api: ActualApi, id: string) => {
+    await requireAccount(api, id);
+    const [rows, balanceYen] = await Promise.all([
+      api.getTransactions(id, "0001-01-01", "9999-12-31"), api.getAccountBalance(id),
+    ]);
+    if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
+    return { transactionCount: rows.length, balanceYen };
   };
 
   return {
@@ -426,6 +479,75 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
 
     listExpenseCategories() { return withBudget(listCategories); },
 
+    listCategories() {
+      return withBudget(async api => {
+        const [categories, groups] = await Promise.all([api.getCategories(), api.getCategoryGroups()]);
+        return categories.map(c => ({ id: c.id, name: c.name, isIncome: Boolean(c.is_income),
+          hidden: Boolean(c.hidden || groups.find(g => g.id === c.group_id)?.hidden),
+          groupName: groups.find(g => g.id === c.group_id)?.name ?? "" }));
+      });
+    },
+
+    addCategory(name, isIncome) {
+      const validName = masterName(name);
+      if (typeof isIncome !== "boolean") throw new ActualMasterValidationError("収入か支出を選んでください。");
+      return withBudget(async api => {
+        const groups = await api.getCategoryGroups();
+        const group = groups.find(g => Boolean(g.is_income) === isIncome && !g.hidden);
+        const groupId = group?.id ?? await api.createCategoryGroup({ name: isIncome ? "収入" : "支出", is_income: isIncome });
+        return api.createCategory({ name: validName, group_id: groupId, is_income: isIncome, hidden: false });
+      });
+    },
+
+    setCategoryHidden(id, hidden) {
+      masterId(id);
+      if (typeof hidden !== "boolean") throw new ActualMasterValidationError("表示状態を選び直してください。");
+      return withBudget(async api => { const category = await requireCategory(api, id); await api.updateCategory(id, { name: category.name, hidden }); });
+    },
+
+    getCategoryUsage(id) { masterId(id); return withBudget(api => categoryUsage(api, id)); },
+
+    deleteCategory(id) {
+      masterId(id);
+      return withBudget(async api => {
+        if (await categoryUsage(api, id)) throw new ActualMasterValidationError("既存の取引で使われているカテゴリは削除できません。利用をやめる場合は非表示にしてください。");
+        await api.deleteCategory(id);
+      });
+    },
+
+    listAccounts() { return withBudget(async api => (await api.getAccounts()).map(a => ({ id: a.id, name: a.name, closed: Boolean(a.closed) }))); },
+    addAccount(name) {
+      const validName = masterName(name);
+      return withBudget(api => api.createAccount({ name: validName, offbudget: false, closed: false }));
+    },
+    renameAccount(id, name) {
+      masterId(id); const validName = masterName(name);
+      return withBudget(async api => { await requireAccount(api, id); await api.updateAccount(id, { name: validName }); });
+    },
+    getAccountUsage(id) { masterId(id); return withBudget(api => accountUsage(api, id)); },
+    closeAccount(id) {
+      masterId(id);
+      return withBudget(async api => {
+        const usage = await accountUsage(api, id);
+        if (usage.balanceYen !== 0) throw new ActualMasterValidationError("残高がある支払元は利用終了にできません。残高を移動して0円にしてから再度お試しください。");
+        // Actual's closeAccount deletes accounts with no transactions. Keep them reopenable.
+        if (usage.transactionCount === 0) await api.updateAccount(id, { closed: true });
+        else await api.closeAccount(id);
+      });
+    },
+    reopenAccount(id) {
+      masterId(id);
+      return withBudget(async api => { await requireAccount(api, id); await api.reopenAccount(id); });
+    },
+    deleteAccount(id) {
+      masterId(id);
+      return withBudget(async api => {
+        const usage = await accountUsage(api, id);
+        if (usage.transactionCount || usage.balanceYen !== 0) throw new ActualMasterValidationError("取引または残高がある支払元は完全削除できません。履歴を残すため、利用終了を選んでください。");
+        await api.deleteAccount(id);
+      });
+    },
+
     createExpenseCategory(name, groupId) {
       const parsed = z.object({ name: z.string().trim().min(1).max(100), groupId: idSchema }).safeParse({ name, groupId });
       if (!parsed.success) throw new Error("Invalid Actual category.");
@@ -434,8 +556,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
 
     renameCategory(id, name) {
       const parsed = z.object({ id: idSchema, name: z.string().trim().min(1).max(100) }).safeParse({ id, name });
-      if (!parsed.success) throw new Error("Invalid Actual category.");
-      return withBudget(async (api) => { await api.updateCategory(parsed.data.id, { name: parsed.data.name }); });
+      if (!parsed.success) throw new ActualMasterValidationError("カテゴリ名を1〜100文字で入力してください。");
+      return withBudget(async (api) => { await requireCategory(api, parsed.data.id); await api.updateCategory(parsed.data.id, { name: parsed.data.name }); });
     },
 
     async importReceipt(input) {
@@ -451,8 +573,9 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return withBudget(async (api) => {
         const accounts = await api.getAccounts();
         if (!accounts.some((account) => account.id === parsed.data.accountId && !account.closed)) {
-          throw new Error("Choose an open account.");
+          throw new ActualMasterValidationError("利用中の支払元を選び直してください。");
         }
+        if (!(await listCategories(api)).some(c => c.id === parsed.data.categoryId)) throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
         const result = await api.importTransactions(parsed.data.accountId, [{
           account: parsed.data.accountId,
           date: parsed.data.date,

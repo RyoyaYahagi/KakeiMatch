@@ -1,3 +1,4 @@
+import { initializeMasterUi } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
@@ -36,7 +37,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const reconciliation = new LocalReconciliationService(repository, ledger);
   const view = el('local-view');
   let imageUrl: string | null = null;
-  function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
+  let resetMasterUi = () => {};
+  function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
     for (const id of ['home', 'receipt', 'statement', 'reconciliation', 'settings']) {
       const item = el(`${id}-tab`); const active = id === tab; item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
@@ -105,6 +107,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el<HTMLInputElement>('receipt-amount').value = value?.totalAmountYen?.toString() ?? '';
     account.value = draft?.value.accountId ?? receipt.confirmedValue?.accountId ?? (accounts.length === 1 ? accounts[0].id : '');
     category.value = draft?.value.categoryId ?? receipt.confirmedValue?.categoryId ?? '';
+    if ((draft?.value.accountId || receipt.confirmedValue?.accountId) && !account.value) view.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
+    if ((draft?.value.categoryId || receipt.confirmedValue?.categoryId) && !category.value) view.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
     const read = () => ({ merchant: el<HTMLInputElement>('receipt-merchant').value, purchasedDate: el<HTMLInputElement>('receipt-date').value, purchasedTime: el<HTMLInputElement>('receipt-time').value || null, totalAmountYen: Number(el<HTMLInputElement>('receipt-amount').value), categoryId: category.value, accountId: account.value });
     let saveTail: Promise<unknown> = Promise.resolve();
     const save = () => { const value = read(); saveTail = saveTail.catch(() => undefined).then(async () => { await receipts.confirm(receipt.id, value); el('receipt-save-state').textContent = '確認内容を保存しました。'; }); return saveTail; };
@@ -207,13 +211,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const zip = el<HTMLInputElement>('import-file'); el('import-section').hidden = false;
   el('import-button').addEventListener('click', () => zip.click());
   zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); await restoreStandaloneBudget(file, ledger); location.reload(); })().catch(report); });
-  setup.append(button('支払元を追加する', async () => { const name = window.prompt('支払元の名前（例：現金、カード）'); if (!name?.trim()) return; await ledger.listOpenAccounts(); await actual.createAccount({ name: name.trim(), offbudget: false, closed: false }); el('message').textContent = '支払元を追加しました。'; }));
-  setup.append(button('基本カテゴリを用意する', async () => {
-    const { CATEGORY_LABELS } = await import('../../../src/lib/category'); const existing = await ledger.listExpenseCategories();
-    let group = (await actual.getCategoryGroups()).find(g => !g.is_income && g.name === '支出');
-    if (!group) { const id = await actual.createCategoryGroup({ name: '支出', is_income: false }); group = { id, name: '支出', is_income: false }; }
-    for (const name of Object.values(CATEGORY_LABELS)) if (!existing.some(c => c.name === name)) await ledger.createExpenseCategory(name, group.id);
-    el('message').textContent = '基本カテゴリを用意しました。';
-  }));
+  resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; } });
+  el('settings-tab').addEventListener('click', resetMasterUi);
   if (budgetId) { if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
 }
