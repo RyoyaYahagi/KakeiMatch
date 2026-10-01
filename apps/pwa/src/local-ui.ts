@@ -1,6 +1,8 @@
 import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
 import { LocalRecurringService } from './local-recurring';
 import { showRecurringSchedules } from './local-recurring-ui';
+import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
+import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
@@ -63,7 +65,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const remaining = Date.parse(audit.undoUntil) - Date.now();
     deletionToast.replaceChildren(text('span', '削除しました。'));
     if (remaining <= 0) return;
-    const undo = button('元に戻す', async () => { await deletions.undo(audit.operationId); if (toastTimer) clearTimeout(toastTimer); await recordsPage(); deletionToast.replaceChildren(text('span', '削除を取り消しました。')); });
+    const undo = button('元に戻す', async () => { await deletions.undo(audit.operationId); if (toastTimer) clearTimeout(toastTimer); await returnToRecords(); deletionToast.replaceChildren(text('span', '削除を取り消しました。')); });
     deletionToast.append(undo, text('span', '10秒以内なら元に戻せます。'));
     toastTimer = setTimeout(() => { deletionToast.replaceChildren(text('span', '削除しました。')); }, remaining);
   }
@@ -71,7 +73,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const remove = button('削除する', async () => {
       if (!window.confirm('この取引を削除しますか？レシート画像などの原本は残ります。')) return;
       const audit = await deletions.delete(id);
-      await recordsPage(); showDeletionToast(audit);
+      await returnToRecords(); showDeletionToast(audit);
     });
     remove.classList.add('destructive'); return remove;
   }
@@ -86,8 +88,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el('message').textContent = ''; view.replaceChildren();
   }
   let selectedMonth = today().slice(0, 7);
+  let searchFilters: TransactionSearchFilters = { ...emptySearchFilters };
+  let searchOrigin = false;
   let homeRevision = 0;
   async function home() {
+    searchOrigin = false;
     const revision = ++homeRevision;
     el('home-summary').setAttribute('aria-busy', 'true');
     await open('home');
@@ -124,11 +129,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function manualEditor(kind: 'expense' | 'income' | 'transfer', transaction?: ActualTransaction) {
     await open('receipt');
     await showManualTransactionEditor({ view, ledger, repository, kind, transaction,
-      onSaved: async () => { await recordsPage(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
-      onCancel: recordsPage });
+      onSaved: async () => { await returnToRecords(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
+      onCancel: returnToRecords });
+  }
+  async function returnToRecords() { if (searchOrigin) await searchPage(); else await recordsPage(); }
+  async function searchPage() {
+    await open('receipt'); searchOrigin = true;
+    await showTransactionSearch({ view, ledger, initialFilters: searchFilters,
+      loadEntries: async () => {
+        const [entries, localReceipts] = await Promise.all([ledger.getSearchTransactions(), receipts.list()]);
+        return attachReceiptSearchItems(entries, localReceipts);
+      },
+      onFiltersChange: filters => { searchFilters = { ...filters }; }, onTransaction: transactionDetail, onBack: recordsPage });
   }
   async function recordsPage() {
+    searchOrigin = false;
     await open('receipt'); view.append(text('h2', '記録'), button('＋記録', recordChooser, false));
+    view.append(button('検索・絞り込み', searchPage));
     const localReceipts = await receipts.list();
     const list = document.createElement('ul'); list.className = 'record-list';
     for (const receipt of localReceipts.filter(receipt => receipt.registration.status !== 'applied' && receipt.registration.status !== 'deleted')) {
@@ -163,7 +180,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     view.append(detail);
     if (current.kind === 'transfer') view.append(button('編集する', () => manualEditor('transfer', current), false));
     if (current.kind !== 'transfer' && !current.isSplit) view.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
-    view.append(deleteButton(current.id), button('記録一覧へ戻る', recordsPage));
+    view.append(deleteButton(current.id), button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords));
   }
   async function receiptPage() {
     await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
@@ -205,7 +222,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       for (const adjustment of value.adjustments) adjustments.append(text('p', `${adjustment.label} · ${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`));
       view.append(adjustments);
     }
-    view.append(button('編集する', () => receiptEditor(receipt, { edit: true }), false), ...(receipt.registration.actualTransactionId ? [deleteButton(receipt.registration.actualTransactionId)] : []), button('記録一覧へ戻る', recordsPage));
+    view.append(button('編集する', () => receiptEditor(receipt, { edit: true }), false), ...(receipt.registration.actualTransactionId ? [deleteButton(receipt.registration.actualTransactionId)] : []), button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords));
   }
   async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean } = {}) {
     if (receipt.registration.status === 'deleted') throw new Error('この取引は削除済みです。記録一覧を開き直してください。');
@@ -557,7 +574,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       history.append(matchedList); view.append(history);
     }
   }
-  for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { void render().catch(report); });
+  for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
   el('home-capture').addEventListener('click', () => { void recordChooser().catch(report); });
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
@@ -577,7 +594,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if ((await deletions.list()).some(audit => (audit.status === 'pending' || audit.status === 'restoring' || audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()) && audit.nativeSnapshot.some(row => row[field] === id))) throw new Error('取り消せる削除の記録があります。取り消し時間が終わってから削除してください。');
   }
   resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; }, onTransaction: async row => { const displayed = row.kind === 'transfer' && row.amountYen > 0 && row.transferId ? await ledger.getTransactionById(row.transferId) : row; if (!displayed) throw new Error('取引が見つかりません。'); await transactionDetail(displayed); }, beforeDeleteAccount: id => protectUndoReference(id, 'account'), beforeDeleteCategory: id => protectUndoReference(id, 'category') });
-  el('settings-tab').addEventListener('click', () => { resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
+  el('settings-tab').addEventListener('click', () => { searchOrigin = false; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
     await deletions.recoverPending();
     await recurring.retry();

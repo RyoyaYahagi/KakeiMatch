@@ -20,7 +20,8 @@
     "test:monthly-dashboard-e2e": "node test/browser-monthly-dashboard.mjs",
     "test:account-balances-e2e": "node test/browser-account-balances.mjs",
     "test:monthly-budgets-e2e": "node test/browser-monthly-budgets.mjs",
-    "test:recurring-e2e": "node test/browser-recurring.mjs"
+    "test:recurring-e2e": "node test/browser-recurring.mjs",
+    "test:transaction-search-e2e": "node test/browser-transaction-search.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

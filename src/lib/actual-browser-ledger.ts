@@ -48,6 +48,11 @@ export type RecurringSchedule = RecurringScheduleInput & {
   completed: boolean;
   editable: boolean;
 };
+export type ActualSearchTransaction = {
+  transaction: ActualTransaction;
+  categoryIds: string[];
+  keywordValues: string[];
+};
 
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
@@ -297,6 +302,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   deleteRecurringSchedule(id: string): Promise<void>;
   skipDeletedScheduleOccurrences(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   runDueSchedules(): Promise<void>;
+  getSearchTransactions(params?: { startDate?: string; endDate?: string }): Promise<ActualSearchTransaction[]>;
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
@@ -947,13 +953,45 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
+    getSearchTransactions(params = {}) {
+      const start = validateDate(params.startDate ?? "0001-01-01");
+      const end = validateDate(params.endDate ?? "9999-12-31");
+      if (start > end) throw new Error("Start date must not follow end date.");
+      return withBudget(async api => {
+        const [rows, names] = await Promise.all([allRows(api, start, end), namesFor(api)]);
+        const validRow = (row: NativeTransaction) => {
+          const extended = row as NativeTransaction & { tombstone?: unknown; error?: unknown; starting_balance_flag?: unknown };
+          return extended.tombstone !== true && !extended.error && extended.starting_balance_flag !== true;
+        };
+        const byId = new Map(rows.map(row => [row.id, row]));
+        const childrenByParent = new Map<string, NativeTransaction[]>();
+        for (const child of rows) {
+          if (!child.parent_id || child.is_child === false || !validRow(child)) continue;
+          const children = childrenByParent.get(child.parent_id) ?? [];
+          children.push(child); childrenByParent.set(child.parent_id, children);
+        }
+        const visible = visibleRows(rows).filter(row => validRow(row) && (!row.transfer_id || row.amount < 0));
+        return visible.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map(row => {
+          const transaction = mapTransaction(row, names, row.transfer_id ? byId.get(row.transfer_id)?.account ?? null : null);
+          const children = childrenByParent.get(row.id) ?? [];
+          const categoryIds = [...new Set([row.category, ...children.map(child => child.category)]
+            .filter((id): id is string => typeof id === "string" && id.length > 0))];
+          const keywordValues = new Set<string>();
+          for (const part of [row, ...children]) {
+            const payeeName = part.payee ? names.payees.get(part.payee) : undefined;
+            if (payeeName?.trim()) keywordValues.add(payeeName.trim());
+            if (typeof part.notes === "string" && part.notes.trim()) keywordValues.add(part.notes.trim());
+          }
+          return { transaction, categoryIds, keywordValues: [...keywordValues] };
+        });
+      });
+    },
+
     getTransactionById(id) {
       const parsedId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(id);
       if (!parsedId.success) return Promise.resolve(null);
       return withBudget(async (api) => {
-        const months = (await api.getBudgetMonths()).toSorted();
-        if (months.length === 0) return null;
-        const rows = await allRows(api, `${months[0]}-01`, "9999-12-31");
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
         const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
         return row ? mapTransaction(row, await namesFor(api), row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null) : null;
       });

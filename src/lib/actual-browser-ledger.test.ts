@@ -220,7 +220,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, accounts, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, payees, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
@@ -508,6 +508,50 @@ describe("Actual browser ledger", () => {
     await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
     await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
     expect(schedules).toHaveLength(0);
+  });
+
+  it("returns search rows with split child metadata, one outgoing transfer, tombstones excluded, and closed accounts included", async () => {
+    const { ledger, rows, accounts, payees } = fixture([{ id: "budget", name: "Local" }]);
+    accounts.push({ id: "closed-card", name: "旧カード", closed: true });
+    payees.push({ id: "market", name: "合成スーパー" });
+    rows.find(row => row.id === "parent")!.category = "food";
+    rows.find(row => row.id === "parent")!.payee = "shop";
+    rows.find(row => row.id === "parent")!.notes = "親メモ";
+    rows.find(row => row.id === "split-a")!.payee = "market";
+    rows.find(row => row.id === "split-a")!.notes = "子メモ米";
+    rows.find(row => row.id === "split-b")!.notes = "子メモ日用品";
+    rows.push(
+      { id: "deleted-root", account: "cash", date: "2026-09-30", amount: -50, category: "food", tombstone: true },
+      { id: "deleted-child", parent_id: "parent", is_child: true, account: "cash", date: "2026-09-27", amount: -1, category: "deleted-category", tombstone: true },
+      { id: "closed-row", account: "closed-card", date: "2026-09-25", amount: -2500, category: "home", notes: "閉鎖口座も検索" },
+    );
+    rows.find(row => row.id === "transfer-in")!.account = "bank";
+    const found = await ledger.getSearchTransactions();
+    expect(found.find(row => row.transaction.id === "parent")).toMatchObject({
+      categoryIds: ["food", "home"], keywordValues: ["Synthetic Store", "親メモ", "合成スーパー", "子メモ米", "子メモ日用品"],
+      transaction: { isSplit: true, memo: "親メモ" },
+    });
+    expect(found.filter(row => row.transaction.kind === "transfer")).toHaveLength(1);
+    expect(found.find(row => row.transaction.id === "transfer-out")?.transaction.transferAccountId).toBe("bank");
+    expect(found.some(row => row.transaction.id === "transfer-in" || row.transaction.id === "deleted-root" || row.categoryIds.includes("deleted-category"))).toBe(false);
+    expect(found.find(row => row.transaction.id === "closed-row")?.transaction.accountId).toBe("closed-card");
+  });
+
+  it("searches the full Actual date range independently of recent-row limits and validates explicit dates", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    for (let index = 0; index < 125; index += 1) {
+      rows.push({ id: `old-${index.toString().padStart(3, "0")}`, account: "cash", date: "2001-01-01", amount: -1, category: "food" });
+    }
+    const results = await ledger.getSearchTransactions();
+    const oldRows = results.filter(row => row.transaction.date === "2001-01-01");
+    expect(oldRows).toHaveLength(125);
+    expect(oldRows[0]?.transaction.id).toBe("old-124");
+    expect(oldRows.at(-1)?.transaction.id).toBe("old-000");
+    await expect(ledger.getSearchTransactions({ startDate: "2001-01-01", endDate: "2001-01-01" })).resolves.toHaveLength(125);
+    await expect(ledger.getTransactionById("old-000")).resolves.toMatchObject({ id: "old-000", date: "2001-01-01", amountYen: -1 });
+    expect(() => ledger.getSearchTransactions({ startDate: "2026-02-30" })).toThrow("Invalid transaction date.");
+    expect(() => ledger.getSearchTransactions({ endDate: "2026/09/01" })).toThrow("Invalid transaction date.");
+    expect(() => ledger.getSearchTransactions({ startDate: "2027-01-01", endDate: "2026-01-01" })).toThrow("Start date must not follow end date.");
   });
 
   it("keeps complex schedules visible but read-only and advances only deleted due occurrences", async () => {
