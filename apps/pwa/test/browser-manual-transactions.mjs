@@ -56,7 +56,7 @@ try {
   assert.equal(await other.locator('#manual-transaction-payee').count(), 0);
   await page.locator('#settings-tab').click();
   await other.getByRole('button', { name: 'キャンセル', exact: true }).click();
-  await other.getByRole('button', { name: '＋記録', exact: true }).click();
+  await other.getByRole('heading', { name: '記録する' }).waitFor();
   await other.getByRole('button', { name: '収入', exact: true }).click();
   await other.locator('#manual-transaction-payee').waitFor();
   assert.equal(await other.locator('#manual-transaction-payee').inputValue(), 'Synthetic Employer');
