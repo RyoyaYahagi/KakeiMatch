@@ -3,7 +3,7 @@ import { LocalRecurringService } from './local-recurring';
 import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
 import { showTransactionSearch } from './local-transaction-search-ui';
-import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
+import { renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -101,7 +101,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const month = selectedMonth;
     const [rows, summary, budgetSummary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), ledger.getMonthlyBudgets({ yearMonth: month })]);
     if (revision !== homeRevision || el('household-view').hidden) return;
-    renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), next => { selectedMonth = next; void home().catch(report); });
+    renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), action => {
+      selectedMonth = action.type === 'current' ? today().slice(0, 7) : shiftMonth(selectedMonth, action.offset);
+      void home().catch(report);
+    });
     renderMonthlyBudgets(el('home-summary'), budgetSummary, () => { void budgetEditor().catch(report); });
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
