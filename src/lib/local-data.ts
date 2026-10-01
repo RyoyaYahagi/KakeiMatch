@@ -216,6 +216,23 @@ export class LocalDataRepository {
     } catch (error) { throw storageError(error); }
   }
 
+  /** Atomically commits related metadata records in one IndexedDB transaction. */
+  async putRecords(records: LocalDataRecord[]): Promise<void> {
+    try {
+      const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
+      const done = transactionDone(transaction);
+      const store = transaction.objectStore(RECORDS_STORE);
+      try {
+        for (const record of records) store.put({ ...record, profileId: this.profileId, key: toKey(this.profileId, record.id) });
+      } catch (error) {
+        transaction.abort();
+        await done.catch(() => undefined);
+        throw error;
+      }
+      await done;
+    } catch (error) { throw storageError(error); }
+  }
+
   async get<T>(id: string): Promise<LocalDataRecord<T> | null> {
     try {
       const row = await requestResult(this.database.transaction(RECORDS_STORE).objectStore(RECORDS_STORE).get(toKey(this.profileId, id))) as StoredRecord | undefined;

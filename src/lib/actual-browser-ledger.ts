@@ -34,6 +34,8 @@ const actualTransactionSchema = z.object({
   payee: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   cleared: z.boolean().optional(),
+  reconciled: z.boolean().optional(),
+  sort_order: z.number().optional(),
   transfer_id: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   imported_id: z.string().nullable().optional(),
@@ -94,6 +96,23 @@ export type ActualBrowserLedgerOptions = {
 };
 
 type NativeTransaction = z.infer<typeof actualTransactionSchema>;
+// Actual stores null categories on split parents even though its public model omits null.
+type ActualBatchTransaction = {
+  id: string;
+  account: string;
+  date: string;
+  amount: number;
+  payee?: string | null;
+  category?: string | null;
+  parent_id?: string | null;
+  notes?: string;
+  imported_id?: string;
+  cleared?: boolean;
+  reconciled?: boolean;
+  is_parent?: boolean;
+  is_child?: boolean;
+  sort_order?: number;
+};
 
 type RuntimeState = { initialized: boolean; dataDir?: string; loadedBudgetId?: string; send?: ActualSend; tail: Promise<void> };
 const runtimeByApi = new WeakMap<object, RuntimeState>();
@@ -178,6 +197,15 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   createExpenseCategory(name: string, groupId: string): Promise<string>;
   renameCategory(id: string, name: string): Promise<void>;
   importReceipt(input: {
+    accountId: string;
+    date: string;
+    amountYen: number;
+    merchant: string;
+    categoryId: string;
+    importedId: string;
+    splits?: Array<{ categoryId: string; amountYen: number }>;
+  }): Promise<ActualTransaction>;
+  editReceipt(id: string, input: {
     accountId: string;
     date: string;
     amountYen: number;
@@ -663,17 +691,21 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const matchingPayee = payees.find(payee => normalizeMerchant(payee.name) === normalizeMerchant(parsed.payeeName));
         const payeeId = matchingPayee?.id ?? await api.createPayee({ name: parsed.payeeName });
         const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
-        await api.batchBudgetUpdates(async () => {
-          await api.updateTransaction(parsedId.data, {
-            account: parsed.accountId,
-            date: parsed.date,
-            amount,
-            payee: payeeId,
-            category: parsed.categoryId,
-            notes: parsed.memo,
-          });
-        });
-        const movedRows = await api.getTransactions(parsed.accountId, parsed.date, parsed.date) as NativeTransaction[];
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        await send("transactions-batch-update", { updated: [{
+          id: parsedId.data,
+          account: parsed.accountId,
+          date: parsed.date,
+          amount,
+          payee: payeeId,
+          category: parsed.categoryId,
+          notes: parsed.memo,
+          cleared: current.cleared ?? false,
+          imported_id: current.imported_id ?? undefined,
+          reconciled: current.reconciled,
+        }], runTransfers: false });
+        const movedRows = await allRows(api, parsed.date, parsed.date);
         const saved = movedRows.find(row => row.id === parsedId.data);
         return verifyManualReadback(saved, parsed, current.imported_id ?? null, api);
       });
@@ -875,6 +907,106 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date ||
           transaction.amountYen !== parsed.data.amountYen || normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) ||
           (parsed.data.splits ? !sameSplitSet(readBackSplitSet(saved, rows), parsed.data.splits) : saved.category !== parsed.data.categoryId) || transaction.kind !== "expense") {
+          throw new ActualBrowserUnavailableError("invalid_data");
+        }
+        return transaction;
+      });
+    },
+
+    async editReceipt(id, input) {
+      const parsed = z.object({
+        id: idSchema,
+        accountId: idSchema,
+        date: dateSchema,
+        amountYen: z.number().int().safe().negative(),
+        merchant: z.string().trim().min(1).max(200),
+        categoryId: idSchema,
+        importedId: z.string().min(1).max(200).startsWith("kakeimatch:receipt:"),
+        splits: z.array(z.object({ categoryId: idSchema, amountYen: z.number().int().safe().negative() })).min(1).optional(),
+      }).strict().safeParse({ id, ...input });
+      if (!parsed.success || (parsed.data.splits && parsed.data.splits.reduce((sum, split) => sum + split.amountYen, 0) !== parsed.data.amountYen)) {
+        throw new Error("Invalid Actual receipt transaction.");
+      }
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const current = rows.find(row => row.id === parsed.data.id);
+        if (!current || current.imported_id !== parsed.data.importedId || current.is_child || current.parent_id || current.transfer_id ||
+          current.imported_id?.startsWith("kakeimatch:receipt:") !== true) {
+          throw new ActualMasterValidationError("編集するレシート取引が見つかりません。記録を読み込み直してください。");
+        }
+        const children = rows.filter(row => row.parent_id === current.id);
+        if (Boolean(current.is_parent) !== Boolean(children.length) || (current.is_parent && !children.length)) {
+          throw new ActualBrowserUnavailableError("invalid_data");
+        }
+        const [accounts, availableCategories, payees] = await Promise.all([api.getAccounts(), listCategories(api), api.getPayees()]);
+        if (!accounts.some(account => account.id === parsed.data.accountId && !account.closed)) {
+          throw new ActualMasterValidationError("利用中の支払元を選び直してください。");
+        }
+        const categoryIds = new Set(availableCategories.map(category => category.id));
+        if ((!parsed.data.splits && !categoryIds.has(parsed.data.categoryId)) || parsed.data.splits?.some(split => !categoryIds.has(split.categoryId))) {
+          throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
+        }
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        const currentNames = await namesFor(api);
+        const currentTransaction = mapTransaction(current, currentNames);
+        const alreadyMatches = current.account === parsed.data.accountId && current.date === parsed.data.date && current.amount === parsed.data.amountYen &&
+          normalizeMerchant(currentTransaction.payeeName ?? "") === normalizeMerchant(parsed.data.merchant) && current.imported_id === parsed.data.importedId &&
+          (parsed.data.splits
+            ? Boolean(current.is_parent) && sameSplitSet(readBackSplitSet(current, rows), parsed.data.splits)
+            : !current.is_parent && !children.length && current.category === parsed.data.categoryId);
+        if (alreadyMatches) return currentTransaction;
+        const payeeId = payees.find(payee => payee.name === parsed.data.merchant)?.id ?? await api.createPayee({ name: parsed.data.merchant });
+        const shared: Pick<ActualBatchTransaction, "account" | "date" | "amount" | "payee" | "notes" | "imported_id" | "cleared" | "reconciled"> = {
+          account: parsed.data.accountId,
+          date: parsed.data.date,
+          amount: parsed.data.amountYen,
+          payee: payeeId,
+          notes: current.notes ?? "",
+          imported_id: current.imported_id,
+          cleared: current.cleared ?? false,
+          reconciled: current.reconciled,
+        };
+        let updated: ActualBatchTransaction[];
+        let added: ActualBatchTransaction[] = [];
+        let deleted: Array<{ id: string }> = [];
+        if (parsed.data.splits) {
+          const desiredChildren: ActualBatchTransaction[] = parsed.data.splits.map((split, index) => ({
+            id: children[index]?.id ?? crypto.randomUUID(),
+            parent_id: current.id,
+            is_child: true,
+            account: parsed.data.accountId,
+            date: parsed.data.date,
+            amount: split.amountYen,
+            category: split.categoryId,
+            payee: payeeId,
+            cleared: current.cleared ?? false,
+            reconciled: current.reconciled,
+            sort_order: children[index]?.sort_order ?? -(index + 1),
+          }));
+          const parent: ActualBatchTransaction = {
+            id: current.id, ...shared, category: null, is_parent: true, is_child: false,
+          };
+          updated = [parent, ...desiredChildren.filter(child => children.some(existing => existing.id === child.id))];
+          added = desiredChildren.filter(child => !children.some(existing => existing.id === child.id));
+          deleted = children.slice(desiredChildren.length).map(child => ({ id: child.id }));
+        } else {
+          updated = [{ id: current.id, ...shared, category: parsed.data.categoryId, is_parent: false, is_child: false }];
+          deleted = children.map(child => ({ id: child.id }));
+        }
+        const nativeSend = send as unknown as (method: string, args: unknown) => Promise<unknown>;
+        await nativeSend("transactions-batch-update", { updated, added, deleted, runTransfers: false });
+        const savedRows = await allRows(api, "0001-01-01", "9999-12-31");
+        const saved = savedRows.find(row => row.id === current.id);
+        if (!saved) throw new ActualBrowserUnavailableError("invalid_data");
+        const transaction = mapTransaction(saved, await namesFor(api));
+        const savedChildren = savedRows.filter(row => row.parent_id === saved.id);
+        if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date || saved.amount !== parsed.data.amountYen ||
+          normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) || saved.imported_id !== parsed.data.importedId ||
+          (saved.cleared ?? false) !== (current.cleared ?? false) || (saved.notes ?? "") !== (current.notes ?? "") ||
+          Boolean(saved.is_parent) !== Boolean(parsed.data.splits) || (parsed.data.splits
+            ? !sameSplitSet(readBackSplitSet(saved, savedRows), parsed.data.splits)
+            : saved.category !== parsed.data.categoryId || savedChildren.length > 0)) {
           throw new ActualBrowserUnavailableError("invalid_data");
         }
         return transaction;

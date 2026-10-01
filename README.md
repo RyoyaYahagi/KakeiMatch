@@ -24,6 +24,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、移行方針
 - [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhone確認
 - [カテゴリと支払元の管理](docs/LOCAL_MASTERS.md): 収入・支出の分離と履歴を守る削除
+- [登録した記録の編集](docs/LOCAL_RECEIPT_EDITS.md): 品目・カテゴリ配分の修正と変更履歴
 - [口座間振替](docs/LOCAL_TRANSFERS.md): 登録・編集と両口座の残高
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理

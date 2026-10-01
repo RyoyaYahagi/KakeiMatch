@@ -118,8 +118,10 @@ try {
   await settings('カテゴリ'); await click('収入カテゴリ'); await page.getByRole('button', { name: /^Synthetic Salary ·/ }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Draft Shop/ }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
-  assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Cash');
-  assert.equal(await page.locator('#receipt-category option:checked').textContent(), 'Synthetic Hobby');
+  await page.getByRole('heading', { name: 'Synthetic Draft Shop', exact: true }).waitFor();
+  await page.getByText('Synthetic Hobby · Synthetic Cash', { exact: true }).waitFor();
+  assert.equal(await page.locator('#receipt-account').count(), 0);
+  assert.equal(await page.locator('#receipt-category').count(), 0);
   await page.locator('#home-tab').click(); assert.equal(await page.locator('#transactions li').count(), 1);
   await context.setOffline(true);
   await addCategory('Synthetic Offline Category');
