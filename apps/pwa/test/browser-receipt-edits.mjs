@@ -65,9 +65,16 @@ try {
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').nth(1);
   await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('-10');
-  await page.locator('#receipt-amount').fill('1390'); await click('登録する'); await page.getByText(/カテゴリ配分を確認してください/).waitFor();
+  await page.locator('#receipt-amount').fill('1390');
+  const invalidRegistrationForm = await page.locator('#local-view form').elementHandle();
+  await click('登録する');
+  // The earlier error remains visible while this submission is still saving.
+  // Wait for the replacement editor before interacting with its details.
+  await page.waitForFunction(form => !form.isConnected, invalidRegistrationForm);
+  await invalidRegistrationForm.dispose();
+  await page.getByText(/カテゴリ配分を確認してください/).waitFor();
   const extraAdjustment = page.locator('[data-receipt-adjustment]').nth(1);
-  if (await extraAdjustment.getAttribute('open') === null) await extraAdjustment.locator('summary').click();
+  if (await extraAdjustment.locator('details').getAttribute('open') === null) await extraAdjustment.locator('summary').click();
   await extraAdjustment.getByRole('button', { name: '値引きを削除', exact: true }).click();
   await page.locator('#receipt-amount').fill('1400');
   await click('レシート一覧へ戻る'); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
