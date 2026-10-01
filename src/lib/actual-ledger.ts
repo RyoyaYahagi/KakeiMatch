@@ -8,6 +8,21 @@ export type ActualTransaction = {
   categoryName: string | null;
   accountId: string;
   cleared: boolean;
+  categoryId?: string | null;
+  memo?: string | null;
+  importedId?: string | null;
+  isSplit?: boolean;
+};
+
+export type ManualTransactionInput = {
+  kind: "expense" | "income";
+  amountYen: number;
+  date: string;
+  payeeName: string;
+  categoryId: string;
+  accountId: string;
+  memo: string | null;
+  importedId: string;
 };
 
 export type ActualAccount = { id: string; name: string };

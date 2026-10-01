@@ -1,3 +1,5 @@
+import { showManualTransactionEditor } from './local-transaction-ui';
+import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { initializeMasterUi } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
@@ -52,18 +54,18 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
     for (const id of ['home', 'receipt', 'statement', 'reconciliation', 'settings']) {
-      const item = el(`${id}-tab`); const active = id === tab; item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
+      const item = el(`${id}-tab`); const active = id === tab || (tab === 'statement' && id === 'settings'); item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
     }
     el('message').textContent = ''; view.replaceChildren();
   }
   async function home() {
     await open('home');
-    const rows = (await ledger.getRecentTransactions({ limit: 50 })).filter(row => row.kind === 'expense');
+    const rows = await ledger.getRecentTransactions({ limit: 50 });
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows) {
-      const item = document.createElement('li'); item.className = 'row'; item.append(text('span', `${row.date} · ${row.payeeName || '支出'}`), text('strong', yen(row.amountYen))); list.append(item);
+      const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
     }
-    if (!rows.length) list.append(text('li', 'まだ支出の記録がありません。'));
+    if (!rows.length) list.append(text('li', 'まだ記録がありません。'));
     const monthly = await ledger.getMonthlySpending({ yearMonth: today().slice(0, 7) });
     el('home-summary').textContent = `今月の支出 ${yen(monthly)}`;
     const resolutions = await reconciliation.resolutions();
@@ -71,13 +73,55 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const attention = resolutions.filter(r => r.status !== 'applied').length + (latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)).length ?? 0);
     el('home-summary').append(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
   }
+  async function recordChooser() {
+    await open('receipt'); view.append(text('h2', '記録する'));
+    view.append(button('支出', () => manualEditor('expense')), button('収入', () => manualEditor('income')),
+      button('レシートから支出', receiptPage), button('記録一覧へ戻る', recordsPage));
+  }
+  async function manualEditor(kind: 'expense' | 'income', transaction?: ActualTransaction) {
+    await open('receipt');
+    await showManualTransactionEditor({ view, ledger, repository, kind, transaction,
+      onSaved: async () => { await recordsPage(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
+      onCancel: recordsPage });
+  }
+  async function recordsPage() {
+    await open('receipt'); view.append(text('h2', '記録'), button('＋記録', recordChooser, false));
+    const localReceipts = await receipts.list();
+    const list = document.createElement('ul'); list.className = 'record-list';
+    for (const receipt of localReceipts.filter(receipt => receipt.registration.status !== 'applied')) {
+      const item = document.createElement('li');
+      item.append(button(`${receipt.confirmedValue?.merchant || receipt.extraction?.merchant || '未入力のレシート'} · 確認する`, () => receiptEditor(receipt))); list.append(item);
+    }
+    for (const row of await ledger.getRecentTransactions({ limit: 100 })) {
+      const item = document.createElement('li');
+      const receipt = localReceipts.find(receipt => receipt.registration.actualTransactionId === row.id);
+      item.append(button(`${row.payeeName || (row.kind === 'income' ? '収入' : '支出')} · ${row.date} · ${row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}${receipt ? ' · 登録済み' : ''}`, () => receipt ? receiptEditor(receipt) : transactionDetail(row))); list.append(item);
+    }
+    view.append(list);
+    if (!list.children.length) view.append(text('p', 'まだ記録がありません。'));
+  }
+  async function transactionDetail(transaction: ActualTransaction) {
+    const linked = (await receipts.list()).find(receipt => receipt.registration.actualTransactionId === transaction.id);
+    if (linked) { await receiptEditor(linked); return; }
+    await open('receipt');
+    const [accounts, current] = await Promise.all([ledger.listAccounts(), ledger.getTransactionById(transaction.id)]);
+    if (!current) throw new Error('記録が見つかりません。記録一覧を読み込み直してください。');
+    view.append(text('h2', current.kind === 'income' ? '収入の記録' : current.kind === 'transfer' ? '振替の記録' : '支出の記録'));
+    const detail = document.createElement('dl'); detail.className = 'transaction-detail';
+    for (const [label, value] of [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']]) {
+      detail.append(text('dt', label), text('dd', value));
+    }
+    view.append(detail);
+    if (current.kind !== 'transfer' && !current.isSplit) view.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
+    view.append(button('記録一覧へ戻る', recordsPage));
+  }
   async function receiptPage() {
     await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
     const capture = document.createElement('input'); capture.type = 'file'; capture.accept = 'image/jpeg,image/png,image/webp'; capture.setAttribute('capture', 'environment'); capture.hidden = true;
     const library = document.createElement('input'); library.type = 'file'; library.accept = capture.accept; library.hidden = true;
     const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void receipts.saveImage(file).then(receiptEditor).catch(report); }); };
     saveFile(capture); saveFile(library);
-    view.append(button('撮影する', () => capture.click(), false), button('写真・ファイルを選ぶ', () => library.click()), button('手入力する', async () => receiptEditor(await receipts.createManual())), capture, library);
+    view.append(button('撮影する', () => capture.click(), false), button('写真・ファイルを選ぶ', () => library.click()), capture, library);
     const list = document.createElement('ul');
     for (const receipt of await receipts.list()) {
       const row = document.createElement('li'); const value = receipt.confirmedValue ?? receipt.extraction;
@@ -431,8 +475,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       history.append(matchedList); view.append(history);
     }
   }
-  for (const [tab, render] of [['home', home], ['receipt', receiptPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { void render().catch(report); });
-  el('home-capture').addEventListener('click', () => { void receiptPage().catch(report); });
+  for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { void render().catch(report); });
+  el('home-capture').addEventListener('click', () => { void recordChooser().catch(report); });
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   await initializeBackupUi(repository, ledger);
@@ -446,6 +490,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   el('import-button').addEventListener('click', () => zip.click());
   zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); await restoreStandaloneBudget(file, ledger); location.reload(); })().catch(report); });
   resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; } });
-  el('settings-tab').addEventListener('click', () => { void flushReceiptDraft().then(() => { flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); }).catch(report); });
+  el('settings-tab').addEventListener('click', () => { resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) { if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
 }

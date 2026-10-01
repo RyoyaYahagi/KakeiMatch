@@ -25,6 +25,8 @@ try {
   await click('設定へ戻る'); await click('カテゴリ'); await click('基本カテゴリを用意する');
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: 'レシートから支出', exact: true }).click();
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await click('AIで読み取る'); await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');

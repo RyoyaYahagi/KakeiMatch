@@ -34,8 +34,13 @@ async function accountDetail(name, closed = false) {
 async function noOverflow() {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 }
+async function newReceipt() {
+  await page.locator('#receipt-tab').click(); await click('＋記録'); await click('レシートから支出');
+  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#receipt-merchant').waitFor();
+}
 async function fillReceipt(merchant, account, category) {
-  await page.locator('#receipt-tab').click(); await click('手入力する');
+  await newReceipt();
   await page.locator('#receipt-merchant').fill(merchant);
   await page.locator('#receipt-date').fill('2026-10-01');
   await page.locator('#receipt-amount').fill('1200');
@@ -57,7 +62,7 @@ try {
   await page.getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Hobby'); await click('変更を保存');
   await page.getByText('カテゴリ名：Synthetic Hobby', { exact: true }).waitFor();
   await click('カテゴリを非表示にする'); await page.getByText('状態：非表示', { exact: true }).waitFor();
-  await page.locator('#receipt-tab').click(); await click('手入力する');
+  await newReceipt();
   assert.equal(await page.locator('#receipt-category option').filter({ hasText: 'Synthetic Hobby' }).count(), 0);
   await categoryDetail('Synthetic Hobby'); await click('カテゴリを表示する');
   await page.getByText('状態：表示中', { exact: true }).waitFor();

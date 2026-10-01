@@ -56,6 +56,8 @@ try {
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: 'レシートから支出', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
@@ -122,7 +124,7 @@ try {
   const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
   const csv = `${headers}\n2026/09/30 12:00,1280,0,,,,,支払い,Diagnostic Store corrected,PayPay,,,synthetic-match\n2026/09/30 13:00,500,0,,,,,支払い,Synthetic New Store,PayPay,,,synthetic-unmatched\n`;
   const upload = async () => {
-    await page.locator('#statement-tab').click();
+    await page.locator('#settings-tab').click(); await page.locator('#statement-tab').click();
     await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
   };
@@ -182,7 +184,9 @@ try {
   await upload();
   await page.getByText('0件を取り込みました。重複 2件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: '手入力する', exact: true }).click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: 'レシートから支出', exact: true }).click();
+  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-offline.png', mimeType: 'image/png', buffer: png });
   await page.locator('#receipt-merchant').fill('Synthetic Offline Store');
   await page.locator('#receipt-amount').fill('200');
   await page.locator('#receipt-category').selectOption({ label: '食費' });

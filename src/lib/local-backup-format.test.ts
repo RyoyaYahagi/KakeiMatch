@@ -224,3 +224,9 @@ it("round trips item IDs, signed discounts, per-item AI categories and drafts wh
   expect(restored.localData.records).toEqual(data.records);
   expect((restored.localData.records[1].value as { extraction: { adjustments?: unknown } }).extraction.adjustments).toBeUndefined();
 });
+
+it('preserves a pending manual transaction attempt ID and frozen snapshot in a backup', async () => {
+  const data = fixture();
+  data.records.push({ id: 'manual-draft:income:new', kind: 'category-state', updatedAt: time, value: { merchant: 'Synthetic Employer', purchasedDate: '2026-09-30', purchasedTime: null, totalAmountYen: 10000, categoryId: 'synthetic-income', accountId: 'synthetic-account', manualKind: 'income', manualMemo: 'Synthetic draft', manualImportedId: 'kakeimatch:manual:00000000-0000-4000-8000-000000000001', manualTransactionId: null, manualStatus: 'processing' } });
+  expect((await readPortableBackup(await create(data))).localData.records).toEqual(data.records);
+});

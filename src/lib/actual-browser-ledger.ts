@@ -2,12 +2,12 @@
 
 import { z } from "zod";
 import { normalizeMerchant } from "./category";
-import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction } from "@/lib/actual-ledger";
+import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction, ManualTransactionInput } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
   | "getBudgetMonths" | "getTransactions" | "importTransactions" | "updateTransaction"
-  | "createCategory" | "updateCategory" | "getPayees" | "batchBudgetUpdates"
+  | "createCategory" | "updateCategory" | "getPayees" | "createPayee" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
   | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
   | "createAccount" | "updateAccount" | "closeAccount" | "reopenAccount" | "deleteAccount" | "getAccountBalance"
@@ -16,6 +16,16 @@ type ActualSend = Awaited<ReturnType<ActualApi["init"]>>["send"];
 
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
+const manualTransactionSchema = z.object({
+  kind: z.enum(["expense", "income"]),
+  amountYen: z.number().int().safe().positive(),
+  date: dateSchema,
+  payeeName: z.string().trim().min(1).max(200),
+  categoryId: idSchema,
+  accountId: idSchema,
+  memo: z.string().max(2000),
+  importedId: z.string().min(1).max(200),
+}).strict();
 const actualTransactionSchema = z.object({
   id: idSchema,
   date: dateSchema,
@@ -25,6 +35,8 @@ const actualTransactionSchema = z.object({
   category: z.string().nullable().optional(),
   cleared: z.boolean().optional(),
   transfer_id: z.string().nullable().optional(),
+  notes: z.string().nullable().optional(),
+  imported_id: z.string().nullable().optional(),
   is_parent: z.boolean().optional(),
   is_child: z.boolean().optional(),
   parent_id: idSchema.nullable().optional(),
@@ -81,9 +93,7 @@ export type ActualBrowserLedgerOptions = {
   api?: ActualApi;
 };
 
-type NativeTransaction = z.infer<typeof actualTransactionSchema> & {
-  imported_id?: string;
-};
+type NativeTransaction = z.infer<typeof actualTransactionSchema>;
 
 type RuntimeState = { initialized: boolean; dataDir?: string; loadedBudgetId?: string; send?: ActualSend; tail: Promise<void> };
 const runtimeByApi = new WeakMap<object, RuntimeState>();
@@ -110,6 +120,10 @@ function mapTransaction(value: unknown, names: { payees: Map<string, string>; ca
     categoryName: row.category ? names.categories.get(row.category) ?? null : null,
     accountId: row.account,
     cleared: row.cleared ?? false,
+    categoryId: row.category ?? null,
+    memo: row.notes ?? null,
+    importedId: row.imported_id ?? null,
+    isSplit: Boolean(row.is_parent || row.subtransactions?.length),
   };
 }
 
@@ -132,10 +146,6 @@ function validateDate(value: string): string {
   return value;
 }
 
-function todayInTokyo(): string {
-  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-}
-
 function lastDayOfMonth(yearMonth: string): string {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error("Invalid yearMonth.");
   const next = new Date(`${yearMonth}-01T00:00:00.000Z`);
@@ -150,6 +160,7 @@ function lastDayOfMonth(yearMonth: string): string {
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
+  listIncomeCategories(): Promise<ActualCategory[]>;
   listCategories(): Promise<ManagedCategory[]>;
   addCategory(name: string, isIncome: boolean): Promise<string>;
   setCategoryHidden(id: string, hidden: boolean): Promise<void>;
@@ -173,6 +184,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     importedId: string;
     splits?: Array<{ categoryId: string; amountYen: number }>;
   }): Promise<ActualTransaction>;
+  createTransaction(input: ManualTransactionInput): Promise<ActualTransaction>;
+  updateTransaction(id: string, input: Omit<ManualTransactionInput, "importedId">): Promise<ActualTransaction>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
   exportBackup(): Promise<Uint8Array>;
@@ -314,6 +327,53 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     const [categories, groups] = await Promise.all([api.getCategories(), api.getCategoryGroups()]);
     return categories.filter((category) => !category.hidden && !category.is_income && !groups.find(g => g.id === category.group_id)?.hidden)
       .map((category) => ({ id: category.id, name: category.name }));
+  };
+
+  const listIncomeCategories = async (api: ActualApi) => {
+    const [categories, groups] = await Promise.all([api.getCategories(), api.getCategoryGroups()]);
+    return categories.filter((category) => !category.hidden && category.is_income && !groups.find(g => g.id === category.group_id)?.hidden)
+      .map((category) => ({ id: category.id, name: category.name }));
+  };
+
+  const validateManualInput = (input: unknown, includeImportedId: boolean) => {
+    const schema = includeImportedId ? manualTransactionSchema : manualTransactionSchema.omit({ importedId: true });
+    const normalized = input && typeof input === "object" ? { ...input, memo: (input as { memo?: string | null }).memo ?? "" } : input;
+    const parsed = schema.safeParse(normalized);
+    if (!parsed.success || (!includeImportedId && input && typeof input === "object" && "importedId" in input)) {
+      throw new ActualMasterValidationError("取引内容を確認して入力し直してください。");
+    }
+    return parsed.data;
+  };
+
+  const validateManualMasters = async (api: ActualApi, input: Omit<ManualTransactionInput, "importedId"> | ManualTransactionInput) => {
+    const [accounts, categories, groups] = await Promise.all([api.getAccounts(), api.getCategories(), api.getCategoryGroups()]);
+    if (!accounts.some(account => account.id === input.accountId && !account.closed)) {
+      throw new ActualMasterValidationError("利用中の支払元を選び直してください。");
+    }
+    const category = categories.find(candidate => candidate.id === input.categoryId);
+    const group = category && groups.find(candidate => candidate.id === category.group_id);
+    const shouldBeIncome = input.kind === "income";
+    if (!category || category.hidden || category.is_income !== shouldBeIncome || group?.hidden) {
+      throw new ActualMasterValidationError(shouldBeIncome ? "収入カテゴリを選び直してください。" : "支出カテゴリを選び直してください。");
+    }
+  };
+
+  const verifyManualReadback = async (
+    row: NativeTransaction | undefined,
+    input: Omit<ManualTransactionInput, "importedId"> | ManualTransactionInput,
+    importedId: string | null,
+    api: ActualApi,
+  ): Promise<ActualTransaction> => {
+    if (!row) throw new ActualBrowserUnavailableError("invalid_data");
+    const transaction = mapTransaction(row, await namesFor(api));
+    const expectedAmount = input.kind === "expense" ? -input.amountYen : input.amountYen;
+    if (row.account !== input.accountId || row.date !== input.date || row.amount !== expectedAmount ||
+      normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(input.payeeName) ||
+      row.category !== input.categoryId || (row.notes ?? "") !== (input.memo ?? "") || (row.imported_id ?? null) !== importedId ||
+      transaction.kind !== input.kind || row.is_parent || row.subtransactions?.length || row.is_child || row.parent_id || row.transfer_id) {
+      throw new ActualBrowserUnavailableError("invalid_data");
+    }
+    return transaction;
   };
 
   const masterName = (name: string) => {
@@ -458,7 +518,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return withBudget(async (api) => {
         const months = (await api.getBudgetMonths()).toSorted();
         if (months.length === 0) return [];
-        const rows = visibleRows(await allRows(api, `${months[0]}-01`, todayInTokyo()));
+        const rows = visibleRows(await allRows(api, `${months[0]}-01`, "9999-12-31"));
         rows.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
         const names = await namesFor(api);
         return rows.slice(0, limit).map((row) => mapTransaction(row, names));
@@ -480,10 +540,9 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       const parsedId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(id);
       if (!parsedId.success) return Promise.resolve(null);
       return withBudget(async (api) => {
-        const today = todayInTokyo();
         const months = (await api.getBudgetMonths()).toSorted();
         if (months.length === 0) return null;
-        const rows = await allRows(api, `${months[0]}-01`, today);
+        const rows = await allRows(api, `${months[0]}-01`, "9999-12-31");
         const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
         return row ? mapTransaction(row, await namesFor(api)) : null;
       });
@@ -509,6 +568,71 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     },
 
     listExpenseCategories() { return withBudget(listCategories); },
+    listIncomeCategories() { return withBudget(listIncomeCategories); },
+
+    createTransaction(input) {
+      const parsed = validateManualInput(input, true) as ManualTransactionInput & { memo: string };
+      if (parsed.importedId.startsWith("kakeimatch:receipt:")) {
+        throw new ActualMasterValidationError("この識別子はレシート登録に使われています。取引を作成し直してください。");
+      }
+      return withBudget(async api => {
+        let rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const existing = rows.find(row => row.imported_id === parsed.importedId && !row.is_child && !row.parent_id);
+        if (existing) return verifyManualReadback(existing, parsed, parsed.importedId, api);
+        await validateManualMasters(api, parsed);
+        const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
+        const result = await api.importTransactions(parsed.accountId, [{
+          account: parsed.accountId,
+          date: parsed.date,
+          amount,
+          payee_name: parsed.payeeName,
+          category: parsed.categoryId,
+          notes: parsed.memo,
+          imported_id: parsed.importedId,
+          cleared: false,
+        }]);
+        if (result.errors.length > 0) throw new ActualBrowserUnavailableError("invalid_data");
+        rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const saved = rows.find(row => row.imported_id === parsed.importedId && !row.is_child && !row.parent_id);
+        return verifyManualReadback(saved, parsed, parsed.importedId, api);
+      });
+    },
+
+    updateTransaction(id, input) {
+      const parsedId = idSchema.safeParse(id);
+      const parsed = validateManualInput(input, false) as Omit<ManualTransactionInput, "importedId"> & { memo: string };
+      if (!parsedId.success) throw new ActualMasterValidationError("編集する取引を読み込み直してください。");
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const current = rows.find(row => row.id === parsedId.data);
+        if (!current || current.is_parent || current.is_child || current.parent_id || current.subtransactions?.length || current.transfer_id) {
+          throw new ActualMasterValidationError("この取引は編集できません。");
+        }
+        if (current.imported_id?.startsWith("kakeimatch:receipt:")) {
+          throw new ActualMasterValidationError("レシートに登録した取引はここから編集できません。");
+        }
+        const currentKind = current.amount < 0 ? "expense" : current.amount > 0 ? "income" : null;
+        if (currentKind !== parsed.kind) throw new ActualMasterValidationError("取引の種類は変更できません。");
+        await validateManualMasters(api, parsed);
+        const payees = await api.getPayees();
+        const matchingPayee = payees.find(payee => normalizeMerchant(payee.name) === normalizeMerchant(parsed.payeeName));
+        const payeeId = matchingPayee?.id ?? await api.createPayee({ name: parsed.payeeName });
+        const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
+        await api.batchBudgetUpdates(async () => {
+          await api.updateTransaction(parsedId.data, {
+            account: parsed.accountId,
+            date: parsed.date,
+            amount,
+            payee: payeeId,
+            category: parsed.categoryId,
+            notes: parsed.memo,
+          });
+        });
+        const movedRows = await api.getTransactions(parsed.accountId, parsed.date, parsed.date) as NativeTransaction[];
+        const saved = movedRows.find(row => row.id === parsedId.data);
+        return verifyManualReadback(saved, parsed, current.imported_id ?? null, api);
+      });
+    },
 
     listCategories() {
       return withBudget(async api => {

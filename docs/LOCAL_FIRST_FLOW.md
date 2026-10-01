@@ -24,6 +24,14 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 
 レシート登録状態は `pending`、`processing`、`applied`、`failed` で管理し、登録後はActualの取引IDを保存します。再試行では同じ `kakeimatch:${receiptId}` imported IDを使います（PWA実装ではreceipt IDを `id` として補間します）。Actualへの反映結果が不明な失敗後は、再試行で状態を回復するまで確認値を変更できません。Web Locks APIを使い、複数タブから同じレシートを同時更新しないようにします。
 
+## 手入力による収入・支出と後編集
+
+主要な移動先は「ホーム / 記録 / 照合 / 設定」です。ホームと記録一覧の「＋記録」から支出、収入、レシートからの支出を選びます。明細の取り込みは設定から開きます。
+
+手入力した収入・支出の正本はActualの取引です。金額は1円以上の整数で入力し、保存時に支出は負、収入は正の金額へ変換します。カテゴリはActualの収入・支出区分と一致することを検証します。振替やレシートの分割取引は、この手入力フォームから編集しません。
+
+手入力の記録は一覧から詳細を開き、「編集する」で日付、金額、相手先、カテゴリ、口座、メモを変更できます。入力途中の値と登録用の固定IDは端末の入力記録として保存します。保存の結果が分からない場合は内容を固定し、同じIDで再試行します。登録結果を読み戻して検証できるまで、新しいIDで同じ記録を作りません。この状態は再読み込みと`.kmb`復元後も引き継ぎます。手入力・後編集にはCloud accountへのサインインもAI要求も必要ありません。
+
 ## Cloud accountとログアウト
 
 端末内の家計表示、レシート入力、PayPay import、照合にCloud account sessionは不要です。GeminiとJevの要求は同一originの `/api/ai/token` で取得する短時間有効なBearer tokenを使います。このrouteは認証sessionからaccountを特定し、PWAはuser IDを送信しません。GatewayがGeminiへ画像と抽出promptを送り、TypeSafeへ検証済みの最小Jev stateを送ります。account用D1には認証record、entitlement、月間AI利用量だけを保存し、家計データは保存しません。

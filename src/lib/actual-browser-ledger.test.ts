@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ActualBudgetSelectionRequiredError,
+  ActualBrowserUnavailableError,
   ActualMasterValidationError,
   ActualRestoreIncompleteError,
   ActualRestoreTargetExistsError,
@@ -65,6 +66,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     getCategoryGroups: vi.fn(async () => [{ id: "expenses", name: "支出", is_income: false, hidden: false }, { id: "income", name: "収入", is_income: true, hidden: false }]),
     createCategoryGroup: vi.fn(async () => "new-group"),
     getPayees: vi.fn(async () => [...payees]),
+    createPayee: vi.fn(async ({ name }: { name: string }) => { const id = `payee-${payees.length}`; payees.push({ id, name }); return id; }),
     getBudgetMonths: vi.fn(async () => ["2026-09"]),
     getTransactions: vi.fn(async (accountId: string, start: string, end: string) => rows.filter((row) => row.account === accountId && String(row.date) >= start && String(row.date) <= end)),
     importTransactions: vi.fn(async (accountId: string, imports: Array<Record<string, unknown>>) => {
@@ -111,7 +113,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
@@ -289,6 +291,69 @@ describe("Actual browser ledger", () => {
     await expect(ledger.importReceipt({ ...base, splits: [{ categoryId: "food", amountYen: 0 }, { categoryId: "home", amountYen: -1000 }] })).rejects.toThrow("Invalid Actual receipt transaction.");
     await expect(ledger.importReceipt({ ...base, splits: [{ categoryId: "income-category", amountYen: -1000 }] })).rejects.toBeInstanceOf(ActualMasterValidationError);
     expect(api.importTransactions).not.toHaveBeenCalled();
+  });
+
+  it("lists income categories and creates manual transactions idempotently with verified fields", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Synthetic" }]);
+    await expect(ledger.listIncomeCategories()).resolves.toEqual([{ id: "income-category", name: "給与" }]);
+    const input = {
+      kind: "income" as const, amountYen: 65000, date: "2099-04-05", payeeName: "Synthetic Salary",
+      categoryId: "income-category", accountId: "cash", memo: "monthly", importedId: "kakeimatch:manual:income-1",
+    };
+    await expect(ledger.createTransaction(input)).resolves.toMatchObject({
+      kind: "income", amountYen: 65000, categoryId: "income-category", memo: "monthly",
+      importedId: input.importedId, isSplit: false,
+    });
+    await expect(ledger.getTransactionById("receipt-created")).resolves.toMatchObject({ date: input.date, importedId: input.importedId });
+    await expect(ledger.getRecentTransactions({ limit: 1 })).resolves.toEqual([expect.objectContaining({ date: input.date, importedId: input.importedId })]);
+    expect(api.importTransactions).toHaveBeenCalledTimes(1);
+    expect(api.importTransactions).toHaveBeenLastCalledWith("cash", [expect.objectContaining({
+      amount: 65000, date: input.date, category: "income-category", notes: "monthly", imported_id: input.importedId,
+    })]);
+    await ledger.createTransaction(input);
+    expect(api.importTransactions).toHaveBeenCalledTimes(1);
+    rows.find(row => row.imported_id === input.importedId)!.amount = 64000;
+    await expect(ledger.createTransaction(input)).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    expect(api.importTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates ordinary manual transactions across dates, accounts, payees, categories and memo, preserving cleared", async () => {
+    const { ledger, api, rows, accounts } = fixture([{ id: "budget", name: "Synthetic" }]);
+    accounts.push({ id: "bank", name: "銀行", closed: false });
+    rows.find(row => row.id === "expense")!.cleared = true;
+    const result = await ledger.updateTransaction("expense", {
+      kind: "expense", amountYen: 2000, date: "2099-06-07", payeeName: "Synthetic Books",
+      categoryId: "home", accountId: "bank", memo: "moved entry",
+    });
+    expect(result).toMatchObject({
+      id: "expense", kind: "expense", amountYen: -2000, date: "2099-06-07", accountId: "bank",
+      payeeName: "Synthetic Books", categoryId: "home", memo: "moved entry", cleared: true,
+    });
+    expect(api.createPayee).toHaveBeenCalledWith({ name: "Synthetic Books" });
+    expect(api.updateTransaction).toHaveBeenCalledWith("expense", expect.objectContaining({
+      account: "bank", date: "2099-06-07", amount: -2000, category: "home", notes: "moved entry",
+    }));
+    expect(api.updateTransaction.mock.calls[0]?.[1]).not.toHaveProperty("cleared");
+  });
+
+  it("rejects invalid manual categories and edits to receipt, transfer, and split rows before writes", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Synthetic" }]);
+    await expect(ledger.createTransaction({
+      kind: "expense", amountYen: 1, date: "2026-09-29", payeeName: "Synthetic", categoryId: "income-category",
+      accountId: "cash", memo: null, importedId: "kakeimatch:manual:wrong-category",
+    })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    rows.find(row => row.id === "expense")!.imported_id = "kakeimatch:receipt:receipt-1";
+    await expect(ledger.updateTransaction("expense", {
+      kind: "expense", amountYen: 100, date: "2026-09-29", payeeName: "Synthetic", categoryId: "food", accountId: "cash", memo: null,
+    })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    rows.find(row => row.id === "expense")!.imported_id = undefined;
+    for (const id of ["transfer-out", "parent", "split-a"]) {
+      await expect(ledger.updateTransaction(id, {
+        kind: "expense", amountYen: 100, date: "2026-09-29", payeeName: "Synthetic", categoryId: "food", accountId: "cash", memo: null,
+      })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    }
+    expect(api.importTransactions).not.toHaveBeenCalled();
+    expect(api.updateTransaction).not.toHaveBeenCalled();
   });
 
   it("separates income categories and keeps custom and hidden categories manageable", async () => {
