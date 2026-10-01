@@ -96,7 +96,27 @@ try {
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年11月');
   await page.getByText('11月の予算 · ¥0 / ¥600', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '前月へ', exact: true }).click(); await homeMonth('2026年10月');
+  // Tap the still-visible previous-month control twice before IndexedDB reads
+  // finish. Both taps must be applied instead of collapsing onto October.
+  await page.getByRole('button', { name: '前月へ', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await homeMonth('2026年9月');
+  await page.getByText('9月の予算 · ¥0 / ¥0', { exact: true }).waitFor();
+  await page.locator('#monthly-income').getByText('¥0', { exact: true }).waitFor();
+  await page.locator('#monthly-expense').getByText('¥0', { exact: true }).waitFor();
+  await page.getByText('まだ記録がありません。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年10月');
+  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年11月');
+  // Opening the editor from the home budget summary and returning must preserve
+  // the month selected in the editor.
+  summary = page.locator('details.monthly-budget-details');
+  await summary.locator('summary').click(); await summary.getByRole('button', { name: '予算を設定', exact: true }).click();
+  await page.getByRole('button', { name: '予算の前月へ', exact: true }).click();
+  await page.getByRole('heading', { name: '2026年10月の予算', exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
+  await page.getByText('10月の予算 · ¥2,900 / ¥3,000', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '前月へ', exact: true }).click(); await homeMonth('2026年9月');
+  await page.getByText('9月の予算 · ¥0 / ¥0', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年10月');
 
   // Zero removes the Food budget, leaving the Home category as the monthly total.
   await editor(); await page.locator('#budget-category').selectOption({ label: 'Synthetic Budget Food' });
@@ -120,5 +140,5 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);
   await context.setOffline(false);
-  console.log('PASS: monthly category budgets, overspend/usage percentages, month-specific custom budgets, zero removal, reload and offline editing');
-} catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }
+  console.log('PASS: monthly budgets follow quick month switches and editor navigation, clear in no-budget months, and persist through reload/offline use');
+} catch (error) { console.log(await page.locator('body').innerText(), errors); throw error; } finally { await browser.close(); }
