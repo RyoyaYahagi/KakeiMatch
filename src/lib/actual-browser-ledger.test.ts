@@ -34,6 +34,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     { id: "transfer-out", account: "cash", date: "2026-09-26", amount: -700, transfer_id: "transfer-in" },
     { id: "transfer-in", account: "cash", date: "2026-09-26", amount: 700, transfer_id: "transfer-out" },
   ];
+  const tombstoned = new Map<string, Record<string, unknown>>();
   const categories = [
       { id: "food", name: "食費", is_income: false, hidden: false, group_id: "expenses" },
       { id: "home", name: "住居費", is_income: false, hidden: false, group_id: "expenses" },
@@ -56,11 +57,12 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
         if (method === "transactions-batch-update") {
           for (const deletion of args?.deleted ?? []) {
             const index = rows.findIndex(item => item.id === deletion.id);
-            if (index >= 0) rows.splice(index, 1);
+            if (index >= 0) { tombstoned.set(deletion.id, rows[index]); rows.splice(index, 1); }
           }
           for (const update of args?.updated ?? []) {
             const row = rows.find(item => item.id === update.id);
             if (row) Object.assign(row, update);
+            else if (update.tombstone === false && typeof update.id === "string" && tombstoned.has(update.id)) { rows.push({ ...tombstoned.get(update.id), ...update }); tombstoned.delete(update.id); }
           }
           rows.push(...(args?.added ?? []));
           return { updated: args?.updated ?? [], added: args?.added ?? [], deleted: args?.deleted ?? [], errors: [] };
@@ -539,6 +541,39 @@ describe("Actual browser ledger", () => {
     await expect(ledger.importReceipt({ accountId: "cash", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "food", importedId: "receipt:hidden" })).rejects.toThrow("支出カテゴリ");
     await expect(ledger.importReceipt({ accountId: "closed", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "home", importedId: "receipt:closed" })).rejects.toThrow("支払元");
     expect(api.importTransactions).not.toHaveBeenCalled();
+  });
+
+  it("deletes and restores complete scalar, split, and transfer groups with the same IDs", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    for (const id of ["expense", "income", "parent"]) {
+      const before = await ledger.getTransactionTree(id);
+      expect(before.length).toBe(id === "parent" ? 3 : 1);
+      await ledger.deleteTransactionTree(before);
+      await expect(ledger.getTransactionTree(id)).resolves.toEqual([]);
+      await ledger.deleteTransactionTree(before);
+      await ledger.restoreTransactionTree(before);
+      await ledger.restoreTransactionTree(before);
+      expect(await ledger.getTransactionTree(id)).toEqual(before);
+    }
+    const transfer = await ledger.createTransfer({ date: "2026-09-30", amountYen: 100, sourceAccountId: "cash", destinationAccountId: "bank", memo: "Synthetic", importedId: "synthetic-delete-transfer" });
+    const pair = await ledger.getTransactionTree(transfer.id);
+    expect(pair).toHaveLength(2);
+    await ledger.deleteTransactionTree(pair);
+    expect(rows.some(row => pair.some(original => original.id === row.id))).toBe(false);
+    await ledger.restoreTransactionTree(pair);
+    expect(await ledger.getTransactionTree(transfer.id)).toEqual(pair);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale deletions, partial groups and occupied IDs before native mutation", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    const snapshot = await ledger.getTransactionTree("expense");
+    rows.find(row => row.id === "expense")!.amount = -999;
+    await expect(ledger.deleteTransactionTree(snapshot)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.restoreTransactionTree(snapshot)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    const split = await ledger.getTransactionTree("parent");
+    await expect(ledger.deleteTransactionTree(split.slice(0, 2))).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.getTransactionTree("split-a")).rejects.toBeInstanceOf(ActualMasterValidationError);
   });
 
 });

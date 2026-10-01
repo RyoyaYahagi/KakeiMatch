@@ -246,8 +246,12 @@ export function showManualTransactionEditor(options: {
       const wasFrozen = frozenAfterUnknownFailure;
       status.textContent = '';
       setBusy(true);
-      const lockId = transaction?.id ?? 'create';
       inFlightOperation = (async () => {
+      const lockIds = editing && transfer ? (await ledger.getTransactionTree(transaction!.id)).map(row => row.id).sort() : [transaction?.id ?? 'create'];
+      const withLocks = async (operation: () => Promise<void>, index = 0): Promise<void> => index >= lockIds.length ? operation() : navigator.locks.request(`kakeimatch-manual-transaction:${lockIds[index]}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (!lock) throw new ActualMasterValidationError('別の画面で記録を保存中です。終わってからもう一度お試しください。');
+        await withLocks(operation, index + 1);
+      });
         let editAudit: { targetType: 'transaction'; transactionId: string; operationId: string; before: ActualTransaction; after: ActualTransaction; status: 'pending' | 'applied'; createdAt: string; appliedAt: string | null } | null = null;
         try { await persistDraft(value, 'processing'); }
         catch (error) {
@@ -257,8 +261,7 @@ export function showManualTransactionEditor(options: {
           return;
         }
         try {
-          await navigator.locks.request(`kakeimatch-manual-transaction:${lockId}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
-            if (!lock) throw new ActualMasterValidationError('別の画面で記録を保存中です。終わってからもう一度お試しください。');
+          await withLocks(async () => {
             if (editing) {
               const correctionId = `transaction-correction:${transaction!.id}`;
               const prior = await options.repository.get<NonNullable<typeof editAudit>>(correctionId);

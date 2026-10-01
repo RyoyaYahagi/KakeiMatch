@@ -1,3 +1,4 @@
+import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { initializeMasterUi } from './local-master-ui';
@@ -47,7 +48,28 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const receipts = new LocalReceiptService(repository, ledger);
   const statements = new LocalStatementService(repository);
   const reconciliation = new LocalReconciliationService(repository, ledger);
+  const deletions = new LocalTransactionDeletionService(repository, ledger);
   const view = el('local-view');
+  const deletionToast = text('div', '', 'deletion-toast'); deletionToast.setAttribute('role', 'status');
+  el('message').after(deletionToast);
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  function showDeletionToast(audit: { operationId: string; undoUntil: string }) {
+    if (toastTimer) clearTimeout(toastTimer);
+    const remaining = Date.parse(audit.undoUntil) - Date.now();
+    deletionToast.replaceChildren(text('span', '削除しました。'));
+    if (remaining <= 0) return;
+    const undo = button('元に戻す', async () => { await deletions.undo(audit.operationId); if (toastTimer) clearTimeout(toastTimer); await recordsPage(); deletionToast.replaceChildren(text('span', '削除を取り消しました。')); });
+    deletionToast.append(undo, text('span', '10秒以内なら元に戻せます。'));
+    toastTimer = setTimeout(() => { deletionToast.replaceChildren(text('span', '削除しました。')); }, remaining);
+  }
+  function deleteButton(id: string) {
+    const remove = button('削除する', async () => {
+      if (!window.confirm('この取引を削除しますか？レシート画像などの原本は残ります。')) return;
+      const audit = await deletions.delete(id);
+      await recordsPage(); showDeletionToast(audit);
+    });
+    remove.classList.add('destructive'); return remove;
+  }
   let imageUrl: string | null = null;
   let resetMasterUi = () => {};
   let flushReceiptDraft: () => Promise<void> = () => Promise.resolve();
@@ -88,7 +110,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     await open('receipt'); view.append(text('h2', '記録'), button('＋記録', recordChooser, false));
     const localReceipts = await receipts.list();
     const list = document.createElement('ul'); list.className = 'record-list';
-    for (const receipt of localReceipts.filter(receipt => receipt.registration.status !== 'applied')) {
+    for (const receipt of localReceipts.filter(receipt => receipt.registration.status !== 'applied' && receipt.registration.status !== 'deleted')) {
       const item = document.createElement('li');
       item.append(button(`${receipt.confirmedValue?.merchant || receipt.extraction?.merchant || '未入力のレシート'} · 確認する`, () => receiptEditor(receipt))); list.append(item);
     }
@@ -120,7 +142,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     view.append(detail);
     if (current.kind === 'transfer') view.append(button('編集する', () => manualEditor('transfer', current), false));
     if (current.kind !== 'transfer' && !current.isSplit) view.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
-    view.append(button('記録一覧へ戻る', recordsPage));
+    view.append(deleteButton(current.id), button('記録一覧へ戻る', recordsPage));
   }
   async function receiptPage() {
     await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
@@ -130,7 +152,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     saveFile(capture); saveFile(library);
     view.append(button('撮影する', () => capture.click(), false), button('写真・ファイルを選ぶ', () => library.click()), capture, library);
     const list = document.createElement('ul');
-    for (const receipt of await receipts.list()) {
+    for (const receipt of (await receipts.list()).filter(receipt => receipt.registration.status !== 'deleted')) {
       const row = document.createElement('li'); const value = receipt.confirmedValue ?? receipt.extraction;
       row.append(button(`${value?.merchant || '未入力のレシート'} · ${receipt.registration.status === 'applied' ? '登録済み' : '確認する'}`, () => receiptEditor(receipt))); list.append(row);
     }
@@ -162,9 +184,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       for (const adjustment of value.adjustments) adjustments.append(text('p', `${adjustment.label} · ${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`));
       view.append(adjustments);
     }
-    view.append(button('編集する', () => receiptEditor(receipt, { edit: true }), false), button('記録一覧へ戻る', recordsPage));
+    view.append(button('編集する', () => receiptEditor(receipt, { edit: true }), false), ...(receipt.registration.actualTransactionId ? [deleteButton(receipt.registration.actualTransactionId)] : []), button('記録一覧へ戻る', recordsPage));
   }
   async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean } = {}) {
+    if (receipt.registration.status === 'deleted') throw new Error('この取引は削除済みです。記録一覧を開き直してください。');
     if (receipt.registration.status === 'applied' && !editorOptions.edit) { await receiptDetail(receipt); return; }
     const editing = receipt.registration.status === 'applied';
     await open('receipt'); view.append(text('h2', editing ? 'レシートの記録を編集' : 'レシートを登録する'));
@@ -527,7 +550,14 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const zip = el<HTMLInputElement>('import-file'); el('import-section').hidden = false;
   el('import-button').addEventListener('click', () => zip.click());
   zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); await restoreStandaloneBudget(file, ledger); location.reload(); })().catch(report); });
-  resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; } });
+  async function protectUndoReference(id: string, field: 'account' | 'category') {
+    if ((await deletions.list()).some(audit => (audit.status === 'pending' || audit.status === 'restoring' || audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()) && audit.nativeSnapshot.some(row => row[field] === id))) throw new Error('取り消せる削除の記録があります。取り消し時間が終わってから削除してください。');
+  }
+  resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; }, beforeDeleteAccount: id => protectUndoReference(id, 'account'), beforeDeleteCategory: id => protectUndoReference(id, 'category') });
   el('settings-tab').addEventListener('click', () => { resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
-  if (budgetId) { if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
+  if (budgetId) {
+    await deletions.recoverPending();
+    const latestDeletion = (await deletions.list()).filter(audit => audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+    if (latestDeletion) showDeletionToast(latestDeletion);
+    if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
 }

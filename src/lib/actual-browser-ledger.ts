@@ -49,6 +49,13 @@ const actualTransactionSchema = z.object({
   })).optional(),
 });
 
+/** Portable scalar values needed to delete or restore an entire native transaction group. */
+export const nativeTransactionSnapshotSchema = actualTransactionSchema.omit({ subtransactions: true }).extend({
+  error: z.object({ type: z.literal("SplitTransactionError"), version: z.literal(1), difference: z.number().int().safe() }).strict().nullable().optional(), imported_payee: z.string().nullable().optional(),
+  starting_balance_flag: z.boolean().optional(), schedule: z.string().nullable().optional(),
+}).strict();
+export type NativeTransactionSnapshot = z.infer<typeof nativeTransactionSnapshotSchema>;
+
 export class ActualMasterValidationError extends Error {
   constructor(message: string) { super(message); this.name = "ActualMasterValidationError"; }
 }
@@ -218,6 +225,9 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   updateTransaction(id: string, input: Omit<ManualTransactionInput, "importedId">): Promise<ActualTransaction>;
   createTransfer(input: TransferInput): Promise<ActualTransaction>;
   updateTransfer(id: string, input: TransferUpdateInput): Promise<ActualTransaction>;
+  getTransactionTree(id: string): Promise<NativeTransactionSnapshot[]>;
+  deleteTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  restoreTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
   exportBackup(): Promise<Uint8Array>;
@@ -449,6 +459,45 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return mapTransaction(source, await namesFor(api), peer.account);
   };
 
+
+  function scalarSnapshot(row: NativeTransaction): NativeTransactionSnapshot {
+    const data = { ...row } as Record<string, unknown>;
+    delete data.subtransactions;
+    // The API also returns read-only fields; persist only known native scalar fields.
+    return nativeTransactionSnapshotSchema.strip().parse(data);
+  }
+  function validateTree(value: unknown): NativeTransactionSnapshot[] {
+    const parsed = z.array(nativeTransactionSnapshotSchema).min(1).max(102).safeParse(value);
+    if (!parsed.success) throw new ActualMasterValidationError("削除する取引の構造を確認できませんでした。");
+    const tree = parsed.data;
+    if (new Set(tree.map(row => row.id)).size !== tree.length) throw new ActualMasterValidationError("取引IDが重複しています。");
+    const root = tree[0];
+    if (root.is_child || root.parent_id) throw new ActualMasterValidationError("品目だけを削除することはできません。");
+    if (root.transfer_id) {
+      const peer = tree.find(row => row.id === root.transfer_id);
+      if (tree.length !== 2 || !peer || peer.transfer_id !== root.id || peer.account === root.account || peer.amount !== -root.amount || root.is_parent || peer.is_parent || peer.is_child || peer.parent_id) throw new ActualMasterValidationError("振替の両取引を確認できませんでした。");
+    } else if (root.is_parent) {
+      const children = tree.slice(1);
+      const sum = children.reduce((total, row) => total + row.amount, 0);
+      if (!children.length || children.some(row => row.parent_id !== root.id || !row.is_child || row.is_parent || row.transfer_id || row.account !== root.account || row.date !== root.date) || !Number.isSafeInteger(sum) || sum !== root.amount) throw new ActualMasterValidationError("分割取引の構造を確認できませんでした。");
+    } else if (tree.length !== 1) throw new ActualMasterValidationError("削除する取引を読み込み直してください。");
+    return tree;
+  }
+  function sameNativeSnapshot(row: NativeTransaction, snapshot: NativeTransactionSnapshot): boolean {
+    const actual = scalarSnapshot(row);
+    // Native API may use null or absent values interchangeably for nullable columns.
+    return Object.keys(snapshot).every(key => {
+      const field = key as keyof NativeTransactionSnapshot;
+      return field === "error" ? JSON.stringify(actual[field] ?? null) === JSON.stringify(snapshot[field] ?? null) : (actual[field] ?? null) === (snapshot[field] ?? null);
+    });
+  }
+  function nativeTree(rows: NativeTransaction[], id: string): NativeTransactionSnapshot[] {
+    const selected = rows.find(row => row.id === id);
+    if (!selected) return [];
+    if (selected.is_child || selected.parent_id) throw new ActualMasterValidationError("品目だけを削除することはできません。");
+    const related = selected.transfer_id ? rows.filter(row => row.id === selected.transfer_id) : rows.filter(row => row.parent_id === selected.id);
+    return validateTree([selected, ...related].map(scalarSnapshot));
+  }
   const masterName = (name: string) => {
     const parsed = z.string().trim().min(1).max(100).safeParse(name);
     if (!parsed.success) throw new ActualMasterValidationError("名前を1〜100文字で入力してください。");
@@ -1013,6 +1062,49 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
+
+    getTransactionTree(id) {
+      masterId(id);
+      return withBudget(async api => nativeTree(await allRows(api, "0001-01-01", "9999-12-31"), id));
+    },
+    async deleteTransactionTree(input) {
+      const snapshot = validateTree(input);
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const ids = new Set(snapshot.map(row => row.id));
+        const current = rows.filter(row => ids.has(row.id));
+        if (!current.length) return;
+        const tree = nativeTree(rows, snapshot[0].id);
+        if (tree.length !== snapshot.length || current.length !== snapshot.length || tree.some(row => !ids.has(row.id)) || current.some(row => !sameNativeSnapshot(row, snapshot.find(saved => saved.id === row.id)!))) throw new ActualMasterValidationError("取引が変更されています。最新の内容を確認してください。");
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        await send("transactions-batch-update", { deleted: snapshot.map(row => ({ id: row.id })), runTransfers: false });
+        if ((await allRows(api, "0001-01-01", "9999-12-31")).some(row => ids.has(row.id))) throw new ActualBrowserUnavailableError("invalid_data");
+      });
+    },
+    async restoreTransactionTree(input) {
+      const snapshot = validateTree(input);
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const ids = new Set(snapshot.map(row => row.id));
+        const existing = rows.filter(row => ids.has(row.id));
+        if (existing.length) {
+          if (existing.length === snapshot.length && existing.every(row => sameNativeSnapshot(row, snapshot.find(saved => saved.id === row.id)!))) return;
+          throw new ActualMasterValidationError("同じ識別子の取引が変更されています。取り消しを完了できません。");
+        }
+        if (snapshot.some(saved => saved.imported_id && rows.some(row => row.imported_id === saved.imported_id))) throw new ActualMasterValidationError("同じ登録識別子の取引があります。取り消しを完了できません。");
+        const [accounts, categories, payees] = await Promise.all([api.getAccounts(), api.getCategories(), api.getPayees()]);
+        if (snapshot.some(row => !accounts.some(account => account.id === row.account) || row.category && !categories.some(category => category.id === row.category) || row.payee && !payees.some(payee => payee.id === row.payee))) throw new ActualMasterValidationError("元の口座やカテゴリを確認できません。取り消しを完了できません。");
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        // Actual deletes by setting tombstone; a native update can restore the same IDs.
+        const nativeSend = send as unknown as (method: "transactions-batch-update", args: { updated: Array<NativeTransactionSnapshot & { tombstone: false }>; runTransfers: false }) => Promise<unknown>;
+        await nativeSend("transactions-batch-update", { updated: snapshot.map(row => ({ ...row, tombstone: false })), runTransfers: false });
+        const restored = await allRows(api, "0001-01-01", "9999-12-31");
+        const tree = nativeTree(restored, snapshot[0].id);
+        if (tree.length !== snapshot.length || tree.some(row => !ids.has(row.id)) || snapshot.some(saved => !sameNativeSnapshot(restored.find(row => row.id === saved.id)!, saved))) throw new ActualBrowserUnavailableError("invalid_data");
+      });
+    },
     updateReceipt(id, changes) {
       const parsed = z.object({
         id: idSchema,

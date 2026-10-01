@@ -15,7 +15,8 @@
     "test:receipt-items-e2e": "node test/browser-receipt-items.mjs",
     "test:manual-e2e": "node test/browser-manual-transactions.mjs",
     "test:transfers-e2e": "node test/browser-transfers.mjs",
-    "test:receipt-edits-e2e": "node test/browser-receipt-edits.mjs"
+    "test:receipt-edits-e2e": "node test/browser-receipt-edits.mjs",
+    "test:deletions-e2e": "node test/browser-deletions.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

@@ -44,7 +44,7 @@ function nameForm(labelText: string, initialValue: string, submitText: string, s
 export function initializeMasterUi(
   container: HTMLElement,
   ledger: ReturnType<typeof createActualBrowserLedger>,
-  options: { onBack: () => void },
+  options: { onBack: () => void; beforeDeleteAccount?: (id: string) => Promise<void>; beforeDeleteCategory?: (id: string) => Promise<void> },
 ): () => void {
   const section = element('section');
   section.className = 'master-settings';
@@ -167,6 +167,7 @@ export function initializeMasterUi(
     }));
     if (usage === 0) section.append(button('カテゴリを削除する', async () => {
       if (!window.confirm(`「${category.name}」を削除しますか？`)) return;
+      await options.beforeDeleteCategory?.(category.id);
       await ledger.deleteCategory(category.id);
       await categoriesPage(listKind);
     }));
@@ -227,6 +228,7 @@ export function initializeMasterUi(
       checkbox.className = 'master-checkbox';
       const remove = button('完全に削除する', async () => {
         if (!checkbox.checked || !window.confirm(`「${account.name}」を完全に削除します。元に戻せません。`)) return;
+        await options.beforeDeleteAccount?.(account.id);
         await ledger.deleteAccount(account.id);
         await accountsPage();
       });

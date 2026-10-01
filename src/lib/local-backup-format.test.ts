@@ -120,6 +120,24 @@ describe("portable local backup format", () => {
     expect(new Set(result.localData.records.map(({ kind }) => kind)).size).toBe(11);
   });
 
+  it("preserves deletion undo snapshots in archives and rejects unverified native fields", async () => {
+    const data = fixture();
+    const originalReceipt = data.records.find(record => record.kind === "receipt-metadata")!.value;
+    const nativeSnapshot = [{ id: "actual-synthetic-transaction", date: "2026-09-28", amount: -1200, account: "synthetic-account", payee: "synthetic-payee-id", category: "food", cleared: false, reconciled: false, imported_id: "kakeimatch:receipt:synthetic-1", is_parent: false }];
+    data.records.push({ id: "transaction-deletion:operation-synthetic", kind: "correction-audit", updatedAt: time, value: {
+      targetType: "deletion", transactionId: "actual-synthetic-transaction", operationId: "operation-synthetic", nativeSnapshot,
+      receiptBefore: [originalReceipt], status: "deleted", createdAt: time, deletedAt: time,
+      undoUntil: "2026-09-30T00:00:10.000Z", completedAt: time,
+    } });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.find(record => record.id === "transaction-deletion:operation-synthetic")?.value).toMatchObject({ status: "deleted", nativeSnapshot, receiptBefore: [originalReceipt] });
+
+    const unverified = structuredClone(data);
+    const deletion = unverified.records.find(record => record.kind === "correction-audit" && record.id.startsWith("transaction-deletion:"))!;
+    ((deletion.value as { nativeSnapshot: Array<Record<string, unknown>> }).nativeSnapshot[0]!).unknownField = "must reject";
+    await expect(create(unverified)).rejects.toThrow(/correction-audit/);
+  });
+
   it("records missing source artifacts without inventing blob contents", async () => {
     const data = fixture();
     data.blobs = data.blobs.filter(({ id }) => id !== "receipt-image:synthetic-1");
