@@ -318,6 +318,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           const suggested = await receipts.suggestCategory(receipt.id);
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
           if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
         } catch (error) {
           report(error);

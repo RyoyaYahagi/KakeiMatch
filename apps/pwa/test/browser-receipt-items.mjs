@@ -10,10 +10,25 @@ const page = await context.newPage();
 await page.clock.setFixedTime(new Date('2026-09-30T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 let classificationFails = true, classificationCalls = 0;
-const choice = category => ({ type: 'choice', choice: category, confidence: 1, probabilities: Object.fromEntries(['food', 'household', 'transport', 'medical', 'clothing', 'entertainment', 'utilities', 'communications', 'other'].map(id => [id, id === category ? 1 : 0])) });
+const choice = (body, categoryName) => {
+  const category = body.categories.find(entry => entry.name === categoryName);
+  assert.ok(category, `The Jev request should include ${categoryName}.`);
+  return { type: 'choice', choice: category.id, confidence: 1, probabilities: Object.fromEntries(body.categories.map(entry => [entry.id, entry.id === category.id ? 1 : 0])) };
+};
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: 9999999999 } }));
 await context.route('**/api/ai/gemini', route => route.fulfill({ json: { documentKind: 'receipt', merchant: 'Synthetic Items Shop', purchasedDate: '2026-09-30', purchasedTime: '12:00', totalAmountYen: 1400, taxAmountYen: 127, items: [{ name: 'Synthetic Apple', amountYen: 1000, quantity: 2, unitPriceYen: 500 }, { name: 'Synthetic Soap', amountYen: 500 }], adjustments: [{ label: 'Synthetic Coupon', amountYen: -100, targetItemIndex: 0 }], warnings: [] } }));
-await context.route('**/api/ai/jev', route => { classificationCalls++; return route.fulfill(classificationFails ? { status: 503, json: { error: 'provider_unavailable' } } : { json: { model: 'synthetic-model', answers: { item_0: choice('food'), item_1: choice('household') } } }); });
+await context.route('**/api/ai/jev', route => {
+  classificationCalls++;
+  if (classificationFails) return route.fulfill({ status: 503, json: { error: 'provider_unavailable' } });
+  const body = route.request().postDataJSON();
+  const indexes = body.itemIndexes ?? body.receipt.items.map((_, index) => index);
+  const answers = Object.fromEntries(indexes.map(index => {
+    const item = body.receipt.items[index];
+    const name = item.name.includes('Soap') ? '日用品' : '食費';
+    return [`item_${index}`, choice(body, name)];
+  }));
+  return route.fulfill({ json: { model: 'synthetic-model', answers } });
+});
 const click = name => page.getByRole('button', { name, exact: true }).click();
 const row = index => page.locator('[data-receipt-item]').nth(index);
 try {
