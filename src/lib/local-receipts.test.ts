@@ -91,6 +91,28 @@ describe("LocalReceiptService", () => {
     expect(body.flowId).toBe(imageBody.flowId);
   });
 
+  it.each(["current", "legacy"])("reuses a %s saved category suggestion after reopening without requesting the spent flow", async (format) => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json(extraction))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }))
+      .mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
+    const { repository, ledger, service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    if (format === "legacy") {
+      const saved = (await service.get(receipt.id))!;
+      delete saved.aiSuggestion.flowId;
+      await repository.put({ id: saved.id, kind: "receipt-metadata", value: saved, updatedAt: saved.updatedAt });
+    }
+    const reopened = new LocalReceiptService(repository, ledger as never, {
+      fetchImpl, getToken: async () => "synthetic-token",
+      withRegistrationLock: async (_id, operation) => operation(),
+    });
+    expect(await reopened.suggestCategory(receipt.id)).toBe("food");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("prefers a saved merchant mapping without calling Jev", async () => {
     const fetchImpl = vi.fn(async () => Response.json(extraction));
     const { repository, service } = await setup(fetchImpl);
@@ -122,6 +144,24 @@ describe("LocalReceiptService", () => {
     expect(await service.suggestCategory(receipt.id)).toBeNull();
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect((await service.get(receipt.id))?.aiSuggestion).toMatchObject({ categoryId: null, source: "unclassified" });
+    expect(await service.suggestCategory(receipt.id)).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("discards a previous suggestion when new receipt facts are extracted", async () => {
+    const answer = (choice: string) => ({ model: "jev-latest", answers: { category: { type: "choice", choice, probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === choice ? 0.92 : 0.01])), confidence: 0.92 } } });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json(extraction))
+      .mockResolvedValueOnce(Response.json(answer("food")))
+      .mockResolvedValueOnce(Response.json({ ...extraction, merchant: "Synthetic Pharmacy" }))
+      .mockResolvedValueOnce(Response.json(answer("medical")));
+    const { service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBe("medical");
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
   it("retains confirmed values after a later analysis pass", async () => {

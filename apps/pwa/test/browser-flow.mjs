@@ -83,6 +83,10 @@ try {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
   await page.locator('#receipt-merchant').fill('Manual Store');
+  await page.locator('#receipt-category').selectOption('');
+  await page.getByRole('button', { name: 'カテゴリを提案する', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#receipt-category')?.selectedOptions[0]?.textContent === '食費');
+  assert.equal(categoryRequests.length, 1);
   await page.locator('#receipt-date').fill('2026-09-29');
   await page.locator('#receipt-time').fill('11:30');
   await page.locator('#receipt-amount').fill('1200');
@@ -94,6 +98,10 @@ try {
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1200');
   assert.equal(await page.locator('#receipt-category option:checked').textContent(), '食費');
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Wallet');
+  await page.getByRole('button', { name: 'カテゴリを提案する', exact: true }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === 'カテゴリを提案する' && b.disabled));
+  assert.equal(categoryRequests.length, 2);
+  assert.equal(categoryRequests[1].flowId, aiRequests[1].flowId);
   await page.locator('#receipt-date').fill('2026-09-30');
   await page.locator('#receipt-time').fill('12:00');
   await page.locator('#receipt-amount').fill('1280');

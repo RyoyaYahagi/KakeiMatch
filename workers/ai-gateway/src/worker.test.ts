@@ -148,7 +148,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(row?.category_mac).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(row)).not.toContain("Synthetic");
   });
-  it("limits replay to three attempts per stage and expires flows after ten minutes", async () => {
+  it("limits replay to three attempts per stage and expires image retries after ten minutes", async () => {
     const flowId = crypto.randomUUID();
     for (let i = 0; i < 3; i++) expect((await gemini(flowId)).status).toBe(200);
     expect((await gemini(flowId)).status).toBe(409);
@@ -158,6 +158,18 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     await gemini(expiring);
     expect((await gemini(expiring, now + 600)).status).toBe(409);
     expect(await usage()).toMatchObject({ used: 2 });
+  });
+  it("allows a delayed category suggestion for saved extraction without another AI use", async () => {
+    const flowId = crypto.randomUUID();
+    await gemini(flowId);
+    const later = now + 60 * 60;
+    const response = await handleRequest(request("jev", { ...category, flowId }, bearer("synthetic-user", later)), env, options(fetchOk(jev), later));
+    expect(response.status).toBe(200);
+    expect(await usage()).toMatchObject({ used: 1 });
+    const expiry = now + 30 * 24 * 60 * 60;
+    const expiredProvider = fetchOk(jev);
+    expect((await handleRequest(request("jev", { ...category, flowId }, bearer("synthetic-user", expiry)), env, options(expiredProvider, expiry))).status).toBe(409);
+    expect(expiredProvider).not.toHaveBeenCalled();
   });
   it("counts provider failures once and permits the same-flow recovery", async () => {
     const flowId = crypto.randomUUID();

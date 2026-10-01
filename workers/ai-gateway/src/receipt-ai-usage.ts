@@ -1,7 +1,10 @@
 import type { AccountEnv } from "./account-auth";
 
 type Db = AccountEnv["ACCOUNT_DB"];
-const FLOW_LIFETIME_SECONDS = 10 * 60;
+const IMAGE_RETRY_LIFETIME_SECONDS = 10 * 60;
+// Receipt facts are stored locally and may be reviewed later. Category requests
+// remain bound to those validated facts and the original user, with three attempts.
+const CATEGORY_LIFETIME_SECONDS = 30 * 24 * 60 * 60;
 // Three attempts per stage bound replay even when an authenticated client lies
 // about whether a request is an internal retry. Rate limits still apply to each.
 const MAX_ATTEMPTS = 3;
@@ -36,9 +39,10 @@ export async function reserveFlow(db: Db, user: string, flow: string, imageMac: 
 export async function attemptFlow(db: Db, user: string, flow: string, stage: "gemini" | "jev", mac: string, now: number): Promise<boolean> {
   const attempts = stage === "gemini" ? "gemini_attempts" : "jev_attempts";
   const digest = stage === "gemini" ? "image_mac" : "category_mac";
+  const lifetime = stage === "gemini" ? IMAGE_RETRY_LIFETIME_SECONDS : CATEGORY_LIFETIME_SECONDS;
   const result = await db.prepare(`UPDATE ai_receipt_flows SET ${attempts} = ${attempts} + 1
     WHERE user_id = ? AND flow_id = ? AND ${digest} = ? AND created_at <= ? AND created_at > ? AND ${attempts} < ?`)
-    .bind(user, flow, mac, now, now - FLOW_LIFETIME_SECONDS, MAX_ATTEMPTS).run();
+    .bind(user, flow, mac, now, now - lifetime, MAX_ATTEMPTS).run();
   return (result.meta?.changes ?? 0) > 0;
 }
 export async function allowCategory(db: Db, user: string, flow: string, mac: string): Promise<void> {
