@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalDataRepository } from "./local-data";
 import { CATEGORY_IDS } from "./category";
-import { LocalReceiptService } from "../../apps/pwa/src/local-receipts";
+import { LocalReceiptService, receiptAllocations, type ConfirmedReceiptValue } from "../../apps/pwa/src/local-receipts";
 
 const extraction = {
   documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30",
@@ -80,7 +80,7 @@ describe("LocalReceiptService", () => {
   it("sends the minimum Jev payload and validates its category choice before storing it", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
@@ -95,7 +95,7 @@ describe("LocalReceiptService", () => {
   it.each(["current", "legacy"])("reuses a %s saved category suggestion after reopening without requesting the spent flow", async (format) => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }))
       .mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
     const { repository, ledger, service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
@@ -115,7 +115,7 @@ describe("LocalReceiptService", () => {
   });
 
   it("prefers a saved merchant mapping without calling Jev", async () => {
-    const fetchImpl = vi.fn(async () => Response.json(extraction));
+    const fetchImpl = vi.fn(async () => Response.json({ ...extraction, items: [] }));
     const { repository, service } = await setup(fetchImpl);
     await repository.put({ id: "mapping:shop", kind: "merchant-mapping", value: { normalizedMerchant: "synthetic shop", categoryId: "food" }, updatedAt: "2026-09-30T00:00:00.000Z" });
     const receipt = await service.saveImage(pngBlob());
@@ -135,7 +135,7 @@ describe("LocalReceiptService", () => {
   });
 
   it("invalidates a merchant mapping to a deleted or hidden custom category without sending another AI request", async () => {
-    const fetchImpl = vi.fn(async () => Response.json(extraction));
+    const fetchImpl = vi.fn(async () => Response.json({ ...extraction, items: [] }));
     const { repository, service } = await setup(fetchImpl);
     await repository.put({ id: "mapping:removed", kind: "merchant-mapping", value: { normalizedMerchant: "synthetic shop", actualCategoryId: "removed-category" }, updatedAt: "2026-09-30T00:00:00.000Z" });
     const receipt = await service.saveImage(pngBlob());
@@ -161,7 +161,7 @@ describe("LocalReceiptService", () => {
     const lowProbabilities = Object.fromEntries(CATEGORY_IDS.map((id) => [id, id === "food" ? 0.4 : 0.075]));
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities: lowProbabilities, confidence: 0.4 } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities: lowProbabilities, confidence: 0.4 } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
@@ -173,7 +173,7 @@ describe("LocalReceiptService", () => {
   });
 
   it("discards a previous suggestion when new receipt facts are extracted", async () => {
-    const answer = (choice: string) => ({ model: "jev-latest", answers: { category: { type: "choice", choice, probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === choice ? 0.92 : 0.01])), confidence: 0.92 } } });
+    const answer = (choice: string) => ({ model: "jev-latest", answers: { item_0: { type: "choice", choice, probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === choice ? 0.92 : 0.01])), confidence: 0.92 } } });
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
       .mockResolvedValueOnce(Response.json(answer("food")))
@@ -183,6 +183,7 @@ describe("LocalReceiptService", () => {
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("food");
+    await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 3284, categoryId: "food", accountId: "cash" });
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("medical");
     expect(fetchImpl).toHaveBeenCalledTimes(4);
@@ -318,11 +319,76 @@ describe("LocalReceiptService", () => {
   it("rejects a category response with missing confidence without storing a suggestion", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
     await expect(service.suggestCategory(receipt.id)).rejects.toMatchObject({ code: "invalid_ai_response" });
     expect((await service.get(receipt.id))?.aiSuggestion).toMatchObject({ categoryId: null, source: "unclassified" });
   });
+});
+
+
+describe("receipt category allocations", () => {
+  const value: ConfirmedReceiptValue = { merchant: "Synthetic", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 1400, categoryId: "food", accountId: "cash", items: [
+    { id: "a", name: "Synthetic apple", amountYen: 1000, categoryId: "food" },
+    { id: "b", name: "Synthetic soap", amountYen: 500, categoryId: "household" },
+  ], adjustments: [{ id: "discount", label: "値引き", amountYen: -100, targetItemId: "a" }] };
+  it("aggregates a targeted discount into its category and keeps the printed total", () => {
+    expect(receiptAllocations(value)).toEqual([{ categoryId: "food", amountYen: 900 }, { categoryId: "household", amountYen: 500 }]);
+  });
+  it("requires confirmation for an unattributed discount or a total mismatch", () => {
+    expect(() => receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
+    expect(() => receiptAllocations({ ...value, totalAmountYen: 1500 })).toThrow(/カテゴリ配分/);
+    expect(() => receiptAllocations({ ...value, items: value.items!.map(item => ({ ...item, amountYen: null })) })).toThrow(/カテゴリ配分/);
+  });
+  it("uses the printed total for a single category despite line uncertainty", () => {
+    expect(receiptAllocations({ ...value, items: [{ id: "a", name: "Synthetic", amountYen: null, categoryId: null }] })).toEqual([{ categoryId: "food", amountYen: 1400 }]);
+  });
+  it("saves confirmed detail and sends one split per category", async () => {
+    const { service, ledger } = await setup(vi.fn(), { listExpenseCategories: async () => [{ id: "actual-food", name: "食費" }, { id: "actual-household", name: "日用品" }] });
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, value);
+    await service.register(receipt.id);
+    expect((await service.get(receipt.id))?.confirmedValue?.items).toEqual(value.items);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ amountYen: -1400, splits: [{ categoryId: "actual-food", amountYen: -900 }, { categoryId: "actual-household", amountYen: -500 }] }));
+  });
+  it("keeps an unsafe allocation pending and editable without writing to Actual", async () => {
+    const { service, ledger } = await setup();
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { ...value, totalAmountYen: 1500 });
+    await expect(service.register(receipt.id)).rejects.toMatchObject({ code: "allocation_required" });
+    expect(ledger.importReceipt).not.toHaveBeenCalled();
+    expect((await service.get(receipt.id))?.registration.status).toBe("pending");
+  });
+  it("rejects duplicate detail IDs and dangling discount targets", async () => {
+    const { service } = await setup();
+    const receipt = await service.createManual();
+    await expect(service.confirm(receipt.id, { ...value, adjustments: [{ id: "d", label: "値引き", amountYen: -100, targetItemId: "missing" }] })).rejects.toMatchObject({ code: "invalid_confirmation" });
+    await expect(service.confirm(receipt.id, { ...value, items: [value.items![0], value.items![0]] })).rejects.toMatchObject({ code: "invalid_confirmation" });
+  });
+});
+
+it("classifies each item in one request and leaves uncertain items for manual selection", async () => {
+  const strong = { type: "choice", choice: "food", probabilities, confidence: 0.92 };
+  const weak = { type: "choice", choice: "food", probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === "food" ? 0.4 : 0.075])), confidence: 0.4 };
+  const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ ...extraction, items: [{ name: "Synthetic apple", amountYen: 2000 }, { name: "Synthetic soap", amountYen: 1284 }] })).mockResolvedValueOnce(Response.json({ model: "synthetic-model", answers: { item_0: strong, item_1: weak } }));
+  const { service } = await setup(fetchImpl);
+  const receipt = await service.saveImage(pngBlob());
+  await service.analyze(receipt.id);
+  await service.suggestCategory(receipt.id);
+  expect((await service.get(receipt.id))?.itemCategories).toEqual(["food", null]);
+  await service.suggestCategory(receipt.id);
+  expect(fetchImpl).toHaveBeenCalledTimes(2);
+});
+
+it("retains raw extraction when item classification fails", async () => {
+  const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(extraction)).mockResolvedValueOnce(Response.json({ error: "rate_limited" }, { status: 429 }));
+  const { service, repository } = await setup(fetchImpl);
+  const receipt = await service.saveImage(pngBlob());
+  await service.analyze(receipt.id);
+  await expect(service.suggestCategory(receipt.id)).rejects.toMatchObject({ code: "rate_limited" });
+  expect((await service.get(receipt.id))?.extraction).toEqual(extraction);
+  expect(await repository.get(`receipt-extraction:${receipt.id}`)).not.toBeNull();
+  expect((await service.get(receipt.id))?.registration.status).toBe("pending");
 });

@@ -45,3 +45,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .master-checkbox { width: 24px; min-height: 24px; margin: 0 8px 0 0; vertical-align: middle; }
 .master-delete { margin-top: 16px; }
 [hidden] { display: none !important; }
+.receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }
+.receipt-item-list li, .receipt-adjustment-list li { border-bottom: 1px solid #dce4de; padding: 0; }
+.receipt-item summary, .receipt-adjustment summary { overflow-wrap: anywhere; font-size: .9rem; }
+.receipt-item label, .receipt-adjustment label { margin-top: 10px; }
+.receipt-item button, .receipt-adjustment button { margin: 12px 0; }
+.receipt-difference { color: #705019; font-size: .875rem; }
+.receipt-tax { margin-top: 12px; }

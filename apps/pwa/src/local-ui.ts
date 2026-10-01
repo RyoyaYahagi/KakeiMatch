@@ -3,9 +3,10 @@ import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
-import { LocalReceiptService, type LocalReceipt } from './local-receipts';
+import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import { LocalReconciliationService } from './local-reconciliation';
+import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`;
@@ -23,6 +24,15 @@ function report(error: unknown) {
   const message = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '操作を完了できませんでした。保存済みのデータを確認して再試行してください。';
   el('message').textContent = message;
 }
+type ReceiptDraft = { merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string; items: ReceiptItem[]; adjustments: ReceiptAdjustment[]; taxAmountYen: number | null };
+function fieldLabel<K extends keyof HTMLElementTagNameMap>(tag: K, value: string, id: string): HTMLElementTagNameMap[K] {
+  const node = document.createElement(tag);
+  node.textContent = value;
+  if (node instanceof HTMLLabelElement) node.htmlFor = id;
+  return node;
+}
+function parseNullableInteger(value: string): number | null { if (!value.trim()) return null; const parsed = Number(value); return Number.isSafeInteger(parsed) ? parsed : null; }
+function parseNullableNumber(value: string): number | null { if (!value.trim()) return null; const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
 
 export async function initializeLocalUi(options: { openAccount: () => void }) {
   const repository = await LocalDataRepository.open();
@@ -38,7 +48,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const view = el('local-view');
   let imageUrl: string | null = null;
   let resetMasterUi = () => {};
-  function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
+  let flushReceiptDraft: () => Promise<void> = () => Promise.resolve();
+  async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
     for (const id of ['home', 'receipt', 'statement', 'reconciliation', 'settings']) {
       const item = el(`${id}-tab`); const active = id === tab; item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
@@ -46,7 +57,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el('message').textContent = ''; view.replaceChildren();
   }
   async function home() {
-    open('home');
+    await open('home');
     const rows = (await ledger.getRecentTransactions({ limit: 50 })).filter(row => row.kind === 'expense');
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows) {
@@ -61,7 +72,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el('home-summary').append(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
   }
   async function receiptPage() {
-    open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
+    await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
     const capture = document.createElement('input'); capture.type = 'file'; capture.accept = 'image/jpeg,image/png,image/webp'; capture.setAttribute('capture', 'environment'); capture.hidden = true;
     const library = document.createElement('input'); library.type = 'file'; library.accept = capture.accept; library.hidden = true;
     const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void receipts.saveImage(file).then(receiptEditor).catch(report); }); };
@@ -74,66 +85,289 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     view.append(list);
   }
-  async function receiptEditor(receipt: LocalReceipt) {
-    open('receipt'); view.append(text('h2', '内容を確認する'));
-    const blob = await repository.getBlob(receipt.image?.blobId ?? "missing");
-    if (!blob && receipt.image) view.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。確認値と家計簿の記録は利用できます。'));
-    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; view.append(img); }
-    const aiArea = document.createElement('div');
-    aiArea.append(text('p', 'AIで読み取るにはアカウントとインターネット接続が必要です。手入力でも登録できます。', 'muted'));
-    const form = document.createElement('form'); form.innerHTML = `
-      <label for="receipt-merchant">店名</label><input id="receipt-merchant" required maxlength="200">
-      <label for="receipt-date">購入日</label><input id="receipt-date" type="date" required>
-      <label for="receipt-time">時刻（任意）</label><input id="receipt-time" type="time">
-      <label for="receipt-amount">金額（円）</label><input id="receipt-amount" type="number" inputmode="numeric" min="1" step="1" required>
-      <label for="receipt-category">カテゴリ</label><select id="receipt-category" required></select>
-      <label for="receipt-account">支払元</label><select id="receipt-account" required></select>
-      <p id="receipt-save-state" role="status"></p>`;
-    const [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
-    const account = form.querySelector<HTMLSelectElement>('#receipt-account')!, category = form.querySelector<HTMLSelectElement>('#receipt-category')!;
-    account.replaceChildren(new Option('選択してください', ''), ...accounts.map(a => new Option(a.name, a.id)));
-    category.replaceChildren(new Option('選択してください', ''), ...categories.map(c => new Option(c.name, c.id)));
+  async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string } = {}) {
+    await open('receipt'); view.append(text('h2', 'レシートを登録する'));
+    const confirmed = receipt.confirmedValue;
     const draftId = `receipt-draft:${receipt.id}`;
-    const draft = await repository.get<{ merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string }>(draftId);
-    view.append(aiArea, form);
-    // Saving before an AI request also persists untouched fields (including amount 0).
-    // Such a draft must not hide a successful extraction, even after reopening it.
-    const hasDraftContent = draft && (draft.value.merchant.trim() !== '' || draft.value.totalAmountYen > 0 || draft.value.purchasedTime !== null);
-    const value = (hasDraftContent ? draft.value : null) ?? receipt.confirmedValue ?? (receipt.extraction?.documentKind === 'receipt' ? receipt.extraction : null) ?? draft?.value;
-    if (receipt.extraction?.warnings.length) view.append(text('p', '読み取り結果に不明な項目があります。画像と照らし合わせて確認してください。'));
-    el<HTMLInputElement>('receipt-merchant').value = value?.merchant ?? '';
-    el<HTMLInputElement>('receipt-date').value = value?.purchasedDate ?? today();
-    el<HTMLInputElement>('receipt-time').value = value?.purchasedTime ?? '';
-    el<HTMLInputElement>('receipt-amount').value = value?.totalAmountYen?.toString() ?? '';
-    account.value = draft?.value.accountId ?? receipt.confirmedValue?.accountId ?? (accounts.length === 1 ? accounts[0].id : '');
-    category.value = draft?.value.categoryId ?? receipt.confirmedValue?.categoryId ?? '';
-    if ((draft?.value.accountId || receipt.confirmedValue?.accountId) && !account.value) view.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
-    if ((draft?.value.categoryId || receipt.confirmedValue?.categoryId) && !category.value) view.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
-    const read = () => ({ merchant: el<HTMLInputElement>('receipt-merchant').value, purchasedDate: el<HTMLInputElement>('receipt-date').value, purchasedTime: el<HTMLInputElement>('receipt-time').value || null, totalAmountYen: Number(el<HTMLInputElement>('receipt-amount').value), categoryId: category.value, accountId: account.value });
-    let saveTail: Promise<unknown> = Promise.resolve();
-    const save = () => { const value = read(); saveTail = saveTail.catch(() => undefined).then(async () => { await receipts.confirm(receipt.id, value); el('receipt-save-state').textContent = '確認内容を保存しました。'; }); return saveTail; };
-    const saveDraft = async () => { if (receipt.registration.status === 'applied') return; await repository.put({ id: draftId, kind: 'category-state', value: read(), updatedAt: new Date().toISOString() }); el('receipt-save-state').textContent = '入力内容を端末に保存しました。'; };
-    form.addEventListener('change', () => { void saveDraft().catch(report); });
-    const ai = button('AIで読み取る', async () => {
+    const savedDraft = await repository.get<ReceiptDraft>(draftId);
+    const draft = savedDraft?.value;
+    const [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
+    const categoryName = (id: string | null | undefined) => {
+      if (!id) return 'カテゴリ未選択';
+      const builtin = isCategoryId(id) ? CATEGORY_LABELS[id] : null;
+      return categories.find(entry => entry.id === id)?.name ?? builtin ?? 'カテゴリを選び直してください';
+    };
+    const actualCategoryId = (id: string | null | undefined) => {
+      if (!id) return '';
+      if (categories.some(entry => entry.id === id)) return id;
+      return isCategoryId(id) ? categories.find(entry => entry.name === CATEGORY_LABELS[id])?.id ?? '' : '';
+    };
+    const extraction = receipt.extraction?.documentKind === 'receipt' ? receipt.extraction : null;
+    const extractionItems: ReceiptItem[] = (extraction?.items ?? []).map((item, index) => ({
+      id: `receipt-item:${receipt.id}:${index}`, name: item.name, amountYen: item.amountYen,
+      ...(item.quantity !== undefined ? { quantity: item.quantity } : {}),
+      ...(item.unitPriceYen !== undefined ? { unitPriceYen: item.unitPriceYen } : {}),
+      categoryId: actualCategoryId(receipt.itemCategories?.[index]),
+    }));
+    const extractionAdjustments: ReceiptAdjustment[] = (extraction?.adjustments ?? []).map((adjustment, index) => ({
+      id: `receipt-adjustment:${receipt.id}:${index}`, label: adjustment.label, amountYen: adjustment.amountYen,
+      targetItemId: adjustment.targetItemIndex == null ? null : extractionItems[adjustment.targetItemIndex]?.id ?? null,
+    }));
+    const useExtraction = editorOptions.useExtraction === true;
+    const usefulDraft = draft && (draft.merchant.trim() || draft.totalAmountYen > 0 || draft.items?.length) ? draft : null;
+    const base = useExtraction ? null : receipt.registration.status === 'pending' ? usefulDraft ?? confirmed : confirmed;
+    const initial: ReceiptDraft = {
+      merchant: base?.merchant ?? extraction?.merchant ?? '',
+      purchasedDate: base?.purchasedDate ?? extraction?.purchasedDate ?? today(),
+      purchasedTime: base?.purchasedTime ?? extraction?.purchasedTime ?? null,
+      totalAmountYen: base?.totalAmountYen ?? extraction?.totalAmountYen ?? 0,
+      categoryId: actualCategoryId(base?.categoryId ?? (extractionItems.length ? '' : receipt.itemCategories?.[0] ?? receipt.aiSuggestion.categoryId)),
+      accountId: editorOptions.preserveAccountId ?? base?.accountId ?? confirmed?.accountId ?? (accounts.length === 1 ? accounts[0].id : ''),
+      items: useExtraction ? extractionItems : base?.items ?? extractionItems,
+      adjustments: useExtraction ? extractionAdjustments : base?.adjustments ?? extractionAdjustments,
+      taxAmountYen: useExtraction ? extraction?.taxAmountYen ?? null : base?.taxAmountYen ?? extraction?.taxAmountYen ?? null,
+    };
+    let items = initial.items.map(item => ({ ...item }));
+    let adjustments = initial.adjustments.map(item => ({ ...item }));
+    const blob = await repository.getBlob(receipt.image?.blobId ?? 'missing');
+    if (!blob && receipt.image) view.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
+    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; view.append(img); }
+    if (receipt.extraction?.warnings.length) view.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
+
+    const form = document.createElement('form');
+    const merchant = document.createElement('input'); merchant.id = 'receipt-merchant'; merchant.required = true; merchant.maxLength = 200; merchant.value = initial.merchant;
+    const date = document.createElement('input'); date.id = 'receipt-date'; date.type = 'date'; date.required = true; date.value = initial.purchasedDate;
+    const time = document.createElement('input'); time.id = 'receipt-time'; time.type = 'time'; time.value = initial.purchasedTime ?? '';
+    const amount = document.createElement('input'); amount.id = 'receipt-amount'; amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '1'; amount.step = '1'; amount.required = true; amount.value = initial.totalAmountYen ? String(initial.totalAmountYen) : '';
+    const category = document.createElement('select'); category.id = 'receipt-category'; category.required = true;
+    category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+    category.value = actualCategoryId(initial.categoryId);
+    const account = document.createElement('select'); account.id = 'receipt-account'; account.required = true;
+    account.replaceChildren(new Option('選択してください', ''), ...accounts.map(entry => new Option(entry.name, entry.id)));
+    account.value = initial.accountId;
+    if (initial.accountId && !account.value) view.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
+    if (base?.categoryId && !category.value) view.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
+    const itemsHeading = text('h3', '購入内容');
+    const itemsList = document.createElement('ul'); itemsList.className = 'receipt-item-list';
+    const adjustmentsHeading = text('h3', '値引き・調整');
+    const adjustmentsList = document.createElement('ul'); adjustmentsList.className = 'receipt-adjustment-list';
+    const warning = text('p', '', 'receipt-difference'); warning.id = 'receipt-difference'; warning.setAttribute('role', 'status');
+    const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
+    let expandItemId: string | null = null;
+    let expandAdjustmentId: string | null = null;
+    const addItem = button('品目を追加', () => { items = readItems(); expandItemId = crypto.randomUUID(); items.push({ id: expandItemId, name: '', amountYen: null, categoryId: null }); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
+    const addAdjustment = button('値引きを追加', () => { adjustments = readAdjustments(); expandAdjustmentId = crypto.randomUUID(); adjustments.push({ id: expandAdjustmentId, label: '', amountYen: 0, targetItemId: null }); drawAdjustments(); updateDifference(); scheduleDraft(); });
+    const applyCategory = button('全品目にこのカテゴリを適用', () => { items = readItems().map(item => ({ ...item, categoryId: category.value || null })); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
+    const taxDetails = document.createElement('details'); taxDetails.className = 'receipt-tax';
+    const taxLabel = fieldLabel('label', '税額（円・任意）', 'receipt-tax');
+    const tax = document.createElement('input'); tax.id = 'receipt-tax'; tax.type = 'number'; tax.inputMode = 'numeric'; tax.min = '0'; tax.step = '1'; tax.value = initial.taxAmountYen == null ? '' : String(initial.taxAmountYen);
+    taxDetails.append(text('summary', '税額（任意）'), taxLabel, tax);
+    const aiArea = document.createElement('div');
+    aiArea.append(text('p', '画像から店名・日付・金額・品目を読み取り、カテゴリを設定します。', 'muted'));
+    const aiButton = button('AIで読み取る', async () => {
+      if (receipt.registration.status === 'applied') return;
       await saveDraft();
-      try { await receipts.analyze(receipt.id);
-        await receiptEditor((await receipts.get(receipt.id))!); }
-      catch (error) { report(error); if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount)); }
+      const accountId = account.value;
+      form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button').forEach(control => { control.disabled = true; });
+      try {
+        await receipts.analyze(receipt.id);
+        try {
+          const suggested = await receipts.suggestCategory(receipt.id);
+          const updated = await receipts.get(receipt.id);
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
+        } catch (error) {
+          report(error);
+          const updated = await receipts.get(receipt.id);
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
+        }
+      } catch (error) {
+        report(error);
+        if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
+      } finally {
+        form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button').forEach(control => { control.disabled = false; });
+      }
     });
-    if (blob) aiArea.append(ai);
-    aiArea.append(button('カテゴリを提案する', async () => { const id = await receipts.suggestCategory(receipt.id); if (id) { const { CATEGORY_LABELS, isCategoryId } = await import("../../../src/lib/category"); category.value = isCategoryId(id) ? categories.find(c => c.name === CATEGORY_LABELS[id])?.id ?? "" : id; } else el('message').textContent = 'カテゴリを選択してください。'; await saveDraft(); }));
-    if (receipt.registration.status === 'applied') { form.querySelectorAll('input,select').forEach(node => { (node as HTMLInputElement).disabled = true; }); aiArea.hidden = true; view.append(text('p', '家計簿へ登録済みです。')); }
-    else {
-      if (receipt.registration.status !== 'pending') { form.querySelectorAll('input,select').forEach(node => { (node as HTMLInputElement).disabled = true; }); aiArea.hidden = true; view.append(text('p', '判断内容は保存されています。同じ内容で登録を再試行してください。')); }
-      const submit = document.createElement('button'); submit.type = 'submit'; submit.textContent = receipt.registration.status === 'failed' ? '家計簿への登録を再試行する' : '確認して家計簿へ登録する';
-      form.append(submit); form.addEventListener('submit', event => { event.preventDefault(); void busy(submit, async () => { if (receipt.registration.status === 'pending') await save(); await receipts.register(receipt.id); await repository.delete(draftId); await receiptEditor((await receipts.get(receipt.id))!); }); });
-      view.append(button('確認内容を保存する', async () => { await saveDraft(); }));
+    if (blob) aiArea.append(aiButton);
+    const merchantLabel = fieldLabel('label', '店名', merchant.id);
+    const dateLabel = fieldLabel('label', '購入日', date.id);
+    const timeLabel = fieldLabel('label', '時刻（任意）', time.id);
+    const amountLabel = fieldLabel('label', '合計金額（円）', amount.id);
+    const categoryLabel = fieldLabel('label', '全体カテゴリ', category.id);
+    const accountLabel = fieldLabel('label', '支払元', account.id);
+    form.append(merchantLabel, merchant, dateLabel, date, timeLabel, time, amountLabel, amount,
+      categoryLabel, category, applyCategory, accountLabel, account, itemsHeading, itemsList, addItem,
+      adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails, warning, status, aiArea);
+    view.append(form);
+
+    function readItems(): ReceiptItem[] {
+      return Array.from(itemsList.querySelectorAll<HTMLElement>('[data-receipt-item]')).map(row => ({
+        id: row.dataset.receiptItem!, name: row.querySelector<HTMLInputElement>('[data-item-name]')!.value,
+        amountYen: parseNullableInteger(row.querySelector<HTMLInputElement>('[data-item-amount]')!.value),
+        quantity: parseNullableNumber(row.querySelector<HTMLInputElement>('[data-item-quantity]')!.value),
+        unitPriceYen: parseNullableInteger(row.querySelector<HTMLInputElement>('[data-item-unit-price]')!.value),
+        categoryId: row.querySelector<HTMLSelectElement>('[data-item-category]')!.value || null,
+      }));
+    }
+    function readAdjustments(): ReceiptAdjustment[] {
+      return Array.from(adjustmentsList.querySelectorAll<HTMLElement>('[data-receipt-adjustment]')).map(row => ({
+        id: row.dataset.receiptAdjustment!, label: row.querySelector<HTMLInputElement>('[data-adjustment-label]')!.value,
+        amountYen: Number(row.querySelector<HTMLInputElement>('[data-adjustment-amount]')!.value),
+        targetItemId: row.querySelector<HTMLSelectElement>('[data-adjustment-target]')!.value || null,
+      }));
+    }
+    function read(): ReceiptDraft {
+      return { merchant: merchant.value, purchasedDate: date.value, purchasedTime: time.value || null,
+        totalAmountYen: Number(amount.value), categoryId: category.value, accountId: account.value,
+        items: readItems(), adjustments: readAdjustments(), taxAmountYen: parseNullableInteger(tax.value) };
+    }
+    let saveTail: Promise<void> = Promise.resolve();
+    let draftTimer: ReturnType<typeof setTimeout> | null = null;
+    function saveDraft(): Promise<void> {
+      if (receipt.registration.status === 'applied') return Promise.resolve();
+      const value = read();
+      saveTail = saveTail.catch(() => undefined).then(async () => {
+        await repository.put({ id: draftId, kind: 'category-state', value, updatedAt: new Date().toISOString() });
+        status.textContent = '入力内容を端末に保存しました。';
+      });
+      return saveTail;
+    }
+    flushReceiptDraft = async () => {
+      if (draftTimer) clearTimeout(draftTimer);
+      await saveDraft();
+    };
+    function scheduleDraft() {
+      if (draftTimer) clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => { void saveDraft().catch(report); }, 350);
+    }
+    function updateDifference() {
+      const currentItems = readItems(); const currentAdjustments = readAdjustments();
+      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; return; }
+      const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
+      const difference = Number(amount.value) - knownTotal;
+      warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。合計はレシートの印字を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
+    }
+    function drawItems() {
+      itemsList.replaceChildren();
+      for (const item of items) {
+        const details = document.createElement('details'); details.className = 'receipt-item';
+        details.dataset.receiptItem = item.id;
+        const summary = text('summary', `${item.name.trim() || '品目を入力'} · ${item.amountYen == null ? '金額未入力' : yen(item.amountYen)} · ${categoryName(item.categoryId)}`);
+        details.open = expandItemId === item.id;
+        const nameLabel = fieldLabel('label', '品目名', `item-name-${item.id}`);
+        const name = document.createElement('input'); name.id = nameLabel.htmlFor; name.dataset.itemName = ''; name.value = item.name; name.maxLength = 200;
+        const amountLabel = fieldLabel('label', '金額（円）', `item-amount-${item.id}`);
+        const itemAmount = document.createElement('input'); itemAmount.id = amountLabel.htmlFor; itemAmount.dataset.itemAmount = ''; itemAmount.type = 'number'; itemAmount.inputMode = 'numeric'; itemAmount.min = '0'; itemAmount.step = '1'; itemAmount.value = item.amountYen == null ? '' : String(item.amountYen);
+        const quantityLabel = fieldLabel('label', '数量（任意）', `item-quantity-${item.id}`);
+        const quantity = document.createElement('input'); quantity.id = quantityLabel.htmlFor; quantity.dataset.itemQuantity = ''; quantity.type = 'number'; quantity.inputMode = 'decimal'; quantity.min = '0'; quantity.step = 'any'; quantity.value = item.quantity == null ? '' : String(item.quantity);
+        const unitLabel = fieldLabel('label', '単価（円・任意）', `item-unit-${item.id}`);
+        const unit = document.createElement('input'); unit.id = unitLabel.htmlFor; unit.dataset.itemUnitPrice = ''; unit.type = 'number'; unit.inputMode = 'numeric'; unit.min = '0'; unit.step = '1'; unit.value = item.unitPriceYen == null ? '' : String(item.unitPriceYen);
+        const itemCategoryLabel = fieldLabel('label', 'カテゴリ', `item-category-${item.id}`);
+        const itemCategory = document.createElement('select'); itemCategory.id = itemCategoryLabel.htmlFor; itemCategory.dataset.itemCategory = '';
+        itemCategory.replaceChildren(new Option('全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+        const availableCategoryId = actualCategoryId(item.categoryId);
+        if (item.categoryId && !availableCategoryId) itemCategory.append(new Option('カテゴリを選び直してください（利用不可）', item.categoryId));
+        itemCategory.value = availableCategoryId || item.categoryId || '';
+        const remove = button('品目を削除', () => {
+          items = readItems().filter(entry => entry.id !== item.id);
+          adjustments = readAdjustments().map(entry => entry.targetItemId === item.id ? { ...entry, targetItemId: null } : entry);
+          drawItems(); drawAdjustments(); updateDifference(); scheduleDraft();
+        });
+        for (const input of [name, itemAmount, quantity, unit, itemCategory]) input.addEventListener('input', () => {
+          const displayedAmount = itemAmount.value ? yen(Number(itemAmount.value)) : '金額未入力';
+          summary.textContent = `${name.value.trim() || '品目を入力'} · ${displayedAmount} · ${categoryName(itemCategory.value)}`;
+          if (input === name) updateAdjustmentTargets();
+          updateDifference(); scheduleDraft();
+        });
+        details.addEventListener('focusout', event => {
+          if (event.relatedTarget instanceof Node && details.contains(event.relatedTarget)) return;
+          details.open = false;
+        });
+        details.append(summary, nameLabel, name, amountLabel, itemAmount, quantityLabel, quantity,
+          unitLabel, unit, itemCategoryLabel, itemCategory, remove);
+        const row = document.createElement('li'); row.append(details); itemsList.append(row);
+      }
+    }
+    function updateAdjustmentTargets() {
+      const currentItems = readItems();
+      adjustmentsList.querySelectorAll<HTMLSelectElement>('[data-adjustment-target]').forEach(select => {
+        const selected = select.value;
+        select.replaceChildren(new Option('指定しない', ''), ...currentItems.map(item => new Option(item.name || '品目を入力', item.id)));
+        select.value = selected;
+      });
+    }
+    function drawAdjustments() {
+      adjustmentsList.replaceChildren();
+      for (const adjustment of adjustments) {
+        const row = document.createElement('li'); row.className = 'receipt-adjustment'; row.dataset.receiptAdjustment = adjustment.id;
+        const details = document.createElement('details');
+        const summary = text('summary', `${adjustment.label || '値引き・調整'} · ${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`);
+        details.open = expandAdjustmentId === adjustment.id;
+        const label = fieldLabel('label', '内容', `adjustment-label-${adjustment.id}`);
+        const name = document.createElement('input'); name.id = label.htmlFor; name.dataset.adjustmentLabel = ''; name.value = adjustment.label; name.maxLength = 100;
+        const amountLabel = fieldLabel('label', '金額（値引きはマイナス）', `adjustment-amount-${adjustment.id}`);
+        const value = document.createElement('input'); value.id = amountLabel.htmlFor; value.dataset.adjustmentAmount = ''; value.type = 'number'; value.inputMode = 'numeric'; value.step = '1'; value.value = String(adjustment.amountYen);
+        const targetLabel = fieldLabel('label', '対象の品目（任意）', `adjustment-target-${adjustment.id}`);
+        const target = document.createElement('select'); target.id = targetLabel.htmlFor; target.dataset.adjustmentTarget = '';
+        target.replaceChildren(new Option('指定しない', ''), ...items.map(item => new Option(item.name || '品目を入力', item.id)));
+        target.value = adjustment.targetItemId ?? '';
+        const remove = button('値引きを削除', () => { adjustments = readAdjustments().filter(entry => entry.id !== adjustment.id); drawAdjustments(); updateDifference(); scheduleDraft(); });
+        for (const input of [name, value, target]) input.addEventListener('input', () => {
+          summary.textContent = `${name.value || '値引き・調整'} · ${Number(value.value) < 0 ? '−' : '+'}${yen(Number(value.value))}`;
+          updateDifference(); scheduleDraft();
+        });
+        details.append(summary, label, name, amountLabel, value, targetLabel, target, remove);
+        row.append(details); adjustmentsList.append(row);
+      }
+    }
+    drawItems(); drawAdjustments();
+    for (const input of [merchant, date, time, amount, category, account, tax]) input.addEventListener('input', () => { updateDifference(); scheduleDraft(); });
+    category.addEventListener('change', scheduleDraft); account.addEventListener('change', scheduleDraft);
+    updateDifference();
+    if (receipt.registration.status !== 'applied') void saveDraft().catch(report);
+
+    if (receipt.registration.status === 'applied') {
+      form.querySelectorAll('input,select,button').forEach(node => { (node as HTMLInputElement).disabled = true; });
+      status.textContent = '家計簿へ登録済みです。';
+    } else {
+      if (receipt.registration.status !== 'pending') {
+        form.querySelectorAll('input,select,button').forEach(node => { (node as HTMLInputElement).disabled = true; });
+        status.textContent = '判断内容は保存されています。同じ内容で登録を再試行してください。';
+      }
+      const submit = document.createElement('button'); submit.type = 'submit';
+      submit.textContent = receipt.registration.status === 'failed' ? '登録を再試行する' : '登録する';
+      form.append(submit);
+      form.addEventListener('submit', event => {
+        event.preventDefault();
+        void busy(submit, async () => {
+          if (draftTimer) clearTimeout(draftTimer);
+          const value = read();
+          if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
+          if (value.items.some(item => !item.name.trim()) || value.adjustments.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
+          await saveDraft();
+          form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button').forEach(control => { control.disabled = true; });
+          try {
+            if (receipt.registration.status === 'pending') await receipts.confirm(receipt.id, value);
+            await receipts.register(receipt.id);
+          } catch (error) {
+            const current = await receipts.get(receipt.id);
+            if (current) await receiptEditor(current);
+            throw error;
+          }
+          await saveTail;
+          flushReceiptDraft = () => Promise.resolve();
+          await repository.delete(draftId);
+          await receiptPage();
+          el('message').textContent = '登録しました。';
+        });
+      });
     }
     view.append(button('レシート一覧へ戻る', receiptPage));
     if (!accounts.length || !categories.length) view.append(text('p', '設定から支払元とカテゴリを用意してください。'), button('家計簿の設定へ', options.openAccount));
   }
   async function statementPage() {
-    open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPayのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));
+    await open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPayのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));
     const label = text('label', 'PayPayのCSVファイル'); label.setAttribute('for', 'statement-file');
     const input = document.createElement('input'); input.id = 'statement-file'; input.type = 'file'; input.accept = '.csv,text/csv';
     const submit = button('明細を取り込む', async () => { const file = input.files?.[0]; if (!file) { el('message').textContent = 'CSVファイルを選択してください。'; return; } const result = await statements.importFile(file, 'paypay'); await statementPage(); el('message').textContent = `${result.added}件を取り込みました。重複 ${result.duplicates}件。`; }, false);
@@ -142,7 +376,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     for (const record of await repository.list('statement-import')) if (!await repository.getBlob(`statement-source:${record.id}`)) view.append(text('p', '取込元CSVの原本はありません。原本の確認はできませんが、明細行と照合結果は利用できます。'));
   }
   async function reviewPage() {
-    open('reconciliation'); view.append(text('h2', '明細の確認'));
+    await open('reconciliation'); view.append(text('h2', '明細の確認'));
     view.append(button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }, false));
     const run = await reconciliation.latest(); const decisions = await reconciliation.resolutions();
     for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reviewPage(); }));
@@ -212,6 +446,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   el('import-button').addEventListener('click', () => zip.click());
   zip.addEventListener('change', () => { const file = zip.files?.[0]; if (file) void (async () => { if ((await receipts.list()).length || (await statements.list()).length) throw new Error('記録済みの端末では別の家計簿を読み込めません。'); await restoreStandaloneBudget(file, ledger); location.reload(); })().catch(report); });
   resetMasterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; } });
-  el('settings-tab').addEventListener('click', resetMasterUi);
+  el('settings-tab').addEventListener('click', () => { void flushReceiptDraft().then(() => { flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); }).catch(report); });
   if (budgetId) { if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
 }

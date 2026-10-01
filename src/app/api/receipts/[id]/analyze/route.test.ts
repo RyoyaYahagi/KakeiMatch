@@ -120,7 +120,7 @@ describe("receipt analysis API", () => {
   it("persists only validated successful structured results", async () => {
     await POST(request("/api/receipts/receipt-a/analyze"), context());
     const success = mocks.inserts.find((row) => row.status === "succeeded");
-    expect(success).toMatchObject({ status: "succeeded", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v1", resultJson: JSON.stringify(validResult) });
+    expect(success).toMatchObject({ status: "succeeded", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v2", resultJson: JSON.stringify(validResult) });
     expect(success).toHaveProperty("needsReview", false);
     expect(success).toHaveProperty("succeededAt");
   });
@@ -138,7 +138,7 @@ describe("receipt analysis API", () => {
   it("retains receipt and previous successful extraction after provider failure, then permits retry", async () => {
     mocks.extract.mockRejectedValueOnce(new Error("private provider diagnostic"));
     setupSelect([ownerReceipt], [{
-      status: "failed", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v1",
+      status: "failed", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v2",
       resultJson: JSON.stringify(validResult), needsReview: false,
       lastErrorCode: "provider_unavailable", attemptedAt: new Date(), succeededAt: new Date(),
     }]);
@@ -160,7 +160,7 @@ describe("receipt analysis API", () => {
   });
 
   it("returns private analysis state only to the owner", async () => {
-    setupSelect([{ id: "receipt-a" }], [{ status: "succeeded", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v1", resultJson: JSON.stringify(validResult), needsReview: false, lastErrorCode: null, attemptedAt: new Date(), succeededAt: new Date() }]);
+    setupSelect([{ id: "receipt-a" }], [{ status: "succeeded", model: "gemini-3.5-flash-lite", promptVersion: "receipt-v2", resultJson: JSON.stringify(validResult), needsReview: false, lastErrorCode: null, attemptedAt: new Date(), succeededAt: new Date() }]);
     const response = await GET(request("/api/receipts/receipt-a/analysis", "GET"), context());
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("private, no-store");

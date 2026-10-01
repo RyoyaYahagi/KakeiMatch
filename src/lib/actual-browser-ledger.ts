@@ -26,6 +26,13 @@ const actualTransactionSchema = z.object({
   cleared: z.boolean().optional(),
   transfer_id: z.string().nullable().optional(),
   is_parent: z.boolean().optional(),
+  is_child: z.boolean().optional(),
+  parent_id: idSchema.nullable().optional(),
+  subtransactions: z.array(z.object({
+    id: idSchema.optional(),
+    amount: z.number().int().safe(),
+    category: idSchema.nullable().optional(),
+  })).optional(),
 });
 
 export class ActualMasterValidationError extends Error {
@@ -76,7 +83,6 @@ export type ActualBrowserLedgerOptions = {
 
 type NativeTransaction = z.infer<typeof actualTransactionSchema> & {
   imported_id?: string;
-  is_child?: boolean;
 };
 
 type RuntimeState = { initialized: boolean; dataDir?: string; loadedBudgetId?: string; send?: ActualSend; tail: Promise<void> };
@@ -105,6 +111,20 @@ function mapTransaction(value: unknown, names: { payees: Map<string, string>; ca
     accountId: row.account,
     cleared: row.cleared ?? false,
   };
+}
+
+function readBackSplitSet(parent: NativeTransaction, rows: NativeTransaction[]) {
+  const children = parent.subtransactions?.length
+    ? parent.subtransactions
+    : rows.filter(row => row.parent_id === parent.id);
+  return children.map(child => ({ categoryId: child.category ?? "", amountYen: child.amount }));
+}
+
+function sameSplitSet(actual: Array<{ categoryId: string; amountYen: number }>, expected: Array<{ categoryId: string; amountYen: number }>) {
+  const key = (split: { categoryId: string; amountYen: number }) => `${split.categoryId}\0${split.amountYen}`;
+  const actualSorted = actual.map(key).sort();
+  const expectedSorted = expected.map(key).sort();
+  return actualSorted.length === expectedSorted.length && actualSorted.every((value, index) => value === expectedSorted[index]);
 }
 
 function validateDate(value: string): string {
@@ -151,6 +171,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     merchant: string;
     categoryId: string;
     importedId: string;
+    splits?: Array<{ categoryId: string; amountYen: number }>;
   }): Promise<ActualTransaction>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
@@ -266,10 +287,20 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   const allRows = async (api: ActualApi, startDate: string, endDate: string): Promise<NativeTransaction[]> => {
     const accounts = await api.getAccounts();
     const lists = await Promise.all(accounts.map((account) => api.getTransactions(account.id, startDate, endDate)));
-    return lists.flat() as NativeTransaction[];
+    const rows = lists.flat() as NativeTransaction[];
+    const ids = new Set(rows.map(row => row.id));
+    // The public API groups split children beneath their parent. Expand them
+    // internally for category usage and spending, without counting a child twice.
+    const children = rows.flatMap(parent => (parent.subtransactions ?? []).filter(child => !child.id || !ids.has(child.id)).map(child => {
+      if (!child.id) throw new ActualBrowserUnavailableError("invalid_data");
+      return { ...parent, ...child, id: child.id, is_parent: false, is_child: true, parent_id: parent.id, subtransactions: undefined };
+    }));
+    return [...rows, ...children];
   };
 
-  const visibleRows = (rows: NativeTransaction[]) => rows.filter((row) => !row.is_parent);
+  // Keep the split parent
+  // as the single receipt/reconciliation row and leave children to Actual's UI.
+  const visibleRows = (rows: NativeTransaction[]) => rows.filter((row) => !row.is_child && !row.parent_id);
 
   const namesFor = async (api: ActualApi) => {
     const [payees, categories] = await Promise.all([api.getPayees(), api.getCategories()]);
@@ -453,7 +484,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const months = (await api.getBudgetMonths()).toSorted();
         if (months.length === 0) return null;
         const rows = await allRows(api, `${months[0]}-01`, today);
-        const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_parent);
+        const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
         return row ? mapTransaction(row, await namesFor(api)) : null;
       });
     },
@@ -568,14 +599,17 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         merchant: z.string().trim().min(1).max(200),
         categoryId: idSchema,
         importedId: z.string().min(1).max(200),
+        splits: z.array(z.object({ categoryId: idSchema, amountYen: z.number().int().safe().negative() })).min(1).optional(),
       }).safeParse(input);
-      if (!parsed.success) throw new Error("Invalid Actual receipt transaction.");
+      if (!parsed.success || (parsed.data.splits && parsed.data.splits.reduce((sum, split) => sum + split.amountYen, 0) !== parsed.data.amountYen)) throw new Error("Invalid Actual receipt transaction.");
       return withBudget(async (api) => {
         const accounts = await api.getAccounts();
         if (!accounts.some((account) => account.id === parsed.data.accountId && !account.closed)) {
           throw new ActualMasterValidationError("利用中の支払元を選び直してください。");
         }
-        if (!(await listCategories(api)).some(c => c.id === parsed.data.categoryId)) throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
+        const allowedCategories = new Set((await listCategories(api)).map(c => c.id));
+        if (!parsed.data.splits && !allowedCategories.has(parsed.data.categoryId)) throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
+        if (parsed.data.splits?.some(split => !allowedCategories.has(split.categoryId))) throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
         const result = await api.importTransactions(parsed.data.accountId, [{
           account: parsed.data.accountId,
           date: parsed.data.date,
@@ -584,15 +618,16 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           category: parsed.data.categoryId,
           imported_id: parsed.data.importedId,
           cleared: false,
+          ...(parsed.data.splits ? { subtransactions: parsed.data.splits.map(split => ({ amount: split.amountYen, category: split.categoryId })) } : {}),
         }]);
         if (result.errors.length > 0) throw new ActualBrowserUnavailableError("invalid_data");
         const rows = await api.getTransactions(parsed.data.accountId, parsed.data.date, parsed.data.date) as NativeTransaction[];
-        const saved = rows.find((row) => row.imported_id === parsed.data.importedId);
+        const saved = rows.find((row) => row.imported_id === parsed.data.importedId && Boolean(row.is_parent) === Boolean(parsed.data.splits));
         if (!saved) throw new ActualBrowserUnavailableError("invalid_data");
         const transaction = mapTransaction(saved, await namesFor(api));
         if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date ||
           transaction.amountYen !== parsed.data.amountYen || normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) ||
-          saved.category !== parsed.data.categoryId || transaction.kind !== "expense") {
+          (parsed.data.splits ? !sameSplitSet(readBackSplitSet(saved, rows), parsed.data.splits) : saved.category !== parsed.data.categoryId) || transaction.kind !== "expense") {
           throw new ActualBrowserUnavailableError("invalid_data");
         }
         return transaction;
@@ -625,6 +660,16 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         throw new Error("Invalid Actual reconciliation batch.");
       }
       return withBudget(async (api) => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        for (const update of parsed.data) {
+          if (update.amountYen === undefined) continue;
+          const row = rows.find(transaction => transaction.id === update.transactionId);
+          if (!row) throw new ActualMasterValidationError("照合対象の取引が見つかりません。明細を読み込み直してください。");
+          const isSplitParent = row.is_parent || Boolean(row.subtransactions?.length) || rows.some(transaction => transaction.parent_id === row.id);
+          if (isSplitParent && update.amountYen !== row.amount) {
+            throw new ActualMasterValidationError("分割取引の金額差を確認してください。現在はこの金額差を自動反映できません。");
+          }
+        }
         await api.batchBudgetUpdates(async () => {
           for (const update of parsed.data) {
             await api.updateTransaction(update.transactionId, {

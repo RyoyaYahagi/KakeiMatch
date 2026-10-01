@@ -73,7 +73,7 @@ try {
   // Draft references to deleted masters must require an explicit new selection.
   await addAccount('Synthetic Temporary'); await addCategory('Synthetic Temporary Category');
   await fillReceipt('Synthetic Draft Shop', 'Synthetic Temporary', 'Synthetic Temporary Category');
-  await click('確認内容を保存する'); await page.getByText('入力内容を端末に保存しました。', { exact: true }).waitFor();
+ await page.getByText('入力内容を端末に保存しました。', { exact: true }).waitFor();
   await categoryDetail('Synthetic Temporary Category'); page.once('dialog', dialog => dialog.accept()); await click('カテゴリを削除する');
   await page.getByRole('button', { name: 'カテゴリを追加する', exact: true }).waitFor();
   await accountDetail('Synthetic Temporary');
@@ -89,7 +89,7 @@ try {
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Cash' });
   await page.locator('#receipt-category').selectOption({ label: 'Synthetic Hobby' });
   assert.equal(await page.locator('#receipt-category option').filter({ hasText: 'Synthetic Salary' }).count(), 0);
-  await click('確認して家計簿へ登録する'); await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
+  await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await categoryDetail('Synthetic Hobby');
   await page.getByText('このカテゴリには記録があります。履歴を残すため削除できません。', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'カテゴリを削除する', exact: true }).count(), 0);
