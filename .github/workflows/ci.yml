@@ -81,6 +81,7 @@ jobs:
           PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:monthly-budgets-e2e
           PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:recurring-e2e
           PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:transaction-search-e2e
+          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:category-learning-e2e
       - run: npm ci --prefix workers/ai-gateway
       - run: npm test --prefix workers/ai-gateway
       - run: npm run typecheck --prefix workers/ai-gateway

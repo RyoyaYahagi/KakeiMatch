@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
 import { scheduleAuditSchema } from "./recurring-schedule";
+import { categoryLearningObservationSchema } from "./category-learning";
 import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
@@ -51,7 +52,9 @@ const receipt = z.object({
   extraction: extraction.nullable(),
   aiFlowId: z.uuid().optional(),
   itemCategories: z.array(nullableString).max(100).optional(),
-  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
+  classificationAttempt: z.object({ flowId: z.uuid().optional(), model: z.string().min(1), attemptedAt: isoDateTime,
+    itemCategories: z.array(nullableString).max(100).optional(), categoryId: nullableString }).strict().optional(),
+  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "learned_rule", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
   confirmedValue: confirmedReceipt.nullable(),
   registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed", "deleted"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
 }).strict();
@@ -61,7 +64,7 @@ const deletionAudit = z.object({
   status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
   deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
 }).strict();
-const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema]);
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),

@@ -211,7 +211,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk(jev)))).status).toBe(409);
     const extracted = await gemini(flowId);
     expect(await extracted.json()).toEqual(receipt);
-    const provider = fetchOk({ ...jev, extra: "private" });
+    const provider = fetchOk(jev);
     const response = await handleRequest(request("jev", { receipt: { ...category.receipt, ignored: "drop" }, flowId }), env, options(provider));
     expect(await response.json()).toEqual(jev);
     const [, init] = vi.mocked(provider).mock.calls[0];
@@ -235,6 +235,62 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(Object.keys(JSON.parse(String(init?.body)).questions)).toEqual(["item_0", "item_1"]);
     const incomplete = await handleRequest(request("jev", twoItems), env, options(fetchOk({ model: "jev-latest", answers: { item_0: choice } })));
     expect(incomplete.status).toBe(502);
+  });
+  it("sends only requested unresolved items with original indexes and validates custom category choices", async () => {
+    const flowId = crypto.randomUUID();
+    const items = [
+      { name: "Synthetic Bread", amountYen: 300 },
+      { name: "Synthetic Soap", amountYen: 500 },
+      { name: "Synthetic Apples", amountYen: 700 },
+    ];
+    const receiptBody = { receipt: { ...category.receipt, items }, flowId };
+    expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify({ ...receipt, items }) }))).status).toBe(200);
+    const choices = [{ id: "groceries", name: "食料品" }, { id: "home", name: "住まい用品" }];
+    const customAnswer = { type: "choice", choice: "home", probabilities: { groceries: 0.1, home: 0.9 }, confidence: 0.9 };
+    const provider = fetchOk({ model: "jev-latest", answers: { item_2: customAnswer } });
+    const response = await handleRequest(request("jev", { ...receiptBody, itemIndexes: [2], categories: choices }), env, options(provider));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ model: "jev-latest", answers: { item_2: customAnswer } });
+    const [, init] = vi.mocked(provider).mock.calls[0];
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.state.receipt.items).toEqual([items[2]]);
+    expect(payload.state.receipt).toMatchObject({ merchant: receiptBody.receipt.merchant, totalAmountYen: receiptBody.receipt.totalAmountYen });
+    expect(Object.keys(payload.questions)).toEqual(["item_2"]);
+    expect(payload.questions.item_2.instructions).toContain("state.receipt.items[0]");
+    expect(payload.questions.item_2.criteria).toEqual({ groceries: "食料品", home: "住まい用品" });
+    expect(JSON.stringify(payload)).not.toContain("Synthetic Bread");
+    expect(JSON.stringify(payload)).not.toContain("Synthetic Soap");
+  });
+  it("rejects invalid item indexes and invalid custom category lists before calling Jev", async () => {
+    const flowId = crypto.randomUUID();
+    const body = { ...category, flowId };
+    const provider = fetchOk(jev);
+    const invalidBodies = [
+      { ...body, itemIndexes: [] },
+      { ...body, itemIndexes: [0, 0] },
+      { ...body, itemIndexes: [1] },
+      { ...body, itemIndexes: [0.5] },
+      { ...body, categories: [] },
+      { ...body, categories: [{ id: "same", name: "One" }, { id: "same", name: "Two" }] },
+      { ...body, categories: [{ id: "food", name: "Food", extra: true }] },
+    ];
+    for (const invalid of invalidBodies) expect((await handleRequest(request("jev", invalid), env, options(provider))).status).toBe(400);
+    expect(provider).not.toHaveBeenCalled();
+  });
+  it("supports a merchant-only category question and rejects answers outside declared categories", async () => {
+    const flowId = crypto.randomUUID();
+    const merchantOnly = { receipt: { merchant: "Synthetic Cafe", totalAmountYen: 900, items: [] }, flowId, categories: [{ id: "meals", name: "外食" }] };
+    expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify({ ...receipt, merchant: "Synthetic Cafe", totalAmountYen: 900, items: [] }) }))).status).toBe(200);
+    const answer = { type: "choice", choice: "food", probabilities: { food: 1 }, confidence: 1 };
+    const response = await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "jev-latest", answers: { category: answer } })));
+    expect(response.status).toBe(502);
+    const validAnswer = { type: "choice", choice: "meals", probabilities: { meals: 1 }, confidence: 1 };
+    const provider = fetchOk({ model: "jev-latest", answers: { category: validAnswer } });
+    expect((await handleRequest(request("jev", merchantOnly), env, options(provider))).status).toBe(200);
+    const [, init] = vi.mocked(provider).mock.calls[0];
+    expect(JSON.parse(String(init?.body)).state).toEqual({ receipt: merchantOnly.receipt });
+    expect(Object.keys(JSON.parse(String(init?.body)).questions)).toEqual(["category"]);
+    expect((await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "jev-latest", answers: { category: validAnswer }, extra: true })))).status).toBe(200);
   });
   it("extracts receipt JSON from the current Gemini Interactions REST response", async () => {
     const flowId = crypto.randomUUID();
