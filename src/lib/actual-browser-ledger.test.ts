@@ -43,7 +43,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
       if (!budgetsByDir.has(dataDir)) budgetsByDir.set(dataDir, []);
-      const send = vi.fn(async (method: string, args?: { id?: string; updated?: Array<Record<string, unknown>>; runTransfers?: boolean }) => {
+      const send = vi.fn(async (method: string, args?: { id?: string; updated?: Array<Record<string, unknown>>; added?: Array<Record<string, unknown>>; deleted?: Array<{ id: string }>; runTransfers?: boolean }) => {
         const localBudgets = budgetsByDir.get(activeDataDir)!;
         if (method === "get-budgets") return [...localBudgets];
         if (method === "close-budget") { activeBudget = null; return "ok"; }
@@ -54,11 +54,16 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
           return "ok";
         }
         if (method === "transactions-batch-update") {
+          for (const deletion of args?.deleted ?? []) {
+            const index = rows.findIndex(item => item.id === deletion.id);
+            if (index >= 0) rows.splice(index, 1);
+          }
           for (const update of args?.updated ?? []) {
             const row = rows.find(item => item.id === update.id);
             if (row) Object.assign(row, update);
           }
-          return { updated: args?.updated ?? [], added: [], deleted: [], errors: [] };
+          rows.push(...(args?.added ?? []));
+          return { updated: args?.updated ?? [], added: args?.added ?? [], deleted: args?.deleted ?? [], errors: [] };
         }
         throw new Error(`Unexpected Actual handler: ${method}`);
       });
@@ -280,6 +285,7 @@ describe("Actual browser ledger", () => {
     await ledger.updateReceipt("receipt-created", { categoryId: "home", cleared: true });
     await ledger.applyTransactionUpdates([{ transactionId: "expense", amountYen: -3280, cleared: true }]);
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
+    expect(api.updateTransaction).toHaveBeenCalledWith("receipt-created", { category: "home", cleared: true });
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
   });
   it("accepts Actual's case formatting but rejects a different payee on read-back", async () => {
@@ -310,6 +316,48 @@ describe("Actual browser ledger", () => {
     rows.find(row => row.parent_id === "receipt-created" && row.category === "home")!.amount = -399;
     await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
     expect(api.importTransactions).toHaveBeenCalledTimes(2);
+  });
+
+  it("edits a receipt through awaited native updates and converts normal and split rows", async () => {
+    const { ledger, api, rows, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const receipt = rows.find(row => row.id === "expense")!;
+    Object.assign(receipt, { imported_id: "kakeimatch:receipt:edit-1", notes: "keep this memo", cleared: true });
+    const splitInput = {
+      accountId: "bank", date: "2026-09-30", amountYen: -1000, merchant: "Synthetic Books",
+      categoryId: "food", importedId: "kakeimatch:receipt:edit-1",
+      splits: [{ categoryId: "food", amountYen: -600 }, { categoryId: "home", amountYen: -400 }],
+    };
+    await expect(ledger.editReceipt("expense", splitInput)).resolves.toMatchObject({
+      id: "expense", amountYen: -1000, date: splitInput.date, accountId: "bank", isSplit: true, cleared: true,
+    });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(2);
+    expect(receipt).toMatchObject({ imported_id: splitInput.importedId, notes: "keep this memo", cleared: true, is_parent: true });
+    const send = sendHandlers.at(-1)!;
+    const firstUpdateCount = send.mock.calls.filter(([method]) => method === "transactions-batch-update").length;
+    const repeated = await ledger.editReceipt("expense", splitInput);
+    expect(repeated).toMatchObject({ id: "expense", amountYen: -1000, isSplit: true });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(2);
+    expect(send.mock.calls.filter(([method]) => method === "transactions-batch-update")).toHaveLength(firstUpdateCount);
+
+    const simpleInput = { ...splitInput, accountId: "cash", date: "2026-10-01", amountYen: -900, categoryId: "home", splits: undefined };
+    await expect(ledger.editReceipt("expense", simpleInput)).resolves.toMatchObject({
+      id: "expense", amountYen: -900, date: simpleInput.date, accountId: "cash", categoryId: "home", isSplit: false, cleared: true,
+    });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(0);
+    expect(receipt).toMatchObject({ imported_id: splitInput.importedId, notes: "keep this memo", cleared: true, is_parent: false });
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    expect(send.mock.calls.filter(([method, args]) => method === "transactions-batch-update" && args?.runTransfers === false).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rejects receipt edits for other transaction kinds, mismatched imports, and invalid split totals", async () => {
+    const { ledger, api, rows, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const base = { accountId: "cash", date: "2026-09-29", amountYen: -1000, merchant: "Synthetic Store", categoryId: "food", importedId: "kakeimatch:receipt:expected" };
+    await expect(ledger.editReceipt("expense", base)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    rows.find(row => row.id === "expense")!.imported_id = base.importedId;
+    await expect(ledger.editReceipt("expense", { ...base, splits: [{ categoryId: "food", amountYen: -999 }] })).rejects.toThrow("Invalid Actual receipt transaction.");
+    await expect(ledger.editReceipt("transfer-out", base)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "transactions-batch-update"))).toBe(false);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
   });
 
   it("preserves split totals during reconciliation while allowing equal amount confirmation", async () => {
@@ -392,7 +440,7 @@ describe("Actual browser ledger", () => {
   });
 
   it("updates ordinary manual transactions across dates, accounts, payees, categories and memo, preserving cleared", async () => {
-    const { ledger, api, rows, accounts } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const { ledger, api, rows, accounts, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
     accounts.push({ id: "bank", name: "銀行", closed: false });
     rows.find(row => row.id === "expense")!.cleared = true;
     const result = await ledger.updateTransaction("expense", {
@@ -404,10 +452,10 @@ describe("Actual browser ledger", () => {
       payeeName: "Synthetic Books", categoryId: "home", memo: "moved entry", cleared: true,
     });
     expect(api.createPayee).toHaveBeenCalledWith({ name: "Synthetic Books" });
-    expect(api.updateTransaction).toHaveBeenCalledWith("expense", expect.objectContaining({
-      account: "bank", date: "2099-06-07", amount: -2000, category: "home", notes: "moved entry",
-    }));
-    expect(api.updateTransaction.mock.calls[0]?.[1]).not.toHaveProperty("cleared");
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    expect(sendHandlers.some(send => send.mock.calls.some(([method, args]) => method === "transactions-batch-update" &&
+      args?.updated?.some((update: Record<string, unknown>) => update.id === "expense" && update.account === "bank" && update.date === "2099-06-07" &&
+        update.amount === -2000 && update.category === "home" && update.notes === "moved entry" && update.cleared === true && update.imported_id === "receipt:1")))).toBe(true);
   });
 
   it("rejects invalid manual categories and edits to receipt, transfer, and split rows before writes", async () => {

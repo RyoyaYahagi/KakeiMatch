@@ -244,7 +244,7 @@ export class LocalReconciliationService {
       const statementRecord = await this.findStatement(statementId);
       if (!result || result.status === "matched" || !statementRecord || statementRecord.value.kind !== "purchase") throw new LocalReconciliationError("decision_unavailable");
       const candidates = run.candidates.filter((item) => item.statementTransactionId === statementId);
-      const rejected = new Set((await this.repo.list<PairRejection>("correction-audit")).map((item) => pairKey(item.value.statementId, item.value.receiptId)));
+      const rejected = new Set((await this.repo.list<PairRejection>("correction-audit")).filter(item => "statementId" in item.value && "receiptId" in item.value).map((item) => pairKey(item.value.statementId, item.value.receiptId)));
       if (candidates.some((candidate) => !rejected.has(pairKey(statementId, candidate.receiptId)))) throw new LocalReconciliationError("candidates_remaining");
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
       const [accounts, categories] = await Promise.all([this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories()]);

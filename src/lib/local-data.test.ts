@@ -97,6 +97,23 @@ describe("LocalDataRepository", () => {
     expect(await first.getBlob("blob-1")).toBeNull();
   });
 
+  it("commits related records together and rolls all of them back if queueing one fails", async () => {
+    const repository = await open("profile-a", new IDBFactory());
+    await repository.putRecords([
+      { id: "receipt-a", kind: "receipt-metadata", value: { receipt: "a" }, updatedAt: "2026-09-30T00:00:00.000Z" },
+      { id: "audit-a", kind: "correction-audit", value: { audit: "a" }, updatedAt: "2026-09-30T00:00:00.000Z" },
+    ]);
+    expect(await repository.get("receipt-a")).not.toBeNull();
+    expect(await repository.get("audit-a")).not.toBeNull();
+
+    const invalid = { get id(): string { throw new Error("synthetic queue failure"); } } as unknown as { id: string; kind: "receipt-metadata"; value: unknown; updatedAt: string };
+    await expect(repository.putRecords([
+      { id: "receipt-b", kind: "receipt-metadata", value: { receipt: "b" }, updatedAt: "2026-09-30T00:00:00.000Z" },
+      invalid,
+    ])).rejects.toMatchObject({ name: "LocalDataStorageError" });
+    expect(await repository.get("receipt-b")).toBeNull();
+  });
+
   it("replaces the profile snapshot on restore while preserving other profiles", async () => {
     const factory = new IDBFactory();
     const first = await open("profile-a", factory);

@@ -248,6 +248,7 @@ export function showManualTransactionEditor(options: {
       setBusy(true);
       const lockId = transaction?.id ?? 'create';
       inFlightOperation = (async () => {
+        let editAudit: { targetType: 'transaction'; transactionId: string; operationId: string; before: ActualTransaction; after: ActualTransaction; status: 'pending' | 'applied'; createdAt: string; appliedAt: string | null } | null = null;
         try { await persistDraft(value, 'processing'); }
         catch (error) {
           submittedSnapshot = null;
@@ -258,20 +259,49 @@ export function showManualTransactionEditor(options: {
         try {
           await navigator.locks.request(`kakeimatch-manual-transaction:${lockId}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
             if (!lock) throw new ActualMasterValidationError('別の画面で記録を保存中です。終わってからもう一度お試しください。');
+            if (editing) {
+              const correctionId = `transaction-correction:${transaction!.id}`;
+              const prior = await options.repository.get<NonNullable<typeof editAudit>>(correctionId);
+              if (prior?.value.status !== 'pending') {
+                const latest = await ledger.getTransactionById(transaction!.id);
+                const fields = ['date', 'amountYen', 'accountId', 'categoryId', 'payeeName', 'memo', 'transferAccountId'] as const;
+                if (!latest || fields.some(field => (latest[field] ?? null) !== (transaction![field] ?? null))) throw new ActualMasterValidationError('別の画面で記録が変更されました。開き直してから編集してください。');
+              }
+              const timestamp = new Date().toISOString();
+              editAudit = prior?.value.status === 'pending' ? prior.value : {
+                targetType: 'transaction', transactionId: transaction!.id, operationId: importedId,
+                before: transaction!,
+                after: { ...transaction!, date: value.date, amountYen: kind === 'income' ? value.amountYen : -value.amountYen,
+                  accountId: value.accountId, memo: value.memo,
+                  ...(transfer ? { transferAccountId: value.destinationAccountId } : { categoryId: value.categoryId, payeeName: value.payeeName }) },
+                status: 'pending', createdAt: timestamp, appliedAt: null,
+              };
+              await options.repository.put({ id: correctionId, kind: 'correction-audit', value: editAudit, updatedAt: timestamp });
+            }
+            let saved: ActualTransaction;
             if (transfer) {
               const transferValue = { date: value.date, amountYen: value.amountYen, sourceAccountId: value.accountId, destinationAccountId: value.destinationAccountId!, memo: value.memo };
-              if (editing) await ledger.updateTransfer(transaction!.id, transferValue);
-              else await ledger.createTransfer({ ...transferValue, importedId });
+              if (editing) saved = await ledger.updateTransfer(transaction!.id, transferValue);
+              else saved = await ledger.createTransfer({ ...transferValue, importedId });
             } else {
               const manualValue = { ...value, kind: kind as 'expense' | 'income' };
-              if (editing) await ledger.updateTransaction(transaction!.id, manualValue);
-              else await ledger.createTransaction({ ...manualValue, importedId });
+              if (editing) saved = await ledger.updateTransaction(transaction!.id, manualValue);
+              else saved = await ledger.createTransaction({ ...manualValue, importedId });
+            }
+            if (editAudit) {
+              const timestamp = new Date().toISOString();
+              const audit = { ...editAudit, after: saved, status: 'applied' as const, appliedAt: timestamp };
+              await options.repository.putRecords([
+                { id: `transaction-correction:${transaction!.id}`, kind: 'correction-audit', value: audit, updatedAt: timestamp },
+                { id: `transaction-correction:${transaction!.id}:${editAudit.operationId}`, kind: 'correction-audit', value: audit, updatedAt: timestamp },
+              ]);
             }
           });
         } catch (error) {
           if (!heading.isConnected) return;
           status.textContent = messageFor(error);
           if (error instanceof ActualMasterValidationError) {
+            if (editing && !wasFrozen && editAudit) await options.repository.delete(`transaction-correction:${transaction!.id}`);
             if (wasFrozen) {
               await persistDraft(value, 'failed').catch(() => undefined);
               if (!heading.isConnected) return;

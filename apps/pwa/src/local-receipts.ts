@@ -11,6 +11,7 @@ const MAPPING_KIND = "merchant-mapping" as const;
 const MAX_GATEWAY_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_ITEMS_FOR_JEV = 30;
 const MAX_TEXT_FOR_JEV = 200;
+function receiptEditAuditId(id: string): string { return `receipt-correction:${id}`; }
 
 export type ReceiptItem = { id: string; name: string; amountYen: number | null; quantity?: number | null; unitPriceYen?: number | null; categoryId: string | null };
 export type ReceiptAdjustment = { id: string; label: string; amountYen: number; targetItemId?: string | null };
@@ -40,6 +41,17 @@ export type LocalReceipt = {
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
   confirmedValue: ConfirmedReceiptValue | null;
   registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
+};
+
+export type ReceiptEditAudit = {
+  targetType: "receipt";
+  receiptId: string;
+  operationId: string;
+  before: ConfirmedReceiptValue;
+  after: ConfirmedReceiptValue;
+  status: "pending" | "applied";
+  createdAt: string;
+  appliedAt: string | null;
 };
 
 export class LocalReceiptServiceError extends Error {
@@ -264,6 +276,96 @@ export class LocalReceiptService {
     }
     return updated;
     });
+  }
+
+  async getPendingEdit(id: string): Promise<ReceiptEditAudit | null> {
+    const record = await this.repository.get<ReceiptEditAudit>(receiptEditAuditId(id));
+    if (record?.kind !== "correction-audit" || record.value?.targetType !== "receipt" || record.value.status !== "pending") return null;
+    return record.value;
+  }
+
+  /** Updates the existing Actual transaction and records a durable, retryable audit intent. */
+  async edit(id: string, input: ConfirmedReceiptValue, expectedUpdatedAt?: string): Promise<LocalReceipt> {
+    return this.withLock(id, async () => {
+      const receipt = await this.requireReceipt(id);
+      const pending = await this.getPendingEdit(id);
+      if (pending) {
+        if (!receipt.confirmedValue || !receipt.registration.actualTransactionId) {
+          throw new LocalReceiptServiceError("edit_state_invalid", "変更の確認情報を開けませんでした。保存データを確認してください。");
+        }
+        return this.applyEdit(receipt, pending);
+      }
+      if (!validConfirmed(input)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
+      if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== receipt.updatedAt) {
+        throw new LocalReceiptServiceError("receipt_changed", "別の画面で内容が変更されています。最新の内容を開き直してください。");
+      }
+      if (receipt.registration.status !== "applied" || !receipt.registration.actualTransactionId || !receipt.confirmedValue) {
+        throw new LocalReceiptServiceError("edit_unavailable", "登録済みの支出だけ編集できます。");
+      }
+      const categories = await this.ledger.listExpenseCategories();
+      const accounts = await this.ledger.listOpenAccounts();
+      const normalized = { ...input, merchant: input.merchant.trim() };
+      const available = (categoryId: string) => {
+        const base = isCategoryId(categoryId) ? categoryId : null;
+        return categories.some(category => category.id === categoryId || (base !== null && category.name === CATEGORY_LABELS[base]));
+      };
+      if (!accounts.some(account => account.id === normalized.accountId)) throw new LocalReceiptServiceError("account_unavailable", "支払元を選び直してください。");
+      if (!available(normalized.categoryId) || (normalized.items ?? []).some(item => item.categoryId !== null && !available(item.categoryId))) {
+        throw new LocalReceiptServiceError("category_unavailable", "カテゴリを選び直してください。");
+      }
+      const allocations = receiptAllocations(normalized);
+      const resolved = allocations.map(row => {
+        const base = isCategoryId(row.categoryId) ? row.categoryId : null;
+        const category = categories.find(candidate => candidate.id === row.categoryId || (base !== null && candidate.name === CATEGORY_LABELS[base]));
+        if (!category) throw new LocalReceiptServiceError("category_unavailable", "品目のカテゴリを選び直してください。");
+        return { categoryId: category.id, amountYen: -row.amountYen };
+      });
+      const combined = new Map<string, number>();
+      for (const row of resolved) combined.set(row.categoryId, (combined.get(row.categoryId) ?? 0) + row.amountYen);
+      const splits = [...combined].map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
+      const timestamp = nowIso(this.options);
+      const audit: ReceiptEditAudit = {
+        targetType: "receipt", receiptId: id, operationId: crypto.randomUUID(), before: receipt.confirmedValue,
+        after: normalized, status: "pending", createdAt: timestamp, appliedAt: null,
+      };
+      await this.repository.put({ id: receiptEditAuditId(id), kind: "correction-audit", value: audit, updatedAt: timestamp });
+      // Continue from the durable intent. If Actual succeeds but the local commit fails,
+      // retry repeats this same importedId and target transaction with the saved payload.
+      return this.applyEdit(receipt, audit, splits);
+    });
+  }
+
+  private async applyEdit(receipt: LocalReceipt, audit: ReceiptEditAudit, precomputedSplits?: Array<{ categoryId: string; amountYen: number }>): Promise<LocalReceipt> {
+    const categories = await this.ledger.listExpenseCategories();
+    const allocations = receiptAllocations(audit.after);
+    const resolved = allocations.map(row => {
+      const base = isCategoryId(row.categoryId) ? row.categoryId : null;
+      const category = categories.find(candidate => candidate.id === row.categoryId || (base !== null && candidate.name === CATEGORY_LABELS[base]));
+      if (!category) throw new LocalReceiptServiceError("category_unavailable", "カテゴリを選び直してください。");
+      return { categoryId: category.id, amountYen: -row.amountYen };
+    });
+    const combined = new Map<string, number>();
+    for (const row of (precomputedSplits ?? resolved)) combined.set(row.categoryId, (combined.get(row.categoryId) ?? 0) + row.amountYen);
+    const splits = [...combined].map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
+    const categoryId = splits[0]?.categoryId;
+    if (!categoryId || !receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_state_invalid", "登録済み取引を確認できませんでした。");
+    try {
+      const transaction = await this.ledger.editReceipt(receipt.registration.actualTransactionId, {
+        accountId: audit.after.accountId, date: audit.after.purchasedDate, amountYen: -audit.after.totalAmountYen,
+        merchant: audit.after.merchant, categoryId, importedId: `kakeimatch:${receipt.id}`,
+        ...(splits.length > 1 ? { splits } : {}),
+      });
+      if (transaction.id !== receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_readback_failed", "変更後の内容を家計簿で確認できませんでした。再試行してください。");
+      const appliedAt = nowIso(this.options);
+      const updated: LocalReceipt = { ...receipt, confirmedValue: audit.after, updatedAt: appliedAt };
+      const appliedAudit: ReceiptEditAudit = { ...audit, status: "applied", appliedAt };
+      await this.repository.putRecords([
+        { id: receipt.id, kind: RECEIPT_KIND, value: updated, updatedAt: appliedAt },
+        { id: receiptEditAuditId(receipt.id), kind: "correction-audit", value: appliedAudit, updatedAt: appliedAt },
+        { id: `${receiptEditAuditId(receipt.id)}:${audit.operationId}`, kind: "correction-audit", value: appliedAudit, updatedAt: appliedAt },
+      ]);
+      return updated;
+    } catch (error) { throw safeError(error); }
   }
 
   async register(id: string): Promise<LocalReceipt> {

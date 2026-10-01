@@ -369,6 +369,68 @@ describe("receipt category allocations", () => {
   });
 });
 
+describe("registered receipt edits", () => {
+  const original: ConfirmedReceiptValue = { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 3284, categoryId: "actual-food", accountId: "cash" };
+  const changed: ConfirmedReceiptValue = { ...original, merchant: "Synthetic Shop Updated", totalAmountYen: 3400 };
+  type EditInput = { accountId: string; date: string; amountYen: number; merchant: string; categoryId: string; importedId: string; splits?: Array<{ categoryId: string; amountYen: number }> };
+
+  async function registeredReceipt(overrides: Record<string, unknown> = {}) {
+    const { repository, ledger, service } = await setup(vi.fn(), overrides);
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, original);
+    await service.register(receipt.id);
+    return { repository, ledger, service, receipt: (await service.get(receipt.id))! };
+  }
+
+  it("validates edit values and stale editor timestamps before writing an intent or Actual", async () => {
+    const editReceipt = vi.fn<(id: string, input: EditInput) => Promise<{ id: string }>>(async () => ({ id: "actual-tx" }));
+    const { repository, service, receipt } = await registeredReceipt({ editReceipt });
+    await expect(service.edit(receipt.id, { ...changed, totalAmountYen: 0 }, receipt.updatedAt)).rejects.toMatchObject({ code: "invalid_confirmation" });
+    await expect(service.edit(receipt.id, changed, "stale" )).rejects.toMatchObject({ code: "receipt_changed" });
+    expect(editReceipt).not.toHaveBeenCalled();
+    expect(await repository.get(`receipt-correction:${receipt.id}`)).toBeNull();
+  });
+
+  it("keeps the original confirmed value and pending audit when Actual readback fails, then retries the same intent", async () => {
+    const editReceipt = vi.fn<(id: string, input: EditInput) => Promise<{ id: string }>>(async () => ({ id: "actual-tx" }));
+    editReceipt.mockResolvedValueOnce({ id: "wrong-transaction" }).mockResolvedValueOnce({ id: "actual-tx" });
+    const { repository, ledger, service, receipt } = await registeredReceipt({ editReceipt });
+    await expect(service.edit(receipt.id, changed, receipt.updatedAt)).rejects.toMatchObject({ code: "edit_readback_failed" });
+    expect((await service.get(receipt.id))?.confirmedValue).toEqual(original);
+    const pending = await service.getPendingEdit(receipt.id);
+    expect(pending).toMatchObject({ before: original, after: changed, status: "pending" });
+    const recoveredService = new LocalReceiptService(repository, ledger as never, { withRegistrationLock: async (_id, operation) => operation() });
+    await recoveredService.edit(receipt.id, original, "stale");
+    expect(editReceipt).toHaveBeenCalledTimes(2);
+    expect(editReceipt.mock.calls[0][0]).toBe("actual-tx");
+    expect(editReceipt.mock.calls[0][1]).toEqual(editReceipt.mock.calls[1][1]);
+    expect((await recoveredService.get(receipt.id))?.confirmedValue).toEqual(changed);
+    expect(await recoveredService.getPendingEdit(receipt.id)).toBeNull();
+    expect(await repository.get(`receipt-correction:${receipt.id}:${pending!.operationId}`)).toMatchObject({ value: { status: "applied", after: changed } });
+  });
+
+  it("atomically commits receipt metadata and applied audit, and retries idempotently after local commit failure", async () => {
+    const editReceipt = vi.fn<(id: string, input: EditInput) => Promise<{ id: string }>>(async () => ({ id: "actual-tx" }));
+    const { repository, ledger, service, receipt } = await registeredReceipt({ editReceipt });
+    const putRecords = repository.putRecords.bind(repository);
+    let fail = true;
+    vi.spyOn(repository, "putRecords").mockImplementation(async records => {
+      if (fail) { fail = false; throw new Error("synthetic commit failure"); }
+      return putRecords(records);
+    });
+    await expect(service.edit(receipt.id, changed, receipt.updatedAt)).rejects.toBeDefined();
+    expect((await service.get(receipt.id))?.confirmedValue).toEqual(original);
+    expect(await service.getPendingEdit(receipt.id)).toMatchObject({ status: "pending", after: changed });
+    const recoveredService = new LocalReceiptService(repository, ledger as never, { withRegistrationLock: async (_id, operation) => operation() });
+    await recoveredService.edit(receipt.id, changed, receipt.updatedAt);
+    expect(editReceipt).toHaveBeenCalledTimes(2);
+    expect(editReceipt.mock.calls[0][1]).toEqual(editReceipt.mock.calls[1][1]);
+    expect((await recoveredService.get(receipt.id))?.confirmedValue).toEqual(changed);
+    const audit = await repository.get<{ status: string; before: ConfirmedReceiptValue; after: ConfirmedReceiptValue }>(`receipt-correction:${receipt.id}:${(await repository.get<{ operationId: string }>(`receipt-correction:${receipt.id}`))!.value.operationId}`);
+    expect(audit?.value).toMatchObject({ status: "applied", before: original, after: changed });
+  });
+});
+
 it("classifies each item in one request and leaves uncertain items for manual selection", async () => {
   const strong = { type: "choice", choice: "food", probabilities, confidence: 0.92 };
   const weak = { type: "choice", choice: "food", probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === "food" ? 0.4 : 0.075])), confidence: 0.4 };
