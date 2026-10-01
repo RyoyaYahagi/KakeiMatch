@@ -6,7 +6,7 @@ import type { ActualAccount, ActualCategory, ActualLedger, ActualMonthlySummary,
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
-  | "getBudgetMonths" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
+  | "getBudgetMonths" | "getBudgetMonth" | "setBudgetAmount" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
   | "createCategory" | "updateCategory" | "getPayees" | "createPayee" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
   | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
@@ -14,8 +14,26 @@ type ActualApi = Pick<typeof import("@actual-app/api"),
 >;
 type ActualSend = Awaited<ReturnType<ActualApi["init"]>>["send"];
 
+export type ActualMonthlyBudgetCategory = {
+  categoryId: string;
+  categoryName: string;
+  budgetYen: number;
+  spentYen: number;
+  remainingYen: number;
+  usageRatio: number | null;
+};
+export type ActualMonthlyBudgets = {
+  yearMonth: string;
+  categories: ActualMonthlyBudgetCategory[];
+  budgetYen: number;
+  spentYen: number;
+  remainingYen: number;
+  usageRatio: number | null;
+};
+
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
+const budgetCategorySchema = z.object({ id: idSchema, budgeted: z.number().int().safe() }).passthrough();
 const manualTransactionSchema = z.object({
   kind: z.enum(["expense", "income"]),
   amountYen: z.number().int().safe().positive(),
@@ -253,6 +271,8 @@ function summarizeMonth(rows: NativeTransaction[], categories: Array<{ id: strin
  */
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
   getMonthlySummary(params: { yearMonth: string }): Promise<ActualMonthlySummary>;
+  getMonthlyBudgets(params: { yearMonth: string }): Promise<ActualMonthlyBudgets>;
+  setMonthlyBudget(params: { yearMonth: string; categoryId: string; budgetYen: number }): Promise<void>;
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
@@ -428,6 +448,48 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       api.getCategories(),
     ]);
     return summarizeMonth(rows, categories, yearMonth);
+  };
+
+  const monthlyBudgets = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlyBudgets> => {
+    const [nativeMonth, masters, summary] = await Promise.all([
+      api.getBudgetMonth(yearMonth), api.getCategories(), monthlySummary(api, yearMonth),
+    ]);
+    const nativeCategories = new Map<string, number>();
+    const incomeCategoryIds = new Set(masters.filter(category => category.is_income).map(category => category.id));
+    for (const group of nativeMonth.categoryGroups) {
+      for (const unknownCategory of group.categories ?? []) {
+        if (unknownCategory && typeof unknownCategory === "object" && "id" in unknownCategory
+          && typeof unknownCategory.id === "string" && incomeCategoryIds.has(unknownCategory.id)) continue;
+        const parsed = budgetCategorySchema.safeParse(unknownCategory);
+        if (!parsed.success || nativeCategories.has(parsed.data.id)) throw new ActualBrowserUnavailableError("invalid_data");
+        nativeCategories.set(parsed.data.id, parsed.data.budgeted);
+      }
+    }
+    const spentByCategory = new Map(summary.categories
+      .filter(category => category.categoryId !== null)
+      .map(category => [category.categoryId!, category.amountYen]));
+    const categories: ActualMonthlyBudgetCategory[] = masters
+      .filter(category => !category.is_income)
+      .map(category => {
+        const budgetYen = nativeCategories.get(category.id) ?? 0;
+        const spentYen = spentByCategory.get(category.id) ?? 0;
+        const remainingYen = addSafeYen(budgetYen, -spentYen);
+        return {
+          categoryId: category.id,
+          categoryName: category.name,
+          budgetYen,
+          spentYen,
+          remainingYen,
+          usageRatio: budgetYen === 0 ? null : spentYen === 0 ? 0 : spentYen / budgetYen,
+        };
+      });
+    const targeted = categories.filter(category => category.budgetYen > 0);
+    const totals = targeted.reduce((sum, category) => ({
+      budgetYen: addSafeYen(sum.budgetYen, category.budgetYen),
+      spentYen: addSafeYen(sum.spentYen, category.spentYen),
+      remainingYen: addSafeYen(sum.remainingYen, category.remainingYen),
+    }), { budgetYen: 0, spentYen: 0, remainingYen: 0 });
+    return { yearMonth, categories, ...totals, usageRatio: totals.budgetYen === 0 ? null : totals.spentYen / totals.budgetYen };
   };
 
   // Keep the split parent
@@ -750,6 +812,29 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     getMonthlySummary({ yearMonth }) {
       lastDayOfMonth(yearMonth);
       return withBudget(api => monthlySummary(api, yearMonth));
+    },
+
+    getMonthlyBudgets({ yearMonth }) {
+      lastDayOfMonth(yearMonth);
+      return withBudget(api => monthlyBudgets(api, yearMonth));
+    },
+
+    setMonthlyBudget({ yearMonth, categoryId, budgetYen }) {
+      lastDayOfMonth(yearMonth);
+      const parsedId = idSchema.safeParse(categoryId);
+      if (!parsedId.success || !Number.isSafeInteger(budgetYen) || budgetYen < 0) {
+        return Promise.reject(new ActualMasterValidationError("予算額とカテゴリを確認してください。"));
+      }
+      return withBudget(async api => {
+        const category = (await api.getCategories()).find(item => item.id === parsedId.data);
+        if (!category || category.is_income) throw new ActualMasterValidationError("支出カテゴリを選んでください。");
+        await api.setBudgetAmount(yearMonth, parsedId.data, budgetYen);
+        const month = await api.getBudgetMonth(yearMonth);
+        const raw = month.categoryGroups.flatMap(group => group.categories ?? []).find(value =>
+          value && typeof value === "object" && "id" in value && value.id === parsedId.data);
+        const readback = budgetCategorySchema.safeParse(raw);
+        if (!readback.success || readback.data.budgeted !== budgetYen) throw new ActualBrowserUnavailableError("invalid_data");
+      });
     },
 
     getMonthlySpending({ yearMonth }) {

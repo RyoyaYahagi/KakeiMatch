@@ -1,3 +1,4 @@
+import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
 import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
@@ -85,11 +86,13 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   let homeRevision = 0;
   async function home() {
     const revision = ++homeRevision;
+    el('home-summary').setAttribute('aria-busy', 'true');
     await open('home');
     const month = selectedMonth;
-    const [rows, summary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month })]);
+    const [rows, summary, budgetSummary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), ledger.getMonthlyBudgets({ yearMonth: month })]);
     if (revision !== homeRevision || el('household-view').hidden) return;
     renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), next => { selectedMonth = next; void home().catch(report); });
+    renderMonthlyBudgets(el('home-summary'), budgetSummary, () => { void budgetEditor().catch(report); });
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
       const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
@@ -100,6 +103,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const latest = await reconciliation.latest();
     const attention = resolutions.filter(r => r.status !== 'applied').length + (latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)).length ?? 0);
     el('home-attention').replaceChildren(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
+    if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
+  }
+  async function budgetEditor() {
+    await open('statement');
+    await showMonthlyBudgetEditor({ view, ledger, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
   }
   async function recordChooser() {
     await open('receipt'); view.append(text('h2', '記録する'));
@@ -548,6 +556,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const setup = el('local-settings');
   await initializeBackupUi(repository, ledger);
   setup.append(text('h2', 'この端末の家計簿'), el('import-section'), el('budget-section'));
+  const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
   try { await ledger.listOpenAccounts(); } catch (error) { if (!(error instanceof ActualBudgetSelectionRequiredError)) throw error; }
   const actual = await import('@actual-app/api');
