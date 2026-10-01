@@ -13,7 +13,8 @@ const now = Date.parse("2026-09-30T14:59:00Z") / 1000;
 const receipt = { documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30", totalAmountYen: 3284, taxAmountYen: null, items: [{ name: "Synthetic Item", amountYen: 3284 }], warnings: [] };
 const category = { receipt: { merchant: receipt.merchant, totalAmountYen: receipt.totalAmountYen, items: receipt.items } };
 const image = { contentType: "image/png", imageBase64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64") };
-const jev = { model: "jev-latest", answers: { category: { type: "choice", choice: "food", probabilities: { food: 0.9, household: 0.02, transport: 0.01, medical: 0.01, clothing: 0.01, entertainment: 0.01, utilities: 0.01, communications: 0.01, other: 0.02 }, confidence: 0.9 } } };
+const choice = { type: "choice", choice: "food", probabilities: { food: 0.9, household: 0.02, transport: 0.01, medical: 0.01, clothing: 0.01, entertainment: 0.01, utilities: 0.01, communications: 0.01, other: 0.02 }, confidence: 0.9 };
+const jev = { model: "jev-latest", answers: { item_0: choice } };
 const origin = "https://kakeimatch-pr-60.workers.dev";
 function bearer(user = "synthetic-user", at = now, claims = {}) {
   const head = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -215,8 +216,25 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await response.json()).toEqual(jev);
     const [, init] = vi.mocked(provider).mock.calls[0];
     expect(JSON.parse(String(init?.body)).state).toEqual(category);
-    const malformed = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-latest", answers: {} })));
+    const malformed = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-latest", answers: { item_0: { ...choice, unexpected: true } } })));
     expect(malformed.status).toBe(502);
+  });
+  it("classifies every item in one Jev call and rejects incomplete indexed answers", async () => {
+    const flowId = crypto.randomUUID();
+    const twoItems = { receipt: { ...category.receipt, items: [...category.receipt.items, { name: "Synthetic Tea", amountYen: 400 }] }, flowId };
+    const twoItemReceipt = { ...receipt, items: twoItems.receipt.items };
+    const extracted = await handleRequest(request("gemini", { ...image, flowId }), env, options(fetchOk({ output_text: JSON.stringify(twoItemReceipt) })));
+    expect(extracted.status).toBe(200);
+    const second = { ...choice, choice: "household" };
+    const provider = fetchOk({ model: "jev-latest", answers: { item_0: choice, item_1: second } });
+    const response = await handleRequest(request("jev", twoItems), env, options(provider));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ model: "jev-latest", answers: { item_0: choice, item_1: second } });
+    expect(provider).toHaveBeenCalledTimes(1);
+    const [, init] = vi.mocked(provider).mock.calls[0];
+    expect(Object.keys(JSON.parse(String(init?.body)).questions)).toEqual(["item_0", "item_1"]);
+    const incomplete = await handleRequest(request("jev", twoItems), env, options(fetchOk({ model: "jev-latest", answers: { item_0: choice } })));
+    expect(incomplete.status).toBe(502);
   });
   it("extracts receipt JSON from the current Gemini Interactions REST response", async () => {
     const flowId = crypto.randomUUID();

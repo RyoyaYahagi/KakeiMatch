@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   ActualBudgetSelectionRequiredError,
+  ActualMasterValidationError,
   ActualRestoreIncompleteError,
   ActualRestoreTargetExistsError,
   createActualBrowserLedger,
@@ -22,8 +23,8 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     { id: "expense", account: "cash", date: "2026-09-29", amount: -3284, payee: "shop", category: "food", cleared: false, imported_id: "receipt:1" },
     { id: "income", account: "cash", date: "2026-09-28", amount: 5000, payee: null, category: null, cleared: false },
     { id: "parent", account: "cash", date: "2026-09-27", amount: -1000, is_parent: true },
-    { id: "split-a", account: "cash", date: "2026-09-27", amount: -600, category: "food", cleared: false },
-    { id: "split-b", account: "cash", date: "2026-09-27", amount: -400, category: "home", cleared: false },
+    { id: "split-a", parent_id: "parent", is_child: true, account: "cash", date: "2026-09-27", amount: -600, category: "food", cleared: false },
+    { id: "split-b", parent_id: "parent", is_child: true, account: "cash", date: "2026-09-27", amount: -400, category: "home", cleared: false },
     { id: "transfer-out", account: "cash", date: "2026-09-26", amount: -700, transfer_id: "transfer-in" },
     { id: "transfer-in", account: "cash", date: "2026-09-26", amount: 700, transfer_id: "transfer-out" },
   ];
@@ -71,7 +72,11 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
         if (rows.some((row) => row.imported_id === item.imported_id)) continue;
         const payeeId = "payee-" + item.imported_id;
         payees.push({ id: payeeId, name: String(item.payee_name) });
-        rows.push({ id: "receipt-created", ...item, account: accountId, payee: payeeId, category: item.category });
+        const subtransactions = item.subtransactions as Array<{ amount: number; category: string }> | undefined;
+        const id = "receipt-created";
+        const parentFields = Object.fromEntries(Object.entries(item).filter(([key]) => key !== "subtransactions"));
+        rows.push({ id, ...parentFields, ...(subtransactions ? { is_parent: true } : {}), account: accountId, payee: payeeId, category: item.category });
+        subtransactions?.forEach((split, index) => rows.push({ id: `${id}/child-${index}`, parent_id: id, is_child: true, account: accountId, date: String(item.date), amount: split.amount, category: split.category }));
       }
       return { added: [], updated: [], errors: [] };
     }),
@@ -221,7 +226,9 @@ describe("Actual browser ledger", () => {
     await expect(ledger.getTransactions({ startDate: "2026-09-29", endDate: "2026-09-29" }))
       .resolves.toEqual([expect.objectContaining({ id: "expense", amountYen: -3284 })]);
     const recent = await ledger.getRecentTransactions();
-    expect(recent.some((row) => row.id === "parent")).toBe(false);
+    expect(recent.some((row) => row.id === "parent" && row.amountYen === -1000)).toBe(true);
+    expect(recent.some((row) => row.id === "split-a" || row.id === "split-b")).toBe(false);
+    await expect(ledger.getTransactionById("parent")).resolves.toMatchObject({ id: "parent", amountYen: -1000 });
     await expect(ledger.getMonthlySpending({ yearMonth: "2026-09" })).resolves.toBe(4284);
     await expect(ledger.getTransactionById("expense")).resolves.toMatchObject({ amountYen: -3284 });
     await expect(ledger.listExpenseCategories()).resolves.toEqual([
@@ -243,6 +250,45 @@ describe("Actual browser ledger", () => {
     await expect(ledger.importReceipt(input)).resolves.toMatchObject({ payeeName: "Synthetic Cafe" });
     api.getPayees.mockResolvedValue([{ id: "payee-receipt:case", name: "Different Store" }]);
     await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
+  });
+
+  it("imports and verifies split receipt children atomically, and validates existing imports on retry", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const input = {
+      accountId: "cash", date: "2026-09-29", amountYen: -1000, merchant: "Synthetic Market",
+      categoryId: "food", importedId: "receipt:split",
+      splits: [{ categoryId: "food", amountYen: -600 }, { categoryId: "home", amountYen: -400 }],
+    };
+    await expect(ledger.importReceipt(input)).resolves.toMatchObject({ id: "receipt-created", amountYen: -1000, kind: "expense" });
+    expect(api.importTransactions).toHaveBeenCalledTimes(1);
+    expect(api.importTransactions.mock.calls[0]?.[1][0]).toMatchObject({
+      imported_id: "receipt:split",
+      subtransactions: [{ amount: -600, category: "food" }, { amount: -400, category: "home" }],
+    });
+    await expect(ledger.getTransactions({ startDate: input.date, endDate: input.date }))
+      .resolves.toEqual(expect.arrayContaining([expect.objectContaining({ id: "receipt-created", amountYen: -1000 })]));
+
+    rows.find(row => row.parent_id === "receipt-created" && row.category === "home")!.amount = -399;
+    await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
+    expect(api.importTransactions).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves split totals during reconciliation while allowing equal amount confirmation", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Synthetic" }]);
+    await expect(ledger.applyTransactionUpdates([{ transactionId: "parent", amountYen: -900, cleared: true }]))
+      .rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    await ledger.applyTransactionUpdates([{ transactionId: "parent", amountYen: -1000, cleared: true }]);
+    expect(api.updateTransaction).toHaveBeenCalledWith("parent", { amount: -1000, cleared: true });
+  });
+
+  it("rejects invalid split totals, positive amounts, and unavailable split categories before import", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const base = { accountId: "cash", date: "2026-09-29", amountYen: -1000, merchant: "Synthetic Market", categoryId: "food", importedId: "receipt:invalid" };
+    await expect(ledger.importReceipt({ ...base, splits: [{ categoryId: "food", amountYen: -999 }] })).rejects.toThrow("Invalid Actual receipt transaction.");
+    await expect(ledger.importReceipt({ ...base, splits: [{ categoryId: "food", amountYen: 0 }, { categoryId: "home", amountYen: -1000 }] })).rejects.toThrow("Invalid Actual receipt transaction.");
+    await expect(ledger.importReceipt({ ...base, splits: [{ categoryId: "income-category", amountYen: -1000 }] })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(api.importTransactions).not.toHaveBeenCalled();
   });
 
   it("separates income categories and keeps custom and hidden categories manageable", async () => {
@@ -308,4 +354,13 @@ describe("Actual browser ledger", () => {
     expect(api.importTransactions).not.toHaveBeenCalled();
   });
 
+});
+
+it("handles Actual's grouped split response with nullable parent IDs and counts children once", async () => {
+  const { ledger, api } = fixture([{ id: 'budget', name: 'Synthetic' }]);
+  const children = [{ id: 'child-a', amount: -600, category: 'food' }, { id: 'child-b', amount: -400, category: 'home' }];
+  api.getTransactions.mockImplementation(async (accountId: string) => accountId === 'cash' ? [{ id: 'grouped-parent', account: 'cash', date: '2026-09-27', amount: -1000, payee: 'shop', category: null, parent_id: null, is_parent: true, is_child: false, subtransactions: children }] : []);
+  expect(await ledger.getMonthlySpending({ yearMonth: '2026-09' })).toBe(1000);
+  expect(await ledger.getTransactions({ startDate: '2026-09-01', endDate: '2026-09-30' })).toEqual([expect.objectContaining({ id: 'grouped-parent', amountYen: -1000 })]);
+  expect(await ledger.getTransactionById('grouped-parent')).toMatchObject({ amountYen: -1000 });
 });

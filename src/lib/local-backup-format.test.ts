@@ -209,3 +209,18 @@ describe("portable local backup format", () => {
     await expect(readPortableBackup(futureSchema)).rejects.toThrow(/未対応/);
   });
 });
+
+
+it("round trips item IDs, signed discounts, per-item AI categories and drafts while retaining legacy records", async () => {
+  const data = fixture();
+  const record = data.records[0].value as Record<string, unknown>;
+  const details = { items: [{ id: "synthetic-item", name: "Coffee", amountYen: 1300, categoryId: "food", quantity: 1, unitPriceYen: 1300 }], adjustments: [{ id: "synthetic-discount", label: "クーポン", amountYen: -100, targetItemId: "synthetic-item" }], taxAmountYen: 109 };
+  record.confirmedValue = { ...(record.confirmedValue as object), ...details };
+  record.itemCategories = ["food"];
+  (record.aiSuggestion as Record<string, unknown>).flowId = "00000000-0000-4000-8000-000000000001";
+  record.extraction = { ...(record.extraction as object), adjustments: [{ label: "クーポン", amountYen: -100, targetItemIndex: 0 }] };
+  data.records.push({ id: "receipt-draft:synthetic", kind: "category-state", value: record.confirmedValue, updatedAt: time });
+  const restored = await readPortableBackup(await create(data));
+  expect(restored.localData.records).toEqual(data.records);
+  expect((restored.localData.records[1].value as { extraction: { adjustments?: unknown } }).extraction.adjustments).toBeUndefined();
+});

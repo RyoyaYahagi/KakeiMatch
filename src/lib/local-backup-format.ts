@@ -20,19 +20,24 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
 const nullableString = z.string().nullable();
 const safeYen = z.number().int().safe().nonnegative();
 const probabilityMap = z.record(z.enum(CATEGORY_IDS), z.number().finite().min(0).max(1)).nullable();
+const receiptItem = z.object({ id: z.string().min(1), name: z.string().min(1), amountYen: safeYen.nullable(), quantity: z.number().finite().positive().nullable().optional(), unitPriceYen: safeYen.nullable().optional(), categoryId: nullableString }).strict();
+const receiptAdjustment = z.object({ id: z.string().min(1), label: z.string().min(1), amountYen: z.number().int().safe(), targetItemId: nullableString.optional() }).strict();
+const detailFields = { items: z.array(receiptItem).max(100).optional(), adjustments: z.array(receiptAdjustment).max(100).optional(), taxAmountYen: safeYen.nullable().optional() };
 const extraction = z.object({
   documentKind: z.enum(["receipt", "not_receipt", "unknown"]), merchant: z.string().nullable(), purchasedDate: date.nullable(),
   purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen.nullable(), taxAmountYen: safeYen.nullable(),
-  items: z.array(z.object({ name: z.string(), amountYen: safeYen.nullable() }).strict()),
-  warnings: z.array(z.object({ field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items"]).nullable(), code: z.string(), message: z.string() }).strict()),
-}).strict();
+  items: z.array(z.object({ name: z.string(), amountYen: safeYen.nullable(), quantity: z.number().finite().positive().nullable().optional(), unitPriceYen: safeYen.nullable().optional() }).strict()),
+  adjustments: z.array(z.object({ label: z.string().min(1), amountYen: z.number().int().safe(), targetItemIndex: z.number().int().nonnegative().nullable().optional() }).strict()).max(100).optional(),
+  warnings: z.array(z.object({ field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"]).nullable(), code: z.string(), message: z.string() }).strict()),
+}).strict().refine(value => (value.adjustments ?? []).every(row => row.targetItemIndex == null || row.targetItemIndex < value.items.length));
 const receipt = z.object({
   id: z.string().min(1), createdAt: isoDateTime, updatedAt: isoDateTime,
   image: z.object({ blobId: z.string().min(1), contentType: z.string().min(1), sizeBytes: z.number().int().safe().nonnegative() }).strict().nullable(),
   extraction: extraction.nullable(),
   aiFlowId: z.uuid().optional(),
-  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable() }).strict(),
-  confirmedValue: z.object({ merchant: z.string(), purchasedDate: date, purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen, categoryId: z.string(), accountId: z.string() }).strict().nullable(),
+  itemCategories: z.array(nullableString).max(100).optional(),
+  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
+  confirmedValue: z.object({ merchant: z.string(), purchasedDate: date, purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen, categoryId: z.string(), accountId: z.string(), ...detailFields }).strict().nullable(),
   registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
 }).strict();
 const statementImport = z.object({
@@ -81,7 +86,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
   switch (kind) {
     case "receipt-metadata": return receipt;
     case "receipt-extraction": return z.object({ receiptId: z.string().min(1), extraction, analyzedAt: isoDateTime }).strict();
-    case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string() }).strict();
+    case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string(), ...detailFields }).strict();
     case "merchant-mapping": return id.startsWith("merchant:")
       ? z.union([z.object({ normalizedMerchant: z.string(), categoryId: z.enum(CATEGORY_IDS) }).strict(), z.object({ normalizedMerchant: z.string(), actualCategoryId: z.string().min(1) }).strict()])
       : z.object({ merchant: z.string(), aliasMerchant: z.string() }).strict();
@@ -115,6 +120,13 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
     recordIds.add(id);
     if (!recordValueSchema(kind, id).safeParse(recordValue).success) fail(`「${kind}」の記録内容が不正です。`);
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
+    if (kind === "receipt-metadata" || kind === "category-state") {
+      const detail = (kind === "receipt-metadata" ? (recordValue as { confirmedValue: unknown }).confirmedValue : recordValue) as { items?: Array<{ id: string }>; adjustments?: Array<{ id: string; targetItemId?: string | null }> } | null;
+      if (detail) {
+        const items = detail.items ?? [], adjustments = detail.adjustments ?? [];
+        if (new Set([...items, ...adjustments].map(row => row.id)).size !== items.length + adjustments.length || adjustments.some(row => row.targetItemId != null && !items.some(item => item.id === row.targetItemId))) fail("品目・値引きのIDまたは対象が不正です。");
+      }
+    }
     return { id, kind, value: recordValue, updatedAt };
   });
   const blobIds = new Set<string>();

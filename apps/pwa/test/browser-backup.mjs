@@ -126,8 +126,8 @@ async function addReceipt(merchant, amount) {
   await page.locator('#receipt-amount').fill(String(amount));
   await page.locator('#receipt-category').selectOption({ label: '食費' });
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Backup Wallet' });
-  await page.getByRole('button', { name: '確認して家計簿へ登録する', exact: true }).click();
-  try { await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor({ timeout: 15000 }); }
+  await page.getByRole('button', { name: '登録する', exact: true }).click();
+  try { await page.getByText('登録しました。', { exact: true }).waitFor({ timeout: 15000 }); }
   catch (error) {
     const diagnostic = await page.evaluate(() => ({
       message: document.querySelector('#message')?.textContent,

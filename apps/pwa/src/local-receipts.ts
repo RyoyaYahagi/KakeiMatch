@@ -12,6 +12,9 @@ const MAX_GATEWAY_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_ITEMS_FOR_JEV = 30;
 const MAX_TEXT_FOR_JEV = 200;
 
+export type ReceiptItem = { id: string; name: string; amountYen: number | null; quantity?: number | null; unitPriceYen?: number | null; categoryId: string | null };
+export type ReceiptAdjustment = { id: string; label: string; amountYen: number; targetItemId?: string | null };
+
 export type ConfirmedReceiptValue = {
   merchant: string;
   purchasedDate: string;
@@ -20,6 +23,9 @@ export type ConfirmedReceiptValue = {
   /** Actual category ID after the user chooses; AI suggestions use CategoryId keys. */
   categoryId: string;
   accountId: string;
+  taxAmountYen?: number | null;
+  items?: ReceiptItem[];
+  adjustments?: ReceiptAdjustment[];
 };
 
 export type LocalReceipt = {
@@ -30,6 +36,7 @@ export type LocalReceipt = {
   extraction: ReceiptExtractionResult | null;
   /** Usage flow for the latest successful extraction; older receipts may lack it. */
   aiFlowId?: string;
+  itemCategories?: Array<string | null>;
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
   confirmedValue: ConfirmedReceiptValue | null;
   registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
@@ -58,6 +65,15 @@ function nowIso(options: LocalReceiptServiceOptions): string { return (options.n
 function newId(options: LocalReceiptServiceOptions): string { return `receipt:${(options.makeId ?? crypto.randomUUID.bind(crypto))()}`; }
 function isSafeYen(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 function validConfirmed(value: ConfirmedReceiptValue): boolean {
+  const items = value.items ?? [], adjustments = value.adjustments ?? [];
+  if (items.length > 100 || adjustments.length > 100 ||
+      new Set([...items, ...adjustments].map(row => row.id)).size !== items.length + adjustments.length ||
+      items.some(row => typeof row.id !== "string" || !row.id || typeof row.name !== "string" || !row.name.trim() ||
+        (row.amountYen !== null && !isSafeYen(row.amountYen)) || (row.categoryId !== null && (typeof row.categoryId !== "string" || !row.categoryId)) ||
+        (row.quantity != null && (!Number.isFinite(row.quantity) || row.quantity <= 0)) || (row.unitPriceYen != null && !isSafeYen(row.unitPriceYen))) ||
+      adjustments.some(row => !row.id || typeof row.label !== "string" || !row.label.trim() || !Number.isSafeInteger(row.amountYen) ||
+        (row.targetItemId != null && !items.some(item => item.id === row.targetItemId))) ||
+      (value.taxAmountYen != null && !isSafeYen(value.taxAmountYen))) return false;
   const date = /^\d{4}-\d{2}-\d{2}$/.test(value.purchasedDate) ? new Date(`${value.purchasedDate}T00:00:00.000Z`) : null;
   return typeof value.merchant === "string" && value.merchant.trim().length > 0 &&
     date !== null && !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value.purchasedDate &&
@@ -142,6 +158,7 @@ export class LocalReceiptService {
   async analyze(id: string): Promise<LocalReceipt> {
     return this.withLock(id, async () => {
     const receipt = await this.requireReceipt(id);
+    if (receipt.registration.status !== "pending") throw new LocalReceiptServiceError("registration_locked", "登録済みの内容は読み取り直せません。");
     if (!receipt.image) throw new LocalReceiptServiceError("image_required", "読み取るレシート画像がありません。");
     const blob = await this.repository.getBlob(receipt.image.blobId);
     if (!blob) throw new LocalReceiptServiceError("image_missing", "レシート画像を端末で見つけられませんでした。");
@@ -161,7 +178,7 @@ export class LocalReceiptService {
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
       const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp,
-        aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
+        itemCategories: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;
     } catch (error) { throw safeError(error); }
@@ -171,7 +188,7 @@ export class LocalReceiptService {
   async suggestCategory(id: string): Promise<string | null> {
     return this.withLock(id, async () => {
     const receipt = await this.requireReceipt(id);
-    if (receipt.confirmedValue) {
+    if (receipt.confirmedValue && (!receipt.extraction || receipt.registration.status !== "pending")) {
       const id = receipt.confirmedValue.categoryId;
       return isCategoryId(id) || (await this.ledger.listExpenseCategories()).some(c => c.id === id) ? id : null;
     }
@@ -179,7 +196,7 @@ export class LocalReceiptService {
     try {
       const mapping = merchant ? (await this.repository.list<{ normalizedMerchant?: string; categoryId?: unknown; actualCategoryId?: unknown }>(MAPPING_KIND))
         .find(({ value }) => value.normalizedMerchant === normalizeMerchant(merchant) && (isCategoryId(value.categoryId) || (typeof value.actualCategoryId === "string" && value.actualCategoryId.length > 0))) : undefined;
-      if (mapping && (isCategoryId(mapping.value.categoryId) || typeof mapping.value.actualCategoryId === "string")) {
+      if (!receipt.extraction?.items.length && mapping && (isCategoryId(mapping.value.categoryId) || typeof mapping.value.actualCategoryId === "string")) {
         const categoryId = typeof mapping.value.actualCategoryId === "string" ? mapping.value.actualCategoryId : String(mapping.value.categoryId);
         if (typeof mapping.value.actualCategoryId === "string" && !(await this.ledger.listExpenseCategories()).some(c => c.id === categoryId)) {
           await this.repository.delete(mapping.id);
@@ -193,7 +210,7 @@ export class LocalReceiptService {
       if (!receipt.extraction) return null;
       // Reuse the validated local answer, including an uncertain result, rather
       // than spending another provider attempt for identical receipt facts.
-      if (receipt.aiSuggestion.attemptedAt && receipt.aiSuggestion.probabilities && receipt.aiSuggestion.model) {
+      if (receipt.aiSuggestion.attemptedAt && (receipt.itemCategories || receipt.aiSuggestion.probabilities) && receipt.aiSuggestion.model) {
         if (receipt.aiSuggestion.flowId === receipt.aiFlowId) return receipt.aiSuggestion.categoryId;
         if (!receipt.aiSuggestion.flowId) {
           const extraction = await this.repository.get<{ analyzedAt: string }>(`receipt-extraction:${id}`);
@@ -208,7 +225,18 @@ export class LocalReceiptService {
       const token = await (this.options.getToken ?? getAiAccessToken)();
       const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ ...state, flowId: receipt.aiFlowId }) });
       if (!response.ok) throw gatewayError(await readGatewayCode(response));
-      const parsed = safeCategoryResponse(await response.json());
+      const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
+      if (items.length) {
+        const parsedItems = items.map((_, index) => safeCategoryResponse({ model: body.model, answers: { category: body.answers?.[`item_${index}`] } }));
+        if (parsedItems.some(result => !result)) throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
+        const timestamp = nowIso(this.options);
+        const itemCategories = parsedItems.map(result => result!.choice);
+        // Items beyond the API limit remain unclassified for manual confirmation.
+        while (itemCategories.length < receipt.extraction.items.length) itemCategories.push(null);
+        await this.save({ ...receipt, itemCategories, aiSuggestion: { categoryId: itemCategories[0] ?? null, source: itemCategories.some(Boolean) ? "jev" : "unclassified", probabilities: null, model: String(body.model), attemptedAt: timestamp, flowId: receipt.aiFlowId }, updatedAt: timestamp });
+        return itemCategories[0] ?? null;
+      }
+      const parsed = safeCategoryResponse(body);
       if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
       const suggestion = { categoryId: parsed.choice, source: parsed.choice ? "jev" as const : "unclassified" as const, probabilities: parsed.probabilities, model: parsed.model, attemptedAt: nowIso(this.options), flowId: receipt.aiFlowId };
       await this.save({ ...receipt, aiSuggestion: suggestion, updatedAt: suggestion.attemptedAt });
@@ -226,10 +254,12 @@ export class LocalReceiptService {
     const updated = { ...receipt, confirmedValue: { ...confirmedValue, merchant: confirmedValue.merchant.trim() }, updatedAt: timestamp, registration: { status: "pending" as const, actualTransactionId: null, lastError: null } };
     await this.save(updated);
     const normalizedMerchant = normalizeMerchant(updated.confirmedValue!.merchant);
-    if (normalizedMerchant) {
-      const categoryMapping = isCategoryId(confirmedValue.categoryId)
-        ? { normalizedMerchant, categoryId: confirmedValue.categoryId }
-        : { normalizedMerchant, actualCategoryId: confirmedValue.categoryId };
+    const effectiveCategories = new Set((confirmedValue.items ?? []).map(item => item.categoryId ?? confirmedValue.categoryId));
+    const mappedCategory = effectiveCategories.size === 1 ? [...effectiveCategories][0] : confirmedValue.categoryId;
+    if (normalizedMerchant && effectiveCategories.size <= 1) {
+      const categoryMapping = isCategoryId(mappedCategory)
+        ? { normalizedMerchant, categoryId: mappedCategory }
+        : { normalizedMerchant, actualCategoryId: mappedCategory };
       await this.repository.put({ id: `merchant:${encodeURIComponent(normalizedMerchant)}`, kind: MAPPING_KIND, value: categoryMapping, updatedAt: timestamp });
     }
     return updated;
@@ -249,6 +279,16 @@ export class LocalReceiptService {
       if (!(await this.ledger.listOpenAccounts()).some(a => a.id === receipt.confirmedValue!.accountId)) {
         throw new LocalReceiptServiceError("account_unavailable", "支払元を選び直してください。登録結果の確認中の場合は、元の支払元を再開して再試行してください。");
       }
+      const allocations = receiptAllocations(receipt.confirmedValue);
+      const resolved = allocations.map(row => {
+        const key = isCategoryId(row.categoryId) ? row.categoryId : null;
+        const found = categories.find(c => c.id === row.categoryId || (key !== null && c.name === CATEGORY_LABELS[key]));
+        if (!found) throw new LocalReceiptServiceError("category_unavailable", "品目のカテゴリを選び直してください。");
+        return { categoryId: found.id, amountYen: -row.amountYen };
+      });
+      const combined = new Map<string, number>();
+      for (const row of resolved) combined.set(row.categoryId, (combined.get(row.categoryId) ?? 0) + row.amountYen);
+      const splits = [...combined].map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
       const timestamp = nowIso(this.options);
       const processing = { ...receipt, registration: { ...receipt.registration, status: "processing" as const, lastError: null }, updatedAt: timestamp };
       await this.save(processing);
@@ -256,7 +296,7 @@ export class LocalReceiptService {
         const transaction = await this.ledger.importReceipt({
           accountId: receipt.confirmedValue.accountId, date: receipt.confirmedValue.purchasedDate,
           amountYen: -receipt.confirmedValue.totalAmountYen, merchant: receipt.confirmedValue.merchant,
-          categoryId: category.id, importedId: `kakeimatch:${id}`,
+          categoryId: splits[0]?.categoryId ?? category.id, ...(splits.length > 1 ? { splits } : {}), importedId: `kakeimatch:${id}`,
         });
         const applied = { ...processing, registration: { status: "applied" as const, actualTransactionId: transaction.id, lastError: null }, updatedAt: nowIso(this.options) };
         await this.save(applied);
@@ -285,6 +325,33 @@ export class LocalReceiptService {
     }
     throw new LocalReceiptServiceError("registration_lock_unavailable", "この端末では安全な登録処理を開始できません。対応ブラウザーで再試行してください。");
   }
+}
+
+/** Printed total is authoritative. Multiple categories require a complete, exact allocation. */
+export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ categoryId: string; amountYen: number }> {
+  const items = value.items ?? [];
+  const categories = new Set(items.map(item => item.categoryId ?? value.categoryId));
+  if (categories.size <= 1) return [{ categoryId: [...categories][0] ?? value.categoryId, amountYen: value.totalAmountYen }];
+  const fail = (): never => { throw new LocalReceiptServiceError("allocation_required", "カテゴリ配分を確認してください。品目と値引きの合計をレシート総額に合わせてください。"); };
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    if (item.amountYen === null) fail();
+    const key = item.categoryId ?? value.categoryId;
+    const amount = (totals.get(key) ?? 0) + item.amountYen!;
+    if (!Number.isSafeInteger(amount)) fail();
+    totals.set(key, amount);
+  }
+  for (const adjustment of value.adjustments ?? []) {
+    const item = items.find(item => item.id === adjustment.targetItemId);
+    if (!item) fail();
+    const key = item!.categoryId ?? value.categoryId;
+    const amount = totals.get(key)! + adjustment.amountYen;
+    if (!Number.isSafeInteger(amount) || amount < 0) fail();
+    totals.set(key, amount);
+  }
+  const sum = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
+  if (!Number.isSafeInteger(sum) || sum !== value.totalAmountYen) fail();
+  return [...totals].filter(([,amount]) => amount > 0).map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
 }
 
 function toBase64(bytes: Uint8Array): string {

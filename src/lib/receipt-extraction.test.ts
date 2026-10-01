@@ -16,6 +16,7 @@ const goodResult = {
   totalAmountYen: 1280,
   taxAmountYen: 116,
   items: [{ name: "人工りんご", amountYen: 300 }],
+  adjustments: [],
   warnings: [],
 };
 
@@ -45,18 +46,33 @@ describe("receipt extraction schema and review derivation", () => {
     expect(() => validateReceiptExtraction({ ...goodResult, totalAmountYen: 1.5 })).toThrow(ReceiptExtractionError);
     expect(() => validateReceiptExtraction({ ...goodResult, purchasedDate: "2026-02-30" })).toThrow(ReceiptExtractionError);
     expect(() => validateReceiptExtraction({ ...goodResult, items: "not an array" })).toThrow(ReceiptExtractionError);
+    expect(() => validateReceiptExtraction({ ...goodResult, items: [{ name: "人工りんご", amountYen: Number.MAX_SAFE_INTEGER + 1 }] })).toThrow(ReceiptExtractionError);
+    expect(() => validateReceiptExtraction({ ...goodResult, adjustments: [{ label: "割引", amountYen: -1.5 }] })).toThrow(ReceiptExtractionError);
+    expect(() => validateReceiptExtraction({ ...goodResult, adjustments: [{ label: "割引", amountYen: -100, targetItemIndex: 1 }] })).toThrow(ReceiptExtractionError);
     expect(() => validateReceiptExtraction({ ...goodResult, documentKind: "receipt", unknown: "extra" })).toThrow(ReceiptExtractionError);
   });
 
   it("keeps the generated Gemini schema aligned with runtime fields", () => {
     const properties = (receiptExtractionJsonSchema as { properties: Record<string, unknown> }).properties;
     expect(Object.keys(properties)).toEqual([
-      "documentKind", "merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "warnings",
+      "documentKind", "merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments", "warnings",
     ]);
     expect(JSON.stringify(receiptExtractionJsonSchema)).not.toContain("category");
     expect(JSON.stringify(receiptExtractionJsonSchema)).not.toMatch(/anyOf|\$schema|minLength|pattern/);
     expect((properties.totalAmountYen as { type: string[] }).type).toEqual(["integer", "null"]);
     expect((properties.merchant as { type: string[] }).type).toEqual(["string", "null"]);
+  });
+
+  it("accepts quantity, unit price and signed adjustments while preserving old results", () => {
+    const result = validateReceiptExtraction({
+      ...goodResult,
+      items: [{ name: "人工りんご", amountYen: 600, quantity: 2, unitPriceYen: 300 }],
+      adjustments: [{ label: "商品割引", amountYen: -100, targetItemIndex: 0 }],
+      warnings: [{ field: "adjustments", code: "uncertain_target", message: "対象商品を確認してください" }],
+    });
+    expect(result.adjustments?.[0]).toEqual({ label: "商品割引", amountYen: -100, targetItemIndex: 0 });
+    const { adjustments: _ignored, ...legacyResult } = goodResult;
+    expect(validateReceiptExtraction(legacyResult)).toEqual(legacyResult);
   });
 });
 
