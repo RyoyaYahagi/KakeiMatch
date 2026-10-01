@@ -52,3 +52,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .receipt-item button, .receipt-adjustment button { margin: 12px 0; }
 .receipt-difference { color: #705019; font-size: .875rem; }
 .receipt-tax { margin-top: 12px; }
+.transaction-entry, .record-list button { width: 100%; text-align: left; padding: 8px 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: #213a32; overflow-wrap: anywhere; }
+.record-list { list-style: none; padding: 0; }
+.transaction-detail { margin: 16px 0; }
+.transaction-detail dt { font-size: .85rem; color: #58675d; margin-top: 12px; }
+.transaction-detail dd { margin: 4px 0; overflow-wrap: anywhere; }
+textarea { width: 100%; min-height: 88px; padding: 8px; font: inherit; border: 1px solid #a8b9ad; border-radius: 8px; }

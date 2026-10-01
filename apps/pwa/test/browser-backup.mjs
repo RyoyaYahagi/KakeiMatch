@@ -117,6 +117,8 @@ async function setupLedger() {
 
 async function addReceipt(merchant, amount) {
   await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: 'レシートから支出', exact: true }).click();
   const fileInputs = page.locator('#local-view input[type=file]');
   await fileInputs.first().setInputFiles({ name: `${merchant}.png`, mimeType: 'image/png', buffer: syntheticPng });
   await page.locator('#receipt-merchant').waitFor();
@@ -139,7 +141,7 @@ async function addReceipt(merchant, amount) {
 }
 
 async function importStatementCsv() {
-  await page.locator('#statement-tab').click();
+  await page.locator('#settings-tab').click(); await page.locator('#statement-tab').click();
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
   await page.getByText('2件を取り込みました。重複 0件。', { exact: true }).waitFor();
@@ -330,7 +332,7 @@ try {
   await waitForReady();
   const wiped = await readHouseholdSnapshot();
   assert.deepEqual(wiped, { records: [], blobs: [] }, 'local full wipe must clear household IndexedDB data while signed out');
-  await page.getByText('まだ支出の記録がありません。').waitFor();
+  await page.getByText('まだ記録がありません。').waitFor();
 
   assert.deepEqual(pageErrors, []);
   console.log('PASS: actual browser-ledger export/import, staging restore after local wipe, corruption safety, receipt/CSV cleanup, missing-raw round-trip, and signed-out local full wipe.');

@@ -14,9 +14,8 @@ root.innerHTML = `
     <header><h1>KakeiMatch</h1><span class="status" id="network"></span></header>
     <p class="muted">この端末の家計簿を表示します。</p>
     <nav class="app-nav" aria-label="アプリ">
-      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true">家計簿</button>
-      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">レシート</button>
-      <button id="statement-tab" class="nav-button" type="button" aria-pressed="false">明細</button>
+      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true">ホーム</button>
+      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">記録</button>
       <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">照合</button>
       <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">設定</button>
     </nav>
@@ -32,7 +31,7 @@ root.innerHTML = `
       <select id="budget"></select>
     </section>
     <p id="home-summary"></p>
-    <button id="home-capture" type="button">レシートを記録する</button>
+    <button id="home-capture" type="button">＋記録</button>
     <section>
       <h2>最近の取引</h2>
       <ul id="transactions"></ul>
@@ -42,6 +41,7 @@ root.innerHTML = `
     <section id="settings-view" hidden>
       <p>家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       <section id="local-settings"></section>
+      <button id="statement-tab" class="master-entry" type="button">明細を取り込む</button>
       <h2>AI利用</h2>
       <p class="muted">レシートの読み取りからカテゴリ提案までで1回です。読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
