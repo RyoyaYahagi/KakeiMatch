@@ -3,7 +3,7 @@ import { ReceiptExtractionError, validateReceiptExtraction, type ReceiptExtracti
 import { LocalDataStorageError, type LocalDataRepository } from "../../../src/lib/local-data";
 import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType } from "../../../src/lib/receipt-validation";
 import { getAiAccessToken } from "./ai-auth";
-import type { createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
+import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
 
 const RECEIPT_KIND = "receipt-metadata" as const;
 const EXTRACTION_KIND = "receipt-extraction" as const;
@@ -69,6 +69,7 @@ function safeError(error: unknown): LocalReceiptServiceError {
   if (error instanceof LocalReceiptServiceError) return error;
   if (error instanceof ReceiptValidationError) return new LocalReceiptServiceError("invalid_image", error.message);
   if (error instanceof ReceiptExtractionError) return new LocalReceiptServiceError("invalid_ai_response", "読み取り結果を確認できませんでした。もう一度お試しください。");
+  if (error instanceof ActualMasterValidationError) return new LocalReceiptServiceError("invalid_confirmation", error.message);
   if (error instanceof LocalDataStorageError) return new LocalReceiptServiceError("storage", error.message);
   if (error instanceof TypeError) return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
   if (error instanceof Error && ["account_session_required", "ai_token_unavailable"].includes(error.message)) {
@@ -170,13 +171,21 @@ export class LocalReceiptService {
   async suggestCategory(id: string): Promise<string | null> {
     return this.withLock(id, async () => {
     const receipt = await this.requireReceipt(id);
-    if (receipt.confirmedValue) return receipt.confirmedValue.categoryId;
+    if (receipt.confirmedValue) {
+      const id = receipt.confirmedValue.categoryId;
+      return isCategoryId(id) || (await this.ledger.listExpenseCategories()).some(c => c.id === id) ? id : null;
+    }
     const merchant = receipt.extraction?.merchant ?? null;
     try {
       const mapping = merchant ? (await this.repository.list<{ normalizedMerchant?: string; categoryId?: unknown; actualCategoryId?: unknown }>(MAPPING_KIND))
         .find(({ value }) => value.normalizedMerchant === normalizeMerchant(merchant) && (isCategoryId(value.categoryId) || (typeof value.actualCategoryId === "string" && value.actualCategoryId.length > 0))) : undefined;
       if (mapping && (isCategoryId(mapping.value.categoryId) || typeof mapping.value.actualCategoryId === "string")) {
         const categoryId = typeof mapping.value.actualCategoryId === "string" ? mapping.value.actualCategoryId : String(mapping.value.categoryId);
+        if (typeof mapping.value.actualCategoryId === "string" && !(await this.ledger.listExpenseCategories()).some(c => c.id === categoryId)) {
+          await this.repository.delete(mapping.id);
+          await this.save({ ...receipt, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null }, updatedAt: nowIso(this.options) });
+          return null;
+        }
         const suggestion = { categoryId, source: "merchant_mapping" as const, probabilities: null, model: null, attemptedAt: nowIso(this.options) };
         await this.save({ ...receipt, aiSuggestion: suggestion, updatedAt: suggestion.attemptedAt });
       return suggestion.categoryId;
@@ -232,14 +241,18 @@ export class LocalReceiptService {
       const receipt = await this.requireReceipt(id);
       if (receipt.registration.status === "applied") return receipt;
       if (!receipt.confirmedValue) throw new LocalReceiptServiceError("confirmation_required", "登録内容を確認して保存してください。");
+      // Reject unavailable selections before locking a pending receipt for a write.
+      const categories = await this.ledger.listExpenseCategories();
+      const basicCategory = isCategoryId(receipt.confirmedValue.categoryId) ? receipt.confirmedValue.categoryId : null;
+      const category = categories.find(({ id: actualId, name }) => actualId === receipt.confirmedValue!.categoryId || (basicCategory !== null && name === CATEGORY_LABELS[basicCategory]));
+      if (!category) throw new LocalReceiptServiceError("category_unavailable", "カテゴリを選び直してください。登録結果の確認中の場合は、元のカテゴリを再表示して再試行してください。");
+      if (!(await this.ledger.listOpenAccounts()).some(a => a.id === receipt.confirmedValue!.accountId)) {
+        throw new LocalReceiptServiceError("account_unavailable", "支払元を選び直してください。登録結果の確認中の場合は、元の支払元を再開して再試行してください。");
+      }
       const timestamp = nowIso(this.options);
       const processing = { ...receipt, registration: { ...receipt.registration, status: "processing" as const, lastError: null }, updatedAt: timestamp };
       await this.save(processing);
       try {
-        const categories = await this.ledger.listExpenseCategories();
-        const basicCategory = isCategoryId(receipt.confirmedValue.categoryId) ? receipt.confirmedValue.categoryId : null;
-        const category = categories.find(({ id: actualId, name }) => actualId === receipt.confirmedValue!.categoryId || (basicCategory !== null && name === CATEGORY_LABELS[basicCategory]));
-        if (!category) throw new LocalReceiptServiceError("category_unavailable", "家計簿でカテゴリを確認できません。カテゴリ設定を見直してください。");
         const transaction = await this.ledger.importReceipt({
           accountId: receipt.confirmedValue.accountId, date: receipt.confirmedValue.purchasedDate,
           amountYen: -receipt.confirmedValue.totalAmountYen, merchant: receipt.confirmedValue.merchant,

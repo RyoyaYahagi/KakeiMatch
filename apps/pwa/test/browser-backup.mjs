@@ -104,9 +104,13 @@ async function waitForReady() {
 
 async function setupLedger() {
   await page.locator('#settings-tab').click();
-  page.once('dialog', dialog => dialog.accept('Synthetic Backup Wallet'));
+  await page.getByRole('button', { name: '支払元', exact: true }).click();
   await page.getByRole('button', { name: '支払元を追加する', exact: true }).click();
-  await page.getByText('支払元を追加しました。', { exact: true }).waitFor();
+  await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Backup Wallet');
+  await page.getByRole('button', { name: '追加する', exact: true }).click();
+  await page.getByRole('button', { name: 'Synthetic Backup Wallet · 利用中', exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
 }
