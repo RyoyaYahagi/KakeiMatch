@@ -40,7 +40,7 @@ export type LocalReceipt = {
   itemCategories?: Array<string | null>;
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
   confirmedValue: ConfirmedReceiptValue | null;
-  registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
+  registration: { status: "pending" | "processing" | "applied" | "failed" | "deleted"; actualTransactionId: string | null; lastError: string | null };
 };
 
 export type ReceiptEditAudit = {
@@ -372,6 +372,7 @@ export class LocalReceiptService {
     return this.withLock(id, async () => {
       const receipt = await this.requireReceipt(id);
       if (receipt.registration.status === "applied") return receipt;
+      if (receipt.registration.status === "deleted") throw new LocalReceiptServiceError("registration_locked", "削除済みの支出は再登録できません。元に戻してから再試行してください。");
       if (!receipt.confirmedValue) throw new LocalReceiptServiceError("confirmation_required", "登録内容を確認して保存してください。");
       // Reject unavailable selections before locking a pending receipt for a write.
       const categories = await this.ledger.listExpenseCategories();

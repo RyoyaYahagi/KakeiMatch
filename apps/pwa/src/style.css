@@ -58,3 +58,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .transaction-detail dt { font-size: .85rem; color: #58675d; margin-top: 12px; }
 .transaction-detail dd { margin: 4px 0; overflow-wrap: anywhere; }
 textarea { width: 100%; min-height: 88px; padding: 8px; font: inherit; border: 1px solid #a8b9ad; border-radius: 8px; }
+
+button.destructive { color: #a13a2c; border-color: #a13a2c; }
+.deletion-toast:empty { display: none; }
+.deletion-toast { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
+.deletion-toast span { font-size: 1rem; }

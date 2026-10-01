@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
+import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
 const MAGIC = new TextEncoder().encode("KMATCHB1");
@@ -51,8 +52,15 @@ const receipt = z.object({
   itemCategories: z.array(nullableString).max(100).optional(),
   aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
   confirmedValue: confirmedReceipt.nullable(),
-  registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
+  registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed", "deleted"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
 }).strict();
+const deletionAudit = z.object({
+  targetType: z.literal("deletion"), transactionId: z.string().min(1), operationId: z.string().min(1),
+  nativeSnapshot: z.array(nativeTransactionSnapshotSchema).min(1), receiptBefore: z.array(receipt),
+  status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
+  deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
+}).strict();
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
@@ -108,7 +116,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "reconciliation-run": return runResult.extend({ runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime }).strict();
     case "reconciliation-result": return runResult;
     case "reconciliation-resolution": return resolution;
-    case "correction-audit": return correctionAudit;
+    case "correction-audit": return allCorrectionAudits;
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();

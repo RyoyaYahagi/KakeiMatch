@@ -361,6 +361,15 @@ describe("receipt category allocations", () => {
     expect(ledger.importReceipt).not.toHaveBeenCalled();
     expect((await service.get(receipt.id))?.registration.status).toBe("pending");
   });
+  it("does not re-register a locally deleted receipt", async () => {
+    const { repository, service, ledger } = await setup();
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { merchant: "Synthetic", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 1000, categoryId: "actual-food", accountId: "cash" });
+    const deleted = { ...(await service.get(receipt.id))!, registration: { status: "deleted" as const, actualTransactionId: "actual-old", lastError: null } };
+    await repository.put({ id: receipt.id, kind: "receipt-metadata", value: deleted, updatedAt: deleted.updatedAt });
+    await expect(service.register(receipt.id)).rejects.toMatchObject({ code: "registration_locked" });
+    expect(ledger.importReceipt).not.toHaveBeenCalled();
+  });
   it("rejects duplicate detail IDs and dangling discount targets", async () => {
     const { service } = await setup();
     const receipt = await service.createManual();
