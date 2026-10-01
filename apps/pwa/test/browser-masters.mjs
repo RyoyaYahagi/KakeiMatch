@@ -28,7 +28,8 @@ async function categoryDetail(name) {
   await page.getByText(`カテゴリ名：${name}`, { exact: true }).waitFor();
 }
 async function accountDetail(name, closed = false) {
-  await settings('支払元'); await click(`${name} · ${closed ? '利用終了' : '利用中'}`);
+  await settings('支払元'); if (closed) await page.locator('.closed-accounts summary').click();
+  await click(`${name} · ${closed ? '利用終了' : '利用中'}`);
   await page.getByText(`支払元：${name}`, { exact: true }).waitFor();
 }
 async function noOverflow() {
