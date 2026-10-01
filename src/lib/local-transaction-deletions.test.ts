@@ -42,6 +42,16 @@ async function setup(overrides: Record<string, unknown> = {}) {
 beforeEach(() => indexedDB.deleteDatabase("kakeimatch-local-data"));
 
 describe("LocalTransactionDeletionService", () => {
+  it("recovers a failed schedule occurrence skip before committing deletion", async () => {
+    const skip = vi.fn(async () => undefined).mockRejectedValueOnce(new Error("synthetic skip failure"));
+    const { service, ledger } = await setup({ skipDeletedScheduleOccurrences: skip });
+    await expect(service.delete("native-parent")).rejects.toThrow("skip failure");
+    expect((await service.list())[0]?.status).toBe("pending");
+    await service.recoverPending();
+    expect(ledger.deleteTransactionTree).toHaveBeenCalledTimes(2);
+    expect(skip).toHaveBeenCalledTimes(2);
+    expect((await service.list())[0]?.status).toBe("deleted");
+  });
   it("deletes a split tree, marks linked receipt metadata deleted, and undo restores the exact snapshots", async () => {
     const { repository, ledger, service } = await setup();
     await repository.put({ id: receipt.id, kind: "receipt-metadata", value: receipt, updatedAt: receipt.updatedAt });

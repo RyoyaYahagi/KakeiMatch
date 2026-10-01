@@ -23,6 +23,7 @@ type DeletionLedger = {
   getTransactionTree(id: string): Promise<NativeTransactionSnapshot[]>;
   deleteTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   restoreTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  skipDeletedScheduleOccurrences?(snapshot: NativeTransactionSnapshot[]): Promise<void>;
 };
 export type LocalTransactionDeletionOptions = {
   now?: () => Date;
@@ -156,6 +157,7 @@ export class LocalTransactionDeletionService {
 
   private async finishDelete(audit: DeletionAudit): Promise<void> {
     await this.ledger.deleteTransactionTree(audit.nativeSnapshot);
+    await this.ledger.skipDeletedScheduleOccurrences?.(audit.nativeSnapshot);
     const deletedAt = timestamp(this.options);
     const completed: DeletionAudit = { ...audit, status: "deleted", deletedAt, undoUntil: new Date(Date.parse(deletedAt) + UNDO_WINDOW_MS).toISOString(), completedAt: deletedAt };
     const receiptRecords: LocalDataRecord[] = audit.receiptBefore.map(receipt => {

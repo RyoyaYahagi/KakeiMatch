@@ -9,6 +9,7 @@ const productionSharedModules = new Set([
   'lib/actual-browser-ledger.ts', 'lib/actual-ledger.ts', 'lib/local-data.ts',
   'lib/local-backup-format.ts', 'lib/category.ts', 'lib/receipt-extraction.ts',
   'lib/receipt-validation.ts', 'lib/reconciliation-engine.ts', 'lib/statement-parser-core.ts',
+  'lib/recurring-schedule.ts',
 ]);
 const runtimeBoundary: Plugin = {
   name: 'local-first-runtime-boundary',

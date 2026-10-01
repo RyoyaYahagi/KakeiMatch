@@ -42,6 +42,8 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
       { id: "income-category", name: "給与", is_income: true, hidden: false, group_id: "income" },
     ];
   const budgetValues = new Map<string, number>([["food", 10000], ["home", 5000], ["hidden", -200]]);
+  const schedules: Array<Record<string, unknown>> = [];
+  const rules: Array<Record<string, unknown>> = [];
   const api = {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
@@ -50,6 +52,16 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
         const localBudgets = budgetsByDir.get(activeDataDir)!;
         if (method === "get-budgets") return [...localBudgets];
         if (method === "close-budget") { activeBudget = null; return "ok"; }
+        if (method === "schedule/force-run-service") return "ok";
+        if (method === "schedule/skip-next-date") {
+          const schedule = schedules.find(item => item.id === args?.id);
+          if (schedule && typeof schedule.next_date === "string") {
+            const date = new Date(`${schedule.next_date}T00:00:00Z`);
+            date.setUTCDate(date.getUTCDate() + 1);
+            schedule.next_date = date.toISOString().slice(0, 10);
+          }
+          return "ok";
+        }
         if (method === "delete-budget") {
           const index = localBudgets.findIndex((budget) => budget.id === args?.id);
           if (index >= 0) localBudgets.splice(index, 1);
@@ -89,6 +101,42 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     getPayees: vi.fn(async () => [...payees]),
     createPayee: vi.fn(async ({ name }: { name: string }) => { const id = `payee-${payees.length}`; payees.push({ id, name }); return id; }),
     getBudgetMonths: vi.fn(async () => ["2026-09"]),
+    getSchedules: vi.fn(async () => schedules),
+    createSchedule: vi.fn(async (schedule: Record<string, unknown>) => {
+      const id = `schedule-${schedules.length + 1}`;
+      const ruleId = `schedule-rule-${schedules.length + 1}`;
+      schedules.push({ ...schedule, id, rule: ruleId, next_date: (schedule.date as { start: string }).start, completed: false });
+      rules.push({ id: ruleId, stage: null, conditionsOp: "and", conditions: [
+        { field: "payee", op: "is", value: schedule.payee },
+        { field: "account", op: "is", value: schedule.account },
+        { field: "date", op: "isapprox", value: schedule.date },
+        { field: "amount", op: schedule.amountOp, value: schedule.amount },
+      ], actions: [{ op: "link-schedule", value: id }] });
+      return id;
+    }),
+    updateSchedule: vi.fn(async (id: string, fields: Record<string, unknown>) => {
+      const schedule = schedules.find(item => item.id === id)!;
+      Object.assign(schedule, fields);
+      if (["amount", "amountOp", "account", "payee", "date"].some(key => key in fields)) {
+        const rule = rules.find(item => item.id === schedule.rule)!;
+        const conditions = rule.conditions as Array<Record<string, unknown>>;
+        for (const condition of conditions) {
+          if (condition.field === "amount") { condition.op = schedule.amountOp; condition.value = schedule.amount; }
+          if (condition.field === "account") condition.value = schedule.account;
+          if (condition.field === "payee") condition.value = schedule.payee;
+          if (condition.field === "date") condition.value = schedule.date;
+        }
+      }
+    }),
+    deleteSchedule: vi.fn(async (id: string) => {
+      const schedule = schedules.find(item => item.id === id);
+      schedules.splice(schedules.indexOf(schedule!), 1);
+    }),
+    getRules: vi.fn(async () => rules),
+    updateRule: vi.fn(async (rule: Record<string, unknown>) => {
+      Object.assign(rules.find(item => item.id === rule.id)!, rule);
+      return rule;
+    }),
     getBudgetMonth: vi.fn(async (month: string) => ({
       month, incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
       toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
@@ -172,7 +220,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, accounts, categories, budgetValues, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
@@ -392,6 +440,103 @@ describe("Actual browser ledger", () => {
     });
     budgetValues.set("food", 0);
     await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 41 })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+  });
+
+  it("creates schedules disabled until category rules are installed, retries matching names, and runs Actual's schedule service", async () => {
+    const { ledger, api, schedules, rules, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    const input = {
+      name: "家賃", kind: "expense" as const, amountYen: 80000, categoryId: "home", accountId: "cash",
+      frequency: "monthly" as const, startDate: "2026-09-27", postsTransaction: true,
+    };
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({
+      id: "schedule-1", name: "家賃", kind: "expense", amountYen: 80000, categoryId: "home", frequency: "monthly", editable: true,
+    });
+    expect(api.createSchedule).toHaveBeenCalledWith(expect.objectContaining({ posts_transaction: false, amount: -80000, amountOp: "is" }));
+    expect(rules[0]?.actions).toEqual([
+      { op: "link-schedule", value: "schedule-1" }, { field: "category", op: "set", value: "home" },
+    ]);
+    expect(api.updateSchedule.mock.calls.map(([, fields]) => fields)).toEqual([{ posts_transaction: true }]);
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({ id: "schedule-1", categoryId: "home" });
+    expect(api.createSchedule).toHaveBeenCalledTimes(1);
+    expect(schedules).toHaveLength(1);
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "schedule/force-run-service"))).toBe(true);
+  });
+
+  it("repairs a durable disabled native schedule after category rule persistence fails", async () => {
+    const { ledger, api, schedules, rules } = fixture([{ id: "budget", name: "Local" }]);
+    const input = {
+      name: "保険料", kind: "expense" as const, amountYen: 1200, categoryId: "home", accountId: "cash",
+      frequency: "yearly" as const, startDate: "2026-10-01", postsTransaction: true,
+    };
+    api.updateRule.mockRejectedValueOnce(new Error("write failed"));
+    await expect(ledger.createRecurringSchedule(input)).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    expect(schedules[0]?.posts_transaction).toBe(false);
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({ id: "schedule-1", editable: true });
+    expect(api.createSchedule).toHaveBeenCalledTimes(1);
+    expect(schedules[0]?.posts_transaction).toBe(true);
+    expect(rules[0]?.actions).toContainEqual({ field: "category", op: "set", value: "home" });
+  });
+
+  it("updates editable schedules without replacing unrelated rule actions and can delete unsupported schedules", async () => {
+    const { ledger, api, schedules, rules } = fixture([{ id: "budget", name: "Local" }]);
+    schedules.push({
+      id: "external", name: "電気代", rule: "rule-external", posts_transaction: true, amount: -12000, amountOp: "is",
+      account: "cash", payee: "shop", date: { frequency: "monthly", interval: 1, start: "2026-01-01", endMode: "never" },
+      next_date: "2026-10-01", completed: false,
+    });
+    rules.push({ id: "rule-external", stage: null, conditionsOp: "and", conditions: [
+      { field: "payee", op: "is", value: "shop" }, { field: "account", op: "is", value: "cash" },
+      { field: "date", op: "isapprox", value: schedules[0]?.date }, { field: "amount", op: "is", value: -12000 },
+    ], actions: [
+      { op: "link-schedule", value: "external" }, { field: "notes", op: "set", value: "keep me" },
+      { field: "category", op: "set", value: "food" },
+    ] });
+    const replacement = {
+      name: "電気代", kind: "expense" as const, amountYen: 13000, categoryId: "home", accountId: "cash",
+      frequency: "monthly" as const, startDate: "2026-01-01", postsTransaction: true,
+    };
+    await expect(ledger.updateRecurringSchedule("external", replacement)).resolves.toMatchObject({ amountYen: 13000, categoryId: "home" });
+    expect(rules[0]?.actions).toEqual([
+      { op: "link-schedule", value: "external" }, { field: "notes", op: "set", value: "keep me" },
+      { field: "category", op: "set", value: "home" },
+    ]);
+    expect(api.updateSchedule).toHaveBeenCalledWith("external", expect.objectContaining({ posts_transaction: false }));
+    expect(api.updateSchedule).toHaveBeenCalledWith("external", expect.objectContaining({
+      amount: -13000, date: { frequency: "monthly", interval: 1, start: "2026-01-01", endMode: "never" },
+    }));
+    expect(api.updateSchedule.mock.calls.find(([, fields]) => fields.amount === -13000)).toHaveLength(2);
+    await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
+    await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
+    expect(schedules).toHaveLength(0);
+  });
+
+  it("keeps complex schedules visible but read-only and advances only deleted due occurrences", async () => {
+    const { ledger, schedules, rules, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    schedules.push({
+      id: "complex", name: "複雑な定期取引", rule: "rule-complex", posts_transaction: true,
+      amount: -100, amountOp: "is", account: "cash", payee: "shop",
+      date: { frequency: "monthly", interval: 1, start: "2026-09-01", endMode: "never", patterns: [{ type: "day", value: 1 }] },
+      next_date: "2026-09-01", completed: false,
+    });
+    rules.push({ id: "rule-complex", stage: null, conditionsOp: "and", conditions: [], actions: [{ op: "link-schedule", value: "complex" }] });
+    await expect(ledger.listRecurringSchedules()).resolves.toMatchObject([{ id: "complex", editable: false }]);
+    await expect(ledger.deleteRecurringSchedule("complex")).resolves.toBeUndefined();
+
+    schedules.push({
+      id: "due", name: "月額", rule: "rule-due", posts_transaction: true, amount: -1000, amountOp: "is", account: "cash", payee: "shop",
+      date: { frequency: "monthly", interval: 1, start: "2026-09-01", endMode: "never" }, next_date: "2026-09-30", completed: false,
+    });
+    await ledger.skipDeletedScheduleOccurrences([
+      { id: "occurrence", date: "2026-09-30", amount: -1000, account: "cash", schedule: "due" },
+      { id: "stale", date: "2026-09-29", amount: -1000, account: "cash", schedule: "due" },
+    ]);
+    expect(schedules.find(schedule => schedule.id === "due")?.next_date).toBe("2026-10-01");
+    await ledger.skipDeletedScheduleOccurrences([
+      { id: "occurrence", date: "2026-09-30", amount: -1000, account: "cash", schedule: "due" },
+    ]);
+    expect(schedules.find(schedule => schedule.id === "due")?.next_date).toBe("2026-10-01");
+    const skipCalls = sendHandlers.flatMap(send => send.mock.calls).filter(([method]) => method === "schedule/skip-next-date");
+    expect(skipCalls).toHaveLength(1);
   });
 
   it("rejects unsafe monthly total and balance arithmetic", async () => {

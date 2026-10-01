@@ -85,6 +85,17 @@ async function rewriteEntry(file: Blob, path: string, replacement: Uint8Array): 
 }
 
 describe("portable local backup format", () => {
+  it("round-trips a pending schedule creation and rejects malformed operation intents", async () => {
+    const data = fixture();
+    const intent = { targetType: "schedule", operationId: "synthetic-schedule-operation", operation: "create", scheduleId: null,
+      input: { name: "Synthetic Subscription", kind: "expense", amountYen: 1500, categoryId: "synthetic-category", accountId: "synthetic-account", frequency: "monthly", startDate: "2026-10-01", postsTransaction: true },
+      status: "pending", createdAt: time, appliedAt: null };
+    data.records.push({ id: "schedule-operation:synthetic-schedule-operation", kind: "correction-audit", value: intent, updatedAt: time });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.at(-1)?.value).toEqual(intent);
+    intent.input.amountYen = 0.5;
+    await expect(create(data)).rejects.toThrow(/correction-audit/);
+  });
   it("round-trips new receipt flow IDs while accepting receipts written before the cutover", async () => {
     const data = fixture();
     data.records[0].value = { ...(data.records[0].value as Record<string, unknown>), aiFlowId: "00000000-0000-4000-8000-000000000001" };
