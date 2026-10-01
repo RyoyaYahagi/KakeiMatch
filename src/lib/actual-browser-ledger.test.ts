@@ -38,8 +38,10 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
   const categories = [
       { id: "food", name: "食費", is_income: false, hidden: false, group_id: "expenses" },
       { id: "home", name: "住居費", is_income: false, hidden: false, group_id: "expenses" },
+      { id: "hidden", name: "旧カテゴリ", is_income: false, hidden: true, group_id: "expenses" },
       { id: "income-category", name: "給与", is_income: true, hidden: false, group_id: "income" },
     ];
+  const budgetValues = new Map<string, number>([["food", 10000], ["home", 5000], ["hidden", -200]]);
   const api = {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
@@ -87,6 +89,19 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     getPayees: vi.fn(async () => [...payees]),
     createPayee: vi.fn(async ({ name }: { name: string }) => { const id = `payee-${payees.length}`; payees.push({ id, name }); return id; }),
     getBudgetMonths: vi.fn(async () => ["2026-09"]),
+    getBudgetMonth: vi.fn(async (month: string) => ({
+      month, incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [
+        ...categories.filter(category => !category.is_income).map(category => ({
+          id: category.id, budgeted: budgetValues.get(category.id) ?? 0,
+        })),
+        ...categories.filter(category => category.is_income).map(category => ({
+          id: category.id, name: category.name, is_income: true, received: 123,
+        })),
+      ] }],
+    })),
+    setBudgetAmount: vi.fn(async (_month: string, categoryId: string, value: number) => { budgetValues.set(categoryId, value); }),
     getTransactions: vi.fn(async (accountId: string, start: string, end: string) => rows.filter((row) => row.account === accountId && String(row.date) >= start && String(row.date) <= end)),
     importTransactions: vi.fn(async (accountId: string, imports: Array<Record<string, unknown>>) => {
       for (const item of imports) {
@@ -157,7 +172,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, accounts, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, categories, budgetValues, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
@@ -330,6 +345,53 @@ describe("Actual browser ledger", () => {
     });
     expect(() => ledger.getMonthlySummary({ yearMonth: "0000-01" })).toThrow("Invalid yearMonth.");
     await expect(ledger.getMonthlySummary({ yearMonth: "9999-12" })).resolves.toMatchObject({ yearMonth: "9999-12", incomeYen: 0, expenseYen: 0 });
+  });
+
+  it("reads native category budgets, includes hidden expense categories, and scopes totals to budgeted categories", async () => {
+    const { ledger } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09",
+      categories: [
+        { categoryId: "food", categoryName: "食費", budgetYen: 10000, spentYen: 3884, remainingYen: 6116, usageRatio: 0.3884 },
+        { categoryId: "home", categoryName: "住居費", budgetYen: 5000, spentYen: 400, remainingYen: 4600, usageRatio: 0.08 },
+        { categoryId: "hidden", categoryName: "旧カテゴリ", budgetYen: -200, spentYen: 0, remainingYen: -200, usageRatio: 0 },
+      ],
+      budgetYen: 15000, spentYen: 4284, remainingYen: 10716, usageRatio: 0.2856,
+    });
+  });
+
+  it("sets a nonnegative budget only for expense categories and verifies Actual readback", async () => {
+    const { ledger, api, budgetValues } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 0 })).resolves.toBeUndefined();
+    expect(api.setBudgetAmount).toHaveBeenCalledWith("2026-09", "food", 0);
+    expect(budgetValues.get("food")).toBe(0);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "income-category", budgetYen: 100 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "missing", budgetYen: 100 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: -1 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: Number.MAX_SAFE_INTEGER + 1 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(api.setBudgetAmount).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed budget values, unsafe totals, invalid months, and native readback mismatches", async () => {
+    const { ledger, api, budgetValues } = fixture([{ id: "budget", name: "Local" }]);
+    api.getBudgetMonth.mockResolvedValueOnce({
+      month: "2026-09", incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [{ id: "food", budgeted: Number.MAX_SAFE_INTEGER + 1 }] }],
+    });
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    budgetValues.set("food", Number.MAX_SAFE_INTEGER);
+    budgetValues.set("home", 1);
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    expect(() => ledger.getMonthlyBudgets({ yearMonth: "0000-01" })).toThrow("Invalid yearMonth.");
+    api.setBudgetAmount.mockResolvedValueOnce(undefined);
+    api.getBudgetMonth.mockResolvedValueOnce({
+      month: "2026-09", incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [{ id: "food", budgeted: 42 }] }],
+    });
+    budgetValues.set("food", 0);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 41 })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
   });
 
   it("rejects unsafe monthly total and balance arithmetic", async () => {

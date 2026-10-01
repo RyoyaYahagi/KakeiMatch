@@ -78,3 +78,6 @@ button.destructive { color: #a13a2c; border-color: #a13a2c; }
 .account-balance-row button { flex: 1; min-width: 0; }
 .account-balance { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .closed-accounts { margin-top: 12px; }
+.monthly-budget-details { margin: 8px 0; }
+.budget-category-list p { margin: 4px 0; overflow-wrap: anywhere; }
+progress { display: block; width: 100%; height: 12px; accent-color: #2f6959; }
