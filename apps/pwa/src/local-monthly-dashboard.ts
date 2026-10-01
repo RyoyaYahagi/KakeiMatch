@@ -15,7 +15,7 @@ export function monthEnd(month: string): string {
   const day = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][index - 1];
   return `${month}-${day}`;
 }
-export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySummary, currentMonth: string, select: (month: string) => void) {
+export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySummary, currentMonth: string, select: (action: { type: 'shift'; offset: -1 | 1 } | { type: 'current' }) => void) {
   target.replaceChildren();
   const selector = node('div'); selector.className = 'month-selector';
   const [year, month] = summary.yearMonth.split('-');
@@ -23,12 +23,12 @@ export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySumm
   for (const [title, offset] of [['前月へ', -1], ['翌月へ', 1]] as const) {
     const button = node('button', offset < 0 ? '‹' : '›') as HTMLButtonElement; button.type = 'button'; button.className = 'secondary'; button.setAttribute('aria-label', title);
     button.disabled = shiftMonth(summary.yearMonth, offset) === summary.yearMonth;
-    button.addEventListener('click', () => select(shiftMonth(summary.yearMonth, offset)));
+    button.addEventListener('click', () => select({ type: 'shift', offset }));
     if (offset < 0) selector.append(button, label); else selector.append(button);
   }
   target.append(selector);
   if (summary.yearMonth !== currentMonth) {
-    const reset = node('button', '当月へ戻る') as HTMLButtonElement; reset.type = 'button'; reset.className = 'secondary'; reset.addEventListener('click', () => select(currentMonth)); target.append(reset);
+    const reset = node('button', '当月へ戻る') as HTMLButtonElement; reset.type = 'button'; reset.className = 'secondary'; reset.addEventListener('click', () => select({ type: 'current' })); target.append(reset);
   }
   const totals = node('dl'); totals.className = 'monthly-totals';
   for (const [title, value, id] of [
