@@ -1,3 +1,4 @@
+import { createMasterShortcut } from './local-master-ui';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -175,6 +176,33 @@ export function showManualTransactionEditor(options: {
       payeeLabel.remove(); payee.remove(); categoryLabel.remove(); category.remove();
       memoLabel.before(destinationLabel, destination);
     }
+    const shortcuts: HTMLButtonElement[] = [];
+    function addShortcut(field: HTMLSelectElement, request: { kind: 'category'; isIncome: boolean } | { kind: 'account' }) {
+      const shortcut = createMasterShortcut({ ledger, request, origin: {
+        field, beforeOpen: () => persistDraft(readValue()),
+        onCreated: async id => {
+          if (request.kind === 'category') {
+            const updated = await (kind === 'income' ? ledger.listIncomeCategories() : ledger.listExpenseCategories());
+            categories.splice(0, categories.length, ...updated);
+            category.replaceChildren(new Option('選択してください', ''), ...categories.map(value => new Option(value.name, value.id)));
+          } else {
+            const updated = await ledger.listOpenAccounts(); accounts.splice(0, accounts.length, ...updated);
+            for (const select of transfer ? [account, destination] : [account]) {
+              const previous = select.value;
+              select.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
+              if (previous && !accounts.some(value => value.id === previous)) select.append(new Option('現在の口座（利用終了）', previous));
+              select.value = previous;
+            }
+          }
+          field.value = id;
+          await persistDraft(readValue());
+        },
+      } });
+      field.after(shortcut); shortcuts.push(shortcut);
+    }
+    if (!transfer) addShortcut(category, { kind: 'category', isIncome: kind === 'income' });
+    addShortcut(account, { kind: 'account' });
+    if (transfer) addShortcut(destination, { kind: 'account' });
     options.view.replaceChildren(heading, form, cancel);
     status.textContent = '';
 
@@ -218,6 +246,7 @@ export function showManualTransactionEditor(options: {
     });
 
     function setBusy(busy: boolean) {
+      for (const shortcut of shortcuts) shortcut.disabled = busy || frozenAfterUnknownFailure;
       for (const field of fields) field.disabled = busy || frozenAfterUnknownFailure;
       cancel.disabled = busy || frozenAfterUnknownFailure;
       submit.disabled = busy;
@@ -365,6 +394,7 @@ export function showManualTransactionEditor(options: {
       status.textContent = 'カテゴリ別に分けた取引です。この画面からは編集できません。';
     }
     if (frozenAfterUnknownFailure) {
+      shortcuts.forEach(shortcut => { shortcut.disabled = true; });
       fields.forEach(field => { field.disabled = true; });
       submit.textContent = '同じ内容で再試行する';
       status.textContent = '前回の保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';

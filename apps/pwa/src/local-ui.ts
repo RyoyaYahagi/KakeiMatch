@@ -7,7 +7,7 @@ import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
-import { initializeMasterUi } from './local-master-ui';
+import { initializeMasterUi, createMasterShortcut } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
@@ -250,7 +250,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const draftId = `receipt-draft:${receipt.id}`;
     const savedDraft = await repository.get<ReceiptDraft>(draftId);
     const draft = savedDraft?.value;
-    const [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
+    let [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
     const categoryName = (id: string | null | undefined) => {
       if (!id) return 'カテゴリ未選択';
       const builtin = isCategoryId(id) ? CATEGORY_LABELS[id] : null;
@@ -362,6 +362,32 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       categoryLabel, category, applyCategory, accountLabel, account, itemsHeading, itemsList, addItem,
       adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails, warning, status, aiArea);
     view.append(form);
+    function addCategoryShortcut(field: HTMLSelectElement) {
+      return createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
+        field, beforeOpen: saveDraft,
+        onCreated: async id => {
+          categories = await ledger.listExpenseCategories();
+          for (const select of [category, ...Array.from(itemsList.querySelectorAll<HTMLSelectElement>('[data-item-category]'))]) {
+            const previous = select.value;
+            select.replaceChildren(new Option(select === category ? '選択してください' : '全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+            if (previous && !categories.some(entry => entry.id === previous)) select.append(new Option('カテゴリを選び直してください（利用不可）', previous));
+            select.value = previous;
+          }
+          field.value = id;
+          field.dispatchEvent(new Event('input', { bubbles: true }));
+          await saveDraft();
+        },
+      } });
+    }
+    category.after(addCategoryShortcut(category));
+    account.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
+      field: account, beforeOpen: saveDraft,
+      onCreated: async id => {
+        accounts = await ledger.listOpenAccounts();
+        account.replaceChildren(new Option('選択してください', ''), ...accounts.map(entry => new Option(entry.name, entry.id)));
+        account.value = id; await saveDraft();
+      },
+    } }));
 
     function readItems(): ReceiptItem[] {
       return Array.from(itemsList.querySelectorAll<HTMLElement>('[data-receipt-item]')).map(row => ({
@@ -447,7 +473,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           details.open = false;
         });
         details.append(summary, nameLabel, name, amountLabel, itemAmount, quantityLabel, quantity,
-          unitLabel, unit, itemCategoryLabel, itemCategory, remove);
+          unitLabel, unit, itemCategoryLabel, itemCategory, addCategoryShortcut(itemCategory), remove);
         const row = document.createElement('li'); row.append(details); itemsList.append(row);
       }
     }
@@ -525,7 +551,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       });
     });
     view.append(button(editing ? 'キャンセル' : '支出の選択へ戻る', editing ? () => receiptDetail(receipt) : newEntryReturn));
-    if (!accounts.length || !categories.length) view.append(text('p', '設定から支払元とカテゴリを用意してください。'), button('家計簿の設定へ', options.openAccount));
+    if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
   }
   async function statementPage() {
     await open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPayのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));

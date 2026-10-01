@@ -36,10 +36,69 @@ function nameForm(labelText: string, initialValue: string, submitText: string, s
   form.append(label, input, submit);
   form.addEventListener('submit', event => {
     event.preventDefault();
-    submit.disabled = true;
-    void save(input.value.trim()).catch(onError).finally(() => { submit.disabled = false; });
+    submit.disabled = true; input.disabled = true; form.dataset.saving = 'true';
+    void save(input.value.trim()).catch(onError).finally(() => { submit.disabled = false; input.disabled = false; delete form.dataset.saving; });
   });
   return form;
+}
+
+type MasterCreation = { kind: 'category'; isIncome: boolean } | { kind: 'account' };
+
+// The settings screen and in-entry shortcuts share validation and creation.
+function masterCreationForm(ledger: Ledger, request: MasterCreation, onCreated: (id: string) => Promise<void>, onError: (error: unknown) => void) {
+  let createdId: string | null = null;
+  const form = nameForm(request.kind === 'category' ? 'カテゴリ名' : '支払元の名前', '', '追加する', async name => {
+    if (!name) throw new Error(request.kind === 'category' ? 'カテゴリ名を入力してください。' : '支払元の名前を入力してください。');
+    if (createdId === null) {
+      createdId = request.kind === 'category' ? await ledger.addCategory(name, request.isIncome) : await ledger.addAccount(name);
+      form.querySelector('input')!.readOnly = true;
+    }
+    // A failed refresh can be retried without creating a second master entry.
+    await onCreated(createdId);
+  }, onError);
+  return form;
+}
+
+/** Keeps the caller and its draft alive; the explicit origin handles refresh/selection. */
+export function createMasterShortcut(options: {
+  ledger: Ledger;
+  request: MasterCreation;
+  origin: { field: HTMLSelectElement; beforeOpen: () => Promise<void>; onCreated: (id: string) => Promise<void> };
+}): HTMLButtonElement {
+  const launch = element('button', options.request.kind === 'category' ? 'カテゴリを追加' : '支払元・口座を追加', 'secondary text-button');
+  launch.type = 'button';
+  launch.dataset.masterShortcutFor = options.origin.field.id;
+  launch.addEventListener('click', () => {
+    const itemDetails = options.origin.field.closest('details');
+    const itemWasOpen = itemDetails?.open;
+    launch.disabled = true;
+    void (async () => {
+      const dialog = element('dialog', undefined, 'master-create-dialog');
+      const heading = element('h2', options.request.kind === 'category' ? options.request.isIncome ? '収入カテゴリを追加' : '支出カテゴリを追加' : '支払元・口座を追加');
+      heading.id = `master-dialog-${crypto.randomUUID()}`;
+      dialog.setAttribute('aria-labelledby', heading.id);
+      const status = element('p', '', 'master-status'); status.setAttribute('role', 'status');
+      const showError = (error: unknown) => { status.textContent = errorMessage(error); };
+      const close = () => {
+        dialog.close(); dialog.remove();
+        if (itemDetails && itemWasOpen) itemDetails.open = true;
+        if (options.origin.field.isConnected) options.origin.field.focus();
+      };
+      const form = masterCreationForm(options.ledger, options.request, async id => { await options.origin.onCreated(id); close(); }, showError);
+      const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button';
+      back.addEventListener('click', () => { if (form.dataset.saving !== 'true') close(); });
+      dialog.addEventListener('cancel', event => { event.preventDefault(); if (form.dataset.saving !== 'true') close(); });
+      dialog.append(heading, form, status, back);
+      document.body.append(dialog); dialog.showModal();
+      const controls = form.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button');
+      controls.forEach(control => { control.disabled = true; });
+      try {
+        await options.origin.beforeOpen();
+        controls.forEach(control => { control.disabled = false; });
+      } catch (error) { showError(error); }
+    })().finally(() => { launch.disabled = false; });
+  });
+  return launch;
 }
 
 export function initializeMasterUi(
@@ -145,11 +204,7 @@ export function initializeMasterUi(
   async function categoryCreatePage(kind: boolean | null) {
     const isIncome = kind ?? false;
     showPage(isIncome ? '収入カテゴリを追加' : '支出カテゴリを追加', () => categoriesPage(kind));
-    section.append(nameForm('カテゴリ名', '', '追加する', async name => {
-      if (!name) throw new Error('カテゴリ名を入力してください。');
-      await ledger.addCategory(name, isIncome);
-      await categoriesPage(isIncome);
-    }, showFormError));
+    section.append(masterCreationForm(ledger, { kind: 'category', isIncome }, async () => { await categoriesPage(isIncome); }, showFormError));
   }
 
   async function categoryDetailPage(category: Category, listKind: boolean | null) {
@@ -216,11 +271,7 @@ export function initializeMasterUi(
 
   function accountCreatePage() {
     showPage('支払元を追加', accountsPage);
-    section.append(nameForm('支払元の名前', '', '追加する', async name => {
-      if (!name) throw new Error('支払元の名前を入力してください。');
-      await ledger.addAccount(name);
-      await accountsPage();
-    }, showFormError));
+    section.append(masterCreationForm(ledger, { kind: 'account' }, async () => { await accountsPage(); }, showFormError));
   }
 
   async function accountDetailPage(account: Account) {
