@@ -1,4 +1,6 @@
 import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
+import { LocalRecurringService } from './local-recurring';
+import { showRecurringSchedules } from './local-recurring-ui';
 import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
@@ -51,6 +53,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const statements = new LocalStatementService(repository);
   const reconciliation = new LocalReconciliationService(repository, ledger);
   const deletions = new LocalTransactionDeletionService(repository, ledger);
+  const recurring = new LocalRecurringService(repository, ledger);
   const view = el('local-view');
   const deletionToast = text('div', '', 'deletion-toast'); deletionToast.setAttribute('role', 'status');
   el('message').after(deletionToast);
@@ -108,6 +111,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function budgetEditor() {
     await open('statement');
     await showMonthlyBudgetEditor({ view, ledger, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
+  }
+  async function recurringOverview() {
+    await open('statement');
+    await showRecurringSchedules({ view, ledger, service: recurring, onBack: () => el('settings-tab').click() });
   }
   async function recordChooser() {
     await open('receipt'); view.append(text('h2', '記録する'));
@@ -557,6 +564,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   await initializeBackupUi(repository, ledger);
   setup.append(text('h2', 'この端末の家計簿'), el('import-section'), el('budget-section'));
   const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
+  const recurringEntry = button('定期登録', recurringOverview); recurringEntry.classList.add('master-entry'); recurringEntry.setAttribute('aria-label', '定期登録'); setup.append(recurringEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
   try { await ledger.listOpenAccounts(); } catch (error) { if (!(error instanceof ActualBudgetSelectionRequiredError)) throw error; }
   const actual = await import('@actual-app/api');
@@ -572,6 +580,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   el('settings-tab').addEventListener('click', () => { resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
     await deletions.recoverPending();
+    await recurring.retry();
+    await ledger.runDueSchedules();
     const latestDeletion = (await deletions.list()).filter(audit => audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     if (latestDeletion) showDeletionToast(latestDeletion);
     if (!el('household-view').hidden) await home(); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';

@@ -7,6 +7,7 @@ import type { ActualAccount, ActualCategory, ActualLedger, ActualMonthlySummary,
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
   | "getBudgetMonths" | "getBudgetMonth" | "setBudgetAmount" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
+  | "getSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "getRules" | "updateRule"
   | "createCategory" | "updateCategory" | "getPayees" | "createPayee" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
   | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
@@ -29,6 +30,23 @@ export type ActualMonthlyBudgets = {
   spentYen: number;
   remainingYen: number;
   usageRatio: number | null;
+};
+
+export type RecurringScheduleInput = {
+  name: string;
+  kind: "expense" | "income";
+  amountYen: number;
+  categoryId: string;
+  accountId: string;
+  frequency: "monthly" | "weekly" | "yearly";
+  startDate: string;
+  postsTransaction: boolean;
+};
+export type RecurringSchedule = RecurringScheduleInput & {
+  id: string;
+  nextDate: string | null;
+  completed: boolean;
+  editable: boolean;
 };
 
 const dateSchema = z.iso.date();
@@ -273,6 +291,12 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   getMonthlySummary(params: { yearMonth: string }): Promise<ActualMonthlySummary>;
   getMonthlyBudgets(params: { yearMonth: string }): Promise<ActualMonthlyBudgets>;
   setMonthlyBudget(params: { yearMonth: string; categoryId: string; budgetYen: number }): Promise<void>;
+  listRecurringSchedules(): Promise<RecurringSchedule[]>;
+  createRecurringSchedule(input: RecurringScheduleInput): Promise<RecurringSchedule>;
+  updateRecurringSchedule(id: string, input: RecurringScheduleInput): Promise<RecurringSchedule>;
+  deleteRecurringSchedule(id: string): Promise<void>;
+  skipDeletedScheduleOccurrences(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  runDueSchedules(): Promise<void>;
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
@@ -490,6 +514,132 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       remainingYen: addSafeYen(sum.remainingYen, category.remainingYen),
     }), { budgetYen: 0, spentYen: 0, remainingYen: 0 });
     return { yearMonth, categories, ...totals, usageRatio: totals.budgetYen === 0 ? null : totals.spentYen / totals.budgetYen };
+  };
+
+  const validateRecurringInput = async (api: ActualApi, input: unknown): Promise<RecurringScheduleInput> => {
+    const schema = z.object({
+      name: z.string().trim().min(1).max(200), kind: z.enum(["expense", "income"]),
+      amountYen: z.number().int().safe().positive(), categoryId: idSchema, accountId: idSchema,
+      frequency: z.enum(["monthly", "weekly", "yearly"]), startDate: dateSchema, postsTransaction: z.boolean(),
+    }).strict();
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new ActualMasterValidationError("定期取引の内容を確認してください。");
+    const category = (await api.getCategories()).find(item => item.id === parsed.data.categoryId);
+    const account = (await api.getAccounts()).find(item => item.id === parsed.data.accountId);
+    if (!category || category.is_income !== (parsed.data.kind === "income") || !account || account.closed) {
+      throw new ActualMasterValidationError("カテゴリと口座を確認してください。");
+    }
+    return parsed.data;
+  };
+
+  const setScheduleCategory = async (api: ActualApi, scheduleId: string, categoryId: string) => {
+    const schedule = (await api.getSchedules()).find(item => item.id === scheduleId);
+    if (!schedule?.rule) throw new ActualBrowserUnavailableError("invalid_data");
+    const rule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (!rule || !Array.isArray(rule.actions)) throw new ActualBrowserUnavailableError("invalid_data");
+    const actions = rule.actions.filter(action => !(action.op === "set" && "field" in action && action.field === "category"));
+    actions.push({ field: "category", op: "set", value: categoryId });
+    await api.updateRule({ ...rule, actions });
+    const readbackRule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (!readbackRule?.actions.some(action => action.op === "link-schedule" && action.value === scheduleId)
+      || !readbackRule.actions.some(action => action.op === "set" && "field" in action && action.field === "category" && action.value === categoryId)) {
+      throw new ActualBrowserUnavailableError("invalid_data");
+    }
+  };
+
+  const recurringDate = (input: RecurringScheduleInput) => ({
+    frequency: input.frequency, interval: 1, start: input.startDate, endMode: "never" as const,
+  });
+
+  const isBasicRecurringDate = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    const date = value as Record<string, unknown>;
+    const supportedKeys = new Set(["frequency", "interval", "start", "endMode"]);
+    return ["monthly", "weekly", "yearly"].includes(String(date.frequency))
+      && (date.interval === undefined || date.interval === 1)
+      && typeof date.start === "string" && dateSchema.safeParse(date.start).success
+      && (date.endMode === undefined || date.endMode === "never")
+      && Object.keys(date).every(key => supportedKeys.has(key));
+  };
+
+  const isBasicScheduleRule = (rule: Awaited<ReturnType<ActualApi["getRules"]>>[number] | undefined, schedule: Awaited<ReturnType<ActualApi["getSchedules"]>>[number]): boolean => {
+    if (!rule || rule.stage !== null || rule.conditionsOp !== "and" || !Array.isArray(rule.conditions) || !Array.isArray(rule.actions)) return false;
+    if (rule.conditions.length !== 4 || !rule.actions.some(action => action.op === "link-schedule" && action.value === schedule.id)) return false;
+    if (rule.actions.some(action => !(
+      action.op === "link-schedule"
+      || (action.op === "set" && "field" in action && (action.field === "category" || action.field === "notes"))
+      || action.op === "prepend-notes"
+      || action.op === "append-notes"
+    ))) return false;
+    const condition = (field: string) => rule.conditions.find(item => item.field === field);
+    const payee = condition("payee");
+    const account = condition("account");
+    const date = condition("date");
+    const amount = condition("amount");
+    return !!payee && payee.op === "is" && payee.value === schedule.payee
+      && !!account && account.op === "is" && account.value === schedule.account
+      && !!date && date.op === "isapprox" && JSON.stringify(date.value) === JSON.stringify(schedule.date)
+      && !!amount && amount.op === schedule.amountOp && JSON.stringify(amount.value) === JSON.stringify(schedule.amount);
+  };
+
+  const mapRecurringSchedule = async (api: ActualApi, schedule: Awaited<ReturnType<ActualApi["getSchedules"]>>[number]): Promise<RecurringSchedule> => {
+    const amount = typeof schedule.amount === "number" ? schedule.amount : null;
+    const frequency = schedule.date && typeof schedule.date === "object" && ["monthly", "weekly", "yearly"].includes(schedule.date.frequency)
+      ? schedule.date.frequency as RecurringScheduleInput["frequency"] : "monthly";
+    const startDate = schedule.date && typeof schedule.date === "object" && dateSchema.safeParse(schedule.date.start).success
+      ? schedule.date.start : dateSchema.safeParse(schedule.next_date).success ? schedule.next_date! : "0001-01-01";
+    const rule = (await api.getRules()).find(item => item.id === schedule.rule);
+    const categoryAction = rule?.actions.find(action => action.op === "set" && "field" in action && action.field === "category");
+    const categoryId = categoryAction && typeof categoryAction.value === "string" ? categoryAction.value : "";
+    const editable = amount !== null && Number.isSafeInteger(amount) && amount !== 0 && schedule.amountOp === "is"
+      && !!schedule.account && !!schedule.name && isBasicRecurringDate(schedule.date) && isBasicScheduleRule(rule, schedule);
+    return {
+      id: schedule.id,
+      name: schedule.name ?? "定期取引",
+      kind: amount !== null && amount > 0 ? "income" : "expense",
+      amountYen: amount === null ? 0 : Math.abs(amount),
+      categoryId,
+      accountId: schedule.account ?? "",
+      frequency,
+      startDate,
+      postsTransaction: schedule.posts_transaction,
+      nextDate: dateSchema.safeParse(schedule.next_date).success ? schedule.next_date ?? null : null,
+      completed: schedule.completed ?? false,
+      editable,
+    };
+  };
+
+  const findMatchingSchedule = async (api: ActualApi, input: RecurringScheduleInput) => {
+    const schedule = (await api.getSchedules()).find(item => item.name?.trim() === input.name.trim());
+    if (!schedule) return null;
+    const amount = input.kind === "expense" ? -input.amountYen : input.amountYen;
+    const date = recurringDate(input);
+    const payees = await api.getPayees();
+    const payeeName = payees.find(item => item.id === schedule.payee)?.name;
+    const existingDate = schedule.date;
+    const existingRule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (schedule.amount !== amount || schedule.amountOp !== "is" || schedule.account !== input.accountId
+      || payeeName !== input.name
+      || !isBasicScheduleRule(existingRule, schedule)
+      || !isBasicRecurringDate(existingDate) || typeof existingDate !== "object" || existingDate.frequency !== date.frequency
+      || (existingDate.interval ?? 1) !== date.interval || existingDate.start !== date.start || (existingDate.endMode ?? "never") !== date.endMode) {
+      throw new ActualMasterValidationError("同じ名前の定期取引が既にあります。");
+    }
+    return schedule;
+  };
+
+  const forceRunScheduleService = async (api: ActualApi) => {
+    const runtime = runtimeFor(api);
+    if (!runtime.send) throw new ActualBrowserUnavailableError("storage");
+    await runtime.send("schedule/force-run-service", {});
+  };
+
+  const completeScheduleCreation = async (api: ActualApi, scheduleId: string, input: RecurringScheduleInput) => {
+    await setScheduleCategory(api, scheduleId, input.categoryId);
+    await api.updateSchedule(scheduleId, { posts_transaction: input.postsTransaction });
+    const schedule = (await api.getSchedules()).find(item => item.id === scheduleId);
+    if (!schedule || schedule.posts_transaction !== input.postsTransaction) throw new ActualBrowserUnavailableError("invalid_data");
+    return mapRecurringSchedule(api, schedule);
   };
 
   // Keep the split parent
@@ -835,6 +985,99 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const readback = budgetCategorySchema.safeParse(raw);
         if (!readback.success || readback.data.budgeted !== budgetYen) throw new ActualBrowserUnavailableError("invalid_data");
       });
+    },
+
+    listRecurringSchedules() {
+      return withBudget(async api => Promise.all((await api.getSchedules()).map(schedule => mapRecurringSchedule(api, schedule))));
+    },
+
+    createRecurringSchedule(input) {
+      return withBudget(async api => {
+        const parsed = await validateRecurringInput(api, input);
+        const existing = await findMatchingSchedule(api, parsed);
+        let scheduleId = existing?.id;
+        if (!scheduleId) {
+          const payees = await api.getPayees();
+          const payee = payees.find(item => item.name === parsed.name)?.id ?? await api.createPayee({ name: parsed.name });
+          scheduleId = await api.createSchedule({
+            name: parsed.name,
+            posts_transaction: false,
+            amount: parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen,
+            amountOp: "is",
+            account: parsed.accountId,
+            payee,
+            date: recurringDate(parsed),
+          });
+        }
+        await completeScheduleCreation(api, scheduleId, parsed);
+        await forceRunScheduleService(api);
+        const result = (await api.getSchedules()).find(item => item.id === scheduleId);
+        if (!result) throw new ActualBrowserUnavailableError("invalid_data");
+        return mapRecurringSchedule(api, result);
+      });
+    },
+
+    updateRecurringSchedule(id, input) {
+      return withBudget(async api => {
+        const parsedId = idSchema.safeParse(id);
+        if (!parsedId.success) throw new ActualMasterValidationError("定期取引を確認してください。");
+        const parsed = await validateRecurringInput(api, input);
+        const current = (await api.getSchedules()).find(schedule => schedule.id === parsedId.data);
+        if (!current) throw new ActualMasterValidationError("定期取引が見つかりません。");
+        const mapped = await mapRecurringSchedule(api, current);
+        if (!mapped.editable) throw new ActualMasterValidationError("この定期取引は編集できません。削除して作り直してください。");
+        const payees = await api.getPayees();
+        const payee = payees.find(item => item.name === parsed.name)?.id ?? await api.createPayee({ name: parsed.name });
+        await api.updateSchedule(parsedId.data, { posts_transaction: false });
+        await api.updateSchedule(parsedId.data, {
+          name: parsed.name,
+          amount: parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen,
+          amountOp: "is",
+          account: parsed.accountId,
+          payee,
+          date: recurringDate(parsed),
+        });
+        await setScheduleCategory(api, parsedId.data, parsed.categoryId);
+        await api.updateSchedule(parsedId.data, { posts_transaction: parsed.postsTransaction });
+        await forceRunScheduleService(api);
+        const updated = (await api.getSchedules()).find(schedule => schedule.id === parsedId.data);
+        if (!updated || updated.posts_transaction !== parsed.postsTransaction) throw new ActualBrowserUnavailableError("invalid_data");
+        return mapRecurringSchedule(api, updated);
+      });
+    },
+
+    deleteRecurringSchedule(id) {
+      const parsedId = idSchema.safeParse(id);
+      if (!parsedId.success) return Promise.reject(new ActualMasterValidationError("定期取引を確認してください。"));
+      return withBudget(async api => {
+        if (!(await api.getSchedules()).some(schedule => schedule.id === parsedId.data)) return;
+        await api.deleteSchedule(parsedId.data);
+      });
+    },
+
+    skipDeletedScheduleOccurrences(snapshot) {
+      return withBudget(async api => {
+        const runtime = runtimeFor(api);
+        if (!runtime.send) throw new ActualBrowserUnavailableError("storage");
+        const seen = new Set<string>();
+        for (const row of snapshot) {
+          if (!row.schedule || !dateSchema.safeParse(row.date).success) continue;
+          const key = `${row.schedule}:${row.date}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const schedule = (await api.getSchedules()).find(item => item.id === row.schedule);
+          if (schedule?.next_date === row.date && !schedule.completed && schedule.date && typeof schedule.date === "object"
+            && "frequency" in schedule.date) {
+            await runtime.send("schedule/skip-next-date", { id: schedule.id });
+            const advanced = (await api.getSchedules()).find(item => item.id === schedule.id);
+            if (advanced?.next_date === row.date) throw new ActualBrowserUnavailableError("invalid_data");
+          }
+        }
+      });
+    },
+
+    runDueSchedules() {
+      return withBudget(forceRunScheduleService);
     },
 
     getMonthlySpending({ yearMonth }) {

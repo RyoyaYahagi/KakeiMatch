@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
+import { scheduleAuditSchema } from "./recurring-schedule";
 import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
@@ -60,7 +61,7 @@ const deletionAudit = z.object({
   status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
   deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
 }).strict();
-const allCorrectionAudits = z.union([correctionAudit, deletionAudit]);
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
