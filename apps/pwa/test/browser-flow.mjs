@@ -98,8 +98,9 @@ try {
   await page.locator('#receipt-date').fill('2026-09-29');
   await page.locator('#receipt-time').fill('11:30');
   await page.locator('#receipt-amount').fill('1200');
-  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === 'AIで読み取る' && b.disabled));
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '再読み取り', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Diagnostic Store', null, { timeout: 10000 });
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store');
   assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-30');
   assert.equal(await page.locator('#receipt-time').inputValue(), '12:00');
@@ -118,7 +119,8 @@ try {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
   quotaExceeded = true;
-  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: '再読み取り', exact: true }).click();
   await page.getByText('AI利用上限に達しました。手動で入力できます。', { exact: true }).waitFor();
   assert.equal(usedFlows.size, 2);
   await page.locator('#receipt-merchant').fill('Diagnostic Store corrected');
