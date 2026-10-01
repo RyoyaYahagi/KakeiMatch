@@ -85,6 +85,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   let homeRevision = 0;
   async function home() {
     const revision = ++homeRevision;
+    el('home-summary').setAttribute('aria-busy', 'true');
     await open('home');
     const month = selectedMonth;
     const [rows, summary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month })]);
@@ -100,6 +101,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const latest = await reconciliation.latest();
     const attention = resolutions.filter(r => r.status !== 'applied').length + (latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)).length ?? 0);
     el('home-attention').replaceChildren(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
+    if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
   }
   async function recordChooser() {
     await open('receipt'); view.append(text('h2', '記録する'));
