@@ -144,7 +144,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reviewPage(); }));
     if (!run) { view.append(text('p', '明細を取り込んでから照合してください。')); return; }
     const pending = run.statementResults.filter(row => !decisions.some(d => d.statementId === row.statementTransactionId));
-    const auto = decisions.filter(d => d.source === 'automatic' && d.status === 'applied').length;
+    const automatic = decisions.filter(d => d.source === 'automatic' && d.status === 'applied');
+    const auto = automatic.length;
     view.append(text('p', `自動確認済み ${auto}件 · 要確認 ${pending.filter(r => r.status === 'needs_review').length}件 · 記録なし ${pending.filter(r => r.status === 'unmatched_statement').length}件 · 明細待ち ${run.receiptResults.filter(r => r.status === 'unmatched_receipt').length}件`));
     const allStatements = await statements.list(), allReceipts = await receipts.list();
     const list = document.createElement('ul');
@@ -171,6 +172,26 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       item.append(detail); list.append(item);
     }
     view.append(list);
+    if (automatic.length) {
+      const history = document.createElement('details');
+      history.append(text('summary', `自動確認済みの内容を見る（${auto}件）`));
+      const matchedList = document.createElement('ul');
+      const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
+      const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));
+      automatic.sort((a, b) => (statementById.get(b.statementId)?.usedDate ?? b.createdAt).localeCompare(statementById.get(a.statementId)?.usedDate ?? a.createdAt));
+      for (const decision of automatic) {
+        const statement = statementById.get(decision.statementId), receipt = receiptById.get(decision.receiptId ?? '');
+        const item = document.createElement('li'), detail = document.createElement('details');
+        detail.append(text('summary', statement ? `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}` : `保存済みの照合 · ${yen(decision.statementAmountYen)}`));
+        detail.append(text('p', '同じ支出として自動確認済みです。'));
+        detail.append(text('p', statement ? `明細：${statement.usedDate}${statement.usedTime ? ` ${statement.usedTime.slice(0, 5)}` : ''} · ${statement.merchant} · ${yen(statement.amountYen)}${statement.paymentMethod ? ` · ${statement.paymentMethod}` : ''}` : '対応する明細を端末で見つけられませんでした。'));
+        const value = receipt?.confirmedValue;
+        detail.append(text('p', value ? `レシート：${value.purchasedDate}${value.purchasedTime ? ` ${value.purchasedTime}` : ''} · ${value.merchant} · ${yen(value.totalAmountYen)}` : '対応するレシートを端末で見つけられませんでした。'));
+        if (receipt) detail.append(button('レシートを確認する', () => receiptEditor(receipt)));
+        item.append(detail); matchedList.append(item);
+      }
+      history.append(matchedList); view.append(history);
+    }
   }
   for (const [tab, render] of [['home', home], ['receipt', receiptPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { void render().catch(report); });
   el('home-capture').addEventListener('click', () => { void receiptPage().catch(report); });
