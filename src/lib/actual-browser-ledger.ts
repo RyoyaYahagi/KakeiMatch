@@ -326,6 +326,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     date: string;
     amountYen: number;
     merchant: string;
+    memo?: string | null;
     categoryId: string;
     importedId: string;
     splits?: Array<{ categoryId: string; amountYen: number }>;
@@ -335,6 +336,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     date: string;
     amountYen: number;
     merchant: string;
+    memo?: string | null;
     categoryId: string;
     importedId: string;
     splits?: Array<{ categoryId: string; amountYen: number }>;
@@ -1374,6 +1376,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         date: dateSchema,
         amountYen: z.number().int().safe().negative(),
         merchant: z.string().trim().min(1).max(200),
+        memo: z.string().max(2000).nullable().optional(),
         categoryId: idSchema,
         importedId: z.string().min(1).max(200),
         splits: z.array(z.object({ categoryId: idSchema, amountYen: z.number().int().safe().negative() })).min(1).optional(),
@@ -1394,6 +1397,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           payee_name: parsed.data.merchant,
           category: parsed.data.categoryId,
           imported_id: parsed.data.importedId,
+          ...(parsed.data.memo !== undefined ? { notes: parsed.data.memo ?? "" } : {}),
           cleared: false,
           ...(parsed.data.splits ? { subtransactions: parsed.data.splits.map(split => ({ amount: split.amountYen, category: split.categoryId })) } : {}),
         }]);
@@ -1404,7 +1408,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const transaction = mapTransaction(saved, await namesFor(api));
         if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date ||
           transaction.amountYen !== parsed.data.amountYen || normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) ||
-          (parsed.data.splits ? !sameSplitSet(readBackSplitSet(saved, rows), parsed.data.splits) : saved.category !== parsed.data.categoryId) || transaction.kind !== "expense") {
+          (parsed.data.splits ? !sameSplitSet(readBackSplitSet(saved, rows), parsed.data.splits) : saved.category !== parsed.data.categoryId) || transaction.kind !== "expense" || (parsed.data.memo !== undefined && (saved.notes ?? "") !== (parsed.data.memo ?? ""))) {
           throw new ActualBrowserUnavailableError("invalid_data");
         }
         return transaction;
@@ -1418,6 +1422,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         date: dateSchema,
         amountYen: z.number().int().safe().negative(),
         merchant: z.string().trim().min(1).max(200),
+        memo: z.string().max(2000).nullable().optional(),
         categoryId: idSchema,
         importedId: z.string().min(1).max(200).startsWith("kakeimatch:receipt:"),
         splits: z.array(z.object({ categoryId: idSchema, amountYen: z.number().int().safe().negative() })).min(1).optional(),
@@ -1450,6 +1455,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const currentTransaction = mapTransaction(current, currentNames);
         const alreadyMatches = current.account === parsed.data.accountId && current.date === parsed.data.date && current.amount === parsed.data.amountYen &&
           normalizeMerchant(currentTransaction.payeeName ?? "") === normalizeMerchant(parsed.data.merchant) && current.imported_id === parsed.data.importedId &&
+          (parsed.data.memo === undefined || (current.notes ?? "") === (parsed.data.memo ?? "")) &&
           (parsed.data.splits
             ? Boolean(current.is_parent) && sameSplitSet(readBackSplitSet(current, rows), parsed.data.splits)
             : !current.is_parent && !children.length && current.category === parsed.data.categoryId);
@@ -1460,7 +1466,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           date: parsed.data.date,
           amount: parsed.data.amountYen,
           payee: payeeId,
-          notes: current.notes ?? "",
+          notes: parsed.data.memo !== undefined ? parsed.data.memo ?? "" : current.notes ?? "",
           imported_id: current.imported_id,
           cleared: current.cleared ?? false,
           reconciled: current.reconciled,
@@ -1501,7 +1507,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const savedChildren = savedRows.filter(row => row.parent_id === saved.id);
         if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date || saved.amount !== parsed.data.amountYen ||
           normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) || saved.imported_id !== parsed.data.importedId ||
-          (saved.cleared ?? false) !== (current.cleared ?? false) || (saved.notes ?? "") !== (current.notes ?? "") ||
+          (saved.cleared ?? false) !== (current.cleared ?? false) || (saved.notes ?? "") !== (parsed.data.memo !== undefined ? parsed.data.memo ?? "" : current.notes ?? "") ||
           Boolean(saved.is_parent) !== Boolean(parsed.data.splits) || (parsed.data.splits
             ? !sameSplitSet(readBackSplitSet(saved, savedRows), parsed.data.splits)
             : saved.category !== parsed.data.categoryId || savedChildren.length > 0)) {

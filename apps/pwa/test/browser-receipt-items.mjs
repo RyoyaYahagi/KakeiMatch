@@ -44,11 +44,17 @@ try {
   await page.getByRole('button', { name: '支出', exact: true }).click();
   await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  const aiButton = page.getByRole('button', { name: 'AIで読み取る', exact: true });
+  await aiButton.waitFor();
+  const aiBounds = await aiButton.boundingBox();
+  assert.ok(aiBounds.y + aiBounds.height <= 812, 'AI reading should be visible without scrolling');
+  assert.ok(aiBounds.y < (await page.locator('#receipt-merchant').boundingBox()).y);
+  if (process.env.PWA_RECEIPT_AI_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_AI_SCREENSHOT_PATH });
   await click('AIで読み取る'); await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');
   assert.equal(await row(0).locator('[data-item-category]').inputValue(), '');
   assert.equal(await page.locator('[data-receipt-adjustment]').count(), 1);
-  classificationFails = false; await click('AIで読み取る');
+  classificationFails = false; page.once('dialog', dialog => dialog.accept()); await click('再読み取り');
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
@@ -65,7 +71,7 @@ try {
   await page.locator('#receipt-amount').fill('1400');
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').nth(1);
-  await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('-10');
+  await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('10');
   await page.locator('#receipt-amount').fill('1390');
   const invalidRegistrationForm = await page.locator('#local-view form').elementHandle();
   await click('登録する');
@@ -99,7 +105,7 @@ try {
   await click('編集する');
   await page.locator('#receipt-merchant').waitFor();
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple Edited');
-  assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '-100');
+  assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   assert.equal(await page.locator('[data-adjustment-target]').inputValue(), await row(0).getAttribute('data-receipt-item'));
   assert.equal(await row(0).locator('[data-item-name]').isDisabled(), false);
   assert.deepEqual(errors, []);

@@ -418,6 +418,19 @@ describe("receipt category allocations", () => {
     expect((await service.get(receipt.id))?.confirmedValue?.items).toEqual(value.items);
     expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ amountYen: -1400, splits: [{ categoryId: "actual-food", amountYen: -900 }, { categoryId: "actual-household", amountYen: -500 }] }));
   });
+  it("registers image-free expense details and edits the same linked transaction with a memo", async () => {
+    const editReceipt = vi.fn(async () => ({ id: "actual-tx" }));
+    const { service, ledger } = await setup(vi.fn(), { editReceipt });
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { ...value, memo: "Synthetic memo" });
+    const registered = await service.register(receipt.id);
+    expect(registered.image).toBeNull();
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ memo: "Synthetic memo", importedId: `kakeimatch:${receipt.id}` }));
+    const edited = await service.edit(receipt.id, { ...value, memo: "Synthetic edited memo" }, registered.updatedAt);
+    expect(edited.registration.actualTransactionId).toBe("actual-tx");
+    expect(editReceipt).toHaveBeenCalledWith("actual-tx", expect.objectContaining({ memo: "Synthetic edited memo", importedId: `kakeimatch:${receipt.id}` }));
+    expect(edited.confirmedValue?.adjustments?.[0].amountYen).toBe(-100);
+  });
   it("keeps an unsafe allocation pending and editable without writing to Actual", async () => {
     const { service, ledger } = await setup();
     const receipt = await service.createManual();

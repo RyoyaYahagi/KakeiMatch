@@ -13,6 +13,7 @@
     "test:backup-e2e": "node test/browser-backup.mjs",
     "test:masters-e2e": "node test/browser-masters.mjs",
     "test:receipt-items-e2e": "node test/browser-receipt-items.mjs",
+    "test:manual-items-e2e": "node test/browser-manual-items.mjs",
     "test:manual-e2e": "node test/browser-manual-transactions.mjs",
     "test:transfers-e2e": "node test/browser-transfers.mjs",
     "test:receipt-edits-e2e": "node test/browser-receipt-edits.mjs",

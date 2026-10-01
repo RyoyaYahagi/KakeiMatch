@@ -48,7 +48,7 @@ try {
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');
   assert.equal(await row(0).locator('[data-item-category]').inputValue(), '');
   assert.equal(await page.locator('[data-receipt-adjustment]').count(), 1);
-  classificationFails = false; await click('AIで読み取る');
+  classificationFails = false; page.once('dialog', dialog => dialog.accept()); await click('再読み取り');
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
@@ -65,7 +65,7 @@ try {
   await page.locator('#receipt-amount').fill('1400');
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').nth(1);
-  await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('-10');
+  await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('10');
   await page.locator('#receipt-amount').fill('1390');
   const invalidRegistrationForm = await page.locator('#local-view form').elementHandle();
   await click('登録する');
