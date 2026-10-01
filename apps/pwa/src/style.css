@@ -74,3 +74,7 @@ button.destructive { color: #a13a2c; border-color: #a13a2c; }
 .category-donut [role=button]:focus-visible { outline: 2px solid #213a32; }
 .category-legend { list-style: none; padding: 0; }
 .category-legend-entry { display: block; width: 100%; text-align: left; color: #213a32; border: 0; border-left: 4px solid; border-radius: 0; background: transparent; padding: 8px; margin: 0; overflow-wrap: anywhere; }
+.account-balance-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.account-balance-row button { flex: 1; min-width: 0; }
+.account-balance { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.closed-accounts { margin-top: 12px; }

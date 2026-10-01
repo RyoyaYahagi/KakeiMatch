@@ -62,6 +62,7 @@ export class ActualMasterValidationError extends Error {
 
 export type ManagedCategory = { id: string; name: string; isIncome: boolean; hidden: boolean; groupName: string };
 export type ManagedAccount = { id: string; name: string; closed: boolean };
+export type ManagedAccountBalance = ManagedAccount & { balanceYen: number };
 
 export class ActualBudgetSelectionRequiredError extends Error {
   constructor() {
@@ -261,6 +262,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   getCategoryUsage(id: string): Promise<number>;
   deleteCategory(id: string): Promise<void>;
   listAccounts(): Promise<ManagedAccount[]>;
+  getAccountBalances(): Promise<ManagedAccountBalance[]>;
   addAccount(name: string): Promise<string>;
   renameAccount(id: string, name: string): Promise<void>;
   getAccountUsage(id: string): Promise<{ transactionCount: number; balanceYen: number }>;
@@ -946,6 +948,16 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     },
 
     listAccounts() { return withBudget(async api => (await api.getAccounts()).map(a => ({ id: a.id, name: a.name, closed: Boolean(a.closed) }))); },
+    getAccountBalances() {
+      return withBudget(async api => {
+        const accounts = await api.getAccounts();
+        return Promise.all(accounts.map(async account => {
+          const balanceYen = await api.getAccountBalance(account.id);
+          if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
+          return { id: account.id, name: account.name, closed: Boolean(account.closed), balanceYen };
+        }));
+      });
+    },
     addAccount(name) {
       const validName = masterName(name);
       return withBudget(api => api.createAccount({ name: validName, offbudget: false, closed: false }));

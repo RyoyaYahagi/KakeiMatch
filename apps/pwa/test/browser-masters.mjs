@@ -28,7 +28,8 @@ async function categoryDetail(name) {
   await page.getByText(`カテゴリ名：${name}`, { exact: true }).waitFor();
 }
 async function accountDetail(name, closed = false) {
-  await settings('支払元'); await click(`${name} · ${closed ? '利用終了' : '利用中'}`);
+  await settings('支払元'); if (closed) await page.locator('.closed-accounts summary').click();
+  await click(`${name} · ${closed ? '利用終了' : '利用中'}`);
   await page.getByText(`支払元：${name}`, { exact: true }).waitFor();
 }
 async function noOverflow() {
@@ -118,6 +119,7 @@ try {
   await settings('カテゴリ'); await click('収入カテゴリ'); await page.getByRole('button', { name: /^Synthetic Salary ·/ }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Draft Shop/ }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
+  await click('編集する');
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Cash');
   assert.equal(await page.locator('#receipt-category option:checked').textContent(), 'Synthetic Hobby');
   await page.locator('#home-tab').click(); assert.equal(await page.locator('#transactions li').count(), 1);
