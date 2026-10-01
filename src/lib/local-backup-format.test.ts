@@ -230,3 +230,9 @@ it('preserves a pending manual transaction attempt ID and frozen snapshot in a b
   data.records.push({ id: 'manual-draft:income:new', kind: 'category-state', updatedAt: time, value: { merchant: 'Synthetic Employer', purchasedDate: '2026-09-30', purchasedTime: null, totalAmountYen: 10000, categoryId: 'synthetic-income', accountId: 'synthetic-account', manualKind: 'income', manualMemo: 'Synthetic draft', manualImportedId: 'kakeimatch:manual:00000000-0000-4000-8000-000000000001', manualTransactionId: null, manualStatus: 'processing' } });
   expect((await readPortableBackup(await create(data))).localData.records).toEqual(data.records);
 });
+
+it('preserves the destination account and attempt ID of a pending transfer', async () => {
+  const data = fixture();
+  data.records.push({ id: 'manual-draft:transfer:new', kind: 'category-state', updatedAt: time, value: { merchant: '', purchasedDate: '2026-10-01', purchasedTime: null, totalAmountYen: 10000, categoryId: '', accountId: 'synthetic-source', destinationAccountId: 'synthetic-destination', manualKind: 'transfer', manualMemo: 'Synthetic transfer', manualImportedId: 'kakeimatch:transfer:00000000-0000-4000-8000-000000000002', manualTransactionId: null, manualStatus: 'processing' } });
+  expect((await readPortableBackup(await create(data))).localData.records).toEqual(data.records);
+});

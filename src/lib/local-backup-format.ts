@@ -86,7 +86,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
   switch (kind) {
     case "receipt-metadata": return receipt;
     case "receipt-extraction": return z.object({ receiptId: z.string().min(1), extraction, analyzedAt: isoDateTime }).strict();
-    case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string(), ...detailFields, manualKind: z.enum(["expense", "income"]).optional(), manualMemo: nullableString.optional(), manualImportedId: z.string().min(1).max(200).optional(), manualTransactionId: nullableString.optional(), manualStatus: z.enum(["draft", "processing", "failed"]).optional() }).strict();
+    case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string(), ...detailFields, destinationAccountId: z.string().optional(), manualKind: z.enum(["expense", "income", "transfer"]).optional(), manualMemo: nullableString.optional(), manualImportedId: z.string().min(1).max(200).optional(), manualTransactionId: nullableString.optional(), manualStatus: z.enum(["draft", "processing", "failed"]).optional() }).strict();
     case "merchant-mapping": return id.startsWith("merchant:")
       ? z.union([z.object({ normalizedMerchant: z.string(), categoryId: z.enum(CATEGORY_IDS) }).strict(), z.object({ normalizedMerchant: z.string(), actualCategoryId: z.string().min(1) }).strict()])
       : z.object({ merchant: z.string(), aliasMerchant: z.string() }).strict();

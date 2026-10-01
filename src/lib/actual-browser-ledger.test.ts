@@ -17,9 +17,14 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
   let activeBudget: string | null = null;
   const accounts = [
     { id: "cash", name: "現金", closed: false },
+    { id: "bank", name: "銀行", closed: false },
     { id: "closed", name: "旧口座", closed: true },
   ];
-  const payees = [{ id: "shop", name: "Synthetic Store" }];
+  const payees = [
+    { id: "shop", name: "Synthetic Store" },
+    { id: "transfer-to-cash", name: "Transfer: 現金", transfer_acct: "cash" },
+    { id: "transfer-to-bank", name: "Transfer: 銀行", transfer_acct: "bank" },
+  ];
   const rows: Array<Record<string, unknown>> = [
     { id: "expense", account: "cash", date: "2026-09-29", amount: -3284, payee: "shop", category: "food", cleared: false, imported_id: "receipt:1" },
     { id: "income", account: "cash", date: "2026-09-28", amount: 5000, payee: null, category: null, cleared: false },
@@ -38,7 +43,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
       if (!budgetsByDir.has(dataDir)) budgetsByDir.set(dataDir, []);
-      const send = vi.fn(async (method: string, args?: { id?: string }) => {
+      const send = vi.fn(async (method: string, args?: { id?: string; updated?: Array<Record<string, unknown>>; runTransfers?: boolean }) => {
         const localBudgets = budgetsByDir.get(activeDataDir)!;
         if (method === "get-budgets") return [...localBudgets];
         if (method === "close-budget") { activeBudget = null; return "ok"; }
@@ -47,6 +52,13 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
           if (index >= 0) localBudgets.splice(index, 1);
           if (activeBudget === args?.id) activeBudget = null;
           return "ok";
+        }
+        if (method === "transactions-batch-update") {
+          for (const update of args?.updated ?? []) {
+            const row = rows.find(item => item.id === update.id);
+            if (row) Object.assign(row, update);
+          }
+          return { updated: args?.updated ?? [], added: [], deleted: [], errors: [] };
         }
         throw new Error(`Unexpected Actual handler: ${method}`);
       });
@@ -82,10 +94,35 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
       }
       return { added: [], updated: [], errors: [] };
     }),
+    addTransactions: vi.fn(async (accountId: string, imports: Array<Record<string, unknown>>, opts?: { runTransfers?: boolean }) => {
+      for (const item of imports) {
+        const id = `transfer-${rows.length}`;
+        const destinationPayee = payees.find(payee => payee.id === item.payee) as { transfer_acct?: string } | undefined;
+        const destination = destinationPayee?.transfer_acct;
+        rows.push({ ...item, id, account: accountId });
+        if (opts?.runTransfers && destination) {
+          const peerId = `${id}-peer`;
+          rows.push({ id: peerId, account: destination, date: item.date, amount: -Number(item.amount),
+            payee: payees.find(payee => payee.transfer_acct === accountId)?.id, notes: item.notes, transfer_id: id });
+          Object.assign(rows.find(row => row.id === id)!, { transfer_id: peerId });
+        }
+      }
+      return "ok";
+    }),
     updateTransaction: vi.fn(async (id: string, fields: Record<string, unknown>) => {
       const row = rows.find((item) => item.id === id);
       if (!row) throw new Error("not found");
       Object.assign(row, fields);
+      if (row.transfer_id) {
+        const peer = rows.find(item => item.id === row.transfer_id);
+        if (peer) {
+          const destinationPayee = payees.find(payee => payee.id === row.payee) as { transfer_acct?: string } | undefined;
+          if (destinationPayee?.transfer_acct) peer.account = destinationPayee.transfer_acct;
+          if (typeof fields.amount === "number") peer.amount = -Number(fields.amount);
+          if ("notes" in fields) peer.notes = fields.notes;
+          if (fields.account) peer.payee = payees.find(payee => payee.transfer_acct === fields.account)?.id;
+        }
+      }
       return [];
     }),
     createCategory: vi.fn(async (input: { name: string; group_id: string; is_income: boolean; hidden: boolean }) => { const id = categories.some(c => c.id === "new-category") ? "new-category-2" : "new-category"; categories.push({ id, ...input }); return id; }),
@@ -119,7 +156,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
 describe("Actual browser ledger", () => {
   it("creates and remembers an empty local budget with runImport", async () => {
     const { ledger, api, selectedBudget, getActiveBudget } = fixture();
-    await expect(ledger.listOpenAccounts()).resolves.toEqual([{ id: "cash", name: "現金" }]);
+    await expect(ledger.listOpenAccounts()).resolves.toEqual([{ id: "cash", name: "現金" }, { id: "bank", name: "銀行" }]);
     expect(api.init).toHaveBeenCalledWith({ dataDir: "/documents" });
     expect(api.runImport).toHaveBeenCalledOnce();
     expect(selectedBudget.current).toBe("new-budget");
@@ -315,6 +352,43 @@ describe("Actual browser ledger", () => {
     rows.find(row => row.imported_id === input.importedId)!.amount = 64000;
     await expect(ledger.createTransaction(input)).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
     expect(api.importTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates one native linked transfer pair and deduplicates by imported ID", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    const input = { amountYen: 12500, date: "2026-09-30", sourceAccountId: "cash", destinationAccountId: "bank", memo: "移動", importedId: "kakeimatch:transfer:one" };
+    const created = await ledger.createTransfer(input);
+    expect(created).toMatchObject({ kind: "transfer", amountYen: -12500, accountId: "cash", transferAccountId: "bank", importedId: input.importedId });
+    expect(created.transferId).toBeTruthy();
+    const pair = rows.filter(row => row.imported_id === input.importedId || row.id === created.transferId);
+    expect(pair).toHaveLength(2);
+    expect(pair.map(row => row.transfer_id)).toEqual([created.transferId, created.id]);
+    expect(api.addTransactions).toHaveBeenCalledWith("cash", [expect.objectContaining({ payee: "transfer-to-bank", amount: -12500 })], { runTransfers: true });
+    await expect(ledger.createTransfer(input)).resolves.toMatchObject({ id: created.id, transferId: created.transferId });
+    expect(api.addTransactions).toHaveBeenCalledOnce();
+  });
+
+  it("edits both sides of a transfer while keeping Actual's reciprocal link", async () => {
+    const { ledger, rows, sendHandlers, api } = fixture([{ id: "budget", name: "Local" }]);
+    const created = await ledger.createTransfer({ amountYen: 1000, date: "2026-09-29", sourceAccountId: "cash", destinationAccountId: "bank", memo: null, importedId: "transfer-edit" });
+    const updated = await ledger.updateTransfer(created.id, { amountYen: 2400, date: "2026-09-30", sourceAccountId: "bank", destinationAccountId: "cash", memo: "修正" });
+    expect(updated).toMatchObject({ kind: "transfer", amountYen: -2400, date: "2026-09-30", accountId: "bank", transferAccountId: "cash", importedId: "transfer-edit" });
+    const source = rows.find(row => row.id === updated.id)!;
+    const peer = rows.find(row => row.id === updated.transferId)!;
+    expect(source).toMatchObject({ account: "bank", amount: -2400, date: "2026-09-30", notes: "修正", transfer_id: peer.id });
+    expect(peer).toMatchObject({ account: "cash", amount: 2400, date: "2026-09-30", notes: "修正", transfer_id: source.id });
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    expect(sendHandlers.some(send => send.mock.calls.some(([method, args]) => method === "transactions-batch-update" &&
+      args?.runTransfers === false && args.updated?.length === 2 && args.updated.every((update: Record<string, unknown>) => Boolean(update.transfer_id))))).toBe(true);
+  });
+
+  it("rejects same, closed, and unknown accounts for transfer creation", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    const base = { amountYen: 100, date: "2026-09-30", sourceAccountId: "cash", destinationAccountId: "bank", memo: null, importedId: "bad-transfer" };
+    await expect(ledger.createTransfer({ ...base, destinationAccountId: "cash" })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.createTransfer({ ...base, destinationAccountId: "closed" })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.createTransfer({ ...base, destinationAccountId: "missing" })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(api.addTransactions).not.toHaveBeenCalled();
   });
 
   it("updates ordinary manual transactions across dates, accounts, payees, categories and memo, preserving cleared", async () => {

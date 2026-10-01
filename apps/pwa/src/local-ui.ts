@@ -62,8 +62,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     await open('home');
     const rows = await ledger.getRecentTransactions({ limit: 50 });
     const list = el('transactions'); list.replaceChildren();
-    for (const row of rows) {
-      const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
+    for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
+      const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。'));
     const monthly = await ledger.getMonthlySpending({ yearMonth: today().slice(0, 7) });
@@ -75,10 +75,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   async function recordChooser() {
     await open('receipt'); view.append(text('h2', '記録する'));
-    view.append(button('支出', () => manualEditor('expense')), button('収入', () => manualEditor('income')),
+    view.append(button('支出', () => manualEditor('expense')), button('収入', () => manualEditor('income')), button('口座間振替', () => manualEditor('transfer')),
       button('レシートから支出', receiptPage), button('記録一覧へ戻る', recordsPage));
   }
-  async function manualEditor(kind: 'expense' | 'income', transaction?: ActualTransaction) {
+  async function manualEditor(kind: 'expense' | 'income' | 'transfer', transaction?: ActualTransaction) {
     await open('receipt');
     await showManualTransactionEditor({ view, ledger, repository, kind, transaction,
       onSaved: async () => { await recordsPage(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
@@ -92,10 +92,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const item = document.createElement('li');
       item.append(button(`${receipt.confirmedValue?.merchant || receipt.extraction?.merchant || '未入力のレシート'} · 確認する`, () => receiptEditor(receipt))); list.append(item);
     }
-    for (const row of await ledger.getRecentTransactions({ limit: 100 })) {
+    for (const row of (await ledger.getRecentTransactions({ limit: 100 })).filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
       const item = document.createElement('li');
       const receipt = localReceipts.find(receipt => receipt.registration.actualTransactionId === row.id);
-      item.append(button(`${row.payeeName || (row.kind === 'income' ? '収入' : '支出')} · ${row.date} · ${row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}${receipt ? ' · 登録済み' : ''}`, () => receipt ? receiptEditor(receipt) : transactionDetail(row))); list.append(item);
+      item.append(button(`${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.date} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}${receipt ? ' · 登録済み' : ''}`, () => receipt ? receiptEditor(receipt) : transactionDetail(row))); list.append(item);
     }
     view.append(list);
     if (!list.children.length) view.append(text('p', 'まだ記録がありません。'));
@@ -108,10 +108,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (!current) throw new Error('記録が見つかりません。記録一覧を読み込み直してください。');
     view.append(text('h2', current.kind === 'income' ? '収入の記録' : current.kind === 'transfer' ? '振替の記録' : '支出の記録'));
     const detail = document.createElement('dl'); detail.className = 'transaction-detail';
-    for (const [label, value] of [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']]) {
+    const values = current.kind === 'transfer' ? [
+      ['金額', yen(current.amountYen)], ['日付', current.date],
+      ['振替元口座', accounts.find(account => account.id === current.accountId)?.name || '利用不可'],
+      ['振替先口座', accounts.find(account => account.id === current.transferAccountId)?.name || '利用不可'],
+      ['メモ', current.memo || 'なし'],
+    ] : [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']];
+    for (const [label, value] of values) {
       detail.append(text('dt', label), text('dd', value));
     }
     view.append(detail);
+    if (current.kind === 'transfer') view.append(button('編集する', () => manualEditor('transfer', current), false));
     if (current.kind !== 'transfer' && !current.isSplit) view.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
     view.append(button('記録一覧へ戻る', recordsPage));
   }
