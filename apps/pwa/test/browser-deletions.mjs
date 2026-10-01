@@ -47,16 +47,16 @@ try {
     if (await item.getAttribute('open') === null) await item.locator('summary').click(); await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount); await item.locator('[data-item-category]').selectOption({ label: categoryName });
   }
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
-  await detail('Synthetic Split'); const before = await records(); const original = before.records.find(row => row.kind === 'receipt-metadata').value.registration.actualTransactionId;
-  await remove(); let snapshot = await records(); assert.equal(snapshot.blobs.length, 1); assert.equal(snapshot.records.find(row => row.kind === 'receipt-metadata').value.registration.status, 'deleted');
+  await detail('Synthetic Split'); const before = await records(); const splitRecord = before.records.find(row => row.kind === 'receipt-metadata' && row.value.confirmedValue?.merchant === 'Synthetic Split'); const original = splitRecord.value.registration.actualTransactionId;
+  await remove(); let snapshot = await records(); assert.equal(snapshot.blobs.length, 1); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.status, 'deleted');
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor();
-  snapshot = await records(); assert.equal(snapshot.records.find(row => row.kind === 'receipt-metadata').value.registration.actualTransactionId, original);
+  snapshot = await records(); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.actualTransactionId, original);
   await detail('Synthetic Split'); await remove(); await page.clock.fastForward(11000);
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click(); const download = await downloadPromise; const buffer = await readFile(await download.path());
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept()); await page.locator('#backup-file').setInputFiles({ name: 'synthetic-deleted.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer }); await navigation;
   await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor(); await page.locator('#receipt-tab').click();
   assert.equal(await page.getByRole('button', { name: /^Synthetic Income ·/ }).count(), 0); assert.equal(await page.getByRole('button', { name: /^Synthetic Split ·/ }).count(), 0);
-  snapshot = await records(); assert.ok(snapshot.blobs.some(blob => blob.id === before.records.find(row => row.kind === 'receipt-metadata').value.image.blobId)); assert.equal(snapshot.records.filter(row => row.kind === 'receipt-metadata' && row.value.registration.status === 'deleted').length, 1);
+  snapshot = await records(); assert.ok(snapshot.blobs.some(blob => blob.id === splitRecord.value.image.blobId)); assert.equal(snapshot.records.filter(row => row.kind === 'receipt-metadata' && row.value.registration.status === 'deleted').length, 1);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); assert.deepEqual(errors, []);
   console.log('PASS: confirm/cancel, expense/income/split/transfer deletion and Undo, stable IDs, expiration, receipt originals retained, no resurrection after backup/reload');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

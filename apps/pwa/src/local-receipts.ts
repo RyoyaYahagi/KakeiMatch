@@ -25,6 +25,7 @@ export type ConfirmedReceiptValue = {
   /** Current Actual category ID; older receipts may contain a base CategoryId key. */
   categoryId: string;
   accountId: string;
+  memo?: string | null;
   taxAmountYen?: number | null;
   items?: ReceiptItem[];
   adjustments?: ReceiptAdjustment[];
@@ -80,7 +81,7 @@ function newId(options: LocalReceiptServiceOptions): string { return `receipt:${
 function isSafeYen(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
 function validConfirmed(value: ConfirmedReceiptValue): boolean {
   const items = value.items ?? [], adjustments = value.adjustments ?? [];
-  if (items.length > 100 || adjustments.length > 100 ||
+  if ((value.memo != null && (typeof value.memo !== "string" || value.memo.length > 2000)) || items.length > 100 || adjustments.length > 100 ||
       new Set([...items, ...adjustments].map(row => row.id)).size !== items.length + adjustments.length ||
       items.some(row => typeof row.id !== "string" || !row.id || typeof row.name !== "string" || !row.name.trim() ||
         (row.amountYen !== null && !isSafeYen(row.amountYen)) || (row.categoryId !== null && (typeof row.categoryId !== "string" || !row.categoryId)) ||
@@ -448,7 +449,7 @@ export class LocalReceiptService {
     try {
       const transaction = await this.ledger.editReceipt(receipt.registration.actualTransactionId, {
         accountId: audit.after.accountId, date: audit.after.purchasedDate, amountYen: -audit.after.totalAmountYen,
-        merchant: audit.after.merchant, categoryId, importedId: `kakeimatch:${receipt.id}`,
+        merchant: audit.after.merchant, ...(audit.after.memo !== undefined ? { memo: audit.after.memo } : {}), categoryId, importedId: `kakeimatch:${receipt.id}`,
         ...(splits.length > 1 ? { splits } : {}),
       });
       if (transaction.id !== receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_readback_failed", "変更後の内容を家計簿で確認できませんでした。再試行してください。");
@@ -497,7 +498,7 @@ export class LocalReceiptService {
         const transaction = await this.ledger.importReceipt({
           accountId: receipt.confirmedValue.accountId, date: receipt.confirmedValue.purchasedDate,
           amountYen: -receipt.confirmedValue.totalAmountYen, merchant: receipt.confirmedValue.merchant,
-          categoryId: splits[0]?.categoryId ?? category.id, ...(splits.length > 1 ? { splits } : {}), importedId: `kakeimatch:${id}`,
+          ...(receipt.confirmedValue.memo !== undefined ? { memo: receipt.confirmedValue.memo } : {}), categoryId: splits[0]?.categoryId ?? category.id, ...(splits.length > 1 ? { splits } : {}), importedId: `kakeimatch:${id}`,
         });
         const applied = { ...processing, registration: { status: "applied" as const, actualTransactionId: transaction.id, lastError: null }, updatedAt: nowIso(this.options) };
         await this.save(applied);
@@ -533,7 +534,7 @@ export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ catego
   const items = value.items ?? [];
   const categories = new Set(items.map(item => item.categoryId ?? value.categoryId));
   if (categories.size <= 1) return [{ categoryId: [...categories][0] ?? value.categoryId, amountYen: value.totalAmountYen }];
-  const fail = (): never => { throw new LocalReceiptServiceError("allocation_required", "カテゴリ配分を確認してください。品目と値引きの合計をレシート総額に合わせてください。"); };
+  const fail = (): never => { throw new LocalReceiptServiceError("allocation_required", "カテゴリ配分を確認してください。品目と値引きの合計を入力した合計金額に合わせてください。"); };
   const totals = new Map<string, number>();
   for (const item of items) {
     if (item.amountYen === null) fail();

@@ -681,6 +681,20 @@ describe("Actual browser ledger", () => {
     expect(send.mock.calls.filter(([method, args]) => method === "transactions-batch-update" && args?.runTransfers === false).length).toBeGreaterThanOrEqual(2);
   });
 
+  it("updates a receipt memo alone, clears it explicitly, and preserves legacy omitted memos", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const receipt = rows.find(row => row.id === "expense")!;
+    Object.assign(receipt, { imported_id: "kakeimatch:receipt:memo", notes: "old memo" });
+    const input = { accountId: "cash", date: "2026-09-29", amountYen: -3284,
+      merchant: "Synthetic Store", categoryId: "food", importedId: "kakeimatch:receipt:memo" };
+    await ledger.editReceipt("expense", { ...input, memo: "new memo" });
+    expect(receipt.notes).toBe("new memo");
+    await ledger.editReceipt("expense", input);
+    expect(receipt.notes).toBe("new memo");
+    await ledger.editReceipt("expense", { ...input, memo: null });
+    expect(receipt.notes).toBe("");
+  });
+
   it("rejects receipt edits for other transaction kinds, mismatched imports, and invalid split totals", async () => {
     const { ledger, api, rows, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
     const base = { accountId: "cash", date: "2026-09-29", amountYen: -1000, merchant: "Synthetic Store", categoryId: "food", importedId: "kakeimatch:receipt:expected" };
