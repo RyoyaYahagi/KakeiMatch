@@ -1,3 +1,4 @@
+import { LocalDataStorageError } from '../../../src/lib/local-data';
 import { initializeLocalUi } from './local-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
@@ -262,6 +263,6 @@ if ('serviceWorker' in navigator) {
   });
 }
 message.textContent = '家計簿を準備しています…';
-void initializeLocalUi({ openAccount: () => showTab('settings') }).catch(() => {
-  message.textContent = '端末の家計簿を開けませんでした。保存状態を確認し、再読込してください。';
+void initializeLocalUi({ openAccount: () => showTab('settings') }).catch((error: unknown) => {
+  message.textContent = error instanceof LocalDataStorageError ? error.message : '端末の家計簿を開けませんでした。保存状態を確認し、再読込してください。';
 });

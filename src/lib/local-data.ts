@@ -1,5 +1,6 @@
 const DATABASE_NAME = "kakeimatch-local-data";
-const DATABASE_VERSION = 2;
+// IndexedDB layout version; independent of the serialized backup schema below.
+export const LOCAL_DATABASE_VERSION = 2;
 const RECORDS_STORE = "records";
 const BLOBS_STORE = "blobs";
 export const LOCAL_PROFILE_KEY = "kakeimatch.local-profile.v1";
@@ -89,6 +90,9 @@ function toKey(profileId: string, id: string): string {
 
 function storageError(error: unknown): LocalDataStorageError {
   if (error instanceof LocalDataStorageError) return error;
+  if (error instanceof Error && error.name === "InvalidStateError") {
+    return new LocalDataStorageError("別の画面で端末内データが更新されました。この画面を再読み込みしてから操作してください。", error);
+  }
   if (error instanceof Error && error.name === "QuotaExceededError") {
     return new LocalDataStorageError("端末の保存容量が不足しているため、データを保存できませんでした。空き容量を確認してから再試行してください。", error);
   }
@@ -123,27 +127,81 @@ function requestResult<T>(request: IDBRequest<T>): Promise<T> {
   });
 }
 
+/** Each step runs in the same versionchange transaction; abort rolls back data and layout. */
+function migrateDatabase(database: IDBDatabase, transaction: IDBTransaction, oldVersion: number): void {
+  if (oldVersion < 0 || oldVersion > LOCAL_DATABASE_VERSION) throw new Error("Unsupported database version");
+  if (oldVersion === 0) {
+    for (const name of [RECORDS_STORE, BLOBS_STORE]) {
+      const store = database.createObjectStore(name, { keyPath: "key" });
+      store.createIndex("profileId", "profileId", { unique: false });
+    }
+  }
+  if (oldVersion < 2) {
+    const blobs = transaction.objectStore(BLOBS_STORE);
+    if (!blobs.indexNames.contains("owner")) {
+      blobs.createIndex("owner", ["profileId", "ownerKind", "ownerId"], { unique: false });
+    }
+  }
+  validateDatabase(database, transaction);
+}
+
+function validateDatabase(database: IDBDatabase, transaction: IDBTransaction): void {
+  for (const name of [RECORDS_STORE, BLOBS_STORE]) {
+    if (!database.objectStoreNames.contains(name)) throw new Error("Missing local data store");
+    const store = transaction.objectStore(name);
+    if (store.keyPath !== "key" || store.autoIncrement) throw new Error("Unexpected local data key");
+    const profile = store.index("profileId");
+    if (profile.keyPath !== "profileId" || profile.unique || profile.multiEntry) throw new Error("Unexpected profile index");
+  }
+  const owner = transaction.objectStore(BLOBS_STORE).index("owner");
+  if (JSON.stringify(owner.keyPath) !== JSON.stringify(["profileId", "ownerKind", "ownerId"]) || owner.unique || owner.multiEntry) {
+    throw new Error("Unexpected blob owner index");
+  }
+}
+
 export class LocalDataRepository {
   private constructor(private readonly database: IDBDatabase, readonly profileId: string) {}
 
   static async open(profileId = getOrCreateLocalProfileId(), factory: IDBFactory = indexedDB): Promise<LocalDataRepository> {
     try {
-      const request = factory.open(DATABASE_NAME, DATABASE_VERSION);
-      request.onupgradeneeded = () => {
-        const db = request.result;
-        if (!db.objectStoreNames.contains(RECORDS_STORE)) {
-          const records = db.createObjectStore(RECORDS_STORE, { keyPath: "key" });
-          records.createIndex("profileId", "profileId", { unique: false });
-        }
-        if (!db.objectStoreNames.contains(BLOBS_STORE)) {
-          const blobs = db.createObjectStore(BLOBS_STORE, { keyPath: "key" });
-          blobs.createIndex("profileId", "profileId", { unique: false });
-        }
-        const blobs = request.transaction!.objectStore(BLOBS_STORE);
-        if (!blobs.indexNames.contains("owner")) blobs.createIndex("owner", ["profileId", "ownerKind", "ownerId"], { unique: false });
-      };
-      const database = await requestResult(request);
-      database.onversionchange = () => database.close();
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = factory.open(DATABASE_NAME, LOCAL_DATABASE_VERSION);
+        let failure: LocalDataStorageError | null = null;
+        request.onupgradeneeded = (event) => {
+          const transaction = request.transaction!;
+          // A blocked open cannot be cancelled. Abort if it later starts upgrading.
+          if (failure) { transaction.abort(); return; }
+          try {
+            migrateDatabase(request.result, transaction, event.oldVersion);
+          } catch (error) {
+            failure = new LocalDataStorageError("端末内データの更新に失敗しました。更新前のデータは保持されています。他の画面を閉じ、再読み込みしてください。", error);
+            transaction.abort();
+          }
+        };
+        request.onblocked = () => {
+          failure = new LocalDataStorageError("別の画面が端末内データを使用しています。このアプリの他の画面を閉じ、再読み込みしてください。", null);
+          reject(failure);
+        };
+        request.onerror = () => {
+          if (request.error?.name === "VersionError") {
+            reject(new LocalDataStorageError("この画面より新しい版の端末内データがあります。アプリを更新して再読み込みしてください。保存済みデータは削除しないでください。", request.error));
+          } else {
+            reject(failure ?? new LocalDataStorageError("端末内データを開けませんでした。保存済みデータは削除せず、再読み込みしてください。", request.error));
+          }
+        };
+        request.onsuccess = () => {
+          const db = request.result;
+          if (failure) { db.close(); return; }
+          try {
+            validateDatabase(db, db.transaction([RECORDS_STORE, BLOBS_STORE]));
+            db.onversionchange = () => db.close();
+            resolve(db);
+          } catch (error) {
+            db.close();
+            reject(new LocalDataStorageError("端末内データの構造を確認できませんでした。保存済みデータは削除せず、アプリを更新して再読み込みしてください。", error));
+          }
+        };
+      });
       return new LocalDataRepository(database, profileId);
     } catch (error) {
       throw storageError(error);
