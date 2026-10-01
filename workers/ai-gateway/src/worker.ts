@@ -141,21 +141,42 @@ function parseCategoryInput(value: unknown): { receipt: { merchant: string | nul
   if (!merchant && !items.length) return null;
   return { receipt: { merchant, totalAmountYen: receipt.totalAmountYen as number | null, items } };
 }
-function isChoiceAnswer(answer: unknown): answer is Record<string, unknown> {
+function isChoiceAnswer(answer: unknown, categoryIds: string[]): answer is Record<string, unknown> {
   if (!isRecord(answer)) return false;
   if (answer.type !== "choice" || typeof answer.choice !== "string" || !isRecord(answer.probabilities) || typeof answer.confidence !== "number" || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return false;
   const probabilities = answer.probabilities;
-  return Object.keys(answer).every((key) => ["type", "choice", "probabilities", "confidence"].includes(key)) && Object.keys(probabilities).length === CATEGORY_IDS.length && CATEGORY_IDS.every((category) => typeof probabilities[category] === "number" && Number.isFinite(probabilities[category]) && probabilities[category] >= 0 && probabilities[category] <= 1) && CATEGORY_IDS.includes(answer.choice as (typeof CATEGORY_IDS)[number]) && Math.abs(CATEGORY_IDS.reduce((sum, category) => sum + (probabilities[category] as number), 0) - 1) <= 0.02;
+  return Object.keys(answer).length === 4 && Object.keys(answer).every((key) => ["type", "choice", "probabilities", "confidence"].includes(key)) && Object.keys(probabilities).length === categoryIds.length && categoryIds.every((category) => typeof probabilities[category] === "number" && Number.isFinite(probabilities[category]) && probabilities[category] >= 0 && probabilities[category] <= 1) && categoryIds.includes(answer.choice) && Math.abs(categoryIds.reduce((sum, category) => sum + (probabilities[category] as number), 0) - 1) <= 0.02;
 }
-function normalizeJevResponse(value: unknown, expected: string[]): unknown {
+function normalizeJevResponse(value: unknown, expected: string[], categoryIds: string[]): unknown {
   if (!isRecord(value) || typeof value.model !== "string" || !value.model.trim() || !isRecord(value.answers)) return null;
   const answerMap: Record<string, unknown> = value.answers;
-  if (Object.keys(answerMap).length !== expected.length || !expected.every((key) => isChoiceAnswer(answerMap[key]))) return null;
+  if (Object.keys(answerMap).length !== expected.length || !expected.every((key) => isChoiceAnswer(answerMap[key], categoryIds))) return null;
   const answers = Object.fromEntries(expected.map((key) => {
     const answer = answerMap[key] as Record<string, unknown>;
     return [key, { type: "choice", choice: answer.choice, probabilities: answer.probabilities, confidence: answer.confidence }];
   }));
   return { model: value.model, answers };
+}
+type CategoryOption = { id: string; name: string };
+function parseCategoryOptions(value: unknown): CategoryOption[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 100) return null;
+  const result: CategoryOption[] = [];
+  const ids = new Set<string>();
+  for (const item of value) {
+    if (!isRecord(item) || Object.keys(item).length !== 2 || !Object.keys(item).every((key) => key === "id" || key === "name") || typeof item.id !== "string" || item.id.length < 1 || item.id.length > 128 || typeof item.name !== "string" || item.name.trim().length < 1 || item.name.length > 100 || ids.has(item.id)) return null;
+    ids.add(item.id);
+    result.push({ id: item.id, name: item.name.trim() });
+  }
+  return result;
+}
+function parseItemIndexes(value: unknown, itemCount: number): number[] | null {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 30) return null;
+  const seen = new Set<number>();
+  for (const index of value) {
+    if (!Number.isSafeInteger(index) || (index as number) < 0 || (index as number) >= itemCount || seen.has(index as number)) return null;
+    seen.add(index as number);
+  }
+  return value as number[];
 }
 function providerError(status: number): Response {
   if (status === 429 || status === 529) return json(429, { error: "rate_limited" });
@@ -259,22 +280,33 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
 
   const normalized = parseCategoryInput(body);
   if (!normalized) return json(400, { error: "invalid_request" });
+  const itemIndexes = body.itemIndexes === undefined ? normalized.receipt.items.map((_, index) => index) : parseItemIndexes(body.itemIndexes, normalized.receipt.items.length);
+  const categories = body.categories === undefined ? null : parseCategoryOptions(body.categories);
+  if (!itemIndexes || (body.categories !== undefined && !categories)) return json(400, { error: "invalid_request" });
   if (!env.TYPESAFE_API_KEY) return json(503, { error: "not_configured" });
   if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
   try {
     const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "jev", normalized);
     if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "jev", mac, now)) return json(409, { error: "invalid_flow" });
   } catch { return json(503, { error: "temporarily_unavailable" }); }
-  const itemCount = normalized.receipt.items.length;
-  const questionKeys = itemCount > 0 ? normalized.receipt.items.map((_, index) => `item_${index}`) : ["category"];
-  const question = { type: "choice", instructions: "この商品を家計簿の基本カテゴリから1つ選んでください。商品名を優先し、不明な場合は other を選んでください。", criteria: CATEGORY_CRITERIA };
-  const payload = { model: env.JEV_MODEL?.trim() || "jev-latest", state: normalized, questions: Object.fromEntries(questionKeys.map((key) => [key, question])) };
+  const selectedItems = itemIndexes.map(index => normalized.receipt.items[index]);
+  const questionKeys = selectedItems.length > 0 ? itemIndexes.map(index => `item_${index}`) : ["category"];
+  const categoryIds = categories?.map(category => category.id) ?? [...CATEGORY_IDS];
+  const fallbackInstruction = categories
+    ? "不明な場合は、最も近いカテゴリを選んでください。"
+    : "不明な場合は other を選んでください。";
+  const criteria: Record<string, string> = categories
+    ? Object.fromEntries(categories.map(category => [category.id, category.name]))
+    : CATEGORY_CRITERIA;
+  const selectedReceipt = { ...normalized.receipt, items: selectedItems };
+  const question = { type: "choice", instructions: "この商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。", criteria };
+  const payload = { model: env.JEV_MODEL?.trim() || "jev-latest", state: { receipt: selectedReceipt }, questions: Object.fromEntries(questionKeys.map((key, index) => [key, { ...question, instructions: selectedItems.length > 0 ? `state.receipt.items[${index}]の商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。${fallbackInstruction}` : `このレシートの店名と合計金額から、該当する家計簿カテゴリを1つ選んでください。${fallbackInstruction}`, criteria }])) };
   let response: Response;
   try { response = await callProvider(env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl); } catch { return json(504, { error: "provider_timeout" }); }
   if (!response.ok) return providerError(response.status);
   let decoded: unknown;
   try { decoded = await readProviderJson(response); } catch { return json(502, { error: "invalid_provider_response" }); }
-  const result = normalizeJevResponse(decoded, questionKeys);
+  const result = normalizeJevResponse(decoded, questionKeys, categoryIds);
   return result ? json(200, result) : json(502, { error: "invalid_provider_response" });
 }
 

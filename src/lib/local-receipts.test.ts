@@ -1,23 +1,22 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalDataRepository } from "./local-data";
-import { CATEGORY_IDS } from "./category";
 import { LocalReceiptService, receiptAllocations, type ConfirmedReceiptValue } from "../../apps/pwa/src/local-receipts";
 
 const extraction = {
   documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30",
   totalAmountYen: 3284, taxAmountYen: null, items: [{ name: "Synthetic Item", amountYen: 3284 }], warnings: [],
 };
-const probabilities = Object.fromEntries(CATEGORY_IDS.map((id) => [id, id === "food" ? 0.92 : 0.01]));
+const probabilities = { "actual-food": 0.92, "actual-medical": 0.04, "actual-household": 0.04 };
 
 function pngBlob() {
   return new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])], { type: "image/png" });
 }
-async function setup(fetchImpl = vi.fn(), ledgerOverrides: Record<string, unknown> = {}) {
+async function setup(fetchImpl = vi.fn(), ledgerOverrides: Record<string, unknown> = {}, serviceOptions: Record<string, unknown> = {}) {
   const repository = await LocalDataRepository.open(crypto.randomUUID());
   const ledger = {
     listOpenAccounts: vi.fn(async () => [{ id: "cash", name: "現金" }]),
-    listExpenseCategories: vi.fn(async () => [{ id: "actual-food", name: "食費" }]),
+    listExpenseCategories: vi.fn(async () => [{ id: "actual-food", name: "食費" }, { id: "actual-medical", name: "医療" }, { id: "actual-household", name: "日用品" }]),
     importReceipt: vi.fn(async () => ({ id: "actual-tx" })),
     ...ledgerOverrides,
   };
@@ -27,6 +26,7 @@ async function setup(fetchImpl = vi.fn(), ledgerOverrides: Record<string, unknow
     makeId: () => "00000000-0000-4000-8000-000000000001",
     now: () => new Date("2026-09-30T00:00:00.000Z"),
     withRegistrationLock: async (_id, operation) => operation(),
+    ...serviceOptions,
   });
   return { repository, ledger, service };
 }
@@ -80,13 +80,15 @@ describe("LocalReceiptService", () => {
   it("sends the minimum Jev payload and validates its category choice before storing it", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     const body = JSON.parse(String(fetchImpl.mock.calls[1][0] && (fetchImpl.mock.calls[1][1] as RequestInit).body));
-    expect(body).toEqual({ flowId: (await service.get(receipt.id))?.aiFlowId, receipt: { merchant: "Synthetic Shop", totalAmountYen: 3284, items: [{ name: "Synthetic Item", amountYen: 3284 }] } });
+    expect(body).toEqual({ flowId: (await service.get(receipt.id))?.aiFlowId, itemIndexes: [0], categories: [
+      { id: "actual-food", name: "食費" }, { id: "actual-medical", name: "医療" }, { id: "actual-household", name: "日用品" },
+    ], receipt: { merchant: "Synthetic Shop", totalAmountYen: 3284, items: [{ name: "Synthetic Item", amountYen: 3284 }] } });
     expect((await service.get(receipt.id))?.confirmedValue).toBeNull();
     const imageBody = JSON.parse(String((fetchImpl.mock.calls[0][1] as RequestInit).body));
     expect(body.flowId).toBe(imageBody.flowId);
@@ -95,12 +97,12 @@ describe("LocalReceiptService", () => {
   it.each(["current", "legacy"])("reuses a %s saved category suggestion after reopening without requesting the spent flow", async (format) => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities, confidence: 0.92 } } }))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 } } }))
       .mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
     const { repository, ledger, service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     if (format === "legacy") {
       const saved = (await service.get(receipt.id))!;
       delete saved.aiSuggestion.flowId;
@@ -110,8 +112,54 @@ describe("LocalReceiptService", () => {
       fetchImpl, getToken: async () => "synthetic-token",
       withRegistrationLock: async (_id, operation) => operation(),
     });
-    expect(await reopened.suggestCategory(receipt.id)).toBe("food");
+    expect(await reopened.suggestCategory(receipt.id)).toBe("actual-food");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("prioritizes current learned item rules over a cached Jev answer", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json(extraction))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 } } }));
+    let nextId = 1;
+    const { service } = await setup(fetchImpl, {}, { makeId: () => `00000000-0000-4000-8000-${String(nextId++).padStart(12, "0")}` });
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
+    for (let index = 0; index < 3; index++) {
+      const confirmed = await service.createManual();
+      await service.confirm(confirmed.id, {
+        merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null,
+        totalAmountYen: 3284, categoryId: "actual-medical", accountId: "cash",
+        items: [{ id: `item-${index}`, name: "Synthetic Item", amountYen: 3284, categoryId: "actual-medical" }],
+      });
+    }
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-medical");
+    expect((await service.get(receipt.id))?.classificationAttempt?.itemCategories).toEqual(["actual-food"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends only unresolved original item indexes and merges Jev answers with learned item categories", async () => {
+    const multiItemExtraction = { ...extraction, items: [{ name: "Known apple", amountYen: 2000 }, { name: "Unknown soap", amountYen: 1284 }] };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json(multiItemExtraction))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_1: { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 } } }));
+    let nextId = 10;
+    const { service } = await setup(fetchImpl, {}, { makeId: () => `00000000-0000-4000-8000-${String(nextId++).padStart(12, "0")}` });
+    for (let index = 0; index < 3; index++) {
+      const confirmed = await service.createManual();
+      await service.confirm(confirmed.id, {
+        merchant: `Synthetic Shop ${index}`, purchasedDate: "2026-09-30", purchasedTime: null,
+        totalAmountYen: 2000, categoryId: "actual-medical", accountId: "cash",
+        items: [{ id: `known-${index}`, name: "Known apple", amountYen: 2000, categoryId: "actual-medical" }],
+      });
+    }
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-medical");
+    expect((await service.get(receipt.id))?.itemCategories).toEqual(["actual-medical", "actual-food"]);
+    const body = JSON.parse(String((fetchImpl.mock.calls[1][1] as RequestInit).body));
+    expect(body.itemIndexes).toEqual([1]);
+    expect(body.receipt.items).toEqual(multiItemExtraction.items);
   });
 
   it("prefers a saved merchant mapping without calling Jev", async () => {
@@ -120,7 +168,7 @@ describe("LocalReceiptService", () => {
     await repository.put({ id: "mapping:shop", kind: "merchant-mapping", value: { normalizedMerchant: "synthetic shop", categoryId: "food" }, updatedAt: "2026-09-30T00:00:00.000Z" });
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect((await service.get(receipt.id))?.aiSuggestion.source).toBe("merchant_mapping");
   });
@@ -134,16 +182,33 @@ describe("LocalReceiptService", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("invalidates a merchant mapping to a deleted or hidden custom category without sending another AI request", async () => {
-    const fetchImpl = vi.fn(async () => Response.json({ ...extraction, items: [] }));
+  it("rejects unexpected merchant-level answer keys without saving the response", async () => {
+    const answer = { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ...extraction, items: [] }))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: answer, item_0: answer } }));
+    const { service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    await expect(service.suggestCategory(receipt.id)).rejects.toMatchObject({ code: "invalid_ai_response" });
+    expect((await service.get(receipt.id))?.classificationAttempt).toBeUndefined();
+    expect((await service.get(receipt.id))?.aiSuggestion.categoryId).toBeNull();
+  });
+
+  it("invalidates a merchant mapping to a deleted custom category and asks Jev without item indexes", async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ...extraction, items: [] }))
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { category: { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 } } }));
     const { repository, service } = await setup(fetchImpl);
     await repository.put({ id: "mapping:removed", kind: "merchant-mapping", value: { normalizedMerchant: "synthetic shop", actualCategoryId: "removed-category" }, updatedAt: "2026-09-30T00:00:00.000Z" });
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBeNull();
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     expect(await repository.get("mapping:removed")).toBeNull();
-    expect((await service.get(receipt.id))?.aiSuggestion.categoryId).toBeNull();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect((await service.get(receipt.id))?.aiSuggestion.categoryId).toBe("actual-food");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const request = JSON.parse(String((fetchImpl.mock.calls[1][1] as RequestInit).body));
+    expect(request).not.toHaveProperty("itemIndexes");
   });
 
   it("requires reselection when a confirmed custom category is no longer available", async () => {
@@ -158,10 +223,10 @@ describe("LocalReceiptService", () => {
   });
 
   it("falls back to Jev when no merchant mapping exists, and reports no category when Jev is uncertain", async () => {
-    const lowProbabilities = Object.fromEntries(CATEGORY_IDS.map((id) => [id, id === "food" ? 0.4 : 0.075]));
+    const lowProbabilities = { "actual-food": 0.4, "actual-medical": 0.35, "actual-household": 0.25 };
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities: lowProbabilities, confidence: 0.4 } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "actual-food", probabilities: lowProbabilities, confidence: 0.4 } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
@@ -173,19 +238,19 @@ describe("LocalReceiptService", () => {
   });
 
   it("discards a previous suggestion when new receipt facts are extracted", async () => {
-    const answer = (choice: string) => ({ model: "jev-latest", answers: { item_0: { type: "choice", choice, probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === choice ? 0.92 : 0.01])), confidence: 0.92 } } });
+    const answer = (choice: string) => ({ model: "jev-latest", answers: { item_0: { type: "choice", choice, probabilities: Object.fromEntries(["actual-food", "actual-medical", "actual-household"].map(id => [id, id === choice ? 0.92 : 0.04])), confidence: 0.92 } } });
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json(answer("food")))
+      .mockResolvedValueOnce(Response.json(answer("actual-food")))
       .mockResolvedValueOnce(Response.json({ ...extraction, merchant: "Synthetic Pharmacy" }))
-      .mockResolvedValueOnce(Response.json(answer("medical")));
+      .mockResolvedValueOnce(Response.json(answer("actual-medical")));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBe("food");
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 3284, categoryId: "food", accountId: "cash" });
     await service.analyze(receipt.id);
-    expect(await service.suggestCategory(receipt.id)).toBe("medical");
+    expect(await service.suggestCategory(receipt.id)).toBe("actual-medical");
     expect(fetchImpl).toHaveBeenCalledTimes(4);
   });
 
@@ -319,7 +384,7 @@ describe("LocalReceiptService", () => {
   it("rejects a category response with missing confidence without storing a suggestion", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(Response.json(extraction))
-      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "food", probabilities } } }));
+      .mockResolvedValueOnce(Response.json({ model: "jev-latest", answers: { item_0: { type: "choice", choice: "actual-food", probabilities } } }));
     const { service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
@@ -441,14 +506,14 @@ describe("registered receipt edits", () => {
 });
 
 it("classifies each item in one request and leaves uncertain items for manual selection", async () => {
-  const strong = { type: "choice", choice: "food", probabilities, confidence: 0.92 };
-  const weak = { type: "choice", choice: "food", probabilities: Object.fromEntries(CATEGORY_IDS.map(id => [id, id === "food" ? 0.4 : 0.075])), confidence: 0.4 };
+  const strong = { type: "choice", choice: "actual-food", probabilities, confidence: 0.92 };
+  const weak = { type: "choice", choice: "actual-food", probabilities: { "actual-food": 0.4, "actual-medical": 0.35, "actual-household": 0.25 }, confidence: 0.4 };
   const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json({ ...extraction, items: [{ name: "Synthetic apple", amountYen: 2000 }, { name: "Synthetic soap", amountYen: 1284 }] })).mockResolvedValueOnce(Response.json({ model: "synthetic-model", answers: { item_0: strong, item_1: weak } }));
   const { service } = await setup(fetchImpl);
   const receipt = await service.saveImage(pngBlob());
   await service.analyze(receipt.id);
   await service.suggestCategory(receipt.id);
-  expect((await service.get(receipt.id))?.itemCategories).toEqual(["food", null]);
+  expect((await service.get(receipt.id))?.itemCategories).toEqual(["actual-food", null]);
   await service.suggestCategory(receipt.id);
   expect(fetchImpl).toHaveBeenCalledTimes(2);
 });

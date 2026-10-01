@@ -85,6 +85,20 @@ async function rewriteEntry(file: Blob, path: string, replacement: Uint8Array): 
 }
 
 describe("portable local backup format", () => {
+  it("preserves custom-category learning observations and learned suggestions", async () => {
+    const data = fixture();
+    const observation = { targetType: "category-learning", receiptId: "receipt:synthetic-1", normalizedMerchant: "synthetic cafe", merchantCategoryId: "custom-category",
+      items: [{ normalizedName: "synthetic coffee", categoryId: "custom-category" }], confirmedAt: time };
+    data.records.push({ id: "category-learning:receipt:synthetic-1", kind: "correction-audit", updatedAt: time, value: observation });
+    const receipt = data.records[0].value as { aiSuggestion: { source: string }; classificationAttempt?: unknown };
+    receipt.aiSuggestion.source = "learned_rule";
+    receipt.classificationAttempt = { model: "synthetic-model", attemptedAt: time, itemCategories: [null, "custom-category"], categoryId: null };
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.at(-1)?.value).toEqual(observation);
+    expect((restored.localData.records[0].value as typeof receipt).classificationAttempt).toEqual(receipt.classificationAttempt);
+    observation.items[0].categoryId = "";
+    await expect(create(data)).rejects.toThrow(/correction-audit/);
+  });
   it("round-trips a pending schedule creation and rejects malformed operation intents", async () => {
     const data = fixture();
     const intent = { targetType: "schedule", operationId: "synthetic-schedule-operation", operation: "create", scheduleId: null,

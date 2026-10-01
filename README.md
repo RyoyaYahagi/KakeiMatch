@@ -28,6 +28,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)
 - [口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)
 - [カテゴリ別月予算](docs/LOCAL_MONTHLY_BUDGETS.md)
+- [カテゴリ修正履歴による分類](docs/LOCAL_CATEGORY_LEARNING.md)
 - [登録した記録の編集](docs/LOCAL_RECEIPT_EDITS.md): 品目・カテゴリ配分の修正と変更履歴
 - [口座間振替](docs/LOCAL_TRANSFERS.md): 登録・編集と両口座の残高
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行

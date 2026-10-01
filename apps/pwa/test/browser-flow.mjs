@@ -31,7 +31,11 @@ await context.route('**/api/ai/jev', async route => {
   const body = route.request().postDataJSON();
   categoryRequests.push(body);
   assert.ok(usedFlows.has(body.flowId));
-  await route.fulfill({ json: { model: 'synthetic-model', answers: { category: { type: 'choice', choice: 'food', confidence: 1, probabilities: { food: 1, household: 0, transport: 0, medical: 0, clothing: 0, entertainment: 0, utilities: 0, communications: 0, other: 0 } } } } });
+  const categories = body.categories;
+  const food = categories.find(category => category.name === '食費');
+  assert.ok(food, 'The Jev request should include the native food category.');
+  const probabilities = Object.fromEntries(categories.map(category => [category.id, category.id === food.id ? 1 : 0]));
+  await route.fulfill({ json: { model: 'synthetic-model', answers: { category: { type: 'choice', choice: food.id, confidence: 1, probabilities } } } });
 });
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: Math.floor(Date.now() / 1000) + 600 } }));
 await context.route('**/api/ai/gemini', async route => {
