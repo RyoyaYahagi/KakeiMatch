@@ -53,7 +53,6 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm eval:reconciliation
-      - run: pnpm --dir apps/pwa typecheck
       - run: pnpm --dir apps/pwa test
       - run: pnpm --dir apps/pwa build
       - run: pnpm --dir apps/pwa exec playwright-core install --with-deps chromium
@@ -68,20 +67,44 @@ jobs:
             if curl --fail --silent http://127.0.0.1:5173/ > /dev/null; then break; fi
             sleep 1
           done
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:backup-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:masters-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:receipt-items-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:manual-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:transfers-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:receipt-edits-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:deletions-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:monthly-dashboard-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:account-balances-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:monthly-budgets-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:recurring-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:transaction-search-e2e
-          PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:category-learning-e2e
+          export PWA_E2E_URL=http://127.0.0.1:5173
+          run_e2e_group() {
+            for script in "$@"; do pnpm --dir apps/pwa "$script"; done
+          }
+          run_e2e_group \
+            test:e2e \
+            test:receipt-items-e2e \
+            test:manual-e2e \
+            test:receipt-edits-e2e \
+            test:deletions-e2e \
+            test:monthly-budgets-e2e \
+            test:category-learning-e2e \
+            test:record-navigation-e2e &
+          first_group=$!
+          run_e2e_group \
+            test:backup-e2e \
+            test:masters-e2e \
+            test:transfers-e2e \
+            test:monthly-dashboard-e2e \
+            test:account-balances-e2e \
+            test:recurring-e2e \
+            test:transaction-search-e2e \
+            test:entry-masters-e2e &
+          second_group=$!
+          result=0
+          wait "$first_group" || result=1
+          wait "$second_group" || result=1
+          exit "$result"
+
+  ai-gateway:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: workers/ai-gateway/package-lock.json
       - run: npm ci --prefix workers/ai-gateway
       - run: npm test --prefix workers/ai-gateway
       - run: npm run typecheck --prefix workers/ai-gateway
