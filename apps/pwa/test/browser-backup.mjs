@@ -221,8 +221,8 @@ async function exportSnapshot() {
     const fields = Array.from(item.children).map(child => child.textContent?.trim() ?? '').filter(Boolean);
     return fields.length ? fields.join(' ') : item.textContent?.trim() ?? '';
   }));
-  const summary = await page.locator('#monthly-expense').textContent();
-  return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: summary.replace(/\s+/g, ' ').trim() };
+  const summary = await page.locator('.monthly-totals > div').evaluateAll(rows => rows.map(row => row.textContent?.replace(/\s+/g, ' ').trim() ?? ''));
+  return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: summary };
 }
 
 async function wipeLocalData() {
