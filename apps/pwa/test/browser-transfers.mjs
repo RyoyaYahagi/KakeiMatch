@@ -78,6 +78,8 @@ try {
   await edit();
   await context.setOffline(true);
   await fill(13000, 'Synthetic Other', 'Synthetic Bank', 'Synthetic offline transfer'); await save(true);
+  await click('記録一覧へ戻る');
+  await page.getByRole('button', { name: /Synthetic Bank · 2026-10-01 · 振替 ¥13,000/ }).waitFor();
   assert.equal(await page.getByRole('button', { name: / · 振替 ¥/ }).count(), 1);
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥0').waitFor();
   assert.deepEqual(errors, []);

@@ -21,7 +21,7 @@ async function addCategory(name, income = false) {
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
 async function manual(kind, store, amount, category, account, date = '2026-10-01') {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click(kind);
+  await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力');
   await page.locator('#manual-transaction-payee').fill(store);
   await page.locator('#manual-transaction-amount').fill(String(amount));
   await page.locator('#manual-transaction-date').fill(date);

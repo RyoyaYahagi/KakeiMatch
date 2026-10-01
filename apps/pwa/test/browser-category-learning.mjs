@@ -46,7 +46,7 @@ async function addCategory(name) {
 }
 async function startReceipt() {
   await page.clock.setFixedTime(new Date(Date.parse('2026-10-01T03:00:00Z') + receiptClockTick++ * 60_000));
-  await page.locator('#receipt-tab').click(); await click('＋記録'); await click('レシートから支出');
+  await page.locator('#receipt-tab').click(); await click('＋記録'); await click('支出'); await click('レシートから入力');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-learning.png', mimeType: 'image/png', buffer: syntheticImage });
   await page.waitForFunction(() => ['Synthetic Learning Food', 'Synthetic Learning Home', 'Synthetic Learning Electronic'].every(name => [...(document.querySelector('#receipt-category')?.options ?? [])].some(option => option.textContent?.includes(name))));
 }
@@ -82,7 +82,7 @@ async function readLearningAudits() {
 async function optionValue(selector, label) {
   return page.locator(`${selector} option`).evaluateAll((options, target) => options.find(option => option.textContent?.includes(target))?.value ?? '', label);
 }
-async function cancelDraft() { await click('レシート一覧へ戻る'); }
+async function cancelDraft() { await click('支出の選択へ戻る'); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   await addAccount('Synthetic Learning Wallet');
