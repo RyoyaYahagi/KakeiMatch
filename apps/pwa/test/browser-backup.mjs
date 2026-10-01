@@ -99,7 +99,7 @@ async function waitForProfileRecords(predicate, description) {
 }
 
 async function waitForReady() {
-  await page.waitForFunction(() => document.querySelector('#home-summary')?.textContent?.includes('今月の支出'));
+  await page.waitForFunction(() => document.querySelector('#home-summary')?.getAttribute('aria-busy') === 'false');
 }
 
 async function setupLedger() {
@@ -221,8 +221,8 @@ async function exportSnapshot() {
     const fields = Array.from(item.children).map(child => child.textContent?.trim() ?? '').filter(Boolean);
     return fields.length ? fields.join(' ') : item.textContent?.trim() ?? '';
   }));
-  const summary = await page.locator('#home-summary').innerText();
-  return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: (summary.match(/今月の支出[^\n]*/)?.[0] ?? summary).replace(/\s+/g, ' ').trim() };
+  const summary = await page.locator('.monthly-totals > div').evaluateAll(rows => rows.map(row => row.textContent?.replace(/\s+/g, ' ').trim() ?? ''));
+  return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: summary };
 }
 
 async function wipeLocalData() {

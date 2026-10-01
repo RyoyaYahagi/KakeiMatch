@@ -34,19 +34,34 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     { id: "transfer-out", account: "cash", date: "2026-09-26", amount: -700, transfer_id: "transfer-in" },
     { id: "transfer-in", account: "cash", date: "2026-09-26", amount: 700, transfer_id: "transfer-out" },
   ];
+  const tombstoned = new Map<string, Record<string, unknown>>();
   const categories = [
       { id: "food", name: "食費", is_income: false, hidden: false, group_id: "expenses" },
       { id: "home", name: "住居費", is_income: false, hidden: false, group_id: "expenses" },
+      { id: "hidden", name: "旧カテゴリ", is_income: false, hidden: true, group_id: "expenses" },
       { id: "income-category", name: "給与", is_income: true, hidden: false, group_id: "income" },
     ];
+  const budgetValues = new Map<string, number>([["food", 10000], ["home", 5000], ["hidden", -200]]);
+  const schedules: Array<Record<string, unknown>> = [];
+  const rules: Array<Record<string, unknown>> = [];
   const api = {
     init: vi.fn(async ({ dataDir = "/documents" }: { dataDir?: string } = {}) => {
       activeDataDir = dataDir;
       if (!budgetsByDir.has(dataDir)) budgetsByDir.set(dataDir, []);
-      const send = vi.fn(async (method: string, args?: { id?: string; updated?: Array<Record<string, unknown>>; runTransfers?: boolean }) => {
+      const send = vi.fn(async (method: string, args?: { id?: string; updated?: Array<Record<string, unknown>>; added?: Array<Record<string, unknown>>; deleted?: Array<{ id: string }>; runTransfers?: boolean }) => {
         const localBudgets = budgetsByDir.get(activeDataDir)!;
         if (method === "get-budgets") return [...localBudgets];
         if (method === "close-budget") { activeBudget = null; return "ok"; }
+        if (method === "schedule/force-run-service") return "ok";
+        if (method === "schedule/skip-next-date") {
+          const schedule = schedules.find(item => item.id === args?.id);
+          if (schedule && typeof schedule.next_date === "string") {
+            const date = new Date(`${schedule.next_date}T00:00:00Z`);
+            date.setUTCDate(date.getUTCDate() + 1);
+            schedule.next_date = date.toISOString().slice(0, 10);
+          }
+          return "ok";
+        }
         if (method === "delete-budget") {
           const index = localBudgets.findIndex((budget) => budget.id === args?.id);
           if (index >= 0) localBudgets.splice(index, 1);
@@ -54,11 +69,17 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
           return "ok";
         }
         if (method === "transactions-batch-update") {
+          for (const deletion of args?.deleted ?? []) {
+            const index = rows.findIndex(item => item.id === deletion.id);
+            if (index >= 0) { tombstoned.set(deletion.id, rows[index]); rows.splice(index, 1); }
+          }
           for (const update of args?.updated ?? []) {
             const row = rows.find(item => item.id === update.id);
             if (row) Object.assign(row, update);
+            else if (update.tombstone === false && typeof update.id === "string" && tombstoned.has(update.id)) { rows.push({ ...tombstoned.get(update.id), ...update }); tombstoned.delete(update.id); }
           }
-          return { updated: args?.updated ?? [], added: [], deleted: [], errors: [] };
+          rows.push(...(args?.added ?? []));
+          return { updated: args?.updated ?? [], added: args?.added ?? [], deleted: args?.deleted ?? [], errors: [] };
         }
         throw new Error(`Unexpected Actual handler: ${method}`);
       });
@@ -80,6 +101,55 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     getPayees: vi.fn(async () => [...payees]),
     createPayee: vi.fn(async ({ name }: { name: string }) => { const id = `payee-${payees.length}`; payees.push({ id, name }); return id; }),
     getBudgetMonths: vi.fn(async () => ["2026-09"]),
+    getSchedules: vi.fn(async () => schedules),
+    createSchedule: vi.fn(async (schedule: Record<string, unknown>) => {
+      const id = `schedule-${schedules.length + 1}`;
+      const ruleId = `schedule-rule-${schedules.length + 1}`;
+      schedules.push({ ...schedule, id, rule: ruleId, next_date: (schedule.date as { start: string }).start, completed: false });
+      rules.push({ id: ruleId, stage: null, conditionsOp: "and", conditions: [
+        { field: "payee", op: "is", value: schedule.payee },
+        { field: "account", op: "is", value: schedule.account },
+        { field: "date", op: "isapprox", value: schedule.date },
+        { field: "amount", op: schedule.amountOp, value: schedule.amount },
+      ], actions: [{ op: "link-schedule", value: id }] });
+      return id;
+    }),
+    updateSchedule: vi.fn(async (id: string, fields: Record<string, unknown>) => {
+      const schedule = schedules.find(item => item.id === id)!;
+      Object.assign(schedule, fields);
+      if (["amount", "amountOp", "account", "payee", "date"].some(key => key in fields)) {
+        const rule = rules.find(item => item.id === schedule.rule)!;
+        const conditions = rule.conditions as Array<Record<string, unknown>>;
+        for (const condition of conditions) {
+          if (condition.field === "amount") { condition.op = schedule.amountOp; condition.value = schedule.amount; }
+          if (condition.field === "account") condition.value = schedule.account;
+          if (condition.field === "payee") condition.value = schedule.payee;
+          if (condition.field === "date") condition.value = schedule.date;
+        }
+      }
+    }),
+    deleteSchedule: vi.fn(async (id: string) => {
+      const schedule = schedules.find(item => item.id === id);
+      schedules.splice(schedules.indexOf(schedule!), 1);
+    }),
+    getRules: vi.fn(async () => rules),
+    updateRule: vi.fn(async (rule: Record<string, unknown>) => {
+      Object.assign(rules.find(item => item.id === rule.id)!, rule);
+      return rule;
+    }),
+    getBudgetMonth: vi.fn(async (month: string) => ({
+      month, incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [
+        ...categories.filter(category => !category.is_income).map(category => ({
+          id: category.id, budgeted: budgetValues.get(category.id) ?? 0,
+        })),
+        ...categories.filter(category => category.is_income).map(category => ({
+          id: category.id, name: category.name, is_income: true, received: 123,
+        })),
+      ] }],
+    })),
+    setBudgetAmount: vi.fn(async (_month: string, categoryId: string, value: number) => { budgetValues.set(categoryId, value); }),
     getTransactions: vi.fn(async (accountId: string, start: string, end: string) => rows.filter((row) => row.account === accountId && String(row.date) >= start && String(row.date) <= end)),
     importTransactions: vi.fn(async (accountId: string, imports: Array<Record<string, unknown>>) => {
       for (const item of imports) {
@@ -130,7 +200,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     deleteCategory: vi.fn(async (id: string) => { categories.splice(categories.findIndex(c => c.id === id), 1); }),
     createAccount: vi.fn(async (input: { name: string; closed: boolean }) => { accounts.push({ id: "new-account", ...input }); return "new-account"; }),
     updateAccount: vi.fn(async (id: string, changes: Record<string, unknown>) => { Object.assign(accounts.find(a => a.id === id)!, changes); }),
-    getAccountBalance: vi.fn(async () => 0),
+    getAccountBalance: vi.fn<(id: string) => Promise<number>>().mockResolvedValue(0),
     closeAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = true; }),
     reopenAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = false; }),
     deleteAccount: vi.fn(async (id: string) => { accounts.splice(accounts.findIndex(a => a.id === id), 1); }),
@@ -150,7 +220,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
     saveBudgetId,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, accounts, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, payees, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
@@ -269,6 +339,13 @@ describe("Actual browser ledger", () => {
     expect(recent.some((row) => row.id === "split-a" || row.id === "split-b")).toBe(false);
     await expect(ledger.getTransactionById("parent")).resolves.toMatchObject({ id: "parent", amountYen: -1000 });
     await expect(ledger.getMonthlySpending({ yearMonth: "2026-09" })).resolves.toBe(4284);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 5000, expenseYen: 4284, balanceYen: 716,
+      categories: [
+        { categoryId: "food", categoryName: "食費", amountYen: 3884 },
+        { categoryId: "home", categoryName: "住居費", amountYen: 400 },
+      ],
+    });
     await expect(ledger.getTransactionById("expense")).resolves.toMatchObject({ amountYen: -3284 });
     await expect(ledger.listExpenseCategories()).resolves.toEqual([
       { id: "food", name: "食費" }, { id: "home", name: "住居費" },
@@ -280,7 +357,268 @@ describe("Actual browser ledger", () => {
     await ledger.updateReceipt("receipt-created", { categoryId: "home", cleared: true });
     await ledger.applyTransactionUpdates([{ transactionId: "expense", amountYen: -3280, cleared: true }]);
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
+    expect(api.updateTransaction).toHaveBeenCalledWith("receipt-created", { category: "home", cleared: true });
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
+  });
+
+  it("aggregates by amount sign, excludes off-budget and tombstoned rows, and reports null categories", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.push(
+      { id: "refund", account: "cash", date: "2026-09-25", amount: 250, category: "food" },
+      { id: "negative-income", account: "cash", date: "2026-09-24", amount: -100, category: "income-category" },
+      { id: "uncategorized", account: "cash", date: "2026-09-23", amount: -200, category: null },
+      { id: "offbudget-spend", account: "offbudget", date: "2026-09-22", amount: -500, category: "food" },
+      { id: "tombstone-spend", account: "cash", date: "2026-09-21", amount: -900, category: "food", tombstone: true },
+      { id: "opening-balance", account: "cash", date: "2026-09-20", amount: 100000, starting_balance_flag: true },
+      { id: "failed-import", account: "cash", date: "2026-09-19", amount: -800, category: "food", error: "invalid" },
+    );
+    api.getAccounts.mockImplementation(async () => [
+      { id: "cash", name: "現金", closed: false }, { id: "offbudget", name: "投資口座", closed: false, offbudget: true },
+    ]);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 5250, expenseYen: 4584, balanceYen: 666,
+      categories: [
+        { categoryId: "food", categoryName: "食費", amountYen: 3884 },
+        { categoryId: "home", categoryName: "住居費", amountYen: 400 },
+        { categoryId: null, categoryName: "未分類", amountYen: 200 },
+        { categoryId: "income-category", categoryName: "給与", amountYen: 100 },
+      ],
+    });
+  });
+
+  it("returns an empty summary for zero months and handles the last valid calendar month", async () => {
+    const { ledger } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-10" })).resolves.toEqual({
+      yearMonth: "2026-10", incomeYen: 0, expenseYen: 0, balanceYen: 0, categories: [],
+    });
+    expect(() => ledger.getMonthlySummary({ yearMonth: "0000-01" })).toThrow("Invalid yearMonth.");
+    await expect(ledger.getMonthlySummary({ yearMonth: "9999-12" })).resolves.toMatchObject({ yearMonth: "9999-12", incomeYen: 0, expenseYen: 0 });
+  });
+
+  it("reads native category budgets, includes hidden expense categories, and scopes totals to budgeted categories", async () => {
+    const { ledger } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09",
+      categories: [
+        { categoryId: "food", categoryName: "食費", budgetYen: 10000, spentYen: 3884, remainingYen: 6116, usageRatio: 0.3884 },
+        { categoryId: "home", categoryName: "住居費", budgetYen: 5000, spentYen: 400, remainingYen: 4600, usageRatio: 0.08 },
+        { categoryId: "hidden", categoryName: "旧カテゴリ", budgetYen: -200, spentYen: 0, remainingYen: -200, usageRatio: 0 },
+      ],
+      budgetYen: 15000, spentYen: 4284, remainingYen: 10716, usageRatio: 0.2856,
+    });
+  });
+
+  it("sets a nonnegative budget only for expense categories and verifies Actual readback", async () => {
+    const { ledger, api, budgetValues } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 0 })).resolves.toBeUndefined();
+    expect(api.setBudgetAmount).toHaveBeenCalledWith("2026-09", "food", 0);
+    expect(budgetValues.get("food")).toBe(0);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "income-category", budgetYen: 100 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "missing", budgetYen: 100 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: -1 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: Number.MAX_SAFE_INTEGER + 1 })).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(api.setBudgetAmount).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed budget values, unsafe totals, invalid months, and native readback mismatches", async () => {
+    const { ledger, api, budgetValues } = fixture([{ id: "budget", name: "Local" }]);
+    api.getBudgetMonth.mockResolvedValueOnce({
+      month: "2026-09", incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [{ id: "food", budgeted: Number.MAX_SAFE_INTEGER + 1 }] }],
+    });
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    budgetValues.set("food", Number.MAX_SAFE_INTEGER);
+    budgetValues.set("home", 1);
+    await expect(ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    expect(() => ledger.getMonthlyBudgets({ yearMonth: "0000-01" })).toThrow("Invalid yearMonth.");
+    api.setBudgetAmount.mockResolvedValueOnce(undefined);
+    api.getBudgetMonth.mockResolvedValueOnce({
+      month: "2026-09", incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0,
+      categoryGroups: [{ categories: [{ id: "food", budgeted: 42 }] }],
+    });
+    budgetValues.set("food", 0);
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 41 })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+  });
+
+  it("creates schedules disabled until category rules are installed, retries matching names, and runs Actual's schedule service", async () => {
+    const { ledger, api, schedules, rules, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    const input = {
+      name: "家賃", kind: "expense" as const, amountYen: 80000, categoryId: "home", accountId: "cash",
+      frequency: "monthly" as const, startDate: "2026-09-27", postsTransaction: true,
+    };
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({
+      id: "schedule-1", name: "家賃", kind: "expense", amountYen: 80000, categoryId: "home", frequency: "monthly", editable: true,
+    });
+    expect(api.createSchedule).toHaveBeenCalledWith(expect.objectContaining({ posts_transaction: false, amount: -80000, amountOp: "is" }));
+    expect(rules[0]?.actions).toEqual([
+      { op: "link-schedule", value: "schedule-1" }, { field: "category", op: "set", value: "home" },
+    ]);
+    expect(api.updateSchedule.mock.calls.map(([, fields]) => fields)).toEqual([{ posts_transaction: true }]);
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({ id: "schedule-1", categoryId: "home" });
+    expect(api.createSchedule).toHaveBeenCalledTimes(1);
+    expect(schedules).toHaveLength(1);
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "schedule/force-run-service"))).toBe(true);
+  });
+
+  it("repairs a durable disabled native schedule after category rule persistence fails", async () => {
+    const { ledger, api, schedules, rules } = fixture([{ id: "budget", name: "Local" }]);
+    const input = {
+      name: "保険料", kind: "expense" as const, amountYen: 1200, categoryId: "home", accountId: "cash",
+      frequency: "yearly" as const, startDate: "2026-10-01", postsTransaction: true,
+    };
+    api.updateRule.mockRejectedValueOnce(new Error("write failed"));
+    await expect(ledger.createRecurringSchedule(input)).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    expect(schedules[0]?.posts_transaction).toBe(false);
+    await expect(ledger.createRecurringSchedule(input)).resolves.toMatchObject({ id: "schedule-1", editable: true });
+    expect(api.createSchedule).toHaveBeenCalledTimes(1);
+    expect(schedules[0]?.posts_transaction).toBe(true);
+    expect(rules[0]?.actions).toContainEqual({ field: "category", op: "set", value: "home" });
+  });
+
+  it("updates editable schedules without replacing unrelated rule actions and can delete unsupported schedules", async () => {
+    const { ledger, api, schedules, rules } = fixture([{ id: "budget", name: "Local" }]);
+    schedules.push({
+      id: "external", name: "電気代", rule: "rule-external", posts_transaction: true, amount: -12000, amountOp: "is",
+      account: "cash", payee: "shop", date: { frequency: "monthly", interval: 1, start: "2026-01-01", endMode: "never" },
+      next_date: "2026-10-01", completed: false,
+    });
+    rules.push({ id: "rule-external", stage: null, conditionsOp: "and", conditions: [
+      { field: "payee", op: "is", value: "shop" }, { field: "account", op: "is", value: "cash" },
+      { field: "date", op: "isapprox", value: schedules[0]?.date }, { field: "amount", op: "is", value: -12000 },
+    ], actions: [
+      { op: "link-schedule", value: "external" }, { field: "notes", op: "set", value: "keep me" },
+      { field: "category", op: "set", value: "food" },
+    ] });
+    const replacement = {
+      name: "電気代", kind: "expense" as const, amountYen: 13000, categoryId: "home", accountId: "cash",
+      frequency: "monthly" as const, startDate: "2026-01-01", postsTransaction: true,
+    };
+    await expect(ledger.updateRecurringSchedule("external", replacement)).resolves.toMatchObject({ amountYen: 13000, categoryId: "home" });
+    expect(rules[0]?.actions).toEqual([
+      { op: "link-schedule", value: "external" }, { field: "notes", op: "set", value: "keep me" },
+      { field: "category", op: "set", value: "home" },
+    ]);
+    expect(api.updateSchedule).toHaveBeenCalledWith("external", expect.objectContaining({ posts_transaction: false }));
+    expect(api.updateSchedule).toHaveBeenCalledWith("external", expect.objectContaining({
+      amount: -13000, date: { frequency: "monthly", interval: 1, start: "2026-01-01", endMode: "never" },
+    }));
+    expect(api.updateSchedule.mock.calls.find(([, fields]) => fields.amount === -13000)).toHaveLength(2);
+    await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
+    await expect(ledger.deleteRecurringSchedule("external")).resolves.toBeUndefined();
+    expect(schedules).toHaveLength(0);
+  });
+
+  it("returns search rows with split child metadata, one outgoing transfer, tombstones excluded, and closed accounts included", async () => {
+    const { ledger, rows, accounts, payees } = fixture([{ id: "budget", name: "Local" }]);
+    accounts.push({ id: "closed-card", name: "旧カード", closed: true });
+    payees.push({ id: "market", name: "合成スーパー" });
+    rows.find(row => row.id === "parent")!.category = "food";
+    rows.find(row => row.id === "parent")!.payee = "shop";
+    rows.find(row => row.id === "parent")!.notes = "親メモ";
+    rows.find(row => row.id === "split-a")!.payee = "market";
+    rows.find(row => row.id === "split-a")!.notes = "子メモ米";
+    rows.find(row => row.id === "split-b")!.notes = "子メモ日用品";
+    rows.push(
+      { id: "deleted-root", account: "cash", date: "2026-09-30", amount: -50, category: "food", tombstone: true },
+      { id: "deleted-child", parent_id: "parent", is_child: true, account: "cash", date: "2026-09-27", amount: -1, category: "deleted-category", tombstone: true },
+      { id: "closed-row", account: "closed-card", date: "2026-09-25", amount: -2500, category: "home", notes: "閉鎖口座も検索" },
+    );
+    rows.find(row => row.id === "transfer-in")!.account = "bank";
+    const found = await ledger.getSearchTransactions();
+    expect(found.find(row => row.transaction.id === "parent")).toMatchObject({
+      categoryIds: ["food", "home"], keywordValues: ["Synthetic Store", "親メモ", "合成スーパー", "子メモ米", "子メモ日用品"],
+      transaction: { isSplit: true, memo: "親メモ" },
+    });
+    expect(found.filter(row => row.transaction.kind === "transfer")).toHaveLength(1);
+    expect(found.find(row => row.transaction.id === "transfer-out")?.transaction.transferAccountId).toBe("bank");
+    expect(found.some(row => row.transaction.id === "transfer-in" || row.transaction.id === "deleted-root" || row.categoryIds.includes("deleted-category"))).toBe(false);
+    expect(found.find(row => row.transaction.id === "closed-row")?.transaction.accountId).toBe("closed-card");
+  });
+
+  it("searches the full Actual date range independently of recent-row limits and validates explicit dates", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    for (let index = 0; index < 125; index += 1) {
+      rows.push({ id: `old-${index.toString().padStart(3, "0")}`, account: "cash", date: "2001-01-01", amount: -1, category: "food" });
+    }
+    const results = await ledger.getSearchTransactions();
+    const oldRows = results.filter(row => row.transaction.date === "2001-01-01");
+    expect(oldRows).toHaveLength(125);
+    expect(oldRows[0]?.transaction.id).toBe("old-124");
+    expect(oldRows.at(-1)?.transaction.id).toBe("old-000");
+    await expect(ledger.getSearchTransactions({ startDate: "2001-01-01", endDate: "2001-01-01" })).resolves.toHaveLength(125);
+    await expect(ledger.getTransactionById("old-000")).resolves.toMatchObject({ id: "old-000", date: "2001-01-01", amountYen: -1 });
+    expect(() => ledger.getSearchTransactions({ startDate: "2026-02-30" })).toThrow("Invalid transaction date.");
+    expect(() => ledger.getSearchTransactions({ endDate: "2026/09/01" })).toThrow("Invalid transaction date.");
+    expect(() => ledger.getSearchTransactions({ startDate: "2027-01-01", endDate: "2026-01-01" })).toThrow("Start date must not follow end date.");
+  });
+
+  it("keeps complex schedules visible but read-only and advances only deleted due occurrences", async () => {
+    const { ledger, schedules, rules, sendHandlers } = fixture([{ id: "budget", name: "Local" }]);
+    schedules.push({
+      id: "complex", name: "複雑な定期取引", rule: "rule-complex", posts_transaction: true,
+      amount: -100, amountOp: "is", account: "cash", payee: "shop",
+      date: { frequency: "monthly", interval: 1, start: "2026-09-01", endMode: "never", patterns: [{ type: "day", value: 1 }] },
+      next_date: "2026-09-01", completed: false,
+    });
+    rules.push({ id: "rule-complex", stage: null, conditionsOp: "and", conditions: [], actions: [{ op: "link-schedule", value: "complex" }] });
+    await expect(ledger.listRecurringSchedules()).resolves.toMatchObject([{ id: "complex", editable: false }]);
+    await expect(ledger.deleteRecurringSchedule("complex")).resolves.toBeUndefined();
+
+    schedules.push({
+      id: "due", name: "月額", rule: "rule-due", posts_transaction: true, amount: -1000, amountOp: "is", account: "cash", payee: "shop",
+      date: { frequency: "monthly", interval: 1, start: "2026-09-01", endMode: "never" }, next_date: "2026-09-30", completed: false,
+    });
+    await ledger.skipDeletedScheduleOccurrences([
+      { id: "occurrence", date: "2026-09-30", amount: -1000, account: "cash", schedule: "due" },
+      { id: "stale", date: "2026-09-29", amount: -1000, account: "cash", schedule: "due" },
+    ]);
+    expect(schedules.find(schedule => schedule.id === "due")?.next_date).toBe("2026-10-01");
+    await ledger.skipDeletedScheduleOccurrences([
+      { id: "occurrence", date: "2026-09-30", amount: -1000, account: "cash", schedule: "due" },
+    ]);
+    expect(schedules.find(schedule => schedule.id === "due")?.next_date).toBe("2026-10-01");
+    const skipCalls = sendHandlers.flatMap(send => send.mock.calls).filter(([method]) => method === "schedule/skip-next-date");
+    expect(skipCalls).toHaveLength(1);
+  });
+
+  it("rejects unsafe monthly total and balance arithmetic", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.push({ id: "overflow", account: "cash", date: "2026-09-25", amount: -Number.MAX_SAFE_INTEGER, category: null });
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    await expect(ledger.getMonthlySpending({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+  });
+
+  it("nets positive refund splits against spending in each category", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.splice(0, rows.length,
+      { id: "net-split", account: "cash", date: "2026-09-15", amount: -300, is_parent: true },
+      { id: "food-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -700, category: "food" },
+      { id: "food-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 700, category: "food" },
+      { id: "home-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -700, category: "home" },
+      { id: "home-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 200, category: "home" },
+      { id: "transport-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -100, category: "transport" },
+      { id: "transport-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 300, category: "transport" },
+    );
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 0, expenseYen: 300, balanceYen: -300,
+      categories: [
+        { categoryId: "home", categoryName: "住居費", amountYen: 500 },
+        { categoryId: "transport", categoryName: "カテゴリ名不明", amountYen: -200 },
+      ],
+    });
+  });
+
+  it("rejects an unsafe positive category denominator even when split net total is safe", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.splice(0, rows.length,
+      { id: "large-net-split", account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, is_parent: true },
+      { id: "large-a", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, category: "food" },
+      { id: "large-refund", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: Number.MAX_SAFE_INTEGER, category: "transport" },
+      { id: "large-b", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, category: "home" },
+    );
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
   });
   it("accepts Actual's case formatting but rejects a different payee on read-back", async () => {
     const { ledger, api } = fixture([{ id: "budget", name: "Synthetic" }]);
@@ -310,6 +648,48 @@ describe("Actual browser ledger", () => {
     rows.find(row => row.parent_id === "receipt-created" && row.category === "home")!.amount = -399;
     await expect(ledger.importReceipt(input)).rejects.toMatchObject({ reason: "invalid_data" });
     expect(api.importTransactions).toHaveBeenCalledTimes(2);
+  });
+
+  it("edits a receipt through awaited native updates and converts normal and split rows", async () => {
+    const { ledger, api, rows, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const receipt = rows.find(row => row.id === "expense")!;
+    Object.assign(receipt, { imported_id: "kakeimatch:receipt:edit-1", notes: "keep this memo", cleared: true });
+    const splitInput = {
+      accountId: "bank", date: "2026-09-30", amountYen: -1000, merchant: "Synthetic Books",
+      categoryId: "food", importedId: "kakeimatch:receipt:edit-1",
+      splits: [{ categoryId: "food", amountYen: -600 }, { categoryId: "home", amountYen: -400 }],
+    };
+    await expect(ledger.editReceipt("expense", splitInput)).resolves.toMatchObject({
+      id: "expense", amountYen: -1000, date: splitInput.date, accountId: "bank", isSplit: true, cleared: true,
+    });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(2);
+    expect(receipt).toMatchObject({ imported_id: splitInput.importedId, notes: "keep this memo", cleared: true, is_parent: true });
+    const send = sendHandlers.at(-1)!;
+    const firstUpdateCount = send.mock.calls.filter(([method]) => method === "transactions-batch-update").length;
+    const repeated = await ledger.editReceipt("expense", splitInput);
+    expect(repeated).toMatchObject({ id: "expense", amountYen: -1000, isSplit: true });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(2);
+    expect(send.mock.calls.filter(([method]) => method === "transactions-batch-update")).toHaveLength(firstUpdateCount);
+
+    const simpleInput = { ...splitInput, accountId: "cash", date: "2026-10-01", amountYen: -900, categoryId: "home", splits: undefined };
+    await expect(ledger.editReceipt("expense", simpleInput)).resolves.toMatchObject({
+      id: "expense", amountYen: -900, date: simpleInput.date, accountId: "cash", categoryId: "home", isSplit: false, cleared: true,
+    });
+    expect(rows.filter(row => row.parent_id === "expense")).toHaveLength(0);
+    expect(receipt).toMatchObject({ imported_id: splitInput.importedId, notes: "keep this memo", cleared: true, is_parent: false });
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    expect(send.mock.calls.filter(([method, args]) => method === "transactions-batch-update" && args?.runTransfers === false).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rejects receipt edits for other transaction kinds, mismatched imports, and invalid split totals", async () => {
+    const { ledger, api, rows, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const base = { accountId: "cash", date: "2026-09-29", amountYen: -1000, merchant: "Synthetic Store", categoryId: "food", importedId: "kakeimatch:receipt:expected" };
+    await expect(ledger.editReceipt("expense", base)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    rows.find(row => row.id === "expense")!.imported_id = base.importedId;
+    await expect(ledger.editReceipt("expense", { ...base, splits: [{ categoryId: "food", amountYen: -999 }] })).rejects.toThrow("Invalid Actual receipt transaction.");
+    await expect(ledger.editReceipt("transfer-out", base)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "transactions-batch-update"))).toBe(false);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
   });
 
   it("preserves split totals during reconciliation while allowing equal amount confirmation", async () => {
@@ -392,7 +772,7 @@ describe("Actual browser ledger", () => {
   });
 
   it("updates ordinary manual transactions across dates, accounts, payees, categories and memo, preserving cleared", async () => {
-    const { ledger, api, rows, accounts } = fixture([{ id: "budget", name: "Synthetic" }]);
+    const { ledger, api, rows, accounts, sendHandlers } = fixture([{ id: "budget", name: "Synthetic" }]);
     accounts.push({ id: "bank", name: "銀行", closed: false });
     rows.find(row => row.id === "expense")!.cleared = true;
     const result = await ledger.updateTransaction("expense", {
@@ -404,10 +784,10 @@ describe("Actual browser ledger", () => {
       payeeName: "Synthetic Books", categoryId: "home", memo: "moved entry", cleared: true,
     });
     expect(api.createPayee).toHaveBeenCalledWith({ name: "Synthetic Books" });
-    expect(api.updateTransaction).toHaveBeenCalledWith("expense", expect.objectContaining({
-      account: "bank", date: "2099-06-07", amount: -2000, category: "home", notes: "moved entry",
-    }));
-    expect(api.updateTransaction.mock.calls[0]?.[1]).not.toHaveProperty("cleared");
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+    expect(sendHandlers.some(send => send.mock.calls.some(([method, args]) => method === "transactions-batch-update" &&
+      args?.updated?.some((update: Record<string, unknown>) => update.id === "expense" && update.account === "bank" && update.date === "2099-06-07" &&
+        update.amount === -2000 && update.category === "home" && update.notes === "moved entry" && update.cleared === true && update.imported_id === "receipt:1")))).toBe(true);
   });
 
   it("rejects invalid manual categories and edits to receipt, transfer, and split rows before writes", async () => {
@@ -482,6 +862,27 @@ describe("Actual browser ledger", () => {
     expect(rows.map(r => r.id)).toEqual(initialIds);
   });
 
+  it("returns signed balances for every account, including closed accounts, using Actual's default cutoff", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    api.getAccountBalance.mockImplementation(async id => id === "cash" ? -1200 : id === "bank" ? 5000 : -45);
+    await expect(ledger.getAccountBalances()).resolves.toEqual([
+      { id: "cash", name: "現金", closed: false, balanceYen: -1200 },
+      { id: "bank", name: "銀行", closed: false, balanceYen: 5000 },
+      { id: "closed", name: "旧口座", closed: true, balanceYen: -45 },
+    ]);
+    expect(api.getAccountBalance.mock.calls).toEqual([["cash"], ["bank"], ["closed"]]);
+  });
+
+  it("rejects unsafe balance values and surfaces provider failures", async () => {
+    const invalid = fixture([{ id: "budget", name: "Local" }]);
+    invalid.api.getAccountBalance.mockResolvedValueOnce(Number.MAX_SAFE_INTEGER + 1);
+    await expect(invalid.ledger.getAccountBalances()).rejects.toMatchObject({ reason: "invalid_data" });
+
+    const failing = fixture([{ id: "budget", name: "Local" }]);
+    failing.api.getAccountBalance.mockRejectedValueOnce(new Error("synthetic provider failure"));
+    await expect(failing.ledger.getAccountBalances()).rejects.toMatchObject({ reason: "operation" });
+  });
+
   it("rejects blank names and missing or hidden receipt masters at the adapter boundary", async () => {
     const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
     expect(() => ledger.addAccount("   ")).toThrow("名前");
@@ -491,6 +892,39 @@ describe("Actual browser ledger", () => {
     await expect(ledger.importReceipt({ accountId: "cash", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "food", importedId: "receipt:hidden" })).rejects.toThrow("支出カテゴリ");
     await expect(ledger.importReceipt({ accountId: "closed", date: "2026-09-29", amountYen: -100, merchant: "人工店舗", categoryId: "home", importedId: "receipt:closed" })).rejects.toThrow("支払元");
     expect(api.importTransactions).not.toHaveBeenCalled();
+  });
+
+  it("deletes and restores complete scalar, split, and transfer groups with the same IDs", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    for (const id of ["expense", "income", "parent"]) {
+      const before = await ledger.getTransactionTree(id);
+      expect(before.length).toBe(id === "parent" ? 3 : 1);
+      await ledger.deleteTransactionTree(before);
+      await expect(ledger.getTransactionTree(id)).resolves.toEqual([]);
+      await ledger.deleteTransactionTree(before);
+      await ledger.restoreTransactionTree(before);
+      await ledger.restoreTransactionTree(before);
+      expect(await ledger.getTransactionTree(id)).toEqual(before);
+    }
+    const transfer = await ledger.createTransfer({ date: "2026-09-30", amountYen: 100, sourceAccountId: "cash", destinationAccountId: "bank", memo: "Synthetic", importedId: "synthetic-delete-transfer" });
+    const pair = await ledger.getTransactionTree(transfer.id);
+    expect(pair).toHaveLength(2);
+    await ledger.deleteTransactionTree(pair);
+    expect(rows.some(row => pair.some(original => original.id === row.id))).toBe(false);
+    await ledger.restoreTransactionTree(pair);
+    expect(await ledger.getTransactionTree(transfer.id)).toEqual(pair);
+    expect(api.updateTransaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects stale deletions, partial groups and occupied IDs before native mutation", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    const snapshot = await ledger.getTransactionTree("expense");
+    rows.find(row => row.id === "expense")!.amount = -999;
+    await expect(ledger.deleteTransactionTree(snapshot)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.restoreTransactionTree(snapshot)).rejects.toBeInstanceOf(ActualMasterValidationError);
+    const split = await ledger.getTransactionTree("parent");
+    await expect(ledger.deleteTransactionTree(split.slice(0, 2))).rejects.toBeInstanceOf(ActualMasterValidationError);
+    await expect(ledger.getTransactionTree("split-a")).rejects.toBeInstanceOf(ActualMasterValidationError);
   });
 
 });

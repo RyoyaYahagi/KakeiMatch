@@ -58,3 +58,26 @@ button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-v
 .transaction-detail dt { font-size: .85rem; color: #58675d; margin-top: 12px; }
 .transaction-detail dd { margin: 4px 0; overflow-wrap: anywhere; }
 textarea { width: 100%; min-height: 88px; padding: 8px; font: inherit; border: 1px solid #a8b9ad; border-radius: 8px; }
+
+button.destructive { color: #a13a2c; border-color: #a13a2c; }
+.deletion-toast:empty { display: none; }
+.deletion-toast { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
+.deletion-toast span { font-size: 1rem; }
+.month-selector { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.month-selector button { min-width: 44px; font-size: 1.5rem; }
+.monthly-totals { margin: 12px 0; }
+.monthly-totals div { display: flex; justify-content: space-between; padding: 6px 0; }
+.monthly-totals dd { margin: 0; font-variant-numeric: tabular-nums; }
+.monthly-category-details { margin: 8px 0; }
+.category-donut { width: 180px; display: block; margin: 12px auto; }
+.category-donut [role=button] { cursor: pointer; }
+.category-donut [role=button]:focus-visible { outline: 2px solid #213a32; }
+.category-legend { list-style: none; padding: 0; }
+.category-legend-entry { display: block; width: 100%; text-align: left; color: #213a32; border: 0; border-left: 4px solid; border-radius: 0; background: transparent; padding: 8px; margin: 0; overflow-wrap: anywhere; }
+.account-balance-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.account-balance-row button { flex: 1; min-width: 0; }
+.account-balance { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.closed-accounts { margin-top: 12px; }
+.monthly-budget-details { margin: 8px 0; }
+.budget-category-list p { margin: 4px 0; overflow-wrap: anywhere; }
+progress { display: block; width: 100%; height: 12px; accent-color: #2f6959; }

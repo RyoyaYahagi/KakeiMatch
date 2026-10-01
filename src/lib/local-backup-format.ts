@@ -1,5 +1,8 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
+import { scheduleAuditSchema } from "./recurring-schedule";
+import { categoryLearningObservationSchema } from "./category-learning";
+import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
 const MAGIC = new TextEncoder().encode("KMATCHB1");
@@ -23,6 +26,19 @@ const probabilityMap = z.record(z.enum(CATEGORY_IDS), z.number().finite().min(0)
 const receiptItem = z.object({ id: z.string().min(1), name: z.string().min(1), amountYen: safeYen.nullable(), quantity: z.number().finite().positive().nullable().optional(), unitPriceYen: safeYen.nullable().optional(), categoryId: nullableString }).strict();
 const receiptAdjustment = z.object({ id: z.string().min(1), label: z.string().min(1), amountYen: z.number().int().safe(), targetItemId: nullableString.optional() }).strict();
 const detailFields = { items: z.array(receiptItem).max(100).optional(), adjustments: z.array(receiptAdjustment).max(100).optional(), taxAmountYen: safeYen.nullable().optional() };
+const confirmedReceipt = z.object({ merchant: z.string().min(1), purchasedDate: date, purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen, categoryId: z.string().min(1), accountId: z.string().min(1), ...detailFields }).strict();
+const appliedAt = isoDateTime.nullable();
+const transactionSnapshot = z.object({
+  id: z.string().min(1), date, amountYen: z.number().int().safe(), kind: z.enum(["expense", "income", "transfer"]),
+  payeeName: z.string().nullable(), categoryName: z.string().nullable(), accountId: z.string().min(1), cleared: z.boolean(),
+  categoryId: z.string().nullable().optional(), memo: z.string().nullable().optional(), importedId: z.string().nullable().optional(),
+  isSplit: z.boolean().optional(), transferAccountId: z.string().nullable().optional(), transferId: z.string().nullable().optional(),
+}).strict();
+const correctionAudit = z.union([
+  z.object({ runId: z.string(), statementId: z.string(), receiptId: z.string() }).strict(),
+  z.object({ targetType: z.literal("receipt"), receiptId: z.string().min(1), operationId: z.string().min(1), before: confirmedReceipt, after: confirmedReceipt, status: z.enum(["pending", "applied"]), createdAt: isoDateTime, appliedAt }).strict(),
+  z.object({ targetType: z.literal("transaction"), transactionId: z.string().min(1), operationId: z.string().min(1), before: transactionSnapshot, after: transactionSnapshot, status: z.enum(["pending", "applied"]), createdAt: isoDateTime, appliedAt }).strict(),
+]);
 const extraction = z.object({
   documentKind: z.enum(["receipt", "not_receipt", "unknown"]), merchant: z.string().nullable(), purchasedDate: date.nullable(),
   purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen.nullable(), taxAmountYen: safeYen.nullable(),
@@ -36,10 +52,19 @@ const receipt = z.object({
   extraction: extraction.nullable(),
   aiFlowId: z.uuid().optional(),
   itemCategories: z.array(nullableString).max(100).optional(),
-  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
-  confirmedValue: z.object({ merchant: z.string(), purchasedDate: date, purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen, categoryId: z.string(), accountId: z.string(), ...detailFields }).strict().nullable(),
-  registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
+  classificationAttempt: z.object({ flowId: z.uuid().optional(), model: z.string().min(1), attemptedAt: isoDateTime,
+    itemCategories: z.array(nullableString).max(100).optional(), categoryId: nullableString }).strict().optional(),
+  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "learned_rule", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
+  confirmedValue: confirmedReceipt.nullable(),
+  registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed", "deleted"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
 }).strict();
+const deletionAudit = z.object({
+  targetType: z.literal("deletion"), transactionId: z.string().min(1), operationId: z.string().min(1),
+  nativeSnapshot: z.array(nativeTransactionSnapshotSchema).min(1), receiptBefore: z.array(receipt),
+  status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
+  deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
+}).strict();
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
@@ -95,7 +120,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "reconciliation-run": return runResult.extend({ runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime }).strict();
     case "reconciliation-result": return runResult;
     case "reconciliation-resolution": return resolution;
-    case "correction-audit": return z.object({ runId: z.string(), statementId: z.string(), receiptId: z.string() }).strict();
+    case "correction-audit": return allCorrectionAudits;
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();

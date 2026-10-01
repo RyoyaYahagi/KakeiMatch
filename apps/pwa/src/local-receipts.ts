@@ -4,6 +4,7 @@ import { LocalDataStorageError, type LocalDataRepository } from "../../../src/li
 import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType } from "../../../src/lib/receipt-validation";
 import { getAiAccessToken } from "./ai-auth";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
+import { LocalCategoryLearning } from "./local-category-learning";
 
 const RECEIPT_KIND = "receipt-metadata" as const;
 const EXTRACTION_KIND = "receipt-extraction" as const;
@@ -11,6 +12,7 @@ const MAPPING_KIND = "merchant-mapping" as const;
 const MAX_GATEWAY_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_ITEMS_FOR_JEV = 30;
 const MAX_TEXT_FOR_JEV = 200;
+function receiptEditAuditId(id: string): string { return `receipt-correction:${id}`; }
 
 export type ReceiptItem = { id: string; name: string; amountYen: number | null; quantity?: number | null; unitPriceYen?: number | null; categoryId: string | null };
 export type ReceiptAdjustment = { id: string; label: string; amountYen: number; targetItemId?: string | null };
@@ -20,7 +22,7 @@ export type ConfirmedReceiptValue = {
   purchasedDate: string;
   purchasedTime: string | null;
   totalAmountYen: number;
-  /** Actual category ID after the user chooses; AI suggestions use CategoryId keys. */
+  /** Current Actual category ID; older receipts may contain a base CategoryId key. */
   categoryId: string;
   accountId: string;
   taxAmountYen?: number | null;
@@ -37,9 +39,21 @@ export type LocalReceipt = {
   /** Usage flow for the latest successful extraction; older receipts may lack it. */
   aiFlowId?: string;
   itemCategories?: Array<string | null>;
-  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
+  classificationAttempt?: { flowId?: string; model: string; attemptedAt: string; itemCategories?: Array<string | null>; categoryId: string | null };
+  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "learned_rule" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
   confirmedValue: ConfirmedReceiptValue | null;
-  registration: { status: "pending" | "processing" | "applied" | "failed"; actualTransactionId: string | null; lastError: string | null };
+  registration: { status: "pending" | "processing" | "applied" | "failed" | "deleted"; actualTransactionId: string | null; lastError: string | null };
+};
+
+export type ReceiptEditAudit = {
+  targetType: "receipt";
+  receiptId: string;
+  operationId: string;
+  before: ConfirmedReceiptValue;
+  after: ConfirmedReceiptValue;
+  status: "pending" | "applied";
+  createdAt: string;
+  appliedAt: string | null;
 };
 
 export class LocalReceiptServiceError extends Error {
@@ -93,27 +107,34 @@ function safeError(error: unknown): LocalReceiptServiceError {
   }
   return new LocalReceiptServiceError("unavailable", "処理できませんでした。通信状態と端末の空き容量を確認して再試行してください。");
 }
-function safeCategoryResponse(value: unknown): { choice: CategoryId | null; probabilities: Record<CategoryId, number>; model: string } | null {
+function safeCategoryResponse(value: unknown, categories: Array<{ id: string; name: string }>): { choice: string | null; probabilities: Record<CategoryId, number> | null; model: string } | null {
   if (!value || typeof value !== "object") return null;
   const body = value as Record<string, unknown>;
   const answers = body.answers as Record<string, unknown> | undefined;
   const answer = answers?.category as Record<string, unknown> | undefined;
   const probabilities = answer?.probabilities as Record<string, unknown> | undefined;
-  if (!answer || answer.type !== "choice" || !isCategoryId(answer.choice) || typeof body.model !== "string" || !body.model.trim() || !probabilities ||
+  const available = new Set(categories.map(category => category.id));
+  if (!answer || answer.type !== "choice" || typeof answer.choice !== "string" || !available.has(answer.choice) || typeof body.model !== "string" || !body.model.trim() || !probabilities ||
     typeof answer.confidence !== "number" || !Number.isFinite(answer.confidence) || answer.confidence < 0 || answer.confidence > 1) return null;
-  if (Object.keys(probabilities).length !== CATEGORY_IDS.length || !CATEGORY_IDS.every((id) => typeof probabilities[id] === "number" && Number.isFinite(probabilities[id]) && (probabilities[id] as number) >= 0 && (probabilities[id] as number) <= 1)) return null;
-  const parsed = Object.fromEntries(CATEGORY_IDS.map((id) => [id, probabilities[id]])) as Record<CategoryId, number>;
-  if (Math.abs(CATEGORY_IDS.reduce((sum, id) => sum + parsed[id], 0) - 1) > 0.02) return null;
-  const sorted = CATEGORY_IDS.map((id) => parsed[id]).sort((a, b) => b - a);
-  if (parsed[answer.choice] !== sorted[0]) return null;
-  const confident = sorted[0] >= 0.75 && sorted[0] - sorted[1] >= 0.15;
-  return { choice: confident ? answer.choice : null, probabilities: parsed, model: body.model };
+  const keys = Object.keys(probabilities);
+  if (keys.length !== categories.length || categories.some(category => typeof probabilities[category.id] !== "number" || !Number.isFinite(probabilities[category.id]) || (probabilities[category.id] as number) < 0 || (probabilities[category.id] as number) > 1)) return null;
+  const values = categories.map(category => probabilities[category.id] as number);
+  if (keys.some(key => !available.has(key)) || Math.abs(values.reduce((sum, probability) => sum + probability, 0) - 1) > 0.02) return null;
+  const ranked = [...values].sort((a, b) => b - a);
+  const chosen = probabilities[answer.choice] as number;
+  if (chosen !== ranked[0]) return null;
+  const confident = chosen >= 0.75 && chosen - (ranked[1] ?? 0) >= 0.15;
+  const baseProbabilities = keys.length === CATEGORY_IDS.length && CATEGORY_IDS.every(id => typeof probabilities[id] === "number")
+    ? Object.fromEntries(CATEGORY_IDS.map(id => [id, probabilities[id]])) as Record<CategoryId, number> : null;
+  return { choice: confident ? answer.choice : null, probabilities: baseProbabilities, model: body.model };
 }
 
 export class LocalReceiptService {
   private readonly fetchImpl: typeof fetch;
+  private readonly categoryLearning: LocalCategoryLearning;
   constructor(private readonly repository: LocalDataRepository, private readonly ledger: Ledger, private readonly options: LocalReceiptServiceOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.categoryLearning = new LocalCategoryLearning(repository);
   }
 
   async saveImage(file: Blob): Promise<LocalReceipt> {
@@ -178,7 +199,7 @@ export class LocalReceiptService {
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
       const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp,
-        itemCategories: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
+        itemCategories: undefined, classificationAttempt: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;
     } catch (error) { throw safeError(error); }
@@ -187,61 +208,152 @@ export class LocalReceiptService {
 
   async suggestCategory(id: string): Promise<string | null> {
     return this.withLock(id, async () => {
-    const receipt = await this.requireReceipt(id);
-    if (receipt.confirmedValue && (!receipt.extraction || receipt.registration.status !== "pending")) {
-      const id = receipt.confirmedValue.categoryId;
-      return isCategoryId(id) || (await this.ledger.listExpenseCategories()).some(c => c.id === id) ? id : null;
-    }
-    const merchant = receipt.extraction?.merchant ?? null;
-    try {
-      const mapping = merchant ? (await this.repository.list<{ normalizedMerchant?: string; categoryId?: unknown; actualCategoryId?: unknown }>(MAPPING_KIND))
-        .find(({ value }) => value.normalizedMerchant === normalizeMerchant(merchant) && (isCategoryId(value.categoryId) || (typeof value.actualCategoryId === "string" && value.actualCategoryId.length > 0))) : undefined;
-      if (!receipt.extraction?.items.length && mapping && (isCategoryId(mapping.value.categoryId) || typeof mapping.value.actualCategoryId === "string")) {
-        const categoryId = typeof mapping.value.actualCategoryId === "string" ? mapping.value.actualCategoryId : String(mapping.value.categoryId);
-        if (typeof mapping.value.actualCategoryId === "string" && !(await this.ledger.listExpenseCategories()).some(c => c.id === categoryId)) {
-          await this.repository.delete(mapping.id);
-          await this.save({ ...receipt, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null }, updatedAt: nowIso(this.options) });
-          return null;
-        }
-        const suggestion = { categoryId, source: "merchant_mapping" as const, probabilities: null, model: null, attemptedAt: nowIso(this.options) };
-        await this.save({ ...receipt, aiSuggestion: suggestion, updatedAt: suggestion.attemptedAt });
-      return suggestion.categoryId;
+      const receipt = await this.requireReceipt(id);
+      if (receipt.confirmedValue && (!receipt.extraction || receipt.registration.status !== "pending")) {
+        const confirmedId = receipt.confirmedValue.categoryId;
+        return isCategoryId(confirmedId) || (await this.ledger.listExpenseCategories()).some(category => category.id === confirmedId) ? confirmedId : null;
       }
       if (!receipt.extraction) return null;
-      // Reuse the validated local answer, including an uncertain result, rather
-      // than spending another provider attempt for identical receipt facts.
-      if (receipt.aiSuggestion.attemptedAt && (receipt.itemCategories || receipt.aiSuggestion.probabilities) && receipt.aiSuggestion.model) {
-        if (receipt.aiSuggestion.flowId === receipt.aiFlowId) return receipt.aiSuggestion.categoryId;
-        if (!receipt.aiSuggestion.flowId) {
-          const extraction = await this.repository.get<{ analyzedAt: string }>(`receipt-extraction:${id}`);
-          if (extraction && receipt.aiSuggestion.attemptedAt >= extraction.value.analyzedAt) return receipt.aiSuggestion.categoryId;
+      try {
+        const extraction = receipt.extraction;
+        const categories = await this.ledger.listExpenseCategories();
+        const available = new Set(categories.map(category => category.id));
+        const resolveCurrent = (candidate: unknown): string | null => {
+          if (typeof candidate !== "string" || !candidate) return null;
+          if (available.has(candidate)) return candidate;
+          return isCategoryId(candidate) ? categories.find(category => category.name === CATEGORY_LABELS[candidate])?.id ?? null : null;
+        };
+        const rules = await this.categoryLearning.suggest({
+          merchant: extraction.merchant,
+          items: extraction.items.map(item => ({ name: item.name })),
+          categories,
+        });
+        const merchantRule = resolveCurrent(rules.merchantCategoryId);
+        let legacyMerchantCategory: string | null = null;
+        if (extraction.items.length === 0 && extraction.merchant && !rules.hasMerchantHistory) {
+          const mappings = await this.repository.list<{ normalizedMerchant?: string; categoryId?: unknown; actualCategoryId?: unknown }>(MAPPING_KIND);
+          const mapping = mappings.find(({ value }) => value.normalizedMerchant === normalizeMerchant(extraction.merchant!));
+          if (mapping) {
+            legacyMerchantCategory = resolveCurrent(mapping.value.actualCategoryId ?? mapping.value.categoryId);
+            if (!legacyMerchantCategory) await this.repository.delete(mapping.id);
+          }
         }
-      }
-      if (!receipt.aiFlowId) throw gatewayError("invalid_flow");
-      if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのためカテゴリを提案できません。保存済みの内容は端末にあります。");
-      const items = receipt.extraction.items.slice(0, MAX_ITEMS_FOR_JEV).map(({ name, amountYen }) => ({ name: name.trim().slice(0, MAX_TEXT_FOR_JEV), amountYen }));
-      const state = { receipt: { merchant: merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: receipt.extraction.totalAmountYen, items } };
-      if (!state.receipt.merchant && items.length === 0) return null;
-      const token = await (this.options.getToken ?? getAiAccessToken)();
-      const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ ...state, flowId: receipt.aiFlowId }) });
-      if (!response.ok) throw gatewayError(await readGatewayCode(response));
-      const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
-      if (items.length) {
-        const parsedItems = items.map((_, index) => safeCategoryResponse({ model: body.model, answers: { category: body.answers?.[`item_${index}`] } }));
-        if (parsedItems.some(result => !result)) throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
+        const merchantCategory = merchantRule ?? legacyMerchantCategory;
+        const learnedItems = extraction.items.map((_, index) => resolveCurrent(rules.itemCategories[index]));
+        const itemCategories = extraction.items.map((_, index) => learnedItems[index] ?? merchantRule ?? null);
+        const usedLearningRule = !!merchantRule || learnedItems.some(Boolean);
+        const usedLegacyMapping = !merchantRule && !!legacyMerchantCategory;
+        const legacyJevAttempt = (receipt.aiSuggestion.source === "jev" || receipt.aiSuggestion.source === "unclassified") &&
+          !!receipt.aiSuggestion.attemptedAt && !!receipt.aiSuggestion.model
+          ? { flowId: receipt.aiSuggestion.flowId, model: receipt.aiSuggestion.model, attemptedAt: receipt.aiSuggestion.attemptedAt,
+            itemCategories: receipt.itemCategories, categoryId: receipt.aiSuggestion.categoryId }
+          : null;
+        const attempted = receipt.classificationAttempt ?? legacyJevAttempt;
+        let mayReuseJev = false;
+        if (attempted) {
+          if (attempted.flowId === receipt.aiFlowId && !!receipt.aiFlowId) mayReuseJev = true;
+          else if (!attempted.flowId) {
+            const savedExtraction = await this.repository.get<{ analyzedAt: string }>(`receipt-extraction:${id}`);
+            mayReuseJev = !!savedExtraction && attempted.attemptedAt >= savedExtraction.value.analyzedAt;
+          }
+        }
+        const sourceWithoutJev = usedLearningRule ? "learned_rule" as const : usedLegacyMapping ? "merchant_mapping" as const : "unclassified" as const;
+        const saveRulesOrMapping = async () => {
+          const categoryId = extraction.items.length ? itemCategories[0] ?? null : merchantCategory ?? resolveCurrent(receipt.aiSuggestion.categoryId);
+          const updated = { ...receipt, classificationAttempt: attempted ? (receipt.classificationAttempt ?? attempted) : receipt.classificationAttempt,
+            itemCategories: extraction.items.length ? itemCategories : receipt.itemCategories,
+            aiSuggestion: { categoryId, source: sourceWithoutJev, probabilities: null, model: null, attemptedAt: nowIso(this.options), ...(receipt.aiFlowId ? { flowId: receipt.aiFlowId } : {}) },
+            updatedAt: nowIso(this.options) };
+          await this.save(updated);
+          return categoryId;
+        };
+        const saveCurrentItems = async () => {
+          const categoryId = itemCategories[0] ?? null;
+          await this.save({ ...receipt, classificationAttempt: attempted ? (receipt.classificationAttempt ?? attempted) : receipt.classificationAttempt,
+            itemCategories, aiSuggestion: { categoryId, source: itemCategories.some(Boolean) ? "jev" : "unclassified",
+              probabilities: null, model: attempted?.model ?? null, attemptedAt: attempted?.attemptedAt ?? null,
+              ...(attempted?.flowId ? { flowId: attempted.flowId } : {}) }, updatedAt: nowIso(this.options) });
+          return categoryId;
+        };
+
+        if (extraction.items.length) {
+          if (mayReuseJev && attempted) {
+            const cached = attempted.itemCategories ?? [];
+            for (let index = 0; index < Math.min(itemCategories.length, MAX_ITEMS_FOR_JEV); index++) {
+              if (itemCategories[index] === null) itemCategories[index] = resolveCurrent(cached[index]) ?? null;
+            }
+          }
+          const unresolved = itemCategories.map((categoryId, index) => categoryId === null ? index : -1).filter(index => index >= 0);
+          const unresolvedForJev = unresolved.filter(index => index < MAX_ITEMS_FOR_JEV);
+          if (unresolvedForJev.length === 0) {
+            if (usedLearningRule || usedLegacyMapping) return await saveRulesOrMapping();
+            if (mayReuseJev) return await saveCurrentItems();
+            return null;
+          }
+          if (usedLearningRule || usedLegacyMapping) await saveRulesOrMapping();
+          if (mayReuseJev) {
+            if (usedLearningRule) return await saveRulesOrMapping();
+            return await saveCurrentItems();
+          }
+          if (!categories.length || categories.length > 100) return itemCategories[0] ?? null;
+          if (!receipt.aiFlowId) throw gatewayError("invalid_flow");
+          if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのためカテゴリを提案できません。保存済みの内容は端末にあります。");
+          const token = await (this.options.getToken ?? getAiAccessToken)();
+          const items = extraction.items.slice(0, MAX_ITEMS_FOR_JEV).map(({ name, amountYen }) => ({ name: name.trim().slice(0, MAX_TEXT_FOR_JEV), amountYen }));
+          const bodyState = { flowId: receipt.aiFlowId, itemIndexes: unresolvedForJev, categories: categories.map(({ id: categoryId, name }) => ({ id: categoryId, name })),
+            receipt: { merchant: extraction.merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: extraction.totalAmountYen, items } };
+          if (!bodyState.receipt.merchant && items.length === 0) return itemCategories[0] ?? null;
+          const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(bodyState) });
+          if (!response.ok) throw gatewayError(await readGatewayCode(response));
+          const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
+          if (typeof body.model !== "string" || !body.model.trim() || !body.answers) throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
+          const expectedKeys = new Set(unresolvedForJev.map(index => `item_${index}`));
+          if (Object.keys(body.answers).some(key => !expectedKeys.has(key)) || [...expectedKeys].some(key => !(key in body.answers!))) {
+            throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
+          }
+          const jevItems: Array<string | null> = extraction.items.map(() => null);
+          for (const itemIndex of unresolvedForJev) {
+            const parsed = safeCategoryResponse({ model: body.model, answers: { category: body.answers[`item_${itemIndex}`] } }, categories);
+            if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
+            itemCategories[itemIndex] = parsed.choice;
+            jevItems[itemIndex] = parsed.choice;
+          }
+          const timestamp = nowIso(this.options);
+          const categoryId = itemCategories[0] ?? null;
+          await this.save({ ...receipt, itemCategories,
+            classificationAttempt: { flowId: receipt.aiFlowId, model: body.model, attemptedAt: timestamp, itemCategories: jevItems, categoryId: null },
+            aiSuggestion: { categoryId, source: itemCategories.some(Boolean) ? "jev" : "unclassified", probabilities: null, model: body.model, attemptedAt: timestamp, flowId: receipt.aiFlowId }, updatedAt: timestamp });
+          return categoryId;
+        }
+
+        if (merchantCategory) return await saveRulesOrMapping();
+        if (mayReuseJev && attempted) {
+          const categoryId = resolveCurrent(attempted.categoryId);
+          await this.save({ ...receipt, classificationAttempt: receipt.classificationAttempt ?? attempted,
+            aiSuggestion: { categoryId, source: categoryId ? "jev" : "unclassified", probabilities: null, model: attempted.model,
+              attemptedAt: attempted.attemptedAt, ...(attempted.flowId ? { flowId: attempted.flowId } : {}) }, updatedAt: nowIso(this.options) });
+          return categoryId;
+        }
+        if (!extraction.merchant && extraction.items.length === 0) return null;
+        if (!categories.length || categories.length > 100) return null;
+        if (!receipt.aiFlowId) throw gatewayError("invalid_flow");
+        if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのためカテゴリを提案できません。保存済みの内容は端末にあります。");
+        const token = await (this.options.getToken ?? getAiAccessToken)();
+        const bodyState = { flowId: receipt.aiFlowId, categories: categories.map(({ id: categoryId, name }) => ({ id: categoryId, name })),
+          receipt: { merchant: extraction.merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: extraction.totalAmountYen, items: [] } };
+        const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(bodyState) });
+        if (!response.ok) throw gatewayError(await readGatewayCode(response));
+        const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
+        if (!body.answers || Object.keys(body.answers).length !== 1 || !Object.hasOwn(body.answers, "category")) {
+          throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
+        }
+        const parsed = safeCategoryResponse({ model: body.model, answers: { category: body.answers?.category } }, categories);
+        if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
         const timestamp = nowIso(this.options);
-        const itemCategories = parsedItems.map(result => result!.choice);
-        // Items beyond the API limit remain unclassified for manual confirmation.
-        while (itemCategories.length < receipt.extraction.items.length) itemCategories.push(null);
-        await this.save({ ...receipt, itemCategories, aiSuggestion: { categoryId: itemCategories[0] ?? null, source: itemCategories.some(Boolean) ? "jev" : "unclassified", probabilities: null, model: String(body.model), attemptedAt: timestamp, flowId: receipt.aiFlowId }, updatedAt: timestamp });
-        return itemCategories[0] ?? null;
-      }
-      const parsed = safeCategoryResponse(body);
-      if (!parsed) throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
-      const suggestion = { categoryId: parsed.choice, source: parsed.choice ? "jev" as const : "unclassified" as const, probabilities: parsed.probabilities, model: parsed.model, attemptedAt: nowIso(this.options), flowId: receipt.aiFlowId };
-      await this.save({ ...receipt, aiSuggestion: suggestion, updatedAt: suggestion.attemptedAt });
-      return parsed.choice;
-    } catch (error) { throw safeError(error); }
+        await this.save({ ...receipt, classificationAttempt: { flowId: receipt.aiFlowId, model: parsed.model, attemptedAt: timestamp, categoryId: parsed.choice },
+          aiSuggestion: { categoryId: parsed.choice, source: parsed.choice ? "jev" : "unclassified", probabilities: parsed.probabilities, model: parsed.model, attemptedAt: timestamp, flowId: receipt.aiFlowId }, updatedAt: timestamp });
+        return parsed.choice;
+      } catch (error) { throw safeError(error); }
     });
   }
 
@@ -252,24 +364,113 @@ export class LocalReceiptService {
     if (receipt.registration.status !== "pending") throw new LocalReceiptServiceError("registration_locked", "登録処理中、登録済み、または結果確認中の内容は変更できません。登録を再試行して状態を確認してください。");
     const timestamp = nowIso(this.options);
     const updated = { ...receipt, confirmedValue: { ...confirmedValue, merchant: confirmedValue.merchant.trim() }, updatedAt: timestamp, registration: { status: "pending" as const, actualTransactionId: null, lastError: null } };
-    await this.save(updated);
-    const normalizedMerchant = normalizeMerchant(updated.confirmedValue!.merchant);
-    const effectiveCategories = new Set((confirmedValue.items ?? []).map(item => item.categoryId ?? confirmedValue.categoryId));
-    const mappedCategory = effectiveCategories.size === 1 ? [...effectiveCategories][0] : confirmedValue.categoryId;
-    if (normalizedMerchant && effectiveCategories.size <= 1) {
-      const categoryMapping = isCategoryId(mappedCategory)
-        ? { normalizedMerchant, categoryId: mappedCategory }
-        : { normalizedMerchant, actualCategoryId: mappedCategory };
-      await this.repository.put({ id: `merchant:${encodeURIComponent(normalizedMerchant)}`, kind: MAPPING_KIND, value: categoryMapping, updatedAt: timestamp });
-    }
+    const categories = await this.ledger.listExpenseCategories();
+    const learningRecords = this.categoryLearning.recordsForConfirmation(id, updated.confirmedValue!, categories, timestamp);
+    await this.repository.putRecords([
+      { id: updated.id, kind: RECEIPT_KIND, value: updated, updatedAt: timestamp },
+      ...learningRecords,
+    ]);
     return updated;
     });
+  }
+
+  async getPendingEdit(id: string): Promise<ReceiptEditAudit | null> {
+    const record = await this.repository.get<ReceiptEditAudit>(receiptEditAuditId(id));
+    if (record?.kind !== "correction-audit" || record.value?.targetType !== "receipt" || record.value.status !== "pending") return null;
+    return record.value;
+  }
+
+  /** Updates the existing Actual transaction and records a durable, retryable audit intent. */
+  async edit(id: string, input: ConfirmedReceiptValue, expectedUpdatedAt?: string): Promise<LocalReceipt> {
+    return this.withLock(id, async () => {
+      const receipt = await this.requireReceipt(id);
+      const pending = await this.getPendingEdit(id);
+      if (pending) {
+        if (!receipt.confirmedValue || !receipt.registration.actualTransactionId) {
+          throw new LocalReceiptServiceError("edit_state_invalid", "変更の確認情報を開けませんでした。保存データを確認してください。");
+        }
+        return this.applyEdit(receipt, pending);
+      }
+      if (!validConfirmed(input)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
+      if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== receipt.updatedAt) {
+        throw new LocalReceiptServiceError("receipt_changed", "別の画面で内容が変更されています。最新の内容を開き直してください。");
+      }
+      if (receipt.registration.status !== "applied" || !receipt.registration.actualTransactionId || !receipt.confirmedValue) {
+        throw new LocalReceiptServiceError("edit_unavailable", "登録済みの支出だけ編集できます。");
+      }
+      const categories = await this.ledger.listExpenseCategories();
+      const accounts = await this.ledger.listOpenAccounts();
+      const normalized = { ...input, merchant: input.merchant.trim() };
+      const available = (categoryId: string) => {
+        const base = isCategoryId(categoryId) ? categoryId : null;
+        return categories.some(category => category.id === categoryId || (base !== null && category.name === CATEGORY_LABELS[base]));
+      };
+      if (!accounts.some(account => account.id === normalized.accountId)) throw new LocalReceiptServiceError("account_unavailable", "支払元を選び直してください。");
+      if (!available(normalized.categoryId) || (normalized.items ?? []).some(item => item.categoryId !== null && !available(item.categoryId))) {
+        throw new LocalReceiptServiceError("category_unavailable", "カテゴリを選び直してください。");
+      }
+      const allocations = receiptAllocations(normalized);
+      const resolved = allocations.map(row => {
+        const base = isCategoryId(row.categoryId) ? row.categoryId : null;
+        const category = categories.find(candidate => candidate.id === row.categoryId || (base !== null && candidate.name === CATEGORY_LABELS[base]));
+        if (!category) throw new LocalReceiptServiceError("category_unavailable", "品目のカテゴリを選び直してください。");
+        return { categoryId: category.id, amountYen: -row.amountYen };
+      });
+      const combined = new Map<string, number>();
+      for (const row of resolved) combined.set(row.categoryId, (combined.get(row.categoryId) ?? 0) + row.amountYen);
+      const splits = [...combined].map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
+      const timestamp = nowIso(this.options);
+      const audit: ReceiptEditAudit = {
+        targetType: "receipt", receiptId: id, operationId: crypto.randomUUID(), before: receipt.confirmedValue,
+        after: normalized, status: "pending", createdAt: timestamp, appliedAt: null,
+      };
+      await this.repository.put({ id: receiptEditAuditId(id), kind: "correction-audit", value: audit, updatedAt: timestamp });
+      // Continue from the durable intent. If Actual succeeds but the local commit fails,
+      // retry repeats this same importedId and target transaction with the saved payload.
+      return this.applyEdit(receipt, audit, splits);
+    });
+  }
+
+  private async applyEdit(receipt: LocalReceipt, audit: ReceiptEditAudit, precomputedSplits?: Array<{ categoryId: string; amountYen: number }>): Promise<LocalReceipt> {
+    const categories = await this.ledger.listExpenseCategories();
+    const allocations = receiptAllocations(audit.after);
+    const resolved = allocations.map(row => {
+      const base = isCategoryId(row.categoryId) ? row.categoryId : null;
+      const category = categories.find(candidate => candidate.id === row.categoryId || (base !== null && candidate.name === CATEGORY_LABELS[base]));
+      if (!category) throw new LocalReceiptServiceError("category_unavailable", "カテゴリを選び直してください。");
+      return { categoryId: category.id, amountYen: -row.amountYen };
+    });
+    const combined = new Map<string, number>();
+    for (const row of (precomputedSplits ?? resolved)) combined.set(row.categoryId, (combined.get(row.categoryId) ?? 0) + row.amountYen);
+    const splits = [...combined].map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
+    const categoryId = splits[0]?.categoryId;
+    if (!categoryId || !receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_state_invalid", "登録済み取引を確認できませんでした。");
+    try {
+      const transaction = await this.ledger.editReceipt(receipt.registration.actualTransactionId, {
+        accountId: audit.after.accountId, date: audit.after.purchasedDate, amountYen: -audit.after.totalAmountYen,
+        merchant: audit.after.merchant, categoryId, importedId: `kakeimatch:${receipt.id}`,
+        ...(splits.length > 1 ? { splits } : {}),
+      });
+      if (transaction.id !== receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_readback_failed", "変更後の内容を家計簿で確認できませんでした。再試行してください。");
+      const appliedAt = nowIso(this.options);
+      const updated: LocalReceipt = { ...receipt, confirmedValue: audit.after, updatedAt: appliedAt };
+      const appliedAudit: ReceiptEditAudit = { ...audit, status: "applied", appliedAt };
+      const learningRecords = this.categoryLearning.recordsForConfirmation(receipt.id, audit.after, categories, appliedAt);
+      await this.repository.putRecords([
+        { id: receipt.id, kind: RECEIPT_KIND, value: updated, updatedAt: appliedAt },
+        { id: receiptEditAuditId(receipt.id), kind: "correction-audit", value: appliedAudit, updatedAt: appliedAt },
+        { id: `${receiptEditAuditId(receipt.id)}:${audit.operationId}`, kind: "correction-audit", value: appliedAudit, updatedAt: appliedAt },
+        ...learningRecords,
+      ]);
+      return updated;
+    } catch (error) { throw safeError(error); }
   }
 
   async register(id: string): Promise<LocalReceipt> {
     return this.withLock(id, async () => {
       const receipt = await this.requireReceipt(id);
       if (receipt.registration.status === "applied") return receipt;
+      if (receipt.registration.status === "deleted") throw new LocalReceiptServiceError("registration_locked", "削除済みの支出は再登録できません。元に戻してから再試行してください。");
       if (!receipt.confirmedValue) throw new LocalReceiptServiceError("confirmation_required", "登録内容を確認して保存してください。");
       // Reject unavailable selections before locking a pending receipt for a write.
       const categories = await this.ledger.listExpenseCategories();

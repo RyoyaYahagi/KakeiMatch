@@ -1,3 +1,4 @@
+import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { CATEGORY_LABELS } from '../../../src/lib/category';
 
@@ -44,7 +45,7 @@ function nameForm(labelText: string, initialValue: string, submitText: string, s
 export function initializeMasterUi(
   container: HTMLElement,
   ledger: ReturnType<typeof createActualBrowserLedger>,
-  options: { onBack: () => void },
+  options: { onBack: () => void; onTransaction?: (transaction: ActualTransaction) => Promise<void>; beforeDeleteAccount?: (id: string) => Promise<void>; beforeDeleteCategory?: (id: string) => Promise<void> },
 ): () => void {
   const section = element('section');
   section.className = 'master-settings';
@@ -167,6 +168,7 @@ export function initializeMasterUi(
     }));
     if (usage === 0) section.append(button('カテゴリを削除する', async () => {
       if (!window.confirm(`「${category.name}」を削除しますか？`)) return;
+      await options.beforeDeleteCategory?.(category.id);
       await ledger.deleteCategory(category.id);
       await categoriesPage(listKind);
     }));
@@ -183,16 +185,32 @@ export function initializeMasterUi(
   }
 
   async function accountsPage() {
-    showPage('支払元');
+    showPage('支払元・口座残高');
     section.append(button('支払元を追加する', accountCreatePage, true));
-    const list = element('ul', undefined, 'master-list');
+    const accounts = await ledger.getAccountBalances();
+    const list = element('ul', undefined, 'master-list account-balances');
+    const closed = element('details'); closed.className = 'closed-accounts';
+    closed.append(element('summary', `利用終了の口座 ${accounts.filter(account => account.closed).length}件`));
+    const closedList = element('ul', undefined, 'master-list account-balances'); closed.append(closedList);
     section.append(list);
-    const accounts = await ledger.listAccounts();
-    if (!accounts.length) list.append(element('li', '支払元がありません。'));
+    if (!accounts.some(account => !account.closed)) list.append(element('li', '利用中の支払元がありません。'));
     for (const account of accounts) {
-      const row = element('li', undefined, 'master-row');
-      row.append(button(`${account.name} · ${account.closed ? '利用終了' : '利用中'}`, () => accountDetailPage(account)));
-      list.append(row);
+      const row = element('li', undefined, 'master-row account-balance-row'); row.dataset.accountId = account.id;
+      row.append(button(`${account.name} · ${account.closed ? '利用終了' : '利用中'}`, () => accountDetailPage(account)), element('span', `${account.balanceYen < 0 ? '−' : ''}${yen(account.balanceYen)}`, 'account-balance'));
+      (account.closed ? closedList : list).append(row);
+    }
+    if (accounts.some(account => account.closed)) section.append(closed);
+  }
+
+  async function accountTransactionsPage(account: Account) {
+    showPage(`${account.name}の記録`, () => accountDetailPage(account));
+    const rows = (await ledger.getTransactions({ startDate: '0001-01-01', endDate: '9999-12-31' })).filter(row => row.accountId === account.id);
+    const list = element('ul', undefined, 'master-list'); section.append(list);
+    if (!rows.length) list.append(element('li', 'この口座の記録はありません。'));
+    for (const row of rows) {
+      const entry = element('li', undefined, 'master-row');
+      const label = `${row.date} · ${row.payeeName || (row.kind === 'income' ? '収入' : row.kind === 'transfer' ? '口座間振替' : '支出')} · ${row.amountYen < 0 ? '−' : '+'}${yen(row.amountYen)}`;
+      entry.append(options.onTransaction ? button(label, () => options.onTransaction!(row)) : element('span', label)); list.append(entry);
     }
   }
 
@@ -210,6 +228,7 @@ export function initializeMasterUi(
     const usage = await ledger.getAccountUsage(account.id);
     const balance = usage.balanceYen === 0 ? yen(0) : `${usage.balanceYen < 0 ? '−' : '+'}${yen(usage.balanceYen)}`;
     section.append(element('p', `支払元：${account.name}`), element('p', `状態：${account.closed ? '利用終了' : '利用中'}`), element('p', `記録：${usage.transactionCount}件`), element('p', `残高：${balance}`));
+    section.append(button('口座の記録を見る', () => accountTransactionsPage(account)));
     section.append(button('編集する', () => accountEditPage(account), true));
     if (account.closed) section.append(button('利用を再開する', async () => {
       await ledger.reopenAccount(account.id);
@@ -227,6 +246,7 @@ export function initializeMasterUi(
       checkbox.className = 'master-checkbox';
       const remove = button('完全に削除する', async () => {
         if (!checkbox.checked || !window.confirm(`「${account.name}」を完全に削除します。元に戻せません。`)) return;
+        await options.beforeDeleteAccount?.(account.id);
         await ledger.deleteAccount(account.id);
         await accountsPage();
       });

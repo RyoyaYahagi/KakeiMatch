@@ -85,6 +85,31 @@ async function rewriteEntry(file: Blob, path: string, replacement: Uint8Array): 
 }
 
 describe("portable local backup format", () => {
+  it("preserves custom-category learning observations and learned suggestions", async () => {
+    const data = fixture();
+    const observation = { targetType: "category-learning", receiptId: "receipt:synthetic-1", normalizedMerchant: "synthetic cafe", merchantCategoryId: "custom-category",
+      items: [{ normalizedName: "synthetic coffee", categoryId: "custom-category" }], confirmedAt: time };
+    data.records.push({ id: "category-learning:receipt:synthetic-1", kind: "correction-audit", updatedAt: time, value: observation });
+    const receipt = data.records[0].value as { aiSuggestion: { source: string }; classificationAttempt?: unknown };
+    receipt.aiSuggestion.source = "learned_rule";
+    receipt.classificationAttempt = { model: "synthetic-model", attemptedAt: time, itemCategories: [null, "custom-category"], categoryId: null };
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.at(-1)?.value).toEqual(observation);
+    expect((restored.localData.records[0].value as typeof receipt).classificationAttempt).toEqual(receipt.classificationAttempt);
+    observation.items[0].categoryId = "";
+    await expect(create(data)).rejects.toThrow(/correction-audit/);
+  });
+  it("round-trips a pending schedule creation and rejects malformed operation intents", async () => {
+    const data = fixture();
+    const intent = { targetType: "schedule", operationId: "synthetic-schedule-operation", operation: "create", scheduleId: null,
+      input: { name: "Synthetic Subscription", kind: "expense", amountYen: 1500, categoryId: "synthetic-category", accountId: "synthetic-account", frequency: "monthly", startDate: "2026-10-01", postsTransaction: true },
+      status: "pending", createdAt: time, appliedAt: null };
+    data.records.push({ id: "schedule-operation:synthetic-schedule-operation", kind: "correction-audit", value: intent, updatedAt: time });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.at(-1)?.value).toEqual(intent);
+    intent.input.amountYen = 0.5;
+    await expect(create(data)).rejects.toThrow(/correction-audit/);
+  });
   it("round-trips new receipt flow IDs while accepting receipts written before the cutover", async () => {
     const data = fixture();
     data.records[0].value = { ...(data.records[0].value as Record<string, unknown>), aiFlowId: "00000000-0000-4000-8000-000000000001" };
@@ -112,10 +137,30 @@ describe("portable local backup format", () => {
       { id: "reconciliation-result:synthetic-run", kind: "reconciliation-result", updatedAt: time, value: { ruleVersion: "1.0.0", candidates: [], statementResults: [], receiptResults: [] } },
       { id: "reconciliation-resolution:statement-synthetic", kind: "reconciliation-resolution", updatedAt: time, value: { id: "reconciliation-resolution:statement-synthetic", runId: "synthetic-run", statementId: "statement-synthetic", resolution: "no_receipt", source: "user", receiptId: null, categoryId: "synthetic-category", accountId: "synthetic-account", statementAmountYen: 1200, importedId: "kakeimatch:statement:statement-synthetic", status: "applied", actualTransactionId: "actual-synthetic-transaction", errorCode: null, createdAt: time, updatedAt: time } },
       { id: "reconciliation-pair-rejection:synthetic-run:statement-synthetic:receipt-synthetic", kind: "correction-audit", updatedAt: time, value: { runId: "synthetic-run", statementId: "statement-synthetic", receiptId: "receipt-synthetic" } },
+      { id: "receipt-correction:receipt-synthetic", kind: "correction-audit", updatedAt: time, value: { targetType: "receipt", receiptId: "receipt-synthetic", operationId: "operation-synthetic", before: { merchant: "Synthetic", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 1000, categoryId: "synthetic-category", accountId: "synthetic-account" }, after: { merchant: "Synthetic Updated", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 1100, categoryId: "synthetic-category", accountId: "synthetic-account" }, status: "pending", createdAt: time, appliedAt: null } },
+      { id: "transaction-correction:actual-synthetic", kind: "correction-audit", updatedAt: time, value: { targetType: "transaction", transactionId: "actual-synthetic", operationId: "operation-synthetic", before: { id: "actual-synthetic", date: "2026-09-30", amountYen: -1000, kind: "expense", payeeName: "Synthetic", categoryName: "Food", accountId: "synthetic-account", cleared: false, categoryId: "synthetic-category", memo: null, importedId: "synthetic-import" }, after: { id: "actual-synthetic", date: "2026-09-30", amountYen: -1100, kind: "expense", payeeName: "Synthetic", categoryName: "Food", accountId: "synthetic-account", cleared: false, categoryId: "synthetic-category", memo: null, importedId: "synthetic-import" }, status: "applied", createdAt: time, appliedAt: time } },
     ] as LocalDataBackupV2["records"];
     data.records.push(...values);
     const result = await readPortableBackup(await create(data));
     expect(new Set(result.localData.records.map(({ kind }) => kind)).size).toBe(11);
+  });
+
+  it("preserves deletion undo snapshots in archives and rejects unverified native fields", async () => {
+    const data = fixture();
+    const originalReceipt = data.records.find(record => record.kind === "receipt-metadata")!.value;
+    const nativeSnapshot = [{ id: "actual-synthetic-transaction", date: "2026-09-28", amount: -1200, account: "synthetic-account", payee: "synthetic-payee-id", category: "food", cleared: false, reconciled: false, imported_id: "kakeimatch:receipt:synthetic-1", is_parent: false }];
+    data.records.push({ id: "transaction-deletion:operation-synthetic", kind: "correction-audit", updatedAt: time, value: {
+      targetType: "deletion", transactionId: "actual-synthetic-transaction", operationId: "operation-synthetic", nativeSnapshot,
+      receiptBefore: [originalReceipt], status: "deleted", createdAt: time, deletedAt: time,
+      undoUntil: "2026-09-30T00:00:10.000Z", completedAt: time,
+    } });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.find(record => record.id === "transaction-deletion:operation-synthetic")?.value).toMatchObject({ status: "deleted", nativeSnapshot, receiptBefore: [originalReceipt] });
+
+    const unverified = structuredClone(data);
+    const deletion = unverified.records.find(record => record.kind === "correction-audit" && record.id.startsWith("transaction-deletion:"))!;
+    ((deletion.value as { nativeSnapshot: Array<Record<string, unknown>> }).nativeSnapshot[0]!).unknownField = "must reject";
+    await expect(create(unverified)).rejects.toThrow(/correction-audit/);
   });
 
   it("records missing source artifacts without inventing blob contents", async () => {

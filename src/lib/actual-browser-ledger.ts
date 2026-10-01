@@ -2,11 +2,12 @@
 
 import { z } from "zod";
 import { normalizeMerchant } from "./category";
-import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction, ManualTransactionInput, TransferInput, TransferUpdateInput } from "@/lib/actual-ledger";
+import type { ActualAccount, ActualCategory, ActualLedger, ActualMonthlySummary, ActualTransaction, ManualTransactionInput, TransferInput, TransferUpdateInput } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
-  | "getBudgetMonths" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
+  | "getBudgetMonths" | "getBudgetMonth" | "setBudgetAmount" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
+  | "getSchedules" | "createSchedule" | "updateSchedule" | "deleteSchedule" | "getRules" | "updateRule"
   | "createCategory" | "updateCategory" | "getPayees" | "createPayee" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
   | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
@@ -14,8 +15,48 @@ type ActualApi = Pick<typeof import("@actual-app/api"),
 >;
 type ActualSend = Awaited<ReturnType<ActualApi["init"]>>["send"];
 
+export type ActualMonthlyBudgetCategory = {
+  categoryId: string;
+  categoryName: string;
+  budgetYen: number;
+  spentYen: number;
+  remainingYen: number;
+  usageRatio: number | null;
+};
+export type ActualMonthlyBudgets = {
+  yearMonth: string;
+  categories: ActualMonthlyBudgetCategory[];
+  budgetYen: number;
+  spentYen: number;
+  remainingYen: number;
+  usageRatio: number | null;
+};
+
+export type RecurringScheduleInput = {
+  name: string;
+  kind: "expense" | "income";
+  amountYen: number;
+  categoryId: string;
+  accountId: string;
+  frequency: "monthly" | "weekly" | "yearly";
+  startDate: string;
+  postsTransaction: boolean;
+};
+export type RecurringSchedule = RecurringScheduleInput & {
+  id: string;
+  nextDate: string | null;
+  completed: boolean;
+  editable: boolean;
+};
+export type ActualSearchTransaction = {
+  transaction: ActualTransaction;
+  categoryIds: string[];
+  keywordValues: string[];
+};
+
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
+const budgetCategorySchema = z.object({ id: idSchema, budgeted: z.number().int().safe() }).passthrough();
 const manualTransactionSchema = z.object({
   kind: z.enum(["expense", "income"]),
   amountYen: z.number().int().safe().positive(),
@@ -34,6 +75,8 @@ const actualTransactionSchema = z.object({
   payee: z.string().nullable().optional(),
   category: z.string().nullable().optional(),
   cleared: z.boolean().optional(),
+  reconciled: z.boolean().optional(),
+  sort_order: z.number().optional(),
   transfer_id: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
   imported_id: z.string().nullable().optional(),
@@ -47,12 +90,20 @@ const actualTransactionSchema = z.object({
   })).optional(),
 });
 
+/** Portable scalar values needed to delete or restore an entire native transaction group. */
+export const nativeTransactionSnapshotSchema = actualTransactionSchema.omit({ subtransactions: true }).extend({
+  error: z.object({ type: z.literal("SplitTransactionError"), version: z.literal(1), difference: z.number().int().safe() }).strict().nullable().optional(), imported_payee: z.string().nullable().optional(),
+  starting_balance_flag: z.boolean().optional(), schedule: z.string().nullable().optional(),
+}).strict();
+export type NativeTransactionSnapshot = z.infer<typeof nativeTransactionSnapshotSchema>;
+
 export class ActualMasterValidationError extends Error {
   constructor(message: string) { super(message); this.name = "ActualMasterValidationError"; }
 }
 
 export type ManagedCategory = { id: string; name: string; isIncome: boolean; hidden: boolean; groupName: string };
 export type ManagedAccount = { id: string; name: string; closed: boolean };
+export type ManagedAccountBalance = ManagedAccount & { balanceYen: number };
 
 export class ActualBudgetSelectionRequiredError extends Error {
   constructor() {
@@ -94,6 +145,23 @@ export type ActualBrowserLedgerOptions = {
 };
 
 type NativeTransaction = z.infer<typeof actualTransactionSchema>;
+// Actual stores null categories on split parents even though its public model omits null.
+type ActualBatchTransaction = {
+  id: string;
+  account: string;
+  date: string;
+  amount: number;
+  payee?: string | null;
+  category?: string | null;
+  parent_id?: string | null;
+  notes?: string;
+  imported_id?: string;
+  cleared?: boolean;
+  reconciled?: boolean;
+  is_parent?: boolean;
+  is_child?: boolean;
+  sort_order?: number;
+};
 
 type RuntimeState = { initialized: boolean; dataDir?: string; loadedBudgetId?: string; send?: ActualSend; tail: Promise<void> };
 const runtimeByApi = new WeakMap<object, RuntimeState>();
@@ -149,10 +217,75 @@ function validateDate(value: string): string {
 }
 
 function lastDayOfMonth(yearMonth: string): string {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error("Invalid yearMonth.");
-  const next = new Date(`${yearMonth}-01T00:00:00.000Z`);
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  return new Date(next.getTime() - 86_400_000).toISOString().slice(0, 10);
+  const parsed = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(yearMonth);
+  if (!parsed || Number(parsed[1]) === 0) throw new Error("Invalid yearMonth.");
+  const year = Number(parsed[1]), month = Number(parsed[2]);
+  const end = new Date(0);
+  end.setUTCFullYear(year, month, 0);
+  end.setUTCHours(0, 0, 0, 0);
+  return end.toISOString().slice(0, 10);
+}
+
+function addSafeYen(total: number, amount: number): number {
+  const result = total + amount;
+  if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(result)) throw new ActualBrowserUnavailableError("invalid_data");
+  return result;
+}
+
+function summarizeMonth(rows: NativeTransaction[], categories: Array<{ id: string; name: string }>, yearMonth: string): ActualMonthlySummary {
+  const categoryNames = new Map(categories.map(category => [category.id, category.name]));
+  const childrenByParent = new Map<string, NativeTransaction[]>();
+  for (const row of rows) {
+    if (!row.parent_id || row.is_child === false) continue;
+    const children = childrenByParent.get(row.parent_id) ?? [];
+    children.push(row);
+    childrenByParent.set(row.parent_id, children);
+  }
+  let incomeYen = 0, expenseYen = 0;
+  const categoryAmounts = new Map<string | null, number>();
+  const categoryNamesById = new Map<string | null, string>();
+  const addCategory = (categoryId: string | null | undefined, amountYen: number) => {
+    if (amountYen === 0) return;
+    const key = categoryId ?? null;
+    categoryAmounts.set(key, addSafeYen(categoryAmounts.get(key) ?? 0, amountYen));
+    categoryNamesById.set(key, key === null ? "未分類" : categoryNames.get(key) ?? "カテゴリ名不明");
+  };
+  const extended = rows as Array<NativeTransaction & { tombstone?: unknown; starting_balance_flag?: unknown; error?: unknown }>;
+  for (const row of extended) {
+    if (row.tombstone === true || row.starting_balance_flag === true || Boolean(row.error)) continue;
+    if (typeof row.date !== "string" || !dateSchema.safeParse(row.date).success) throw new ActualBrowserUnavailableError("invalid_data");
+    if (row.is_child || row.parent_id || row.transfer_id || !row.date.startsWith(`${yearMonth}-`)) continue;
+    if (!Number.isSafeInteger(row.amount)) throw new ActualBrowserUnavailableError("invalid_data");
+    if (row.amount > 0) incomeYen = addSafeYen(incomeYen, row.amount);
+    else if (row.amount < 0) expenseYen = addSafeYen(expenseYen, -row.amount);
+
+    if (row.amount >= 0) continue;
+    const children = childrenByParent.get(row.id) ?? [];
+    const split = row.is_parent === true || (row.subtransactions?.length ?? 0) > 0 || children.length > 0;
+    if (!split) {
+      addCategory(row.category, -row.amount);
+      continue;
+    }
+    if (!children.length) throw new ActualBrowserUnavailableError("invalid_data");
+    let childTotal = 0;
+    for (const child of children) {
+      const extra = child as NativeTransaction & { tombstone?: unknown; error?: unknown };
+      if (extra.tombstone === true || Boolean(extra.error) || !Number.isSafeInteger(child.amount)) {
+        throw new ActualBrowserUnavailableError("invalid_data");
+      }
+      childTotal = addSafeYen(childTotal, child.amount);
+      addCategory(child.category, -child.amount);
+    }
+    if (childTotal !== row.amount) throw new ActualBrowserUnavailableError("invalid_data");
+  }
+  const balanceYen = incomeYen - expenseYen;
+  if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
+  const categoryRows = [...categoryAmounts].filter(([, amountYen]) => amountYen !== 0).map(([categoryId, amountYen]) => ({
+    categoryId, categoryName: categoryNamesById.get(categoryId) ?? "未分類", amountYen,
+  })).sort((a, b) => b.amountYen - a.amountYen || a.categoryName.localeCompare(b.categoryName) || (a.categoryId ?? "").localeCompare(b.categoryId ?? ""));
+  let positiveCategoryTotal = 0;
+  for (const category of categoryRows) if (category.amountYen > 0) positiveCategoryTotal = addSafeYen(positiveCategoryTotal, category.amountYen);
+  return { yearMonth, incomeYen, expenseYen, balanceYen, categories: categoryRows };
 }
 
 /**
@@ -160,6 +293,16 @@ function lastDayOfMonth(yearMonth: string): string {
  * when an operation runs, so this module never pulls the Node export into server code.
  */
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
+  getMonthlySummary(params: { yearMonth: string }): Promise<ActualMonthlySummary>;
+  getMonthlyBudgets(params: { yearMonth: string }): Promise<ActualMonthlyBudgets>;
+  setMonthlyBudget(params: { yearMonth: string; categoryId: string; budgetYen: number }): Promise<void>;
+  listRecurringSchedules(): Promise<RecurringSchedule[]>;
+  createRecurringSchedule(input: RecurringScheduleInput): Promise<RecurringSchedule>;
+  updateRecurringSchedule(id: string, input: RecurringScheduleInput): Promise<RecurringSchedule>;
+  deleteRecurringSchedule(id: string): Promise<void>;
+  skipDeletedScheduleOccurrences(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  runDueSchedules(): Promise<void>;
+  getSearchTransactions(params?: { startDate?: string; endDate?: string }): Promise<ActualSearchTransaction[]>;
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
@@ -169,6 +312,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   getCategoryUsage(id: string): Promise<number>;
   deleteCategory(id: string): Promise<void>;
   listAccounts(): Promise<ManagedAccount[]>;
+  getAccountBalances(): Promise<ManagedAccountBalance[]>;
   addAccount(name: string): Promise<string>;
   renameAccount(id: string, name: string): Promise<void>;
   getAccountUsage(id: string): Promise<{ transactionCount: number; balanceYen: number }>;
@@ -186,10 +330,22 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     importedId: string;
     splits?: Array<{ categoryId: string; amountYen: number }>;
   }): Promise<ActualTransaction>;
+  editReceipt(id: string, input: {
+    accountId: string;
+    date: string;
+    amountYen: number;
+    merchant: string;
+    categoryId: string;
+    importedId: string;
+    splits?: Array<{ categoryId: string; amountYen: number }>;
+  }): Promise<ActualTransaction>;
   createTransaction(input: ManualTransactionInput): Promise<ActualTransaction>;
   updateTransaction(id: string, input: Omit<ManualTransactionInput, "importedId">): Promise<ActualTransaction>;
   createTransfer(input: TransferInput): Promise<ActualTransaction>;
   updateTransfer(id: string, input: TransferUpdateInput): Promise<ActualTransaction>;
+  getTransactionTree(id: string): Promise<NativeTransactionSnapshot[]>;
+  deleteTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  restoreTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
   exportBackup(): Promise<Uint8Array>;
@@ -301,8 +457,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return result;
   });
 
-  const allRows = async (api: ActualApi, startDate: string, endDate: string): Promise<NativeTransaction[]> => {
-    const accounts = await api.getAccounts();
+  const allRows = async (api: ActualApi, startDate: string, endDate: string, includeAccount: (account: { id: string; offbudget?: boolean }) => boolean = () => true): Promise<NativeTransaction[]> => {
+    const accounts = (await api.getAccounts()).filter(account => includeAccount(account as { id: string; offbudget?: boolean }));
     const lists = await Promise.all(accounts.map((account) => api.getTransactions(account.id, startDate, endDate)));
     const rows = lists.flat() as NativeTransaction[];
     const ids = new Set(rows.map(row => row.id));
@@ -313,6 +469,183 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return { ...parent, ...child, id: child.id, is_parent: false, is_child: true, parent_id: parent.id, subtransactions: undefined };
     }));
     return [...rows, ...children];
+  };
+
+  const monthlySummary = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlySummary> => {
+    const endDate = lastDayOfMonth(yearMonth);
+    const [rows, categories] = await Promise.all([
+      allRows(api, `${yearMonth}-01`, endDate, account => account.offbudget !== true),
+      api.getCategories(),
+    ]);
+    return summarizeMonth(rows, categories, yearMonth);
+  };
+
+  const monthlyBudgets = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlyBudgets> => {
+    const [nativeMonth, masters, summary] = await Promise.all([
+      api.getBudgetMonth(yearMonth), api.getCategories(), monthlySummary(api, yearMonth),
+    ]);
+    const nativeCategories = new Map<string, number>();
+    const incomeCategoryIds = new Set(masters.filter(category => category.is_income).map(category => category.id));
+    for (const group of nativeMonth.categoryGroups) {
+      for (const unknownCategory of group.categories ?? []) {
+        if (unknownCategory && typeof unknownCategory === "object" && "id" in unknownCategory
+          && typeof unknownCategory.id === "string" && incomeCategoryIds.has(unknownCategory.id)) continue;
+        const parsed = budgetCategorySchema.safeParse(unknownCategory);
+        if (!parsed.success || nativeCategories.has(parsed.data.id)) throw new ActualBrowserUnavailableError("invalid_data");
+        nativeCategories.set(parsed.data.id, parsed.data.budgeted);
+      }
+    }
+    const spentByCategory = new Map(summary.categories
+      .filter(category => category.categoryId !== null)
+      .map(category => [category.categoryId!, category.amountYen]));
+    const categories: ActualMonthlyBudgetCategory[] = masters
+      .filter(category => !category.is_income)
+      .map(category => {
+        const budgetYen = nativeCategories.get(category.id) ?? 0;
+        const spentYen = spentByCategory.get(category.id) ?? 0;
+        const remainingYen = addSafeYen(budgetYen, -spentYen);
+        return {
+          categoryId: category.id,
+          categoryName: category.name,
+          budgetYen,
+          spentYen,
+          remainingYen,
+          usageRatio: budgetYen === 0 ? null : spentYen === 0 ? 0 : spentYen / budgetYen,
+        };
+      });
+    const targeted = categories.filter(category => category.budgetYen > 0);
+    const totals = targeted.reduce((sum, category) => ({
+      budgetYen: addSafeYen(sum.budgetYen, category.budgetYen),
+      spentYen: addSafeYen(sum.spentYen, category.spentYen),
+      remainingYen: addSafeYen(sum.remainingYen, category.remainingYen),
+    }), { budgetYen: 0, spentYen: 0, remainingYen: 0 });
+    return { yearMonth, categories, ...totals, usageRatio: totals.budgetYen === 0 ? null : totals.spentYen / totals.budgetYen };
+  };
+
+  const validateRecurringInput = async (api: ActualApi, input: unknown): Promise<RecurringScheduleInput> => {
+    const schema = z.object({
+      name: z.string().trim().min(1).max(200), kind: z.enum(["expense", "income"]),
+      amountYen: z.number().int().safe().positive(), categoryId: idSchema, accountId: idSchema,
+      frequency: z.enum(["monthly", "weekly", "yearly"]), startDate: dateSchema, postsTransaction: z.boolean(),
+    }).strict();
+    const parsed = schema.safeParse(input);
+    if (!parsed.success) throw new ActualMasterValidationError("定期取引の内容を確認してください。");
+    const category = (await api.getCategories()).find(item => item.id === parsed.data.categoryId);
+    const account = (await api.getAccounts()).find(item => item.id === parsed.data.accountId);
+    if (!category || category.is_income !== (parsed.data.kind === "income") || !account || account.closed) {
+      throw new ActualMasterValidationError("カテゴリと口座を確認してください。");
+    }
+    return parsed.data;
+  };
+
+  const setScheduleCategory = async (api: ActualApi, scheduleId: string, categoryId: string) => {
+    const schedule = (await api.getSchedules()).find(item => item.id === scheduleId);
+    if (!schedule?.rule) throw new ActualBrowserUnavailableError("invalid_data");
+    const rule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (!rule || !Array.isArray(rule.actions)) throw new ActualBrowserUnavailableError("invalid_data");
+    const actions = rule.actions.filter(action => !(action.op === "set" && "field" in action && action.field === "category"));
+    actions.push({ field: "category", op: "set", value: categoryId });
+    await api.updateRule({ ...rule, actions });
+    const readbackRule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (!readbackRule?.actions.some(action => action.op === "link-schedule" && action.value === scheduleId)
+      || !readbackRule.actions.some(action => action.op === "set" && "field" in action && action.field === "category" && action.value === categoryId)) {
+      throw new ActualBrowserUnavailableError("invalid_data");
+    }
+  };
+
+  const recurringDate = (input: RecurringScheduleInput) => ({
+    frequency: input.frequency, interval: 1, start: input.startDate, endMode: "never" as const,
+  });
+
+  const isBasicRecurringDate = (value: unknown): boolean => {
+    if (!value || typeof value !== "object") return false;
+    const date = value as Record<string, unknown>;
+    const supportedKeys = new Set(["frequency", "interval", "start", "endMode"]);
+    return ["monthly", "weekly", "yearly"].includes(String(date.frequency))
+      && (date.interval === undefined || date.interval === 1)
+      && typeof date.start === "string" && dateSchema.safeParse(date.start).success
+      && (date.endMode === undefined || date.endMode === "never")
+      && Object.keys(date).every(key => supportedKeys.has(key));
+  };
+
+  const isBasicScheduleRule = (rule: Awaited<ReturnType<ActualApi["getRules"]>>[number] | undefined, schedule: Awaited<ReturnType<ActualApi["getSchedules"]>>[number]): boolean => {
+    if (!rule || rule.stage !== null || rule.conditionsOp !== "and" || !Array.isArray(rule.conditions) || !Array.isArray(rule.actions)) return false;
+    if (rule.conditions.length !== 4 || !rule.actions.some(action => action.op === "link-schedule" && action.value === schedule.id)) return false;
+    if (rule.actions.some(action => !(
+      action.op === "link-schedule"
+      || (action.op === "set" && "field" in action && (action.field === "category" || action.field === "notes"))
+      || action.op === "prepend-notes"
+      || action.op === "append-notes"
+    ))) return false;
+    const condition = (field: string) => rule.conditions.find(item => item.field === field);
+    const payee = condition("payee");
+    const account = condition("account");
+    const date = condition("date");
+    const amount = condition("amount");
+    return !!payee && payee.op === "is" && payee.value === schedule.payee
+      && !!account && account.op === "is" && account.value === schedule.account
+      && !!date && date.op === "isapprox" && JSON.stringify(date.value) === JSON.stringify(schedule.date)
+      && !!amount && amount.op === schedule.amountOp && JSON.stringify(amount.value) === JSON.stringify(schedule.amount);
+  };
+
+  const mapRecurringSchedule = async (api: ActualApi, schedule: Awaited<ReturnType<ActualApi["getSchedules"]>>[number]): Promise<RecurringSchedule> => {
+    const amount = typeof schedule.amount === "number" ? schedule.amount : null;
+    const frequency = schedule.date && typeof schedule.date === "object" && ["monthly", "weekly", "yearly"].includes(schedule.date.frequency)
+      ? schedule.date.frequency as RecurringScheduleInput["frequency"] : "monthly";
+    const startDate = schedule.date && typeof schedule.date === "object" && dateSchema.safeParse(schedule.date.start).success
+      ? schedule.date.start : dateSchema.safeParse(schedule.next_date).success ? schedule.next_date! : "0001-01-01";
+    const rule = (await api.getRules()).find(item => item.id === schedule.rule);
+    const categoryAction = rule?.actions.find(action => action.op === "set" && "field" in action && action.field === "category");
+    const categoryId = categoryAction && typeof categoryAction.value === "string" ? categoryAction.value : "";
+    const editable = amount !== null && Number.isSafeInteger(amount) && amount !== 0 && schedule.amountOp === "is"
+      && !!schedule.account && !!schedule.name && isBasicRecurringDate(schedule.date) && isBasicScheduleRule(rule, schedule);
+    return {
+      id: schedule.id,
+      name: schedule.name ?? "定期取引",
+      kind: amount !== null && amount > 0 ? "income" : "expense",
+      amountYen: amount === null ? 0 : Math.abs(amount),
+      categoryId,
+      accountId: schedule.account ?? "",
+      frequency,
+      startDate,
+      postsTransaction: schedule.posts_transaction,
+      nextDate: dateSchema.safeParse(schedule.next_date).success ? schedule.next_date ?? null : null,
+      completed: schedule.completed ?? false,
+      editable,
+    };
+  };
+
+  const findMatchingSchedule = async (api: ActualApi, input: RecurringScheduleInput) => {
+    const schedule = (await api.getSchedules()).find(item => item.name?.trim() === input.name.trim());
+    if (!schedule) return null;
+    const amount = input.kind === "expense" ? -input.amountYen : input.amountYen;
+    const date = recurringDate(input);
+    const payees = await api.getPayees();
+    const payeeName = payees.find(item => item.id === schedule.payee)?.name;
+    const existingDate = schedule.date;
+    const existingRule = (await api.getRules()).find(item => item.id === schedule.rule);
+    if (schedule.amount !== amount || schedule.amountOp !== "is" || schedule.account !== input.accountId
+      || payeeName !== input.name
+      || !isBasicScheduleRule(existingRule, schedule)
+      || !isBasicRecurringDate(existingDate) || typeof existingDate !== "object" || existingDate.frequency !== date.frequency
+      || (existingDate.interval ?? 1) !== date.interval || existingDate.start !== date.start || (existingDate.endMode ?? "never") !== date.endMode) {
+      throw new ActualMasterValidationError("同じ名前の定期取引が既にあります。");
+    }
+    return schedule;
+  };
+
+  const forceRunScheduleService = async (api: ActualApi) => {
+    const runtime = runtimeFor(api);
+    if (!runtime.send) throw new ActualBrowserUnavailableError("storage");
+    await runtime.send("schedule/force-run-service", {});
+  };
+
+  const completeScheduleCreation = async (api: ActualApi, scheduleId: string, input: RecurringScheduleInput) => {
+    await setScheduleCategory(api, scheduleId, input.categoryId);
+    await api.updateSchedule(scheduleId, { posts_transaction: input.postsTransaction });
+    const schedule = (await api.getSchedules()).find(item => item.id === scheduleId);
+    if (!schedule || schedule.posts_transaction !== input.postsTransaction) throw new ActualBrowserUnavailableError("invalid_data");
+    return mapRecurringSchedule(api, schedule);
   };
 
   // Keep the split parent
@@ -421,6 +754,45 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return mapTransaction(source, await namesFor(api), peer.account);
   };
 
+
+  function scalarSnapshot(row: NativeTransaction): NativeTransactionSnapshot {
+    const data = { ...row } as Record<string, unknown>;
+    delete data.subtransactions;
+    // The API also returns read-only fields; persist only known native scalar fields.
+    return nativeTransactionSnapshotSchema.strip().parse(data);
+  }
+  function validateTree(value: unknown): NativeTransactionSnapshot[] {
+    const parsed = z.array(nativeTransactionSnapshotSchema).min(1).max(102).safeParse(value);
+    if (!parsed.success) throw new ActualMasterValidationError("削除する取引の構造を確認できませんでした。");
+    const tree = parsed.data;
+    if (new Set(tree.map(row => row.id)).size !== tree.length) throw new ActualMasterValidationError("取引IDが重複しています。");
+    const root = tree[0];
+    if (root.is_child || root.parent_id) throw new ActualMasterValidationError("品目だけを削除することはできません。");
+    if (root.transfer_id) {
+      const peer = tree.find(row => row.id === root.transfer_id);
+      if (tree.length !== 2 || !peer || peer.transfer_id !== root.id || peer.account === root.account || peer.amount !== -root.amount || root.is_parent || peer.is_parent || peer.is_child || peer.parent_id) throw new ActualMasterValidationError("振替の両取引を確認できませんでした。");
+    } else if (root.is_parent) {
+      const children = tree.slice(1);
+      const sum = children.reduce((total, row) => total + row.amount, 0);
+      if (!children.length || children.some(row => row.parent_id !== root.id || !row.is_child || row.is_parent || row.transfer_id || row.account !== root.account || row.date !== root.date) || !Number.isSafeInteger(sum) || sum !== root.amount) throw new ActualMasterValidationError("分割取引の構造を確認できませんでした。");
+    } else if (tree.length !== 1) throw new ActualMasterValidationError("削除する取引を読み込み直してください。");
+    return tree;
+  }
+  function sameNativeSnapshot(row: NativeTransaction, snapshot: NativeTransactionSnapshot): boolean {
+    const actual = scalarSnapshot(row);
+    // Native API may use null or absent values interchangeably for nullable columns.
+    return Object.keys(snapshot).every(key => {
+      const field = key as keyof NativeTransactionSnapshot;
+      return field === "error" ? JSON.stringify(actual[field] ?? null) === JSON.stringify(snapshot[field] ?? null) : (actual[field] ?? null) === (snapshot[field] ?? null);
+    });
+  }
+  function nativeTree(rows: NativeTransaction[], id: string): NativeTransactionSnapshot[] {
+    const selected = rows.find(row => row.id === id);
+    if (!selected) return [];
+    if (selected.is_child || selected.parent_id) throw new ActualMasterValidationError("品目だけを削除することはできません。");
+    const related = selected.transfer_id ? rows.filter(row => row.id === selected.transfer_id) : rows.filter(row => row.parent_id === selected.id);
+    return validateTree([selected, ...related].map(scalarSnapshot));
+  }
   const masterName = (name: string) => {
     const parsed = z.string().trim().min(1).max(100).safeParse(name);
     if (!parsed.success) throw new ActualMasterValidationError("名前を1〜100文字で入力してください。");
@@ -581,30 +953,174 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
+    getSearchTransactions(params = {}) {
+      const start = validateDate(params.startDate ?? "0001-01-01");
+      const end = validateDate(params.endDate ?? "9999-12-31");
+      if (start > end) throw new Error("Start date must not follow end date.");
+      return withBudget(async api => {
+        const [rows, names] = await Promise.all([allRows(api, start, end), namesFor(api)]);
+        const validRow = (row: NativeTransaction) => {
+          const extended = row as NativeTransaction & { tombstone?: unknown; error?: unknown; starting_balance_flag?: unknown };
+          return extended.tombstone !== true && !extended.error && extended.starting_balance_flag !== true;
+        };
+        const byId = new Map(rows.map(row => [row.id, row]));
+        const childrenByParent = new Map<string, NativeTransaction[]>();
+        for (const child of rows) {
+          if (!child.parent_id || child.is_child === false || !validRow(child)) continue;
+          const children = childrenByParent.get(child.parent_id) ?? [];
+          children.push(child); childrenByParent.set(child.parent_id, children);
+        }
+        const visible = visibleRows(rows).filter(row => validRow(row) && (!row.transfer_id || row.amount < 0));
+        return visible.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map(row => {
+          const transaction = mapTransaction(row, names, row.transfer_id ? byId.get(row.transfer_id)?.account ?? null : null);
+          const children = childrenByParent.get(row.id) ?? [];
+          const categoryIds = [...new Set([row.category, ...children.map(child => child.category)]
+            .filter((id): id is string => typeof id === "string" && id.length > 0))];
+          const keywordValues = new Set<string>();
+          for (const part of [row, ...children]) {
+            const payeeName = part.payee ? names.payees.get(part.payee) : undefined;
+            if (payeeName?.trim()) keywordValues.add(payeeName.trim());
+            if (typeof part.notes === "string" && part.notes.trim()) keywordValues.add(part.notes.trim());
+          }
+          return { transaction, categoryIds, keywordValues: [...keywordValues] };
+        });
+      });
+    },
+
     getTransactionById(id) {
       const parsedId = z.string().min(1).max(128).regex(/^[A-Za-z0-9_-]+$/).safeParse(id);
       if (!parsedId.success) return Promise.resolve(null);
       return withBudget(async (api) => {
-        const months = (await api.getBudgetMonths()).toSorted();
-        if (months.length === 0) return null;
-        const rows = await allRows(api, `${months[0]}-01`, "9999-12-31");
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
         const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
         return row ? mapTransaction(row, await namesFor(api), row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null) : null;
       });
     },
 
-    getMonthlySpending({ yearMonth }) {
-      const end = lastDayOfMonth(yearMonth);
-      return withBudget(async (api) => {
-        const rows = await allRows(api, `${yearMonth}-01`, end);
-        let total = 0;
-        for (const row of rows) {
-          if (row.is_parent || row.transfer_id || row.amount >= 0) continue;
-          total += -row.amount;
-          if (!Number.isSafeInteger(total)) throw new ActualBrowserUnavailableError("invalid_data");
-        }
-        return total;
+    getMonthlySummary({ yearMonth }) {
+      lastDayOfMonth(yearMonth);
+      return withBudget(api => monthlySummary(api, yearMonth));
+    },
+
+    getMonthlyBudgets({ yearMonth }) {
+      lastDayOfMonth(yearMonth);
+      return withBudget(api => monthlyBudgets(api, yearMonth));
+    },
+
+    setMonthlyBudget({ yearMonth, categoryId, budgetYen }) {
+      lastDayOfMonth(yearMonth);
+      const parsedId = idSchema.safeParse(categoryId);
+      if (!parsedId.success || !Number.isSafeInteger(budgetYen) || budgetYen < 0) {
+        return Promise.reject(new ActualMasterValidationError("予算額とカテゴリを確認してください。"));
+      }
+      return withBudget(async api => {
+        const category = (await api.getCategories()).find(item => item.id === parsedId.data);
+        if (!category || category.is_income) throw new ActualMasterValidationError("支出カテゴリを選んでください。");
+        await api.setBudgetAmount(yearMonth, parsedId.data, budgetYen);
+        const month = await api.getBudgetMonth(yearMonth);
+        const raw = month.categoryGroups.flatMap(group => group.categories ?? []).find(value =>
+          value && typeof value === "object" && "id" in value && value.id === parsedId.data);
+        const readback = budgetCategorySchema.safeParse(raw);
+        if (!readback.success || readback.data.budgeted !== budgetYen) throw new ActualBrowserUnavailableError("invalid_data");
       });
+    },
+
+    listRecurringSchedules() {
+      return withBudget(async api => Promise.all((await api.getSchedules()).map(schedule => mapRecurringSchedule(api, schedule))));
+    },
+
+    createRecurringSchedule(input) {
+      return withBudget(async api => {
+        const parsed = await validateRecurringInput(api, input);
+        const existing = await findMatchingSchedule(api, parsed);
+        let scheduleId = existing?.id;
+        if (!scheduleId) {
+          const payees = await api.getPayees();
+          const payee = payees.find(item => item.name === parsed.name)?.id ?? await api.createPayee({ name: parsed.name });
+          scheduleId = await api.createSchedule({
+            name: parsed.name,
+            posts_transaction: false,
+            amount: parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen,
+            amountOp: "is",
+            account: parsed.accountId,
+            payee,
+            date: recurringDate(parsed),
+          });
+        }
+        await completeScheduleCreation(api, scheduleId, parsed);
+        await forceRunScheduleService(api);
+        const result = (await api.getSchedules()).find(item => item.id === scheduleId);
+        if (!result) throw new ActualBrowserUnavailableError("invalid_data");
+        return mapRecurringSchedule(api, result);
+      });
+    },
+
+    updateRecurringSchedule(id, input) {
+      return withBudget(async api => {
+        const parsedId = idSchema.safeParse(id);
+        if (!parsedId.success) throw new ActualMasterValidationError("定期取引を確認してください。");
+        const parsed = await validateRecurringInput(api, input);
+        const current = (await api.getSchedules()).find(schedule => schedule.id === parsedId.data);
+        if (!current) throw new ActualMasterValidationError("定期取引が見つかりません。");
+        const mapped = await mapRecurringSchedule(api, current);
+        if (!mapped.editable) throw new ActualMasterValidationError("この定期取引は編集できません。削除して作り直してください。");
+        const payees = await api.getPayees();
+        const payee = payees.find(item => item.name === parsed.name)?.id ?? await api.createPayee({ name: parsed.name });
+        await api.updateSchedule(parsedId.data, { posts_transaction: false });
+        await api.updateSchedule(parsedId.data, {
+          name: parsed.name,
+          amount: parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen,
+          amountOp: "is",
+          account: parsed.accountId,
+          payee,
+          date: recurringDate(parsed),
+        });
+        await setScheduleCategory(api, parsedId.data, parsed.categoryId);
+        await api.updateSchedule(parsedId.data, { posts_transaction: parsed.postsTransaction });
+        await forceRunScheduleService(api);
+        const updated = (await api.getSchedules()).find(schedule => schedule.id === parsedId.data);
+        if (!updated || updated.posts_transaction !== parsed.postsTransaction) throw new ActualBrowserUnavailableError("invalid_data");
+        return mapRecurringSchedule(api, updated);
+      });
+    },
+
+    deleteRecurringSchedule(id) {
+      const parsedId = idSchema.safeParse(id);
+      if (!parsedId.success) return Promise.reject(new ActualMasterValidationError("定期取引を確認してください。"));
+      return withBudget(async api => {
+        if (!(await api.getSchedules()).some(schedule => schedule.id === parsedId.data)) return;
+        await api.deleteSchedule(parsedId.data);
+      });
+    },
+
+    skipDeletedScheduleOccurrences(snapshot) {
+      return withBudget(async api => {
+        const runtime = runtimeFor(api);
+        if (!runtime.send) throw new ActualBrowserUnavailableError("storage");
+        const seen = new Set<string>();
+        for (const row of snapshot) {
+          if (!row.schedule || !dateSchema.safeParse(row.date).success) continue;
+          const key = `${row.schedule}:${row.date}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const schedule = (await api.getSchedules()).find(item => item.id === row.schedule);
+          if (schedule?.next_date === row.date && !schedule.completed && schedule.date && typeof schedule.date === "object"
+            && "frequency" in schedule.date) {
+            await runtime.send("schedule/skip-next-date", { id: schedule.id });
+            const advanced = (await api.getSchedules()).find(item => item.id === schedule.id);
+            if (advanced?.next_date === row.date) throw new ActualBrowserUnavailableError("invalid_data");
+          }
+        }
+      });
+    },
+
+    runDueSchedules() {
+      return withBudget(forceRunScheduleService);
+    },
+
+    getMonthlySpending({ yearMonth }) {
+      lastDayOfMonth(yearMonth);
+      return withBudget(async api => (await monthlySummary(api, yearMonth)).expenseYen);
     },
 
     listOpenAccounts() {
@@ -663,17 +1179,21 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const matchingPayee = payees.find(payee => normalizeMerchant(payee.name) === normalizeMerchant(parsed.payeeName));
         const payeeId = matchingPayee?.id ?? await api.createPayee({ name: parsed.payeeName });
         const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
-        await api.batchBudgetUpdates(async () => {
-          await api.updateTransaction(parsedId.data, {
-            account: parsed.accountId,
-            date: parsed.date,
-            amount,
-            payee: payeeId,
-            category: parsed.categoryId,
-            notes: parsed.memo,
-          });
-        });
-        const movedRows = await api.getTransactions(parsed.accountId, parsed.date, parsed.date) as NativeTransaction[];
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        await send("transactions-batch-update", { updated: [{
+          id: parsedId.data,
+          account: parsed.accountId,
+          date: parsed.date,
+          amount,
+          payee: payeeId,
+          category: parsed.categoryId,
+          notes: parsed.memo,
+          cleared: current.cleared ?? false,
+          imported_id: current.imported_id ?? undefined,
+          reconciled: current.reconciled,
+        }], runTransfers: false });
+        const movedRows = await allRows(api, parsed.date, parsed.date);
         const saved = movedRows.find(row => row.id === parsedId.data);
         return verifyManualReadback(saved, parsed, current.imported_id ?? null, api);
       });
@@ -794,6 +1314,16 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     },
 
     listAccounts() { return withBudget(async api => (await api.getAccounts()).map(a => ({ id: a.id, name: a.name, closed: Boolean(a.closed) }))); },
+    getAccountBalances() {
+      return withBudget(async api => {
+        const accounts = await api.getAccounts();
+        return Promise.all(accounts.map(async account => {
+          const balanceYen = await api.getAccountBalance(account.id);
+          if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
+          return { id: account.id, name: account.name, closed: Boolean(account.closed), balanceYen };
+        }));
+      });
+    },
     addAccount(name) {
       const validName = masterName(name);
       return withBudget(api => api.createAccount({ name: validName, offbudget: false, closed: false }));
@@ -881,6 +1411,149 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
+    async editReceipt(id, input) {
+      const parsed = z.object({
+        id: idSchema,
+        accountId: idSchema,
+        date: dateSchema,
+        amountYen: z.number().int().safe().negative(),
+        merchant: z.string().trim().min(1).max(200),
+        categoryId: idSchema,
+        importedId: z.string().min(1).max(200).startsWith("kakeimatch:receipt:"),
+        splits: z.array(z.object({ categoryId: idSchema, amountYen: z.number().int().safe().negative() })).min(1).optional(),
+      }).strict().safeParse({ id, ...input });
+      if (!parsed.success || (parsed.data.splits && parsed.data.splits.reduce((sum, split) => sum + split.amountYen, 0) !== parsed.data.amountYen)) {
+        throw new Error("Invalid Actual receipt transaction.");
+      }
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const current = rows.find(row => row.id === parsed.data.id);
+        if (!current || current.imported_id !== parsed.data.importedId || current.is_child || current.parent_id || current.transfer_id ||
+          current.imported_id?.startsWith("kakeimatch:receipt:") !== true) {
+          throw new ActualMasterValidationError("編集するレシート取引が見つかりません。記録を読み込み直してください。");
+        }
+        const children = rows.filter(row => row.parent_id === current.id);
+        if (Boolean(current.is_parent) !== Boolean(children.length) || (current.is_parent && !children.length)) {
+          throw new ActualBrowserUnavailableError("invalid_data");
+        }
+        const [accounts, availableCategories, payees] = await Promise.all([api.getAccounts(), listCategories(api), api.getPayees()]);
+        if (!accounts.some(account => account.id === parsed.data.accountId && !account.closed)) {
+          throw new ActualMasterValidationError("利用中の支払元を選び直してください。");
+        }
+        const categoryIds = new Set(availableCategories.map(category => category.id));
+        if ((!parsed.data.splits && !categoryIds.has(parsed.data.categoryId)) || parsed.data.splits?.some(split => !categoryIds.has(split.categoryId))) {
+          throw new ActualMasterValidationError("支出カテゴリを選び直してください。");
+        }
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        const currentNames = await namesFor(api);
+        const currentTransaction = mapTransaction(current, currentNames);
+        const alreadyMatches = current.account === parsed.data.accountId && current.date === parsed.data.date && current.amount === parsed.data.amountYen &&
+          normalizeMerchant(currentTransaction.payeeName ?? "") === normalizeMerchant(parsed.data.merchant) && current.imported_id === parsed.data.importedId &&
+          (parsed.data.splits
+            ? Boolean(current.is_parent) && sameSplitSet(readBackSplitSet(current, rows), parsed.data.splits)
+            : !current.is_parent && !children.length && current.category === parsed.data.categoryId);
+        if (alreadyMatches) return currentTransaction;
+        const payeeId = payees.find(payee => payee.name === parsed.data.merchant)?.id ?? await api.createPayee({ name: parsed.data.merchant });
+        const shared: Pick<ActualBatchTransaction, "account" | "date" | "amount" | "payee" | "notes" | "imported_id" | "cleared" | "reconciled"> = {
+          account: parsed.data.accountId,
+          date: parsed.data.date,
+          amount: parsed.data.amountYen,
+          payee: payeeId,
+          notes: current.notes ?? "",
+          imported_id: current.imported_id,
+          cleared: current.cleared ?? false,
+          reconciled: current.reconciled,
+        };
+        let updated: ActualBatchTransaction[];
+        let added: ActualBatchTransaction[] = [];
+        let deleted: Array<{ id: string }> = [];
+        if (parsed.data.splits) {
+          const desiredChildren: ActualBatchTransaction[] = parsed.data.splits.map((split, index) => ({
+            id: children[index]?.id ?? crypto.randomUUID(),
+            parent_id: current.id,
+            is_child: true,
+            account: parsed.data.accountId,
+            date: parsed.data.date,
+            amount: split.amountYen,
+            category: split.categoryId,
+            payee: payeeId,
+            cleared: current.cleared ?? false,
+            reconciled: current.reconciled,
+            sort_order: children[index]?.sort_order ?? -(index + 1),
+          }));
+          const parent: ActualBatchTransaction = {
+            id: current.id, ...shared, category: null, is_parent: true, is_child: false,
+          };
+          updated = [parent, ...desiredChildren.filter(child => children.some(existing => existing.id === child.id))];
+          added = desiredChildren.filter(child => !children.some(existing => existing.id === child.id));
+          deleted = children.slice(desiredChildren.length).map(child => ({ id: child.id }));
+        } else {
+          updated = [{ id: current.id, ...shared, category: parsed.data.categoryId, is_parent: false, is_child: false }];
+          deleted = children.map(child => ({ id: child.id }));
+        }
+        const nativeSend = send as unknown as (method: string, args: unknown) => Promise<unknown>;
+        await nativeSend("transactions-batch-update", { updated, added, deleted, runTransfers: false });
+        const savedRows = await allRows(api, "0001-01-01", "9999-12-31");
+        const saved = savedRows.find(row => row.id === current.id);
+        if (!saved) throw new ActualBrowserUnavailableError("invalid_data");
+        const transaction = mapTransaction(saved, await namesFor(api));
+        const savedChildren = savedRows.filter(row => row.parent_id === saved.id);
+        if (saved.account !== parsed.data.accountId || saved.date !== parsed.data.date || saved.amount !== parsed.data.amountYen ||
+          normalizeMerchant(transaction.payeeName ?? "") !== normalizeMerchant(parsed.data.merchant) || saved.imported_id !== parsed.data.importedId ||
+          (saved.cleared ?? false) !== (current.cleared ?? false) || (saved.notes ?? "") !== (current.notes ?? "") ||
+          Boolean(saved.is_parent) !== Boolean(parsed.data.splits) || (parsed.data.splits
+            ? !sameSplitSet(readBackSplitSet(saved, savedRows), parsed.data.splits)
+            : saved.category !== parsed.data.categoryId || savedChildren.length > 0)) {
+          throw new ActualBrowserUnavailableError("invalid_data");
+        }
+        return transaction;
+      });
+    },
+
+
+    getTransactionTree(id) {
+      masterId(id);
+      return withBudget(async api => nativeTree(await allRows(api, "0001-01-01", "9999-12-31"), id));
+    },
+    async deleteTransactionTree(input) {
+      const snapshot = validateTree(input);
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const ids = new Set(snapshot.map(row => row.id));
+        const current = rows.filter(row => ids.has(row.id));
+        if (!current.length) return;
+        const tree = nativeTree(rows, snapshot[0].id);
+        if (tree.length !== snapshot.length || current.length !== snapshot.length || tree.some(row => !ids.has(row.id)) || current.some(row => !sameNativeSnapshot(row, snapshot.find(saved => saved.id === row.id)!))) throw new ActualMasterValidationError("取引が変更されています。最新の内容を確認してください。");
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        await send("transactions-batch-update", { deleted: snapshot.map(row => ({ id: row.id })), runTransfers: false });
+        if ((await allRows(api, "0001-01-01", "9999-12-31")).some(row => ids.has(row.id))) throw new ActualBrowserUnavailableError("invalid_data");
+      });
+    },
+    async restoreTransactionTree(input) {
+      const snapshot = validateTree(input);
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const ids = new Set(snapshot.map(row => row.id));
+        const existing = rows.filter(row => ids.has(row.id));
+        if (existing.length) {
+          if (existing.length === snapshot.length && existing.every(row => sameNativeSnapshot(row, snapshot.find(saved => saved.id === row.id)!))) return;
+          throw new ActualMasterValidationError("同じ識別子の取引が変更されています。取り消しを完了できません。");
+        }
+        if (snapshot.some(saved => saved.imported_id && rows.some(row => row.imported_id === saved.imported_id))) throw new ActualMasterValidationError("同じ登録識別子の取引があります。取り消しを完了できません。");
+        const [accounts, categories, payees] = await Promise.all([api.getAccounts(), api.getCategories(), api.getPayees()]);
+        if (snapshot.some(row => !accounts.some(account => account.id === row.account) || row.category && !categories.some(category => category.id === row.category) || row.payee && !payees.some(payee => payee.id === row.payee))) throw new ActualMasterValidationError("元の口座やカテゴリを確認できません。取り消しを完了できません。");
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        // Actual deletes by setting tombstone; a native update can restore the same IDs.
+        const nativeSend = send as unknown as (method: "transactions-batch-update", args: { updated: Array<NativeTransactionSnapshot & { tombstone: false }>; runTransfers: false }) => Promise<unknown>;
+        await nativeSend("transactions-batch-update", { updated: snapshot.map(row => ({ ...row, tombstone: false })), runTransfers: false });
+        const restored = await allRows(api, "0001-01-01", "9999-12-31");
+        const tree = nativeTree(restored, snapshot[0].id);
+        if (tree.length !== snapshot.length || tree.some(row => !ids.has(row.id)) || snapshot.some(saved => !sameNativeSnapshot(restored.find(row => row.id === saved.id)!, saved))) throw new ActualBrowserUnavailableError("invalid_data");
+      });
+    },
     updateReceipt(id, changes) {
       const parsed = z.object({
         id: idSchema,

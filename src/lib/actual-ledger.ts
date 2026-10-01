@@ -43,6 +43,14 @@ export type TransferUpdateInput = Omit<TransferInput, "importedId">;
 
 export type ActualAccount = { id: string; name: string };
 export type ActualCategory = { id: string; name: string };
+export type ActualMonthlyCategory = { categoryId: string | null; categoryName: string; amountYen: number };
+export type ActualMonthlySummary = {
+  yearMonth: string;
+  incomeYen: number;
+  expenseYen: number;
+  balanceYen: number;
+  categories: ActualMonthlyCategory[];
+};
 
 export interface ActualLedger {
   getRecentTransactions(params?: { limit?: number }): Promise<ActualTransaction[]>;
