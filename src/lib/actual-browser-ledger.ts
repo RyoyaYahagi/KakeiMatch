@@ -2,11 +2,11 @@
 
 import { z } from "zod";
 import { normalizeMerchant } from "./category";
-import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction, ManualTransactionInput } from "@/lib/actual-ledger";
+import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction, ManualTransactionInput, TransferInput, TransferUpdateInput } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
-  | "getBudgetMonths" | "getTransactions" | "importTransactions" | "updateTransaction"
+  | "getBudgetMonths" | "getTransactions" | "importTransactions" | "addTransactions" | "updateTransaction"
   | "createCategory" | "updateCategory" | "getPayees" | "createPayee" | "batchBudgetUpdates"
   | "exportBudget" | "importBudget"
   | "getCategoryGroups" | "createCategoryGroup" | "deleteCategory"
@@ -107,7 +107,7 @@ function runtimeFor(api: ActualApi): RuntimeState {
   return state;
 }
 
-function mapTransaction(value: unknown, names: { payees: Map<string, string>; categories: Map<string, string> }): ActualTransaction {
+function mapTransaction(value: unknown, names: { payees: Map<string, string>; categories: Map<string, string> }, transferAccountId: string | null = null): ActualTransaction {
   const parsed = actualTransactionSchema.safeParse(value);
   if (!parsed.success) throw new ActualBrowserUnavailableError("invalid_data");
   const row = parsed.data;
@@ -124,6 +124,8 @@ function mapTransaction(value: unknown, names: { payees: Map<string, string>; ca
     memo: row.notes ?? null,
     importedId: row.imported_id ?? null,
     isSplit: Boolean(row.is_parent || row.subtransactions?.length),
+    transferId: row.transfer_id ?? null,
+    transferAccountId: row.transfer_id ? transferAccountId : null,
   };
 }
 
@@ -186,6 +188,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   }): Promise<ActualTransaction>;
   createTransaction(input: ManualTransactionInput): Promise<ActualTransaction>;
   updateTransaction(id: string, input: Omit<ManualTransactionInput, "importedId">): Promise<ActualTransaction>;
+  createTransfer(input: TransferInput): Promise<ActualTransaction>;
+  updateTransfer(id: string, input: TransferUpdateInput): Promise<ActualTransaction>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
   exportBackup(): Promise<Uint8Array>;
@@ -376,6 +380,47 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return transaction;
   };
 
+  const transferInputSchema = z.object({
+    amountYen: z.number().int().safe().positive(),
+    date: dateSchema,
+    sourceAccountId: idSchema,
+    destinationAccountId: idSchema,
+    memo: z.string().max(2000).nullable(),
+    importedId: z.string().min(1).max(200),
+  }).strict();
+  const transferUpdateInputSchema = transferInputSchema.omit({ importedId: true });
+
+  const validateTransferAccounts = async (api: ActualApi, sourceAccountId: string, destinationAccountId: string) => {
+    if (sourceAccountId === destinationAccountId) throw new ActualMasterValidationError("移動元と移動先には異なる口座を選んでください。");
+    const accounts = await api.getAccounts();
+    if (!accounts.some(account => account.id === sourceAccountId && !account.closed) ||
+        !accounts.some(account => account.id === destinationAccountId && !account.closed)) {
+      throw new ActualMasterValidationError("利用中の口座を選び直してください。");
+    }
+    const payees = await api.getPayees() as Array<{ id: string; name: string; transfer_acct?: string | null }>;
+    const destinationPayee = payees.find(payee => payee.transfer_acct === destinationAccountId);
+    const sourcePayee = payees.find(payee => payee.transfer_acct === sourceAccountId);
+    if (!destinationPayee || !sourcePayee) throw new ActualBrowserUnavailableError("invalid_data");
+    return { destinationPayee, sourcePayee, payees };
+  };
+
+  const verifyTransferPair = async (
+    rows: NativeTransaction[], input: Omit<TransferInput, "importedId"> & { importedId: string | null },
+    api: ActualApi,
+  ): Promise<ActualTransaction> => {
+    const source = rows.find(row => row.imported_id === input.importedId && row.account === input.sourceAccountId);
+    const peer = source?.transfer_id ? rows.find(row => row.id === source.transfer_id) : undefined;
+    const amount = input.amountYen;
+    if (!source || rows.filter(row => row.imported_id === input.importedId).length !== 1 || !peer || source.account !== input.sourceAccountId || peer.account !== input.destinationAccountId ||
+      source.transfer_id !== peer.id || peer.transfer_id !== source.id || source.amount !== -amount || peer.amount !== amount ||
+      source.date !== input.date || peer.date !== input.date || (source.notes ?? "") !== (input.memo ?? "") || (peer.notes ?? "") !== (input.memo ?? "") ||
+      (source.imported_id ?? null) !== input.importedId || source.category || peer.category || source.is_parent || peer.is_parent ||
+      source.is_child || peer.is_child || source.parent_id || peer.parent_id || source.subtransactions?.length || peer.subtransactions?.length) {
+      throw new ActualBrowserUnavailableError("invalid_data");
+    }
+    return mapTransaction(source, await namesFor(api), peer.account);
+  };
+
   const masterName = (name: string) => {
     const parsed = z.string().trim().min(1).max(100).safeParse(name);
     if (!parsed.success) throw new ActualMasterValidationError("名前を1〜100文字で入力してください。");
@@ -521,7 +566,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const rows = visibleRows(await allRows(api, `${months[0]}-01`, "9999-12-31"));
         rows.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
         const names = await namesFor(api);
-        return rows.slice(0, limit).map((row) => mapTransaction(row, names));
+        return rows.slice(0, limit).map(row => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null));
       });
     },
 
@@ -532,7 +577,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return withBudget(async (api) => {
         const [rows, names] = await Promise.all([allRows(api, start, end), namesFor(api)]);
         return visibleRows(rows).sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
-          .map((row) => mapTransaction(row, names));
+          .map((row) => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null));
       });
     },
 
@@ -544,7 +589,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         if (months.length === 0) return null;
         const rows = await allRows(api, `${months[0]}-01`, "9999-12-31");
         const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
-        return row ? mapTransaction(row, await namesFor(api)) : null;
+        return row ? mapTransaction(row, await namesFor(api), row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null) : null;
       });
     },
 
@@ -631,6 +676,84 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const movedRows = await api.getTransactions(parsed.accountId, parsed.date, parsed.date) as NativeTransaction[];
         const saved = movedRows.find(row => row.id === parsedId.data);
         return verifyManualReadback(saved, parsed, current.imported_id ?? null, api);
+      });
+    },
+
+    createTransfer(input) {
+      const parsed = transferInputSchema.safeParse({ ...input, memo: input?.memo ?? null });
+      if (!parsed.success) throw new ActualMasterValidationError("振替内容を確認して入力し直してください。");
+      if (parsed.data.importedId.startsWith("kakeimatch:receipt:") || parsed.data.importedId.startsWith("kakeimatch:manual:")) {
+        throw new ActualMasterValidationError("この識別子は別の記録に使われています。振替を作成し直してください。");
+      }
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const existing = rows.find(row => row.imported_id === parsed.data.importedId);
+        if (existing) {
+          if (!existing.transfer_id || rows.filter(row => row.imported_id === parsed.data.importedId).length !== 1) {
+            throw new ActualMasterValidationError("この識別子は別の記録に使われています。振替を作成し直してください。");
+          }
+          return verifyTransferPair(rows, parsed.data, api);
+        }
+        const { destinationPayee } = await validateTransferAccounts(api, parsed.data.sourceAccountId, parsed.data.destinationAccountId);
+        await api.addTransactions(parsed.data.sourceAccountId, [{
+          date: parsed.data.date,
+          amount: -parsed.data.amountYen,
+          payee: destinationPayee.id,
+          notes: parsed.data.memo ?? "",
+          imported_id: parsed.data.importedId,
+          cleared: false,
+        }], { runTransfers: true });
+        const savedRows = await allRows(api, "0001-01-01", "9999-12-31");
+        return verifyTransferPair(savedRows, parsed.data, api);
+      });
+    },
+
+    updateTransfer(id, input) {
+      const parsedId = idSchema.safeParse(id);
+      const parsed = transferUpdateInputSchema.safeParse({ ...input, memo: input?.memo ?? null });
+      if (!parsedId.success || !parsed.success) throw new ActualMasterValidationError("編集する振替を確認して入力し直してください。");
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const selected = rows.find(row => row.id === parsedId.data);
+        const selectedPeer = selected?.transfer_id ? rows.find(row => row.id === selected.transfer_id) : undefined;
+        const current = selected?.imported_id ? selected : selectedPeer?.imported_id ? selectedPeer : undefined;
+        const peer = current?.transfer_id ? rows.find(row => row.id === current.transfer_id) : undefined;
+        if (!current || !peer || peer.transfer_id !== current.id || current.account === peer.account || current.category || peer.category || current.is_parent || peer.is_parent || current.is_child || peer.is_child || current.parent_id || peer.parent_id || current.subtransactions?.length || peer.subtransactions?.length || current.imported_id?.startsWith("kakeimatch:receipt:")) {
+          throw new ActualMasterValidationError("編集する振替が見つかりません。記録を読み込み直してください。");
+        }
+        const importedId = current.imported_id ?? null;
+        if (!importedId) throw new ActualMasterValidationError("識別情報のない振替は編集できません。");
+        const { destinationPayee, sourcePayee } = await validateTransferAccounts(api, parsed.data.sourceAccountId, parsed.data.destinationAccountId);
+        const send = runtimeFor(api).send;
+        if (!send) throw new ActualBrowserUnavailableError("storage");
+        // The public updateTransaction wrapper does not await transfer post-processing in
+        // Actual 26.9.0. Apply both complete sides in one native batch with transfer hooks
+        // disabled, preserving the existing reciprocal IDs and avoiding a partial edit.
+        await send("transactions-batch-update", {
+          updated: [
+            {
+              id: current.id,
+              account: parsed.data.sourceAccountId,
+              date: parsed.data.date,
+              amount: -parsed.data.amountYen,
+              payee: destinationPayee.id,
+              notes: parsed.data.memo ?? "",
+              transfer_id: peer.id,
+            },
+            {
+              id: peer.id,
+              account: parsed.data.destinationAccountId,
+              date: parsed.data.date,
+              amount: parsed.data.amountYen,
+              payee: sourcePayee.id,
+              notes: parsed.data.memo ?? "",
+              transfer_id: current.id,
+            },
+          ],
+          runTransfers: false,
+        });
+        const savedRows = await allRows(api, "0001-01-01", "9999-12-31");
+        return verifyTransferPair(savedRows, { ...parsed.data, importedId }, api);
       });
     },
 

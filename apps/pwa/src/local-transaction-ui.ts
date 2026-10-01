@@ -3,7 +3,7 @@ import { ActualMasterValidationError } from '../../../src/lib/actual-browser-led
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 
-type TransactionKind = 'expense' | 'income';
+type TransactionKind = 'expense' | 'income' | 'transfer';
 type FormValue = {
   kind: TransactionKind;
   date: string;
@@ -12,6 +12,7 @@ type FormValue = {
   categoryId: string;
   accountId: string;
   memo: string | null;
+  destinationAccountId?: string;
 };
 type ManualTransactionDraft = {
   merchant: string;
@@ -21,6 +22,7 @@ type ManualTransactionDraft = {
   categoryId: string;
   accountId: string;
   manualKind?: TransactionKind;
+  destinationAccountId?: string;
   manualMemo?: string | null;
   manualImportedId?: string;
   manualTransactionId?: string | null;
@@ -65,10 +67,11 @@ export function showManualTransactionEditor(options: {
   const transaction = options.transaction;
   const editing = transaction !== undefined;
   const kind = options.kind;
+  const transfer = kind === 'transfer';
   const form = node('form', undefined, 'manual-transaction-form');
   const status = node('p', '', 'status');
   status.setAttribute('role', 'status');
-  const heading = node('h2', editing ? '取引を編集' : kind === 'expense' ? '支出を入力' : '収入を入力');
+  const heading = node('h2', editing ? '取引を編集' : transfer ? '口座間振替' : kind === 'expense' ? '支出を入力' : '収入を入力');
   status.textContent = 'カテゴリと口座を読み込んでいます。';
   const loadingCancel = node('button', 'キャンセル', 'secondary');
   loadingCancel.type = 'button';
@@ -104,7 +107,7 @@ export function showManualTransactionEditor(options: {
   void editorLockReady.then(locked => {
     if (!locked) throw new Error('別の画面でこの記録を編集中です。閉じてから開き直してください。');
     if (!heading.isConnected || options.view.hidden) { releaseEditorLock?.(); return null; }
-    const categoriesPromise = kind === 'expense' ? ledger.listExpenseCategories() : ledger.listIncomeCategories();
+    const categoriesPromise = transfer ? Promise.resolve([]) : kind === 'expense' ? ledger.listExpenseCategories() : ledger.listIncomeCategories();
     return Promise.all([categoriesPromise, ledger.listOpenAccounts(), options.repository.get<ManualTransactionDraft>(draftId)] as const);
   }).then(result => {
     if (!result || !heading.isConnected || options.view.hidden) return;
@@ -114,7 +117,7 @@ export function showManualTransactionEditor(options: {
     const draftSnapshot: FormValue | null = draft ? {
       kind, date: draft.purchasedDate, amountYen: draft.totalAmountYen,
       payeeName: draft.merchant, categoryId: draft.categoryId, accountId: draft.accountId,
-      memo: draft.manualMemo ?? null,
+      memo: draft.manualMemo ?? null, destinationAccountId: draft.destinationAccountId,
     } : null;
     const dateLabel = fieldLabel('label', '日付', 'manual-transaction-date');
     const date = node('input'); date.id = dateLabel.htmlFor; date.type = 'date'; date.required = true;
@@ -127,12 +130,12 @@ export function showManualTransactionEditor(options: {
 
     const payeeText = kind === 'expense' ? '店名・支払先' : '入金元・内容';
     const payeeLabel = fieldLabel('label', payeeText, 'manual-transaction-payee');
-    const payee = node('input'); payee.id = payeeLabel.htmlFor; payee.maxLength = 200; payee.required = true;
+    const payee = node('input'); payee.id = payeeLabel.htmlFor; payee.maxLength = 200; payee.required = !transfer;
     payee.value = draftSnapshot?.payeeName ?? transaction?.payeeName ?? '';
 
     const categoryText = kind === 'expense' ? '支出カテゴリ' : '収入カテゴリ';
     const categoryLabel = fieldLabel('label', categoryText, 'manual-transaction-category');
-    const category = node('select'); category.id = categoryLabel.htmlFor; category.required = true;
+    const category = node('select'); category.id = categoryLabel.htmlFor; category.required = !transfer;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(value => new Option(value.name, value.id)));
     const currentCategoryId = transaction?.categoryId ?? categories.find(value => value.name === transaction?.categoryName)?.id ?? '';
     const selectedCategoryId = draftSnapshot?.categoryId ?? currentCategoryId;
@@ -141,7 +144,7 @@ export function showManualTransactionEditor(options: {
     }
     category.value = selectedCategoryId;
 
-    const accountLabel = fieldLabel('label', kind === 'expense' ? '支払元' : '入金先口座', 'manual-transaction-account');
+    const accountLabel = fieldLabel('label', transfer ? '振替元口座' : kind === 'expense' ? '支払元' : '入金先口座', 'manual-transaction-account');
     const account = node('select'); account.id = accountLabel.htmlFor; account.required = true;
     account.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
     const selectedAccountId = draftSnapshot?.accountId ?? transaction?.accountId;
@@ -149,6 +152,13 @@ export function showManualTransactionEditor(options: {
       account.append(new Option('現在の口座（利用終了）', selectedAccountId));
     }
     account.value = selectedAccountId ?? (accounts.length === 1 ? accounts[0].id : '');
+
+    const destinationLabel = fieldLabel('label', '振替先口座', 'manual-transaction-destination');
+    const destination = node('select'); destination.id = destinationLabel.htmlFor; destination.required = transfer;
+    destination.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
+    const destinationId = draftSnapshot?.destinationAccountId ?? transaction?.transferAccountId ?? '';
+    if (destinationId && !accounts.some(value => value.id === destinationId)) destination.append(new Option('現在の口座（利用終了）', destinationId));
+    destination.value = destinationId;
 
     const memoLabel = fieldLabel('label', 'メモ（任意）', 'manual-transaction-memo');
     const memo = node('textarea'); memo.id = memoLabel.htmlFor; memo.maxLength = 2000; memo.value = draftSnapshot?.memo ?? transaction?.memo ?? '';
@@ -161,6 +171,10 @@ export function showManualTransactionEditor(options: {
 
     form.append(dateLabel, date, amountLabel, amount, payeeLabel, payee,
       categoryLabel, category, accountLabel, account, memoLabel, memo, status, submit);
+    if (transfer) {
+      payeeLabel.remove(); payee.remove(); categoryLabel.remove(); category.remove();
+      memoLabel.before(destinationLabel, destination);
+    }
     options.view.replaceChildren(heading, form, cancel);
     status.textContent = '';
 
@@ -172,11 +186,12 @@ export function showManualTransactionEditor(options: {
       categoryId: category.value,
       accountId: account.value,
       memo: memo.value.trim() || null,
+      ...(transfer ? { destinationAccountId: destination.value } : {}),
     });
-    const fields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = [date, amount, payee, category, account, memo];
+    const fields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = transfer ? [date, amount, account, destination, memo] : [date, amount, payee, category, account, memo];
     let submittedSnapshot: FormValue | null = draft?.manualStatus === 'processing' || draft?.manualStatus === 'failed' ? draftSnapshot : null;
     let frozenAfterUnknownFailure = submittedSnapshot !== null;
-    const importedId = draft?.manualImportedId ?? `kakeimatch:manual:${crypto.randomUUID()}`;
+    const importedId = draft?.manualImportedId ?? `kakeimatch:${transfer ? 'transfer' : 'manual'}:${crypto.randomUUID()}`;
     let draftTail = pendingDraftWrites;
 
     function persistDraft(value: FormValue, manualStatus: ManualTransactionDraft['manualStatus'] = 'draft') {
@@ -185,6 +200,7 @@ export function showManualTransactionEditor(options: {
         totalAmountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId,
         manualKind: kind, manualMemo: value.memo, manualImportedId: importedId,
         manualTransactionId: transaction?.id ?? null, manualStatus,
+        ...(transfer ? { destinationAccountId: value.destinationAccountId } : {}),
       };
       draftTail = draftTail.catch(() => undefined).then(() => options.repository.put({
         id: draftId, kind: 'category-state', value: record, updatedAt: new Date().toISOString(),
@@ -209,6 +225,11 @@ export function showManualTransactionEditor(options: {
     function validate(value: FormValue): string | null {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value.date) || Number.isNaN(new Date(`${value.date}T00:00:00Z`).valueOf()) || new Date(`${value.date}T00:00:00Z`).toISOString().slice(0, 10) !== value.date) return '日付を選んでください。';
       if (!Number.isSafeInteger(value.amountYen) || value.amountYen <= 0) return '金額は1円以上の整数で入力してください。';
+      if (transfer) {
+        if (!value.accountId || !value.destinationAccountId) return '振替元と振替先の口座を選んでください。';
+        if (value.accountId === value.destinationAccountId) return '異なる口座を選んでください。';
+        return null;
+      }
       if (!value.payeeName) return `${payeeText}を入力してください。`;
       if (!value.categoryId) return `${categoryText}を選んでください。`;
       if (!value.accountId) return `${kind === 'expense' ? '支払元' : '入金先口座'}を選んでください。`;
@@ -237,8 +258,15 @@ export function showManualTransactionEditor(options: {
         try {
           await navigator.locks.request(`kakeimatch-manual-transaction:${lockId}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
             if (!lock) throw new ActualMasterValidationError('別の画面で記録を保存中です。終わってからもう一度お試しください。');
-            if (editing) await ledger.updateTransaction(transaction!.id, value);
-            else await ledger.createTransaction({ ...value, importedId });
+            if (transfer) {
+              const transferValue = { date: value.date, amountYen: value.amountYen, sourceAccountId: value.accountId, destinationAccountId: value.destinationAccountId!, memo: value.memo };
+              if (editing) await ledger.updateTransfer(transaction!.id, transferValue);
+              else await ledger.createTransfer({ ...transferValue, importedId });
+            } else {
+              const manualValue = { ...value, kind: kind as 'expense' | 'income' };
+              if (editing) await ledger.updateTransaction(transaction!.id, manualValue);
+              else await ledger.createTransaction({ ...manualValue, importedId });
+            }
           });
         } catch (error) {
           if (!heading.isConnected) return;
