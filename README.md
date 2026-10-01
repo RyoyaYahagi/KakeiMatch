@@ -23,6 +23,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [実装計画](docs/IMPLEMENTATION_PLAN.md): 現在の利用フローと残作業
 - [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、移行方針
 - [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhone確認
+- [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [セキュリティ](SECURITY.md): データとサービスの保護

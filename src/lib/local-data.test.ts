@@ -3,6 +3,7 @@ import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import "fake-indexeddb/auto";
 import {
   LocalDataRepository,
+  LOCAL_DATABASE_VERSION,
   migrateLocalDataBackup,
   type LocalDataBackupV1,
 } from "./local-data";
@@ -15,7 +16,42 @@ async function open(profileId: string, factory: IDBFactory): Promise<LocalDataRe
   return repository;
 }
 
+function rawOpen(factory: IDBFactory, version: number, upgrade?: (db: IDBDatabase) => void): Promise<IDBDatabase> {
+  const request = factory.open("kakeimatch-local-data", version);
+  request.onupgradeneeded = () => upgrade?.(request.result);
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function seedV1(factory: IDBFactory): Promise<void> {
+  const db = await rawOpen(factory, 1, db => {
+    for (const name of ["records", "blobs"]) {
+      db.createObjectStore(name, { keyPath: "key" }).createIndex("profileId", "profileId");
+    }
+  });
+  const transaction = db.transaction(["records", "blobs"], "readwrite");
+  const done = new Promise<void>((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onabort = () => reject(transaction.error);
+  });
+  for (const profileId of ["profile-a", "profile-b"]) {
+    transaction.objectStore("records").put({
+      key: `${profileId}\u0000receipt`, profileId, id: "receipt", kind: "receipt-metadata",
+      value: { merchant: "人工店舗", profileId }, updatedAt: "2026-09-30T00:00:00.000Z",
+    });
+    transaction.objectStore("blobs").put({
+      key: `${profileId}\u0000image`, profileId, id: "image", ownerKind: "receipt", ownerId: "receipt",
+      blob: new Blob([`synthetic ${profileId}`]), contentType: "image/jpeg", createdAt: "2026-09-30T00:00:00.000Z",
+    });
+  }
+  await done;
+  db.close();
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   openRepositories.splice(0).forEach((repository) => repository.close());
 });
 
@@ -109,6 +145,105 @@ describe("LocalDataRepository", () => {
     });
     await upgraded.delete("receipt-legacy");
     expect(await upgraded.getBlob("blob-legacy")).toBeNull();
+  });
+
+  it("preserves every profile and blob across v1 migration and repeated reopening", async () => {
+    const factory = new IDBFactory();
+    await seedV1(factory);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      for (const profile of ["profile-a", "profile-b"]) {
+        const repository = await open(profile, factory);
+        expect(await repository.get("receipt")).toMatchObject({ value: { profileId: profile } });
+        expect(await (await repository.getBlob("image"))?.blob.text()).toBe(`synthetic ${profile}`);
+        repository.close();
+      }
+    }
+    const db = await rawOpen(factory, LOCAL_DATABASE_VERSION);
+    expect(db.version).toBe(2);
+    expect(db.transaction("blobs").objectStore("blobs").indexNames.contains("owner")).toBe(true);
+    db.close();
+  });
+
+  it("rolls back layout, version and data after a partially executed migration fails, then retries", async () => {
+    const factory = new IDBFactory();
+    await seedV1(factory);
+    const createIndex = IDBObjectStore.prototype.createIndex;
+    const failure = vi.spyOn(IDBObjectStore.prototype, "createIndex").mockImplementation(function (this: IDBObjectStore, ...args) {
+      const index = createIndex.apply(this, args);
+      this.transaction.objectStore("records").clear();
+      this.clear();
+      throw new Error(`synthetic migration failure after ${index.name}`);
+    });
+    try {
+      await expect(LocalDataRepository.open("profile-a", factory)).rejects.toMatchObject({
+        name: "LocalDataStorageError", message: expect.stringContaining("更新前のデータは保持"),
+      });
+    } finally { failure.mockRestore(); }
+    const old = await rawOpen(factory, 1);
+    expect(old.version).toBe(1);
+    const transaction = old.transaction(["records", "blobs"]);
+    expect(transaction.objectStore("blobs").indexNames.contains("owner")).toBe(false);
+    const counts = ["records", "blobs"].map(name => new Promise<number>((resolve, reject) => {
+      const request = transaction.objectStore(name).count();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    }));
+    expect(await Promise.all(counts)).toEqual([2, 2]);
+    old.close();
+    for (const profile of ["profile-a", "profile-b"]) {
+      const repository = await open(profile, factory);
+      expect(await repository.get("receipt")).toMatchObject({ value: { profileId: profile } });
+      expect(await (await repository.getBlob("image"))?.blob.text()).toBe(`synthetic ${profile}`);
+    }
+  });
+
+  it("rejects a future layout without changing its data or version", async () => {
+    const factory = new IDBFactory();
+    const repository = await open("profile-a", factory);
+    await repository.put({ id: "keep", kind: "app-settings", value: { synthetic: true }, updatedAt: "2026-09-30T00:00:00.000Z" });
+    repository.close();
+    const future = await rawOpen(factory, LOCAL_DATABASE_VERSION + 1, db => db.createObjectStore("future"));
+    future.close();
+    await expect(LocalDataRepository.open("profile-a", factory)).rejects.toMatchObject({ message: expect.stringContaining("新しい版") });
+    const unchanged = await rawOpen(factory, LOCAL_DATABASE_VERSION + 1);
+    expect(unchanged.objectStoreNames.contains("future")).toBe(true);
+    const request = unchanged.transaction("records").objectStore("records").get("profile-a\u0000keep");
+    const row = await new Promise(resolve => { request.onsuccess = () => resolve(request.result); });
+    expect(row).toMatchObject({ id: "keep", value: { synthetic: true } });
+    unchanged.close();
+  });
+
+  it("rejects blocked upgrades promptly and aborts the abandoned open after the old tab closes", async () => {
+    const factory = new IDBFactory();
+    await seedV1(factory);
+    const old = await rawOpen(factory, 1);
+    try {
+      await expect(LocalDataRepository.open("profile-a", factory)).rejects.toMatchObject({ message: expect.stringContaining("他の画面を閉じ") });
+    } finally { old.close(); }
+    // Queued behind the abandoned upgrade: succeeds only if it rolled back and released its connection.
+    const unchanged = await rawOpen(factory, 1);
+    expect(unchanged.version).toBe(1);
+    unchanged.close();
+    const retry = await open("profile-a", factory);
+    expect(await retry.get("receipt")).not.toBeNull();
+  });
+
+  it("asks a stale connection to reload after another tab upgrades", async () => {
+    const factory = new IDBFactory();
+    const repository = await open("profile-a", factory);
+    const next = await rawOpen(factory, LOCAL_DATABASE_VERSION + 1);
+    await expect(repository.get("receipt")).rejects.toMatchObject({ message: expect.stringContaining("再読み込み") });
+    next.close();
+  });
+
+  it("rejects a malformed current layout without recreating missing stores", async () => {
+    const factory = new IDBFactory();
+    const malformed = await rawOpen(factory, LOCAL_DATABASE_VERSION, db => db.createObjectStore("records", { keyPath: "key" }));
+    malformed.close();
+    await expect(LocalDataRepository.open("profile-a", factory)).rejects.toMatchObject({ message: expect.stringContaining("構造を確認できません") });
+    const unchanged = await rawOpen(factory, LOCAL_DATABASE_VERSION);
+    expect(Array.from(unchanged.objectStoreNames)).toEqual(["records"]);
+    unchanged.close();
   });
 
   it("turns QuotaExceededError into an explicit storage failure", async () => {
