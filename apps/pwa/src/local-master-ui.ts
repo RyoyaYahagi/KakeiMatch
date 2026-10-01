@@ -46,7 +46,7 @@ export function initializeMasterUi(
   container: HTMLElement,
   ledger: ReturnType<typeof createActualBrowserLedger>,
   options: { onBack: () => void; onTransaction?: (transaction: ActualTransaction) => Promise<void>; beforeDeleteAccount?: (id: string) => Promise<void>; beforeDeleteCategory?: (id: string) => Promise<void> },
-): () => void {
+): (() => void) & { openAccounts: () => Promise<void> } {
   const section = element('section');
   section.className = 'master-settings';
   section.hidden = true;
@@ -265,5 +265,5 @@ export function initializeMasterUi(
     }, showFormError));
   }
 
-  return () => leaveManagement();
+  return Object.assign(() => leaveManagement(), { openAccounts: accountsPage });
 }

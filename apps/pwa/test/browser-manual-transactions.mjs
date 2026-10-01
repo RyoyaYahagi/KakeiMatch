@@ -21,7 +21,7 @@ async function category(name, income) {
   await click('カテゴリを追加する'); await page.getByLabel('カテゴリ名', { exact: true }).fill(name); await click('追加する');
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
-async function chooser(kind) { await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); await page.locator('#manual-transaction-payee').waitFor(); }
+async function chooser(kind) { await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-payee').waitFor(); }
 async function fill(name, amount, categoryName, accountName, memo) {
   await page.locator('#manual-transaction-payee').fill(name);
   await page.locator('#manual-transaction-amount').fill(String(amount));
