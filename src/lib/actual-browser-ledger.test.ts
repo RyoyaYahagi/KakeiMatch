@@ -276,6 +276,13 @@ describe("Actual browser ledger", () => {
     expect(recent.some((row) => row.id === "split-a" || row.id === "split-b")).toBe(false);
     await expect(ledger.getTransactionById("parent")).resolves.toMatchObject({ id: "parent", amountYen: -1000 });
     await expect(ledger.getMonthlySpending({ yearMonth: "2026-09" })).resolves.toBe(4284);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 5000, expenseYen: 4284, balanceYen: 716,
+      categories: [
+        { categoryId: "food", categoryName: "食費", amountYen: 3884 },
+        { categoryId: "home", categoryName: "住居費", amountYen: 400 },
+      ],
+    });
     await expect(ledger.getTransactionById("expense")).resolves.toMatchObject({ amountYen: -3284 });
     await expect(ledger.listExpenseCategories()).resolves.toEqual([
       { id: "food", name: "食費" }, { id: "home", name: "住居費" },
@@ -289,6 +296,78 @@ describe("Actual browser ledger", () => {
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
     expect(api.updateTransaction).toHaveBeenCalledWith("receipt-created", { category: "home", cleared: true });
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
+  });
+
+  it("aggregates by amount sign, excludes off-budget and tombstoned rows, and reports null categories", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.push(
+      { id: "refund", account: "cash", date: "2026-09-25", amount: 250, category: "food" },
+      { id: "negative-income", account: "cash", date: "2026-09-24", amount: -100, category: "income-category" },
+      { id: "uncategorized", account: "cash", date: "2026-09-23", amount: -200, category: null },
+      { id: "offbudget-spend", account: "offbudget", date: "2026-09-22", amount: -500, category: "food" },
+      { id: "tombstone-spend", account: "cash", date: "2026-09-21", amount: -900, category: "food", tombstone: true },
+      { id: "opening-balance", account: "cash", date: "2026-09-20", amount: 100000, starting_balance_flag: true },
+      { id: "failed-import", account: "cash", date: "2026-09-19", amount: -800, category: "food", error: "invalid" },
+    );
+    api.getAccounts.mockImplementation(async () => [
+      { id: "cash", name: "現金", closed: false }, { id: "offbudget", name: "投資口座", closed: false, offbudget: true },
+    ]);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 5250, expenseYen: 4584, balanceYen: 666,
+      categories: [
+        { categoryId: "food", categoryName: "食費", amountYen: 3884 },
+        { categoryId: "home", categoryName: "住居費", amountYen: 400 },
+        { categoryId: null, categoryName: "未分類", amountYen: 200 },
+        { categoryId: "income-category", categoryName: "給与", amountYen: 100 },
+      ],
+    });
+  });
+
+  it("returns an empty summary for zero months and handles the last valid calendar month", async () => {
+    const { ledger } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-10" })).resolves.toEqual({
+      yearMonth: "2026-10", incomeYen: 0, expenseYen: 0, balanceYen: 0, categories: [],
+    });
+    expect(() => ledger.getMonthlySummary({ yearMonth: "0000-01" })).toThrow("Invalid yearMonth.");
+    await expect(ledger.getMonthlySummary({ yearMonth: "9999-12" })).resolves.toMatchObject({ yearMonth: "9999-12", incomeYen: 0, expenseYen: 0 });
+  });
+
+  it("rejects unsafe monthly total and balance arithmetic", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.push({ id: "overflow", account: "cash", date: "2026-09-25", amount: -Number.MAX_SAFE_INTEGER, category: null });
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+    await expect(ledger.getMonthlySpending({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
+  });
+
+  it("nets positive refund splits against spending in each category", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.splice(0, rows.length,
+      { id: "net-split", account: "cash", date: "2026-09-15", amount: -300, is_parent: true },
+      { id: "food-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -700, category: "food" },
+      { id: "food-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 700, category: "food" },
+      { id: "home-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -700, category: "home" },
+      { id: "home-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 200, category: "home" },
+      { id: "transport-spend", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -100, category: "transport" },
+      { id: "transport-refund", parent_id: "net-split", is_child: true, account: "cash", date: "2026-09-15", amount: 300, category: "transport" },
+    );
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).resolves.toEqual({
+      yearMonth: "2026-09", incomeYen: 0, expenseYen: 300, balanceYen: -300,
+      categories: [
+        { categoryId: "home", categoryName: "住居費", amountYen: 500 },
+        { categoryId: "transport", categoryName: "カテゴリ名不明", amountYen: -200 },
+      ],
+    });
+  });
+
+  it("rejects an unsafe positive category denominator even when split net total is safe", async () => {
+    const { ledger, rows } = fixture([{ id: "budget", name: "Local" }]);
+    rows.splice(0, rows.length,
+      { id: "large-net-split", account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, is_parent: true },
+      { id: "large-a", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, category: "food" },
+      { id: "large-refund", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: Number.MAX_SAFE_INTEGER, category: "transport" },
+      { id: "large-b", parent_id: "large-net-split", is_child: true, account: "cash", date: "2026-09-15", amount: -Number.MAX_SAFE_INTEGER, category: "home" },
+    );
+    await expect(ledger.getMonthlySummary({ yearMonth: "2026-09" })).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
   });
   it("accepts Actual's case formatting but rejects a different payee on read-back", async () => {
     const { ledger, api } = fixture([{ id: "budget", name: "Synthetic" }]);

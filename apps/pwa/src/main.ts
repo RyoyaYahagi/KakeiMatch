@@ -30,10 +30,11 @@ root.innerHTML = `
       <label for="budget">家計簿</label>
       <select id="budget"></select>
     </section>
-    <p id="home-summary"></p>
+    <div id="home-summary"></div>
+    <div id="home-attention"></div>
     <button id="home-capture" type="button">＋記録</button>
     <section>
-      <h2>最近の取引</h2>
+      <h2>選択月の記録</h2>
       <ul id="transactions"></ul>
     </section>
     </section>

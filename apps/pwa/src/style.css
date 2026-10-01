@@ -63,3 +63,14 @@ button.destructive { color: #a13a2c; border-color: #a13a2c; }
 .deletion-toast:empty { display: none; }
 .deletion-toast { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; }
 .deletion-toast span { font-size: 1rem; }
+.month-selector { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.month-selector button { min-width: 44px; font-size: 1.5rem; }
+.monthly-totals { margin: 12px 0; }
+.monthly-totals div { display: flex; justify-content: space-between; padding: 6px 0; }
+.monthly-totals dd { margin: 0; font-variant-numeric: tabular-nums; }
+.monthly-category-details { margin: 8px 0; }
+.category-donut { width: 180px; display: block; margin: 12px auto; }
+.category-donut [role=button] { cursor: pointer; }
+.category-donut [role=button]:focus-visible { outline: 2px solid #213a32; }
+.category-legend { list-style: none; padding: 0; }
+.category-legend-entry { display: block; width: 100%; text-align: left; color: #213a32; border: 0; border-left: 4px solid; border-radius: 0; background: transparent; padding: 8px; margin: 0; overflow-wrap: anywhere; }

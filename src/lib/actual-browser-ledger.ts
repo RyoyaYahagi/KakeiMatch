@@ -2,7 +2,7 @@
 
 import { z } from "zod";
 import { normalizeMerchant } from "./category";
-import type { ActualAccount, ActualCategory, ActualLedger, ActualTransaction, ManualTransactionInput, TransferInput, TransferUpdateInput } from "@/lib/actual-ledger";
+import type { ActualAccount, ActualCategory, ActualLedger, ActualMonthlySummary, ActualTransaction, ManualTransactionInput, TransferInput, TransferUpdateInput } from "@/lib/actual-ledger";
 
 type ActualApi = Pick<typeof import("@actual-app/api"),
   | "init" | "shutdown" | "getBudgets" | "runImport" | "loadBudget" | "getAccounts" | "getCategories"
@@ -175,10 +175,75 @@ function validateDate(value: string): string {
 }
 
 function lastDayOfMonth(yearMonth: string): string {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(yearMonth)) throw new Error("Invalid yearMonth.");
-  const next = new Date(`${yearMonth}-01T00:00:00.000Z`);
-  next.setUTCMonth(next.getUTCMonth() + 1);
-  return new Date(next.getTime() - 86_400_000).toISOString().slice(0, 10);
+  const parsed = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(yearMonth);
+  if (!parsed || Number(parsed[1]) === 0) throw new Error("Invalid yearMonth.");
+  const year = Number(parsed[1]), month = Number(parsed[2]);
+  const end = new Date(0);
+  end.setUTCFullYear(year, month, 0);
+  end.setUTCHours(0, 0, 0, 0);
+  return end.toISOString().slice(0, 10);
+}
+
+function addSafeYen(total: number, amount: number): number {
+  const result = total + amount;
+  if (!Number.isSafeInteger(amount) || !Number.isSafeInteger(result)) throw new ActualBrowserUnavailableError("invalid_data");
+  return result;
+}
+
+function summarizeMonth(rows: NativeTransaction[], categories: Array<{ id: string; name: string }>, yearMonth: string): ActualMonthlySummary {
+  const categoryNames = new Map(categories.map(category => [category.id, category.name]));
+  const childrenByParent = new Map<string, NativeTransaction[]>();
+  for (const row of rows) {
+    if (!row.parent_id || row.is_child === false) continue;
+    const children = childrenByParent.get(row.parent_id) ?? [];
+    children.push(row);
+    childrenByParent.set(row.parent_id, children);
+  }
+  let incomeYen = 0, expenseYen = 0;
+  const categoryAmounts = new Map<string | null, number>();
+  const categoryNamesById = new Map<string | null, string>();
+  const addCategory = (categoryId: string | null | undefined, amountYen: number) => {
+    if (amountYen === 0) return;
+    const key = categoryId ?? null;
+    categoryAmounts.set(key, addSafeYen(categoryAmounts.get(key) ?? 0, amountYen));
+    categoryNamesById.set(key, key === null ? "未分類" : categoryNames.get(key) ?? "カテゴリ名不明");
+  };
+  const extended = rows as Array<NativeTransaction & { tombstone?: unknown; starting_balance_flag?: unknown; error?: unknown }>;
+  for (const row of extended) {
+    if (row.tombstone === true || row.starting_balance_flag === true || Boolean(row.error)) continue;
+    if (typeof row.date !== "string" || !dateSchema.safeParse(row.date).success) throw new ActualBrowserUnavailableError("invalid_data");
+    if (row.is_child || row.parent_id || row.transfer_id || !row.date.startsWith(`${yearMonth}-`)) continue;
+    if (!Number.isSafeInteger(row.amount)) throw new ActualBrowserUnavailableError("invalid_data");
+    if (row.amount > 0) incomeYen = addSafeYen(incomeYen, row.amount);
+    else if (row.amount < 0) expenseYen = addSafeYen(expenseYen, -row.amount);
+
+    if (row.amount >= 0) continue;
+    const children = childrenByParent.get(row.id) ?? [];
+    const split = row.is_parent === true || (row.subtransactions?.length ?? 0) > 0 || children.length > 0;
+    if (!split) {
+      addCategory(row.category, -row.amount);
+      continue;
+    }
+    if (!children.length) throw new ActualBrowserUnavailableError("invalid_data");
+    let childTotal = 0;
+    for (const child of children) {
+      const extra = child as NativeTransaction & { tombstone?: unknown; error?: unknown };
+      if (extra.tombstone === true || Boolean(extra.error) || !Number.isSafeInteger(child.amount)) {
+        throw new ActualBrowserUnavailableError("invalid_data");
+      }
+      childTotal = addSafeYen(childTotal, child.amount);
+      addCategory(child.category, -child.amount);
+    }
+    if (childTotal !== row.amount) throw new ActualBrowserUnavailableError("invalid_data");
+  }
+  const balanceYen = incomeYen - expenseYen;
+  if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
+  const categoryRows = [...categoryAmounts].filter(([, amountYen]) => amountYen !== 0).map(([categoryId, amountYen]) => ({
+    categoryId, categoryName: categoryNamesById.get(categoryId) ?? "未分類", amountYen,
+  })).sort((a, b) => b.amountYen - a.amountYen || a.categoryName.localeCompare(b.categoryName) || (a.categoryId ?? "").localeCompare(b.categoryId ?? ""));
+  let positiveCategoryTotal = 0;
+  for (const category of categoryRows) if (category.amountYen > 0) positiveCategoryTotal = addSafeYen(positiveCategoryTotal, category.amountYen);
+  return { yearMonth, incomeYen, expenseYen, balanceYen, categories: categoryRows };
 }
 
 /**
@@ -186,6 +251,7 @@ function lastDayOfMonth(yearMonth: string): string {
  * when an operation runs, so this module never pulls the Node export into server code.
  */
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
+  getMonthlySummary(params: { yearMonth: string }): Promise<ActualMonthlySummary>;
   listOpenAccounts(): Promise<ActualAccount[]>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
@@ -339,8 +405,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return result;
   });
 
-  const allRows = async (api: ActualApi, startDate: string, endDate: string): Promise<NativeTransaction[]> => {
-    const accounts = await api.getAccounts();
+  const allRows = async (api: ActualApi, startDate: string, endDate: string, includeAccount: (account: { id: string; offbudget?: boolean }) => boolean = () => true): Promise<NativeTransaction[]> => {
+    const accounts = (await api.getAccounts()).filter(account => includeAccount(account as { id: string; offbudget?: boolean }));
     const lists = await Promise.all(accounts.map((account) => api.getTransactions(account.id, startDate, endDate)));
     const rows = lists.flat() as NativeTransaction[];
     const ids = new Set(rows.map(row => row.id));
@@ -351,6 +417,15 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return { ...parent, ...child, id: child.id, is_parent: false, is_child: true, parent_id: parent.id, subtransactions: undefined };
     }));
     return [...rows, ...children];
+  };
+
+  const monthlySummary = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlySummary> => {
+    const endDate = lastDayOfMonth(yearMonth);
+    const [rows, categories] = await Promise.all([
+      allRows(api, `${yearMonth}-01`, endDate, account => account.offbudget !== true),
+      api.getCategories(),
+    ]);
+    return summarizeMonth(rows, categories, yearMonth);
   };
 
   // Keep the split parent
@@ -670,18 +745,14 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
+    getMonthlySummary({ yearMonth }) {
+      lastDayOfMonth(yearMonth);
+      return withBudget(api => monthlySummary(api, yearMonth));
+    },
+
     getMonthlySpending({ yearMonth }) {
-      const end = lastDayOfMonth(yearMonth);
-      return withBudget(async (api) => {
-        const rows = await allRows(api, `${yearMonth}-01`, end);
-        let total = 0;
-        for (const row of rows) {
-          if (row.is_parent || row.transfer_id || row.amount >= 0) continue;
-          total += -row.amount;
-          if (!Number.isSafeInteger(total)) throw new ActualBrowserUnavailableError("invalid_data");
-        }
-        return total;
-      });
+      lastDayOfMonth(yearMonth);
+      return withBudget(async api => (await monthlySummary(api, yearMonth)).expenseYen);
     },
 
     listOpenAccounts() {
