@@ -137,6 +137,25 @@ try {
   await page.locator('#reconciliation-tab').click();
   await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.getByText(/自動確認済み 1件/).waitFor();
+  const openAutomaticMatch = async () => {
+    const summary = page.locator('summary').filter({ hasText: '自動確認済みの内容を見る（1件）' });
+    await summary.waitFor();
+    assert.equal(await summary.evaluate(node => node.parentElement.open), false);
+    await summary.click();
+    await page.locator('summary').filter({ hasText: 'Diagnostic Store corrected' }).click();
+    await page.getByText('明細：2026-09-30 12:00 · Diagnostic Store corrected · ¥1,280 · PayPay', { exact: true }).waitFor();
+    await page.getByText('レシート：2026-09-30 12:00 · Diagnostic Store corrected · ¥1,280', { exact: true }).waitFor();
+  };
+  await openAutomaticMatch();
+  if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
+  await page.getByRole('button', { name: 'レシートを確認する', exact: true }).click();
+  await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
+  assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store corrected');
+  await page.locator('#reconciliation-tab').click();
+  // The latest run no longer contains the applied pair, but its history remains.
+  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
+  await openAutomaticMatch();
   await page.locator('summary').filter({ hasText: 'Synthetic New Store' }).click();
   await page.locator('details select').first().selectOption({ label: 'Synthetic Wallet' });
   await page.locator('details select').last().selectOption({ label: '日用品' });
@@ -162,6 +181,8 @@ try {
   await page.locator('#reconciliation-tab').click();
   await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.getByText(/要確認 0件/).waitFor();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
+  await openAutomaticMatch();
   await upload();
   await page.getByText('0件を取り込みました。重複 2件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
