@@ -1,3 +1,4 @@
+import { renderMonthlyDashboard, monthEnd } from './local-monthly-dashboard';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -80,20 +81,27 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     el('message').textContent = ''; view.replaceChildren();
   }
+  let selectedMonth = today().slice(0, 7);
+  let homeRevision = 0;
   async function home() {
+    const revision = ++homeRevision;
+    el('home-summary').setAttribute('aria-busy', 'true');
     await open('home');
-    const rows = await ledger.getRecentTransactions({ limit: 50 });
+    const month = selectedMonth;
+    const [rows, summary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month })]);
+    if (revision !== homeRevision || el('household-view').hidden) return;
+    renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), next => { selectedMonth = next; void home().catch(report); });
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
       const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。'));
-    const monthly = await ledger.getMonthlySpending({ yearMonth: today().slice(0, 7) });
-    el('home-summary').textContent = `今月の支出 ${yen(monthly)}`;
+
     const resolutions = await reconciliation.resolutions();
     const latest = await reconciliation.latest();
     const attention = resolutions.filter(r => r.status !== 'applied').length + (latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)).length ?? 0);
-    el('home-summary').append(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
+    el('home-attention').replaceChildren(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
+    if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
   }
   async function recordChooser() {
     await open('receipt'); view.append(text('h2', '記録する'));
