@@ -16,6 +16,7 @@ import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '.
 import { LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
+import type { StatementProvider } from './statement-parser';
 import { LocalReconciliationService } from './local-reconciliation';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 
@@ -573,14 +574,32 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     view.append(button(editing || !receipt.image ? 'キャンセル' : '支出の選択へ戻る', editing ? () => receiptDetail(receipt) : newEntryReturn));
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
   }
-  async function statementPage() {
-    await open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPayのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));
-    const label = text('label', 'PayPayのCSVファイル'); label.setAttribute('for', 'statement-file');
+  async function statementPage(initialProvider: StatementProvider = 'paypay') {
+    await open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPayと三井住友カードのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));
+    const providerLabel = text('label', 'サービス'); providerLabel.setAttribute('for', 'statement-provider');
+    const provider = document.createElement('select'); provider.id = 'statement-provider';
+    provider.append(new Option('PayPay', 'paypay'), new Option('三井住友カード', 'smbc_card'));
+    provider.value = initialProvider;
+    const label = text('label', 'CSVファイル'); label.setAttribute('for', 'statement-file');
     const input = document.createElement('input'); input.id = 'statement-file'; input.type = 'file'; input.accept = '.csv,text/csv';
-    const submit = button('明細を取り込む', async () => { const file = input.files?.[0]; if (!file) { el('message').textContent = 'CSVファイルを選択してください。'; return; } const result = await statements.importFile(file, 'paypay'); await statementPage(); el('message').textContent = `${result.added}件を取り込みました。重複 ${result.duplicates}件。`; }, false);
-    view.append(label, input, submit, button('照合する', reviewPage));
+    const submit = button('明細を取り込む', async () => {
+      const file = input.files?.[0];
+      if (!file) { el('message').textContent = 'CSVファイルを選択してください。'; return; }
+      const result = await statements.importFile(file, provider.value as StatementProvider);
+      await statementPage(provider.value as StatementProvider);
+      const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
+      el('message').textContent = `${result.added}件を取り込みました。重複 ${result.duplicates}件。対象外 ${result.excluded}件、要確認 ${result.needsReviewRows.length}件。${reasons}`;
+    }, false);
+    view.append(providerLabel, provider, label, input, submit, button('照合する', reviewPage));
     const rows = await statements.list(); view.append(text('p', `取り込み済み ${rows.length}件`));
-    for (const record of await repository.list('statement-import')) if (!await repository.getBlob(`statement-source:${record.id}`)) view.append(text('p', '取込元CSVの原本はありません。原本の確認はできませんが、明細行と照合結果は利用できます。'));
+    for (const record of await repository.list('statement-import')) {
+      const metadata = record.value as { provider?: string; needsReviewRows?: Array<{ rowNumber: number; reason: string }> };
+      if (metadata.needsReviewRows?.length) {
+        view.append(text('p', `${metadata.provider === 'smbc_card' ? '三井住友カード' : 'PayPay'}: 要確認 ${metadata.needsReviewRows.length}件`));
+        for (const row of metadata.needsReviewRows) view.append(text('p', `${row.rowNumber}行目: ${row.reason}`));
+      }
+      if (!await repository.getBlob(`statement-source:${record.id}`)) view.append(text('p', '取込元CSVの原本はありません。原本の確認はできませんが、明細行と照合結果は利用できます。'));
+    }
   }
   async function reviewPage() {
     await open('reconciliation'); view.append(text('h2', '明細の確認'));

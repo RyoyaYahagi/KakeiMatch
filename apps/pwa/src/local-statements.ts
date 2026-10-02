@@ -11,6 +11,7 @@ type LocalImport = {
   totalRows: number;
   excludedRows: number;
   duplicateRowsInFile: number;
+  needsReviewRows?: Array<{ rowNumber: number; reason: string }>;
   createdAt: string;
 };
 
@@ -20,6 +21,7 @@ export type LocalStatementImportResult = {
   duplicates: number;
   excluded: number;
   duplicateRowsInFile: number;
+  needsReviewRows: Array<{ rowNumber: number; reason: string }>;
 };
 
 const FALLBACK_LOCKS = new Map<string, Promise<void>>();
@@ -40,8 +42,12 @@ async function withImportLock<T>(key: string, task: () => Promise<T>): Promise<T
   }
 }
 
-function statementId(importId: string, row: CanonicalStatementTransaction): string {
-  return sha256Hex(new TextEncoder().encode(JSON.stringify([importId, row.externalId ?? row.sourceFingerprint, row.externalId ? null : row.duplicateOrdinal])));
+function statementId(row: CanonicalStatementTransaction): string {
+  return sha256Hex(new TextEncoder().encode(JSON.stringify([
+    row.provider,
+    row.externalId ?? row.sourceFingerprint,
+    row.externalId ? null : row.duplicateOrdinal,
+  ])));
 }
 
 function sameExternalTransaction(left: LocalStatement, right: CanonicalStatementTransaction): boolean {
@@ -83,7 +89,7 @@ export class LocalStatementService {
       const value: LocalImport = oldImport?.value ?? {
         provider, fileHash, encoding: parsed.encoding, headerSignature: parsed.headerSignature,
         totalRows: parsed.totalRows, excludedRows: parsed.excludedRows.length,
-        duplicateRowsInFile: parsed.duplicateRowsInFile, createdAt: now,
+        duplicateRowsInFile: parsed.duplicateRowsInFile, needsReviewRows: parsed.needsReviewRows ?? [], createdAt: now,
       };
       await this.repository.putBlob({
         id: `statement-source:${id}`, ownerKind: "statement-import", ownerId: id,
@@ -95,13 +101,13 @@ export class LocalStatementService {
       let duplicates = parsed.duplicateRowsInFile;
       for (const row of parsed.transactions) {
         const existing = row.externalId ? byExternal.get(`${row.provider}:${row.externalId}`) : undefined;
-        const local: LocalStatement = { ...row, id: statementId(id, row), importId: id };
+        const local: LocalStatement = { ...row, id: statementId(row), importId: id };
         if (current.some((candidate) => candidate.id === local.id)) { duplicates++; continue; }
         if (existing) { duplicates++; continue; }
         await this.repository.put({ id: local.id, kind: "statement-transaction", value: local, updatedAt: now });
         added++;
       }
-      return { id, added, duplicates, excluded: parsed.excludedRows.length, duplicateRowsInFile: parsed.duplicateRowsInFile };
+      return { id, added, duplicates, excluded: parsed.excludedRows.length, duplicateRowsInFile: parsed.duplicateRowsInFile, needsReviewRows: parsed.needsReviewRows ?? [] };
     });
   }
 

@@ -138,9 +138,9 @@ try {
     await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
   };
   await upload();
-  await page.getByText('2件を取り込みました。重複 0件。', { exact: true }).waitFor();
+  await page.getByText('2件を取り込みました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await upload();
-  await page.getByText('0件を取り込みました。重複 2件。', { exact: true }).waitFor();
+  await page.getByText('0件を取り込みました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#reconciliation-tab').click();
   await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.getByText(/自動確認済み 1件/).waitFor();
@@ -192,7 +192,7 @@ try {
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
   await openAutomaticMatch();
   await upload();
-  await page.getByText('0件を取り込みました。重複 2件。', { exact: true }).waitFor();
+  await page.getByText('0件を取り込みました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '＋記録', exact: true }).click();
   await page.getByRole('button', { name: '支出', exact: true }).click();

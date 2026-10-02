@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseStatement } from "./statement-parser";
+import { parseStatement, parseStatementText } from "./statement-parser";
 
 const PAYPAY_HEADER = [
   "取引日", "出金金額（円）", "入金金額（円）", "海外出金金額", "通貨", "変換レート（円）", "利用国",
@@ -9,6 +9,10 @@ const RAKUTEN_2026_09_HEADER = [
   "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
   "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
 ];
+const smbcMetadata = ["SYNTHETIC MEMBER", "SYNTHETIC CARD", "SYNTHETIC STATEMENT"];
+const smbcPurchase = (merchant = "Synthetic Store", amount = "1200") => ["2026/09/28", merchant, amount, "１", "１", amount, ""];
+const smbcFooter = (amount: string) => ["", "", "", "", "", amount, ""];
+const parseSmbcSynthetic = (rows: string[][]) => parseStatementText(csv(rows).toString("utf8"), "smbc_card", "cp932");
 
 function row(values: Partial<Record<(typeof PAYPAY_HEADER)[number], string>> = {}): string[] {
   const base: Record<string, string> = {
@@ -137,7 +141,55 @@ describe("parseStatement", () => {
     const bytes = Buffer.from([0x82, 0xa0, 0x2c, 0x31, 0x0d, 0x0a]); // "あ,1\r\n" in CP932
     const result = parseStatement(bytes, "smbc_card");
     expect(result.encoding).toBe("cp932");
-    expect(result.fatalErrors[0].code).toBe("unsupported_provider");
-    expect(result.headerSignature).toBeNull();
+    expect(result.fatalErrors[0].code).toBe("unsupported_layout");
+  });
+
+  it("recognizes the private-metadata Vpass structure and accepts only strict one-time purchases", () => {
+    const result = parseSmbcSynthetic([smbcMetadata, smbcPurchase("人工ストア", "1200"), smbcFooter("1200")]);
+    expect(result).toMatchObject({ encoding: "cp932", headerSignature: "smbc-vpass-cp932-v1", totalRows: 1, fatalErrors: [] });
+    expect(result.transactions).toHaveLength(1);
+    expect(result.transactions[0]).toMatchObject({ provider: "smbc_card", externalId: null, kind: "purchase", usedDate: "2026-09-28", merchant: "人工ストア", amountYen: 1200, paymentMethod: "1回払い", duplicateOrdinal: 1 });
+    expect(JSON.stringify(result)).not.toContain("SYNTHETIC MEMBER");
+
+    const cp932Text = `${smbcMetadata.join(",")}\r\n2026/09/28,あ,1200,１,１,1200,\r\n,,,,,1200,\r\n`;
+    const cp932Bytes = Buffer.concat(cp932Text.split(/([あ１])/).map((part) => part === "あ" ? Buffer.from([0x82, 0xa0]) : part === "１" ? Buffer.from([0x82, 0x50]) : Buffer.from(part, "ascii")));
+    const decoded = parseStatement(cp932Bytes, "smbc_card");
+    expect(decoded.encoding).toBe("cp932");
+    expect(decoded.transactions[0]?.merchant).toBe("あ");
+  });
+
+  it("stores only reasons for unsupported SMBC details and skips footer equality for mixed files", () => {
+    const installment = ["2026/09/29", "Synthetic Installment", "9000", "分割", "２", "3000", ""];
+    const result = parseSmbcSynthetic([smbcMetadata, smbcPurchase(), installment, smbcFooter("4200")]);
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toHaveLength(1);
+    expect(result.needsReviewRows).toEqual([{ rowNumber: 3, reason: "1回払い以外の可能性があります" }]);
+    expect(JSON.stringify(result)).not.toContain("Synthetic Installment");
+  });
+
+  it("keeps an explicitly named fee row for human review even when its columns match a purchase", () => {
+    const fee = smbcPurchase("年会費", "500");
+    const result = parseSmbcSynthetic([smbcMetadata, fee, smbcFooter("500")]);
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toEqual([]);
+    expect(result.needsReviewRows).toEqual([{ rowNumber: 2, reason: "特殊な利用の可能性があります" }]);
+  });
+
+  it("sends malformed SMBC dates and amounts to row review without canonicalizing them", () => {
+    const badDate = ["2026/02/30", "Synthetic Store", "1200", "１", "１", "1200", ""];
+    const badAmount = ["2026/09/28", "Synthetic Store", "12.5", "１", "１", "12.5", ""];
+    const result = parseSmbcSynthetic([smbcMetadata, badDate, badAmount, smbcFooter("2400")]);
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toEqual([]);
+    expect(result.needsReviewRows).toEqual([
+      { rowNumber: 2, reason: "利用日を確認できません" },
+      { rowNumber: 3, reason: "利用金額を確認できません" },
+    ]);
+  });
+
+  it("rejects unknown layouts and fails integrity checks for normal-only files", () => {
+    expect(parseSmbcSynthetic([["private", "metadata"], smbcPurchase(), smbcFooter("1200")]).fatalErrors[0].code).toBe("unsupported_layout");
+    expect(parseSmbcSynthetic([smbcMetadata, smbcPurchase(), smbcFooter("1300")]).fatalErrors[0].code).toBe("unsupported_layout");
+    expect(parseSmbcSynthetic([smbcMetadata, smbcPurchase().slice(0, 6), smbcFooter("1200")]).fatalErrors[0].code).toBe("unsupported_layout");
   });
 });

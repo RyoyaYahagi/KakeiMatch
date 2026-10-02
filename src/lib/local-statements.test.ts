@@ -6,10 +6,20 @@ import { LocalDataRepository } from "./local-data";
 import { LocalStatementService } from "../../apps/pwa/src/local-statements";
 import { parseStatementBlob } from "../../apps/pwa/src/statement-parser";
 import { sha256Hex } from "./statement-parser-core";
+import { createPortableBackup, readPortableBackup } from "./local-backup-format";
 
 const headers = ["取引日", "出金金額（円）", "入金金額（円）", "海外出金金額", "通貨", "変換レート（円）", "利用国", "取引内容", "取引先", "取引方法", "支払い区分", "利用者", "取引番号"];
 const base = ["2026/09/28 12:34", "1,000", "", "", "", "", "", "支払い", "人工商店", "PayPay残高", "一回払い", "本人", "synthetic-1"];
 const csv = (rows: string[][]) => new Blob([`${rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n")}\r\n`], { type: "text/csv" });
+const smbcMeta = ["SYNTHETIC MEMBER", "SYNTHETIC CARD", "SYNTHETIC STATEMENT"];
+const smbcPurchase = ["2026/09/28", "Synthetic Market", "1200", "１", "１", "1200", ""];
+const smbcReview = ["2026/09/29", "Synthetic Installment", "9000", "INSTALLMENT", "2", "3000", ""];
+const smbcFooter = (amount: string) => ["", "", "", "", "", amount, ""];
+const smbcCsv = (rows: string[][]) => {
+  const text = `${rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n")}\r\n`;
+  const bytes = Buffer.concat(text.split(/(１)/).map((part) => part === "１" ? Buffer.from([0x82, 0x50]) : Buffer.from(part, "ascii")));
+  return new Blob([bytes], { type: "text/csv" });
+};
 const repos: LocalDataRepository[] = [];
 
 async function openService(): Promise<{ repository: LocalDataRepository; service: LocalStatementService }> {
@@ -62,7 +72,7 @@ describe("LocalStatementService", () => {
   it("rejects malformed and unsupported files without storing their originals", async () => {
     const { repository, service } = await openService();
     await expect(service.importFile(csv([headers, [...base.slice(0, 1), "1.5", ...base.slice(2)]]), "paypay")).rejects.toMatchObject({ issues: [{ code: "invalid_row" }] });
-    await expect(service.importFile(new Blob(["a,b\nc,d\n"]), "smbc_card")).rejects.toMatchObject({ issues: [{ code: "unsupported_provider" }] });
+    await expect(service.importFile(new Blob(["a,b\nc,d\n"]), "smbc_card")).rejects.toMatchObject({ issues: [{ code: "unsupported_layout" }] });
     expect(await repository.list("statement-import")).toHaveLength(0);
     expect((await repository.serialize()).blobs).toHaveLength(0);
   });
@@ -72,5 +82,32 @@ describe("LocalStatementService", () => {
     await service.importFile(csv([headers, base]), "paypay");
     const changed = [...base]; changed[1] = "2,000";
     await expect(service.importFile(csv([headers, changed]), "paypay")).rejects.toMatchObject({ issues: [{ code: "duplicate_external_id_conflict" }] });
+  });
+
+  it("stores SMBC review reasons without row values and keeps them in backup records", async () => {
+    const { repository, service } = await openService();
+    const input = smbcCsv([smbcMeta, smbcPurchase, smbcReview, smbcFooter("4200")]);
+    const result = await service.importFile(input, "smbc_card");
+    expect(result).toMatchObject({ added: 1, excluded: 0, needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }] });
+    const metadata = (await repository.get<{ headerSignature: string; needsReviewRows?: unknown[]; totalRows: number }>(result.id))?.value;
+    expect(metadata).toMatchObject({ headerSignature: "smbc-vpass-cp932-v1", needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }], totalRows: 2 });
+    expect(JSON.stringify(metadata)).not.toContain("SYNTHETIC MEMBER");
+    const portable = await createPortableBackup({ actualBackup: new Uint8Array([0x50, 0x4b, 0x03, 0x04]), localData: await repository.serialize() });
+    const restored = await readPortableBackup(portable);
+    expect(restored.localData.records.find((record) => record.id === result.id)?.value).toEqual(metadata);
+  });
+
+  it("deduplicates overlapping SMBC exports by fingerprint and ordinal", async () => {
+    const { service } = await openService();
+    const firstSubset = smbcCsv([smbcMeta, smbcPurchase, smbcFooter("1200")]);
+    const first = await service.importFile(firstSubset, "smbc_card");
+    expect(first.added).toBe(1);
+    const overlapping = smbcCsv([smbcMeta, smbcPurchase, smbcPurchase, smbcFooter("2400")]);
+    const second = await service.importFile(overlapping, "smbc_card");
+    expect(second).toMatchObject({ added: 1, duplicates: 1 });
+    expect((await service.list()).map(({ duplicateOrdinal }) => duplicateOrdinal).sort()).toEqual([1, 2]);
+    const repeat = await service.importFile(overlapping, "smbc_card");
+    expect(repeat).toMatchObject({ added: 0, duplicates: 2 });
+    expect(await service.list()).toHaveLength(2);
   });
 });
