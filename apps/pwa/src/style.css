@@ -81,6 +81,12 @@ button.destructive { color: #a13a2c; border-color: #a13a2c; }
 .monthly-budget-details { margin: 8px 0; }
 .budget-category-list p { margin: 4px 0; overflow-wrap: anywhere; }
 progress { display: block; width: 100%; height: 12px; accent-color: #2f6959; }
+.developer-option { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.developer-option input { width: 24px; min-height: 24px; margin: 0; }
+#developer-costs { margin-top: 16px; }
+#developer-costs .month-selector { margin: 8px 0; }
+#developer-costs .month-selector button { min-width: 44px; }
+.developer-cost-row { display: grid; gap: 4px; overflow-wrap: anywhere; }
 
 .master-create-dialog { width: min(100% - 32px, 480px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid #a8b9ad; border-radius: 12px; padding: 20px; color: inherit; background: #f8f7f3; }
 .master-create-dialog::backdrop { background: rgb(0 0 0 / .35); }

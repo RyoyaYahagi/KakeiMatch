@@ -56,7 +56,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql`、`0004_ai_provider_costs.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -101,3 +101,13 @@ iPhoneでは本人が次を確認します。
 4. アプリを終了・再起動し、端末内データが保持される。
 5. 機内モードで端末内の家計データを閲覧できる。
 6. `.kmb`バックアップを作成できる。
+
+## APIコスト計測の更新（Issue #117）
+
+Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加するテーブルは、利用者・フローの識別子、モデル、トークン数、送信時点の単価、推定料金、時刻、安全な状態コードだけを保存します。画像・店名・購入金額・商品・回答・要求本文は保存しません。過去の要求は補完しません。[実装: ai-provider-costs.ts](../workers/ai-gateway/src/ai-provider-costs.ts)
+
+料金設定はWorkerの `PRICING_CATALOG` で管理します。モデルID、価格の適用開始・終了日時、料金方式、入力・出力単価を一緒に更新してください。既存の版を上書きせず、新しい版を追加します。既存イベントの料金は更新しません。未知のモデルや未対応の料金方式はコスト不明になります。USDの100万分の1を整数で保存し、要求ごとの端数は切り上げます。[実装: ai-provider-costs.ts](../workers/ai-gateway/src/ai-provider-costs.ts)
+
+2026年10月2日に確認したStandardの料金はGemini 3.5 Flash-Liteの入力100万トークンあたり0.30 USD、思考を含む出力100万トークンあたり2.50 USDです。Jev 1.13.0は入力100万トークンあたり0.042 USDで、出力は無料です。カタログはこの料金の推定値を使います。無料枠、請求書、為替換算との照合は行いません。[Google料金 (2026/10), Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/pricing)、[TypeSafe料金 (2026/10), Jev 1.13](https://docs.typesafe.ai/models)
+
+合成要求で、再試行ごとのコスト記録、製品利用回数が増えないこと、`GET /api/ai/costs` の利用者分離、コスト不明の件数を確認します。画面では開発者向け設定を有効にしてから当月・前月の表示を確認します。設定を無効にしても計測は続きます。更新を戻す場合は追加テーブルを残してください。旧Workerを動かした期間は計測されないため、その期間の集計は不完全になります。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)、[実装: PWA](../apps/pwa/src/main.ts)
