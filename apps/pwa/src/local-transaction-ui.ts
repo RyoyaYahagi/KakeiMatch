@@ -1,6 +1,7 @@
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
 import { dateShortcuts, formActions, optionalFields } from './entry-form';
+import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
@@ -205,7 +206,7 @@ export function showManualTransactionEditor(options: {
       } });
       field.after(shortcut); shortcuts.push(shortcut);
     }
-    if (!transfer) addShortcut(category, { kind: 'category', isIncome: kind === 'income' });
+    if (!transfer) { addShortcut(category, { kind: 'category', isIncome: kind === 'income' }); enhanceCategorySelect(category, categoryLabel, recentCategoryUsage(ledger)); }
     addShortcut(account, { kind: 'account' });
     if (transfer) addShortcut(destination, { kind: 'account' });
     cancel.className = 'text-button back-link'; cancel.prepend(icon('chevronLeft'));

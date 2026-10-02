@@ -38,7 +38,7 @@ try {
   await page.getByRole('button', { name: / · 振替 · / }).click(); await remove(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 0);
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 1);
   await page.locator('#home-tab').click(); await click('記録を追加');
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').fill('Synthetic Split'); await page.locator('#receipt-amount').fill('1400'); await page.locator('#receipt-category').selectOption({ label: 'Synthetic Food' }); await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   let itemIndex = 0;
   for (const [name, amount, categoryName] of [['Synthetic Apple', '900', 'Synthetic Food'], ['Synthetic Soap', '500', 'Synthetic Household']]) {

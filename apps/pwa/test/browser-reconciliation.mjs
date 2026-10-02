@@ -90,6 +90,11 @@ try {
   // A record in another card account still matches: payment sources do not scope reconciliation.
   await page.getByText(/自動で一致 2件/).waitFor();
   await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
+  // A record that is a candidate of a statement waiting for a decision is marked in the records list.
+  await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: /^Synthetic Difference Shop · .*要確認 · −¥550$/ }).waitFor();
+  await page.locator('#reconciliation-tab').click();
+  await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   await page.getByText(/明細待ち 0件/).waitFor();
 
   const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });

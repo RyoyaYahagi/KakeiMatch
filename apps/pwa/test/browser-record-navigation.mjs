@@ -28,12 +28,16 @@ try {
 
   await openChooser();
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
-  assert.deepEqual(await page.locator('#local-view button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label') ?? button.textContent)),
+  assert.deepEqual(await page.locator('#record-sheet button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label') ?? button.textContent)),
     ['閉じる', 'レシートを撮る', '保存した写真から', '支出を手入力', '収入', '口座間振替']);
-  assert.equal(await page.locator('#local-view input[type=file]').count(), 2);
+  assert.equal(await page.locator('#record-sheet input[type=file]').count(), 2);
   if (process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
   await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
+  // Categories are chosen with buttons; the hidden select keeps the value for drafts and saving.
+  await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).click();
+  assert.equal(await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).getAttribute('aria-checked'), 'true');
+  assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Navigation Food');
   assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 1);
   await click('キャンセル');
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
@@ -43,6 +47,11 @@ try {
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   // Closing returns to the screen the chooser was opened from (here, home).
   await click('閉じる');
+  await page.locator('#home-tab[aria-current="page"]').waitFor();
+  // The sheet also closes with Escape and leaves the screen below as it was.
+  await click('記録を追加'); await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.locator('#record-sheet').waitFor({ state: 'hidden' });
   await page.locator('#home-tab[aria-current="page"]').waitFor();
   await page.locator('#receipt-tab').click();
 

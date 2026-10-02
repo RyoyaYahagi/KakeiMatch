@@ -181,7 +181,7 @@ async function refreshAccount() {
     if (passkeyResult.status === 'rejected') accountMessage.textContent = 'Passkey一覧を取得できません。';
   } catch {
     usageSummary.textContent = '利用状況を取得できません。オンラインで再度お試しください。';
-    accountStatus.textContent = 'Cloud accountへ接続できません。家計簿のデータはこの端末で引き続き利用できます。';
+    accountStatus.textContent = 'AIアカウントへ接続できません。家計簿のデータはこの端末で引き続き利用できます。';
     signedOutActions.hidden = true;
     signedInActions.hidden = true;
     developerCostsUi.setSignedIn(false);

@@ -12,7 +12,7 @@ export function signedAmount(row: Pick<ActualTransaction, 'kind' | 'amountYen'>)
   return `${sign}${yen(row.amountYen)}`;
 }
 
-export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void, options: { showDate?: boolean; hasReceipt?: boolean } = {}) {
+export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void, options: { showDate?: boolean; hasReceipt?: boolean; needsReview?: boolean } = {}) {
   const kindLabel = row.kind === 'transfer' ? '振替' : row.kind === 'income' ? '収入' : null;
   const visual = row.kind === 'income' ? { tone: 'income', icon: 'income' as const }
     : row.kind === 'transfer' ? { tone: 'other', icon: 'transfer' as const }
@@ -23,12 +23,14 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
   const main = span('record-main');
   const title = row.payeeName || (row.kind === 'transfer' ? '口座間振替' : kindLabel ?? '支出');
   const noteParts = [options.showDate === false ? null : shortDate(row.date), kindLabel ?? row.categoryName, accountName, options.hasReceipt ? 'レシート' : null].filter(Boolean);
-  main.append(span('record-title', title), span('record-note', noteParts.join(' · ')));
+  const note = span('record-note', noteParts.join(' · '));
+  if (options.needsReview) { const mark = span('note-warning', '△ 要確認'); note.prepend(mark, document.createTextNode(noteParts.length ? ' · ' : '')); }
+  main.append(span('record-title', title), note);
   const amountText = signedAmount(row);
   const amount = span(`record-amount amount-${row.kind}`, amountText);
   button.append(badge, main, amount);
   const spokenParts = options.showDate === false ? [shortDate(row.date), ...noteParts] : noteParts;
-  button.setAttribute('aria-label', [title, ...spokenParts, amountText].join(' · '));
+  button.setAttribute('aria-label', [title, ...spokenParts, ...(options.needsReview ? ['要確認'] : []), amountText].join(' · '));
   button.addEventListener('click', open);
   return button;
 }

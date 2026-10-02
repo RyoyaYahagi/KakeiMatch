@@ -41,7 +41,7 @@ try {
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await click('AIで読み取る'); await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');
   assert.equal(await row(0).locator('[data-item-category]').inputValue(), '');
@@ -76,7 +76,7 @@ try {
   if (await extraAdjustment.locator('details').getAttribute('open') === null) await extraAdjustment.locator('summary').click();
   await extraAdjustment.getByRole('button', { name: '値引きを削除', exact: true }).click();
   await page.locator('#receipt-amount').fill('1400');
-  await click('キャンセル'); await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
+  await click('キャンセル'); await click('閉じる'); await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple Edited');
   assert.equal(await page.locator('[data-receipt-adjustment]').count(), 1);
   assert.equal(await page.locator('#receipt-tax').inputValue(), '127');
