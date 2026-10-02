@@ -32,7 +32,7 @@ export type StatementFatalErrorCode =
 export type StatementParseResult = {
   transactions: CanonicalStatementTransaction[];
   excludedRows: Array<{ rowNumber: number; reason: "non_expense" }>;
-  /** SMBC rows that were kept out of canonical transactions for human review. */
+  /** Provider rows kept out of canonical transactions for human review. */
   needsReviewRows?: Array<{ rowNumber: number; reason: string }>;
   duplicateRowsInFile: number;
   totalRows: number;
@@ -66,10 +66,9 @@ const PAYPAY_HEADERS = [
   "取引番号",
 ] as const;
 
-// Verified against a September 2026 e-NAVI export supplied by the user. The two month labels vary by export month.
-const RAKUTEN_2026_09_HEADERS = [
+const RAKUTEN_HEADER_TEMPLATE = [
   "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
-  "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
+  null, "当月請求額", null, "新規サイン",
 ] as const;
 
 const SMBC_HEADER_SIGNATURE = "smbc-vpass-cp932-v1";
@@ -122,7 +121,7 @@ function parsePaypayDate(value: string): { date: string; time: string } | null {
   return { date, time: `${hour}:${minute}` };
 }
 
-function parseSmbcDate(value: string): string | null {
+function parseSlashDate(value: string): string | null {
   const match = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(value);
   if (!match) return null;
   const [, year, month, day] = match;
@@ -158,7 +157,7 @@ function makeSmbcParseResult(rows: string[][], encoding: StatementParseResult["e
       return;
     }
     const [rawDate, rawMerchant, rawAmount, paymentA, paymentB, rawStatementAmount, finalField] = row;
-    const date = parseSmbcDate(rawDate);
+    const date = parseSlashDate(rawDate);
     const amount = parseStrictSmbcYen(rawAmount);
     const statementAmount = parseStrictSmbcYen(rawStatementAmount);
     let reason: string | null = null;
@@ -309,14 +308,89 @@ const rakutenParser: StatementParser = {
   provider: "rakuten_card",
   parse(rows, encoding) {
     const [headers, ...bodyRows] = rows;
-    const headerSignature = JSON.stringify(headers);
-    if (headers.length !== RAKUTEN_2026_09_HEADERS.length ||
-        RAKUTEN_2026_09_HEADERS.some((header, index) => headers[index] !== header)) {
+    const expectedSignature = RAKUTEN_HEADER_TEMPLATE.map((header, index) => {
+      if (header !== null) return header;
+      return index === 7 ? "{month}月支払金額" : "{month}月繰越残高";
+    });
+    const validHeaders = headers.length === RAKUTEN_HEADER_TEMPLATE.length &&
+      RAKUTEN_HEADER_TEMPLATE.every((header, index) => header !== null
+        ? headers[index] === header
+        : /^(?:[1-9]|1[0-2])月(?:支払金額|繰越残高)$/.test(headers[index] ?? "") &&
+          (index === 7 ? headers[index].endsWith("月支払金額") : headers[index].endsWith("月繰越残高")));
+    if (!validHeaders) {
       return { ...EMPTY_RESULT("header_mismatch", encoding), totalRows: bodyRows.length, headerSignature: null };
     }
+    const headerSignature = JSON.stringify(expectedSignature);
     if (bodyRows.length === 0) return { ...EMPTY_RESULT("header_only", encoding), headerSignature };
-    // The verified export contains continuation and partial rows whose meaning is unresolved.
-    return { ...EMPTY_RESULT("unsupported_provider", encoding), totalRows: bodyRows.length, headerSignature };
+
+    const transactions: CanonicalStatementTransaction[] = [];
+    const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
+    const fingerprintOrdinals = new Map<string, number>();
+    let priorCandidate: { rowNumber: number; transactionIndex: number } | null = null;
+
+    const addReview = (rowNumber: number, reason: string, continuation: boolean) => {
+      if (continuation && priorCandidate?.rowNumber === rowNumber - 1) {
+        const [removed] = transactions.splice(priorCandidate.transactionIndex, 1);
+        const ordinal = fingerprintOrdinals.get(removed.sourceFingerprint) ?? 0;
+        if (ordinal <= 1) fingerprintOrdinals.delete(removed.sourceFingerprint);
+        else fingerprintOrdinals.set(removed.sourceFingerprint, ordinal - 1);
+        needsReviewRows.push({ rowNumber: priorCandidate.rowNumber, reason: "複数行明細の可能性があるため確認してください" });
+      }
+      needsReviewRows.push({ rowNumber, reason });
+      priorCandidate = null;
+    };
+
+    bodyRows.forEach((row, index) => {
+      const rowNumber = index + 2;
+      if (row.length !== RAKUTEN_HEADER_TEMPLATE.length) return;
+      if (row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) return;
+
+      const [rawDate, rawMerchant, , rawPaymentMethod, rawAmount, rawFee, rawTotal, rawMonthlyPayment, rawCurrentAmount, rawCarry, rawNewSign] = row;
+      const date = parseSlashDate(rawDate);
+      const amount = parseYen(rawAmount);
+      const parsedOtherAmounts = [rawFee, rawTotal, rawMonthlyPayment, rawCurrentAmount, rawCarry]
+        .map((value) => value.trim() === "" ? 0 : parseYen(value));
+      const missingPurchaseColumns = [rawTotal, rawMonthlyPayment, rawCurrentAmount].some((value) => value.trim() === "");
+      const continuation = rawDate.trim() === "" || rawMerchant.trim() === "" || missingPurchaseColumns;
+
+      let reason: string | null = null;
+      if (!rawDate.trim() || !rawMerchant.trim()) reason = "継続行または部分行の可能性があります";
+      else if (!date) reason = "利用日を確認できません";
+      else if (/^-/.test(rawAmount.trim()) || /取消|キャンセル|返金|返品/.test(rawMerchant)) reason = "返金・取消の可能性があります";
+      else if (rawPaymentMethod !== "1回払い") reason = "1回払い以外の可能性があります";
+      else if (amount === null || amount <= 0) reason = "利用金額を確認できません";
+      else if (parsedOtherAmounts.some((value) => value === null)) reason = "支払金額欄を確認できません";
+      else if ((parseYen(rawFee) ?? 0) > 0 || rawNewSign.trim() !== "") reason = "通常購入の形式ではありません";
+      else if (missingPurchaseColumns) reason = "複数行明細または部分行の可能性があります";
+
+      if (reason) {
+        addReview(rowNumber, reason, continuation);
+        return;
+      }
+
+      const merchant = rawMerchant;
+      const sourceFingerprint = fingerprint(["rakuten_card", "purchase", date!, merchant, String(amount), rawPaymentMethod]);
+      const duplicateOrdinal = (fingerprintOrdinals.get(sourceFingerprint) ?? 0) + 1;
+      fingerprintOrdinals.set(sourceFingerprint, duplicateOrdinal);
+      const transaction: CanonicalStatementTransaction = {
+        provider: "rakuten_card", externalId: null, kind: "purchase", usedDate: date!, usedTime: null, postedDate: null,
+        merchant, amountYen: amount!, paymentMethod: rawPaymentMethod, sourceFingerprint, duplicateOrdinal,
+      };
+      transactions.push(transaction);
+      priorCandidate = { rowNumber, transactionIndex: transactions.length - 1 };
+    });
+
+    if (bodyRows.some((row) => row.length !== RAKUTEN_HEADER_TEMPLATE.length)) {
+      return { ...EMPTY_RESULT("unsupported_layout", encoding), totalRows: bodyRows.length, headerSignature };
+    }
+    if (bodyRows.some((row) => row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH))) {
+      return { ...EMPTY_RESULT("limit_exceeded", encoding), totalRows: bodyRows.length, headerSignature };
+    }
+
+    return {
+      transactions, excludedRows: [], needsReviewRows, duplicateRowsInFile: 0, totalRows: bodyRows.length,
+      encoding, fatalErrors: [], headerSignature,
+    };
   },
 };
 
