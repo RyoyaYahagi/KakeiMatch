@@ -37,7 +37,7 @@ root.innerHTML = `
     <div id="home-summary" aria-busy="true"></div>
     <div id="home-attention"></div>
     <div id="home-categories"></div>
-    <section class="home-section" aria-labelledby="recent-records-title">
+    <section class="surface-section" aria-labelledby="recent-records-title">
       <div class="section-header"><h2 id="recent-records-title">最近の記録</h2><button id="home-all-records" class="text-button" type="button" aria-label="記録をすべて見る">すべて${iconMarkup('chevronRight')}</button></div>
       <ul id="transactions" class="record-rows"></ul>
     </section>

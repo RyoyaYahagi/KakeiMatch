@@ -32,7 +32,7 @@ export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySumm
   if (summary.yearMonth !== currentMonth) {
     const reset = node('button', '当月へ戻る') as HTMLButtonElement; reset.type = 'button'; reset.className = 'text-button month-reset'; reset.addEventListener('click', () => select({ type: 'current' })); target.append(reset);
   }
-  const overview = node('section'); overview.className = 'home-section home-overview'; overview.setAttribute('aria-label', '月の収支');
+  const overview = node('section'); overview.className = 'surface-section home-overview'; overview.setAttribute('aria-label', '月の収支');
   const totals = node('dl'); totals.className = 'monthly-totals';
   for (const [title, value, id] of [
     [summary.yearMonth === currentMonth ? '今月の支出' : '支出', yen(summary.expenseYen), 'monthly-expense'],
@@ -50,7 +50,7 @@ const DONUT_RADIUS = 42;
 
 /** Home breakdown: up to three categories and "その他" in a donut, with every category listed on demand. */
 export function renderCategoryBreakdown(target: HTMLElement, summary: MonthlySummary) {
-  const section = node('section'); section.className = 'home-section category-breakdown'; section.setAttribute('aria-labelledby', 'category-breakdown-title');
+  const section = node('section'); section.className = 'surface-section category-breakdown'; section.setAttribute('aria-labelledby', 'category-breakdown-title');
   const heading = node('h2', '支出の内訳'); heading.id = 'category-breakdown-title';
   section.append(heading);
   target.replaceChildren(section);

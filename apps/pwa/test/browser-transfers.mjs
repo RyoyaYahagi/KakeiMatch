@@ -32,7 +32,7 @@ async function save(edit = false) {
 }
 async function edit() {
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: / · 振替 ¥/ }).click();
+  await page.getByRole('button', { name: / · 振替 · / }).click();
   await page.getByRole('heading', { name: '振替の記録' }).waitFor(); await click('編集する');
   await page.getByLabel('振替先口座', { exact: true }).waitFor();
 }
@@ -56,7 +56,7 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   if (process.env.PWA_TRANSFER_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_TRANSFER_SCREENSHOT_PATH, fullPage: true });
   await save();
-  assert.equal(await page.getByRole('button', { name: / · 振替 ¥/ }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 1);
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥0').waitFor();
   await edit(); await fill(12000, 'Synthetic Other', 'Synthetic Bank', 'Synthetic edited transfer'); await save(true);
   await page.reload(); await page.getByText('今月の支出 ¥0').waitFor();
@@ -79,8 +79,8 @@ try {
   await context.setOffline(true);
   await fill(13000, 'Synthetic Other', 'Synthetic Bank', 'Synthetic offline transfer'); await save(true);
   await click('記録一覧へ戻る');
-  await page.getByRole('button', { name: /Synthetic Bank · 2026-10-01 · 振替 ¥13,000/ }).waitFor();
-  assert.equal(await page.getByRole('button', { name: / · 振替 ¥/ }).count(), 1);
+  await page.getByRole('button', { name: /^Synthetic Bank · .*振替 · .*¥13,000$/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 1);
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥0').waitFor();
   assert.deepEqual(errors, []);
   console.log('PASS: native transfer create/edit, distinct accounts, one list row, excluded spending, draft/reload/backup/offline');

@@ -8,7 +8,9 @@ import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFil
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
 import { renderHomeAttention } from './home-attention';
-import { recordRow } from './record-row';
+import { pendingReceiptRow, recordRow } from './record-row';
+import { renderRecordGroups, type RecordKindFilter } from './records-list';
+import { icon } from './ui-icons';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -206,25 +208,55 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       },
       onFiltersChange: filters => { searchFilters = { ...filters }; }, onTransaction: transactionDetail, onBack: recordsPage });
   }
+  let recordsFilter: RecordKindFilter = 'all';
   async function recordsPage() {
     searchOrigin = false;
     newEntryReturn = recordsPage;
-    const screen = await open('receipt'); view.append(text('h2', '記録'));
-    view.append(button('検索・絞り込み', searchPage), button('口座・残高を見る', accountBalancesPage));
-    const localReceipts = await receipts.list();
-    const list = document.createElement('ul'); list.className = 'record-list';
-    for (const receipt of localReceipts.filter(receipt => receipt.registration.status !== 'applied' && receipt.registration.status !== 'deleted')) {
-      const item = document.createElement('li');
-      item.append(button(`${receipt.confirmedValue?.merchant || receipt.extraction?.merchant || (receipt.image ? '未入力のレシート' : '未入力の支出')} · 確認する`, () => receiptEditor(receipt))); list.append(item);
-    }
-    for (const row of (await ledger.getRecentTransactions({ limit: 100 })).filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
-      const item = document.createElement('li');
-      const receipt = localReceipts.find(receipt => receipt.registration.actualTransactionId === row.id);
-      item.append(button(`${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.date} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}${receipt ? ' · 登録済み' : ''}`, () => receipt ? receiptEditor(receipt) : transactionDetail(row))); list.append(item);
-    }
+    const screen = await open('receipt');
+    const header = document.createElement('div'); header.className = 'page-header';
+    const search = document.createElement('button'); search.type = 'button'; search.className = 'icon-button'; search.setAttribute('aria-label', '検索・絞り込み'); search.append(icon('search'));
+    search.addEventListener('click', () => { void busy(search, searchPage); });
+    header.append(text('h2', '記録'), search);
+    const filters = document.createElement('div'); filters.className = 'segmented'; filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', '種類で絞り込む');
+    const accountsLink = button('口座・残高を見る', accountBalancesPage); accountsLink.className = 'text-button link-row'; accountsLink.prepend(icon('wallet')); accountsLink.append(icon('chevronRight'));
+    view.append(header, filters, accountsLink);
+    const [localReceipts, rows, accounts] = await Promise.all([receipts.list(), ledger.getRecentTransactions({ limit: 100 }), ledger.listAccounts()]);
     ensureScreen(screen);
-    view.append(list);
-    if (!list.children.length) view.append(text('p', 'まだ記録がありません。'));
+    const pending = localReceipts.filter(receipt => receipt.registration.status !== 'applied' && receipt.registration.status !== 'deleted');
+    if (pending.length) {
+      const section = document.createElement('section'); section.className = 'surface-section record-day';
+      const list = document.createElement('ul'); list.className = 'record-rows';
+      for (const receipt of pending) {
+        const item = document.createElement('li');
+        item.append(pendingReceiptRow(receipt.confirmedValue?.merchant || receipt.extraction?.merchant || (receipt.image ? '未入力のレシート' : '未入力の支出'), () => { void receiptEditor(receipt).catch(report); }));
+        list.append(item);
+      }
+      section.append(text('h3', `確認待ち ${pending.length}件`, 'record-day-header'), list);
+      view.append(section);
+    }
+    const groups = document.createElement('div'); groups.className = 'record-groups';
+    const empty = text('p', 'まだ記録がありません。', 'empty');
+    view.append(groups, empty);
+    const records = rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0);
+    const accountNames = new Map(accounts.map(account => [account.id, account.name]));
+    const receiptFor = (row: ActualTransaction) => localReceipts.find(receipt => receipt.registration.actualTransactionId === row.id);
+    const render = () => {
+      const shown = renderRecordGroups(groups, records, {
+        filter: recordsFilter,
+        accountName: id => accountNames.get(id) ?? null,
+        hasReceipt: row => Boolean(receiptFor(row)?.image),
+        open: row => { const receipt = receiptFor(row); void (receipt ? receiptEditor(receipt) : transactionDetail(row)).catch(report); },
+      });
+      empty.hidden = shown > 0 || (recordsFilter === 'all' && pending.length > 0);
+      empty.textContent = recordsFilter === 'all' ? 'まだ記録がありません。' : 'この種類の記録はありません。';
+      filters.querySelectorAll('button').forEach(option => option.setAttribute('aria-pressed', String(option.dataset.filter === recordsFilter)));
+    };
+    for (const [value, label] of [['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']] as const) {
+      const option = document.createElement('button'); option.type = 'button'; option.textContent = label; option.dataset.filter = value;
+      option.addEventListener('click', () => { recordsFilter = value; render(); });
+      filters.append(option);
+    }
+    render();
   }
   async function transactionDetail(transaction: ActualTransaction) {
     const linked = (await receipts.list()).find(receipt => receipt.registration.actualTransactionId === transaction.id);
@@ -233,21 +265,25 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const [accounts, current] = await Promise.all([ledger.listAccounts(), ledger.getTransactionById(transaction.id)]);
     ensureScreen(screen);
     if (!current) throw new Error('記録が見つかりません。記録一覧を読み込み直してください。');
-    view.append(text('h2', current.kind === 'income' ? '収入の記録' : current.kind === 'transfer' ? '振替の記録' : '支出の記録'));
-    const detail = document.createElement('dl'); detail.className = 'transaction-detail';
+    const back = button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords); back.className = 'text-button back-link'; back.prepend(icon('chevronLeft'));
+    view.append(back, text('h2', current.kind === 'income' ? '収入の記録' : current.kind === 'transfer' ? '振替の記録' : '支出の記録'));
+    const detail = document.createElement('dl'); detail.className = 'transaction-detail surface-section';
     const values = current.kind === 'transfer' ? [
       ['金額', yen(current.amountYen)], ['日付', current.date],
       ['振替元口座', accounts.find(account => account.id === current.accountId)?.name || '利用不可'],
       ['振替先口座', accounts.find(account => account.id === current.transferAccountId)?.name || '利用不可'],
       ['メモ', current.memo || 'なし'],
     ] : [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']];
-    for (const [label, value] of values) {
-      detail.append(text('dt', label), text('dd', value));
+    for (const [index, [label, value]] of values.entries()) {
+      const group = document.createElement('div'); group.className = index === 0 ? 'detail-amount' : 'detail-row';
+      group.append(text('dt', label), text('dd', value)); detail.append(group);
     }
     view.append(detail);
-    if (current.kind === 'transfer') view.append(button('編集する', () => manualEditor('transfer', current), false));
-    if (current.kind !== 'transfer' && !current.isSplit) view.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
-    view.append(deleteButton(current.id), button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords));
+    const actions = document.createElement('div'); actions.className = 'detail-actions';
+    if (current.kind === 'transfer') actions.append(button('編集する', () => manualEditor('transfer', current), false));
+    if (current.kind !== 'transfer' && !current.isSplit) actions.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
+    const remove = deleteButton(current.id); remove.className = 'text-button destructive-text';
+    actions.append(remove); view.append(actions);
   }
   async function receiptPage() {
     const screen = await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));

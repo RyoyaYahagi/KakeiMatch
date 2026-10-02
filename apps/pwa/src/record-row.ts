@@ -7,7 +7,12 @@ const yen = (value: number) => `¥${Math.abs(value).toLocaleString('ja-JP')}`;
 function span(className: string, value = '') { const node = document.createElement('span'); node.className = className; node.textContent = value; return node; }
 function shortDate(date: string) { const [, month, day] = date.split('-'); return `${Number(month)}/${Number(day)}`; }
 
-export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void) {
+export function signedAmount(row: Pick<ActualTransaction, 'kind' | 'amountYen'>) {
+  const sign = row.kind === 'transfer' ? '' : row.amountYen < 0 ? '−' : '+';
+  return `${sign}${yen(row.amountYen)}`;
+}
+
+export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void, options: { showDate?: boolean; hasReceipt?: boolean } = {}) {
   const kindLabel = row.kind === 'transfer' ? '振替' : row.kind === 'income' ? '収入' : null;
   const visual = row.kind === 'income' ? { tone: 'income', icon: 'income' as const }
     : row.kind === 'transfer' ? { tone: 'other', icon: 'transfer' as const }
@@ -17,11 +22,26 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
   const badge = span(`record-icon tone-${visual.tone}`); badge.append(icon(visual.icon));
   const main = span('record-main');
   const title = row.payeeName || (row.kind === 'transfer' ? '口座間振替' : kindLabel ?? '支出');
-  const note = [shortDate(row.date), kindLabel ?? row.categoryName, accountName].filter(Boolean).join(' · ');
-  main.append(span('record-title', title), span('record-note', note));
-  const sign = row.kind === 'income' ? '+' : row.kind === 'expense' ? (row.amountYen < 0 ? '−' : '+') : '';
-  const amount = span(`record-amount amount-${row.kind}`, `${sign}${yen(row.amountYen)}`);
+  const noteParts = [options.showDate === false ? null : shortDate(row.date), kindLabel ?? row.categoryName, accountName, options.hasReceipt ? 'レシート' : null].filter(Boolean);
+  main.append(span('record-title', title), span('record-note', noteParts.join(' · ')));
+  const amountText = signedAmount(row);
+  const amount = span(`record-amount amount-${row.kind}`, amountText);
   button.append(badge, main, amount);
+  const spokenParts = options.showDate === false ? [shortDate(row.date), ...noteParts] : noteParts;
+  button.setAttribute('aria-label', [title, ...spokenParts, amountText].join(' · '));
+  button.addEventListener('click', open);
+  return button;
+}
+
+/** A row for a saved receipt that still needs confirmation before it becomes a record. */
+export function pendingReceiptRow(title: string, open: () => void) {
+  const button = document.createElement('button');
+  button.type = 'button'; button.className = 'record-row';
+  const badge = span('record-icon tone-pending'); badge.append(icon('receipt'));
+  const main = span('record-main'); main.append(span('record-title', title), span('record-note', '内容を確認して登録してください'));
+  const action = span('record-amount record-action', '確認する');
+  button.append(badge, main, action);
+  button.setAttribute('aria-label', `${title} · 確認する`);
   button.addEventListener('click', open);
   return button;
 }
