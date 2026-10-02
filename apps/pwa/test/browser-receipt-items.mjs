@@ -56,6 +56,12 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
+  await page.getByRole('button', { name: /^品目一覧/ }).click();
+  assert.equal(await page.locator('#receipt-merchant').isVisible(), false);
+  assert.equal(await row(0).isVisible(), true);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await click('全体');
+  assert.equal(await page.locator('#receipt-merchant').isVisible(), true);
   await page.locator('#receipt-category').selectOption({ label: '食費' });
   await click('品目を追加'); await row(2).locator('[data-item-name]').fill('Temporary item');
   await row(2).locator('[data-item-amount]').fill('20'); await row(2).getByRole('button', { name: '品目を削除', exact: true }).click();
