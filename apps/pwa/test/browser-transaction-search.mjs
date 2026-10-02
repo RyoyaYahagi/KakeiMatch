@@ -18,7 +18,7 @@ async function addAccount(name) {
 }
 async function closeAccount(name) {
   await settings('支払元'); await click(`${name} · 利用中`); await click('利用終了');
-  await page.getByText('状態：利用終了', { exact: true }).waitFor();
+  await page.locator('[data-detail="状態"] dd').getByText('利用終了', { exact: true }).waitFor();
 }
 async function addCategory(name, income = false) {
   await settings('カテゴリ'); if (income) await click('収入カテゴリ');
@@ -27,7 +27,7 @@ async function addCategory(name, income = false) {
 }
 async function hideCategory(name) {
   await settings('カテゴリ'); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click();
-  await click('カテゴリを非表示にする'); await page.getByText('状態：非表示', { exact: true }).waitFor();
+  await click('カテゴリを非表示にする'); await page.locator('[data-detail="状態"] dd').getByText('非表示', { exact: true }).waitFor();
 }
 async function manual(kind, name, amount, category, account, memo, date) {
   await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind);
@@ -149,7 +149,7 @@ try {
   assert.equal(await page.locator('#transaction-search-start-date').inputValue(), '');
   assert.equal(await page.locator('#transaction-search-kind').inputValue(), '');
   await matchingCount(6);
-  const dates = (await page.locator('#transaction-search-results > li > button').allTextContents()).map(label => label.split(' · ')[0]);
+  const dates = await page.locator('#transaction-search-results > li > button').evaluateAll(buttons => buttons.map(button => button.dataset.date));
   assert.deepEqual(dates, [...dates].sort((a, b) => b.localeCompare(a)));
   if (process.env.PWA_TRANSACTION_SEARCH_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_TRANSACTION_SEARCH_SCREENSHOT_PATH, fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

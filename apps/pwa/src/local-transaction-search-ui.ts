@@ -2,6 +2,9 @@ import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { emptySearchFilters, filterSearchTransactions } from './local-transaction-search';
 import type { SearchEntry, TransactionSearchFilters } from './local-transaction-search';
+import { recordRow } from './record-row';
+import { backLink, pageTitle } from './settings-ui';
+import { icon } from './ui-icons';
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 const yen = (amount: number) => `¥${Math.abs(amount).toLocaleString('ja-JP')}`;
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, value = '') { const result = document.createElement(tag); result.textContent = value; return result; }
@@ -28,15 +31,19 @@ export async function showTransactionSearch(options: {
   const { view, ledger } = options;
   let filters = { ...(options.initialFilters ?? emptySearchFilters) };
   let entries: SearchEntry[] = [];
-  const title = node('h2', '記録を検索'); view.replaceChildren(title);
+  const title = pageTitle('記録を検索'); view.replaceChildren(backLink('記録', '検索を閉じる', options.onBack), title);
   const [accounts, categories] = await Promise.all([ledger.listAccounts(), ledger.listCategories()]);
   if (!title.isConnected) return;
   const accountNames = new Map(accounts.map(account => [account.id, account.name]));
   const categoryNames = new Map(categories.map(category => [category.id, category.name]));
   const form = node('form');
-  const keywordLabel = node('label', 'キーワード'); keywordLabel.htmlFor = 'transaction-search-keyword';
+  const keywordLabel = node('label', 'キーワード'); keywordLabel.htmlFor = 'transaction-search-keyword'; keywordLabel.className = 'visually-hidden';
   const keyword = node('input'); keyword.id = keywordLabel.htmlFor; keyword.type = 'search'; keyword.autocomplete = 'off'; keyword.maxLength = 200; keyword.value = filters.keyword;
-  form.append(keywordLabel, keyword);
+  keyword.placeholder = '店名・メモ・品目で検索';
+  const searchField = node('div'); searchField.className = 'search-field'; searchField.append(icon('search'), keyword);
+  // docs/UX.md 記録を検索: the conditions show as small buttons that open the detailed fields.
+  const chips = node('div'); chips.className = 'search-chips';
+  form.append(keywordLabel, searchField, chips);
   const details = node('details'); details.className = 'transaction-search-advanced';
   const advancedSummary = node('summary', '詳細条件'); details.append(advancedSummary);
   const fields = node('div'); fields.className = 'transaction-search-fields';
@@ -67,31 +74,51 @@ export async function showTransactionSearch(options: {
   form.append(details);
   const submit = node('button', '検索する'); submit.type = 'submit'; form.append(submit);
   const clear = node('button', '条件をすべて解除'); clear.type = 'button'; clear.className = 'secondary'; form.append(clear);
-  const active = node('p'); active.className = 'transaction-search-active'; active.setAttribute('aria-live', 'polite'); form.append(active);
+  const active = node('p'); active.className = 'transaction-search-active visually-hidden'; active.setAttribute('aria-live', 'polite'); form.append(active);
+  submit.className = 'search-submit'; clear.className = 'text-button';
   view.append(form);
-  const resultsCount = node('p'); resultsCount.id = 'transaction-search-count'; resultsCount.setAttribute('role', 'status');
-  const results = node('ul'); results.id = 'transaction-search-results'; results.className = 'record-list';
-  view.append(resultsCount, results, (() => { const back = node('button', '検索を閉じる'); back.type = 'button'; back.className = 'secondary'; back.addEventListener('click', options.onBack); return back; })());
+  const resultsCount = node('span'); resultsCount.id = 'transaction-search-count'; resultsCount.setAttribute('role', 'status');
+  const resultsTotal = node('span'); resultsTotal.className = 'num search-total';
+  const resultsSummary = node('div'); resultsSummary.className = 'search-summary'; resultsSummary.append(resultsCount, resultsTotal);
+  const results = node('ul'); results.id = 'transaction-search-results';
+  const resultsSection = node('section'); resultsSection.className = 'surface-section settings-rows'; resultsSection.append(results);
+  view.append(resultsSummary, resultsSection);
   function values(): TransactionSearchFilters {
     return { keyword: keyword.value, startDate: start.value, endDate: end.value, kind: kind.value as TransactionSearchFilters['kind'],
       categoryId: category.value, accountId: account.value,
       minAmountYen: min.value.trim() ? Number(min.value) : null, maxAmountYen: max.value.trim() ? Number(max.value) : null };
   }
-  function updateActive(next: TransactionSearchFilters) { active.textContent = activeFilters(next, { categories: categoryNames, accounts: accountNames }).join(' · '); }
+  function updateActive(next: TransactionSearchFilters) {
+    active.textContent = activeFilters(next, { categories: categoryNames, accounts: accountNames }).join(' · ');
+    const amount = next.minAmountYen !== null || next.maxAmountYen !== null ? `${next.minAmountYen?.toLocaleString('ja-JP') ?? ''}〜${next.maxAmountYen?.toLocaleString('ja-JP') ?? ''}円` : '';
+    const period = next.startDate || next.endDate ? `${next.startDate.slice(5).replace('-', '/') || ''}〜${next.endDate.slice(5).replace('-', '/') || ''}` : '';
+    const chipItems: Array<[string, string, HTMLElement]> = [
+      ['期間', period, start], ['種類', next.kind ? kindLabel(next.kind) : '', kind], ['カテゴリ', next.categoryId ? categoryNames.get(next.categoryId) ?? '' : '', category],
+      ['口座', next.accountId ? accountNames.get(next.accountId) ?? '' : '', account], ['金額', amount, min],
+    ];
+    chips.replaceChildren(...chipItems.map(([label, value, field]) => {
+      const chip = node('button', value ? `${label}：${value}` : label); chip.type = 'button'; chip.className = 'chip';
+      chip.setAttribute('aria-pressed', String(Boolean(value)));
+      chip.append(icon('chevronDown'));
+      chip.addEventListener('click', () => { details.open = true; field.focus(); });
+      return chip;
+    }));
+  }
   function render(next: TransactionSearchFilters) {
     const rows = filterSearchTransactions(entries, next);
     filters = { ...next }; options.onFiltersChange({ ...filters }); updateActive(filters);
     details.open = false;
     results.replaceChildren(); resultsCount.textContent = `${rows.length}件`;
-    if (!rows.length) results.append(node('li', entries.length ? '条件に一致する記録はありません。' : '記録がありません。'));
+    const total = rows.filter(row => row.kind !== 'transfer').reduce((sum, row) => sum + row.amountYen, 0);
+    resultsTotal.textContent = rows.length && total ? `${total < 0 ? '−' : '+'}${yen(total)}` : '';
+    if (!rows.length) results.append(Object.assign(node('li', entries.length ? '条件に一致する記録はありません。' : '記録がありません。'), { className: 'empty muted' }));
     for (const row of rows) {
-      const extra = row.kind === 'transfer' && row.transferAccountId ? ` · 振替先 ${accountNames.get(row.transferAccountId) ?? '利用不可'}` : '';
-      const name = row.payeeName || (row.kind === 'income' ? '収入' : row.kind === 'transfer' ? '口座間振替' : '支出');
-      const item = node('li'); const control = node('button', `${row.date} · ${name} · ${kindLabel(row.kind)} ${yen(row.amountYen)}${extra}`);
-      control.type = 'button'; control.className = 'transaction-search-result';
-      control.addEventListener('click', () => {
+      const where = row.kind === 'transfer' && row.transferAccountId ? `振替先 ${accountNames.get(row.transferAccountId) ?? '利用不可'}` : accountNames.get(row.accountId) ?? null;
+      const item = node('li');
+      const control = recordRow(row, where, () => {
         void options.onTransaction(row).catch(error => { resultsCount.textContent = error instanceof Error ? error.message : '記録を開けませんでした。'; });
       });
+      control.classList.add('transaction-search-result');
       item.append(control); results.append(item);
     }
   }

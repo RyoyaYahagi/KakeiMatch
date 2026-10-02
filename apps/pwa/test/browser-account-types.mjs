@@ -22,21 +22,21 @@ async function noOverflow() { assert.ok(await page.evaluate(() => document.docum
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   await add('Synthetic Legacy Bank'); // No inference from names.
-  await detail('Synthetic Legacy Bank'); await page.getByText('種類：その他 / 未分類', { exact: true }).waitFor();
+  await detail('Synthetic Legacy Bank'); await page.locator('[data-detail="種類"] dd').getByText('その他 / 未分類', { exact: true }).waitFor();
   await click('編集する'); await page.getByLabel('種類', { exact: true }).selectOption('bank'); await click('変更を保存');
-  await page.getByText('種類：銀行口座', { exact: true }).waitFor();
+  await page.locator('[data-detail="種類"] dd').getByText('銀行口座', { exact: true }).waitFor();
   await add('Synthetic Card', 'credit_card'); await add('Synthetic Wallet', 'cash'); await add('Synthetic Other', 'other');
   await accounts();
   await page.locator('[data-account-type="bank"]').getByRole('button', { name: 'Synthetic Legacy Bank · 利用中', exact: true }).waitFor();
   await page.locator('[data-account-type="credit_card"]').getByText('差引預り額 ¥0', { exact: true }).waitFor();
   await noOverflow();
   if (process.env.PWA_ACCOUNT_TYPES_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_ACCOUNT_TYPES_SCREENSHOT_PATH, fullPage: true });
-  await detail('Synthetic Card'); await click('利用終了'); await page.getByText('状態：利用終了', { exact: true }).waitFor();
-  await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
-  await click('利用を再開する'); await page.getByText('状態：利用中', { exact: true }).waitFor();
+  await detail('Synthetic Card'); await click('利用終了'); await page.locator('[data-detail="状態"] dd').getByText('利用終了', { exact: true }).waitFor();
+  await page.locator('[data-detail="種類"] dd').getByText('クレジットカード', { exact: true }).waitFor();
+  await click('利用を再開する'); await page.locator('[data-detail="状態"] dd').getByText('利用中', { exact: true }).waitFor();
   await click('編集する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Renamed Card'); await click('変更を保存');
-  await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
+  await page.locator('[data-detail="種類"] dd').getByText('クレジットカード', { exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   const expenseField = '#manual-transaction-account';
   await page.locator(expenseField).waitFor();
@@ -61,11 +61,11 @@ try {
   page.once('dialog', dialog => dialog.accept()); const navigation = page.waitForNavigation({ waitUntil: 'load' });
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-account-types.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥0').waitFor();
-  await detail('Synthetic Renamed Card'); await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
-  await detail('Synthetic Legacy Bank'); await page.getByText('種類：銀行口座', { exact: true }).waitFor();
-  await detail('Synthetic Inline Bank'); await page.getByText('種類：銀行口座', { exact: true }).waitFor();
+  await detail('Synthetic Renamed Card'); await page.locator('[data-detail="種類"] dd').getByText('クレジットカード', { exact: true }).waitFor();
+  await detail('Synthetic Legacy Bank'); await page.locator('[data-detail="種類"] dd').getByText('銀行口座', { exact: true }).waitFor();
+  await detail('Synthetic Inline Bank'); await page.locator('[data-detail="種類"] dd').getByText('銀行口座', { exact: true }).waitFor();
   await page.reload(); await page.getByText('今月の支出 ¥0').waitFor(); await context.setOffline(true);
-  await detail('Synthetic Wallet'); await page.getByText('種類：現金', { exact: true }).waitFor();
+  await detail('Synthetic Wallet'); await page.locator('[data-detail="種類"] dd').getByText('現金', { exact: true }).waitFor();
   await noOverflow(); assert.deepEqual(errors, []);
   console.log('PASS: account type creation/edit/grouping, no name inference, lifecycle, in-entry creation, income/transfer ordering, backup/restore, reload/offline and 375px layout');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

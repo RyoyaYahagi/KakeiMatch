@@ -946,7 +946,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   resetMasterUi = masterUi;
   setup.append(budgetEntry, recurringEntry); // docs/UX.md 設定: カテゴリ, 支払元, 予算, 定期登録
   openAccountBalances = masterUi.openAccounts;
-  el('settings-tab').addEventListener('click', () => { searchOrigin = false; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
+  el('settings-tab').addEventListener('click', () => { searchOrigin = false; el('message').textContent = ''; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
     await deletions.recoverPending();
     await recurring.retry();

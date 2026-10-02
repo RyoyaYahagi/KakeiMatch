@@ -39,7 +39,7 @@ async function edit() {
 async function balance(name, amount) {
   await page.locator('#settings-tab').click(); await click('支払元');
   await page.getByRole('button', { name: `${name} · 利用中`, exact: true }).click();
-  await page.getByText(`残高：${amount}`, { exact: false }).waitFor();
+  await page.locator('[data-detail="残高"] dd').getByText(`${amount}`, { exact: false }).waitFor();
 }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();

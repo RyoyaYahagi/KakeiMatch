@@ -83,7 +83,7 @@ try {
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Receipt Edited'); assert.equal(await page.locator('[data-receipt-item]').count(), 2);
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   await page.locator('#settings-tab').click(); await click('カテゴリ'); await page.getByRole('button', { name: /^Synthetic Edit Category ·/ }).waitFor();
-  await click('設定へ戻る'); await click('支払元'); await page.getByRole('button', { name: 'Synthetic Edit Wallet · 利用中', exact: true }).waitFor();
+  await page.locator('#settings-tab').click(); await click('支払元'); await page.getByRole('button', { name: 'Synthetic Edit Wallet · 利用中', exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); assert.deepEqual(errors, []);
   console.log('PASS: expense/income/receipt/edit/item/transfer master shortcuts, preserved input, source selection, refresh, cancellation, validation and editor lock at 375px');
 } catch (error) { console.log(await page.locator('body').innerText()); console.log(errors); throw error; } finally { await browser.close(); }
