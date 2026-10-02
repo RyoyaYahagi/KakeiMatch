@@ -27,22 +27,24 @@ try {
   await account('Synthetic Navigation Wallet'); await category('Synthetic Navigation Food'); await category('Synthetic Navigation Income', true);
 
   await openChooser();
-  assert.deepEqual((await page.locator('#local-view button').allTextContents()).slice(0, 4), ['支出', '収入', '口座間振替', '記録一覧へ戻る']);
-  await click('支出');
+  await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
+  assert.deepEqual(await page.locator('#local-view button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label') ?? button.textContent)),
+    ['閉じる', 'レシートを撮る', '保存した写真から', '支出を手入力', '収入', '口座間振替']);
+  assert.equal(await page.locator('#local-view input[type=file]').count(), 2);
   if (process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
-  await click('手入力');
+  await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 1);
   await click('キャンセル');
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).waitFor();
-  await click('レシートから入力'); await page.getByRole('heading', { name: 'レシートを記録する' }).waitFor();
-  await click('支出の選択へ戻る'); await page.getByRole('heading', { name: '支出を記録' }).waitFor();
-  await click('記録する画面へ戻る');
+  await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   await click('収入'); await page.locator('#manual-transaction-payee').waitFor(); await click('キャンセル');
-  await page.getByRole('heading', { name: '記録する' }).waitFor();
+  await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   await click('口座間振替'); await page.getByLabel('振替先口座', { exact: true }).waitFor(); await click('キャンセル');
-  await page.getByRole('heading', { name: '記録する' }).waitFor();
-  await click('記録一覧へ戻る');
+  await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
+  // Closing returns to the screen the chooser was opened from (here, home).
+  await click('閉じる');
+  await page.locator('#home-tab[aria-current="page"]').waitFor();
+  await page.locator('#receipt-tab').click();
 
   await click('口座・残高を見る');
   await page.getByRole('heading', { name: '支払元・口座残高' }).waitFor();

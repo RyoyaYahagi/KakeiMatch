@@ -21,7 +21,7 @@ async function category(name, income = false) {
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
 async function manual(kind, name, amount, categoryName, accountName) {
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind);
   await page.locator('#manual-transaction-payee').waitFor();
   await page.getByLabel(kind === '支出' ? '店名・支払先' : '入金元・内容', { exact: true }).fill(name);
   await page.getByLabel('金額（円）', { exact: true }).fill(String(amount));
@@ -30,7 +30,7 @@ async function manual(kind, name, amount, categoryName, accountName) {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function splitReceipt() {
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
+  await page.locator('#home-tab').click(); await click('記録を追加');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').fill('Synthetic Budget Split');
   await page.locator('#receipt-amount').fill('1400');

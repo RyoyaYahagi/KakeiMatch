@@ -41,8 +41,7 @@ async function addNativeExpense(account) {
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await page.locator('#home-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: '手入力', exact: true }).click();
+  await page.getByRole('button', { name: '支出を手入力', exact: true }).click();
   await page.locator('#manual-transaction-payee').fill('Synthetic Market');
   await page.locator('#manual-transaction-date').fill('2026-09-28');
   await page.locator('#manual-transaction-amount').fill('1200');
@@ -72,7 +71,7 @@ try {
   };
   await upload();
   await page.getByText('1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/自動で一致 1件/).waitFor();
   await page.getByText(/記録なし 0件/).waitFor();
   const importerDisclosure = page.locator('details.statement-import-disclosure');
   if (await importerDisclosure.count()) await importerDisclosure.evaluate(node => { node.open = true; });
@@ -86,9 +85,9 @@ try {
 
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 1件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/自動で一致 1件/).waitFor();
   await page.getByText(/記録なし 0件/).waitFor();
-  const automaticSummary = page.locator('summary').filter({ hasText: '自動確認済みの内容を見る（1件）' });
+  const automaticSummary = page.locator('summary').filter({ hasText: '自動で一致した内容を見る（1件）' });
   if (await automaticSummary.count()) await automaticSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Market' }).waitFor();
   assert.deepEqual(errors, []);

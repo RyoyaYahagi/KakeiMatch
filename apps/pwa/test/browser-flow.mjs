@@ -67,15 +67,13 @@ try {
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
   // A failed analysis can leave an empty draft behind before the next attempt.
   await page.getByText('入力内容を端末に保存しました。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '支出の選択へ戻る', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
+  await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '未入力のレシート · 確認する', exact: true }).click();
   await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Diagnostic Store', null, { timeout: 10000 });
@@ -84,8 +82,8 @@ try {
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1280');
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Wallet');
   // Reopening must recover the stored extraction without spending another AI flow.
-  await page.getByRole('button', { name: '支出の選択へ戻る', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
+  await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store');
   assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-30');
@@ -102,7 +100,7 @@ try {
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
   await page.locator('#receipt-merchant').fill('Manual Store');
   await page.locator('#receipt-date').fill('2026-09-29');
-  await page.locator('#receipt-time').fill('11:30');
+  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('11:30');
   await page.locator('#receipt-amount').fill('1200');
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '再読み取り', exact: true }).click();
@@ -116,7 +114,7 @@ try {
   assert.equal(categoryRequests.length, 2);
   assert.equal(categoryRequests[1].flowId, aiRequests[1].flowId);
   await page.locator('#receipt-date').fill('2026-09-30');
-  await page.locator('#receipt-time').fill('12:00');
+  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('12:00');
   await page.locator('#receipt-amount').fill('1280');
   assert.notEqual(aiRequests[1].flowId, aiRequests[0].flowId);
   await page.locator('#settings-tab').click();
@@ -156,9 +154,9 @@ try {
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/自動で一致 1件/).waitFor();
   const openAutomaticMatch = async () => {
-    const summary = page.locator('summary').filter({ hasText: '自動確認済みの内容を見る（1件）' });
+    const summary = page.locator('summary').filter({ hasText: '自動で一致した内容を見る（1件）' });
     await summary.waitFor();
     assert.equal(await summary.evaluate(node => node.parentElement.open), false);
     await summary.click();
@@ -209,8 +207,6 @@ try {
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-offline.png', mimeType: 'image/png', buffer: png });
   await page.locator('#receipt-merchant').fill('Synthetic Offline Store');
   await page.locator('#receipt-amount').fill('200');
