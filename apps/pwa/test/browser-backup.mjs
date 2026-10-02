@@ -124,8 +124,6 @@ async function setupLedger() {
 async function addReceipt(merchant, amount) {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   const fileInputs = page.locator('#local-view input[type=file]');
   await fileInputs.first().setInputFiles({ name: `${merchant}.png`, mimeType: 'image/png', buffer: syntheticPng });
   await page.locator('#receipt-merchant').waitFor();

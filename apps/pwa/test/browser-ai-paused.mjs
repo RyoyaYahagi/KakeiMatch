@@ -35,8 +35,6 @@ const syntheticPng = {
 async function chooseReceiptEntry() {
   await page.locator('#home-tab').click();
   await click('記録を追加');
-  await click('支出');
-  await click('レシートから入力');
 }
 
 async function uploadReceipt(name = syntheticPng.name) {
@@ -79,7 +77,7 @@ try {
   if (process.env.PWA_AI_PAUSED_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_AI_PAUSED_SCREENSHOT_PATH, fullPage: true });
   await click('登録する');
   await page.getByText('登録しました。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Gemini Draft Store · 登録済み', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^Gemini Draft Store · .*レシート/ }).waitFor();
 
   // Jev pause: Gemini extraction remains available to edit, and registration does not need a cloud session.
   await chooseReceiptEntry();
@@ -93,7 +91,7 @@ try {
   await enterReceipt('Jev Paused Corrected Store', 1900);
   await click('登録する');
   await page.getByText('登録しました。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Jev Paused Corrected Store · 登録済み', exact: true }).waitFor();
+  await page.getByRole('button', { name: /^Jev Paused Corrected Store · .*レシート/ }).waitFor();
 
   assert.equal(geminiRequests.length, 2);
   assert.equal(jevRequests.length, 1);

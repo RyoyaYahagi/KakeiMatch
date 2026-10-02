@@ -41,8 +41,6 @@ try {
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await click('AIで読み取る'); await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');
@@ -78,7 +76,7 @@ try {
   if (await extraAdjustment.locator('details').getAttribute('open') === null) await extraAdjustment.locator('summary').click();
   await extraAdjustment.getByRole('button', { name: '値引きを削除', exact: true }).click();
   await page.locator('#receipt-amount').fill('1400');
-  await click('支出の選択へ戻る'); await click('レシートから入力'); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
+  await click('キャンセル'); await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple Edited');
   assert.equal(await page.locator('[data-receipt-adjustment]').count(), 1);
   assert.equal(await page.locator('#receipt-tax').inputValue(), '127');
@@ -95,7 +93,7 @@ try {
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
   await click('編集する'); await page.locator('#receipt-merchant').waitFor();
   await page.locator('#receipt-merchant').fill('Synthetic Changed Shop');
-  await page.locator('#receipt-time').fill('13:15');
+  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('13:15');
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   await row(0).locator('summary').click(); await row(0).locator('[data-item-name]').fill('Synthetic Corrected Apple');
   await row(0).locator('[data-item-amount]').fill('1100');

@@ -17,10 +17,10 @@ async function create(field, name, category = false) {
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
 }
-async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-amount').waitFor(); }
+async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-amount').waitFor(); }
 async function fill(name, amount) {
   await page.locator('#manual-transaction-payee').fill(name); await page.locator('#manual-transaction-amount').fill(amount);
-  await page.locator('#manual-transaction-date').fill('2026-09-28'); await page.locator('#manual-transaction-memo').fill('Synthetic preserved memo');
+  await page.locator('#manual-transaction-date').fill('2026-09-28'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic preserved memo');
 }
 async function assertDraft(name, amount) {
   assert.equal(await page.locator('#manual-transaction-payee').inputValue(), name);
@@ -43,7 +43,7 @@ try {
   const walletId = await page.locator('#manual-transaction-account').inputValue();
   await shortcut('manual-transaction-account'); await dialog().getByLabel('支払元の名前', { exact: true }).fill('Synthetic Cancelled'); await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click();
   assert.equal(await page.locator('#manual-transaction-account').inputValue(), walletId); await assertDraft('Synthetic entry expense', '900');
-  await click('キャンセル'); await click('手入力'); await assertDraft('Synthetic entry expense', '900');
+  await click('キャンセル'); await click('支出を手入力'); await assertDraft('Synthetic entry expense', '900');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 
   await chooser('収入'); await fill('Synthetic entry income', '250000');
@@ -56,13 +56,13 @@ try {
   await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click();
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 
-  await chooser('口座間振替'); await page.locator('#manual-transaction-amount').fill('1500'); await page.locator('#manual-transaction-memo').fill('Synthetic transfer memo');
+  await chooser('口座間振替'); await page.locator('#manual-transaction-amount').fill('1500'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic transfer memo');
   await create('manual-transaction-account', 'Synthetic New Source'); const source = await page.locator('#manual-transaction-account').inputValue();
   await create('manual-transaction-destination', 'Synthetic New Destination'); assert.equal(await page.locator('#manual-transaction-account').inputValue(), source);
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1500'); assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic transfer memo');
-  await click('キャンセル'); await click('支出'); await click('レシートから入力');
+  await click('キャンセル');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
-  await page.locator('#receipt-merchant').fill('Synthetic Entry Receipt'); await page.locator('#receipt-amount').fill('900'); await page.locator('#receipt-date').fill('2026-09-27'); await page.locator('#receipt-time').fill('13:15');
+  await page.locator('#receipt-merchant').fill('Synthetic Entry Receipt'); await page.locator('#receipt-amount').fill('900'); await page.locator('#receipt-date').fill('2026-09-27'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('13:15');
   await create('receipt-category', 'Synthetic Receipt Food', true); await create('receipt-account', 'Synthetic Receipt Wallet');
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Entry Receipt'); assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-27'); assert.equal(await page.locator('#receipt-time').inputValue(), '13:15');
   for (const [name, amount] of [['Synthetic Apple', '400'], ['Synthetic Soap', '500']]) {

@@ -41,8 +41,7 @@ async function addNativeExpense(account) {
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await page.locator('#home-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.getByRole('button', { name: '支出', exact: true }).click();
-  await page.getByRole('button', { name: '手入力', exact: true }).click();
+  await page.getByRole('button', { name: '支出を手入力', exact: true }).click();
   await page.locator('#manual-transaction-payee').fill('Synthetic Market');
   await page.locator('#manual-transaction-date').fill('2026-09-28');
   await page.locator('#manual-transaction-amount').fill('1200');
