@@ -422,8 +422,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     ensureScreen(screen);
     const editorTabs = document.createElement('div'); editorTabs.className = 'segmented entry-editor-tabs';
     editorTabs.setAttribute('role', 'group'); editorTabs.setAttribute('aria-label', '入力内容の表示');
-    const overviewTab = button('全体', () => undefined); overviewTab.type = 'button';
-    const itemsTab = button('品目一覧', () => undefined); itemsTab.type = 'button';
+    const overviewTab = document.createElement('button'); overviewTab.type = 'button'; overviewTab.textContent = '全体';
+    const itemsTab = document.createElement('button'); itemsTab.type = 'button'; itemsTab.textContent = '品目一覧';
     editorTabs.append(overviewTab, itemsTab);
     const overviewExtras = document.createElement('div'); overviewExtras.className = 'entry-overview-extras';
     view.append(editorTabs, overviewExtras);
