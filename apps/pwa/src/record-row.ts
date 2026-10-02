@@ -18,7 +18,7 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
     : row.kind === 'transfer' ? { tone: 'other', icon: 'transfer' as const }
     : categoryTone(row.categoryName ?? '', row.categoryId ?? null);
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'record-row';
+  button.type = 'button'; button.className = 'record-row'; button.dataset.date = row.date;
   const badge = span(`record-icon tone-${visual.tone}`); badge.append(icon(visual.icon));
   const main = span('record-main');
   const title = row.payeeName || (row.kind === 'transfer' ? '口座間振替' : kindLabel ?? '支出');

@@ -25,12 +25,12 @@ async function addCategory(name, income = false) {
 }
 async function categoryDetail(name) {
   await settings('カテゴリ'); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click();
-  await page.getByText(`カテゴリ名：${name}`, { exact: true }).waitFor();
+  await page.locator('.detail-hero-title').getByText(`${name}`, { exact: true }).waitFor();
 }
 async function accountDetail(name, closed = false) {
   await settings('支払元'); if (closed) await page.locator('.closed-accounts summary').click();
   await click(`${name} · ${closed ? '利用終了' : '利用中'}`);
-  await page.getByText(`支払元：${name}`, { exact: true }).waitFor();
+  await page.locator('.detail-hero-title').getByText(`${name}`, { exact: true }).waitFor();
 }
 async function noOverflow() {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -54,19 +54,19 @@ try {
   await addAccount('Synthetic Wallet');
   await accountDetail('Synthetic Wallet'); await click('編集する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Cash'); await click('変更を保存');
-  await page.getByText('支払元：Synthetic Cash', { exact: true }).waitFor();
+  await page.locator('.detail-hero-title').getByText('Synthetic Cash', { exact: true }).waitFor();
   await addAccount('Synthetic Closed'); await accountDetail('Synthetic Closed'); await click('利用終了');
-  await page.getByText('状態：利用終了', { exact: true }).waitFor(); await click('利用を再開する');
-  await page.getByText('状態：利用中', { exact: true }).waitFor(); await click('利用終了');
-  await page.getByText('状態：利用終了', { exact: true }).waitFor();
+  await page.locator('[data-detail="状態"] dd').getByText('利用終了', { exact: true }).waitFor(); await click('利用を再開する');
+  await page.locator('[data-detail="状態"] dd').getByText('利用中', { exact: true }).waitFor(); await click('利用終了');
+  await page.locator('[data-detail="状態"] dd').getByText('利用終了', { exact: true }).waitFor();
   await addCategory('Synthetic Extra'); await categoryDetail('Synthetic Extra'); await click('編集する');
   await page.getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Hobby'); await click('変更を保存');
-  await page.getByText('カテゴリ名：Synthetic Hobby', { exact: true }).waitFor();
-  await click('カテゴリを非表示にする'); await page.getByText('状態：非表示', { exact: true }).waitFor();
+  await page.locator('.detail-hero-title').getByText('Synthetic Hobby', { exact: true }).waitFor();
+  await click('カテゴリを非表示にする'); await page.locator('[data-detail="状態"] dd').getByText('非表示', { exact: true }).waitFor();
   await newReceipt();
   assert.equal(await page.locator('#receipt-category option').filter({ hasText: 'Synthetic Hobby' }).count(), 0);
   await categoryDetail('Synthetic Hobby'); await click('カテゴリを表示する');
-  await page.getByText('状態：表示中', { exact: true }).waitFor();
+  await page.locator('[data-detail="状態"] dd').getByText('表示中', { exact: true }).waitFor();
   await addCategory('Synthetic Salary', true);
   await page.reload();
   await page.waitForFunction(() => document.querySelector('#home-summary')?.textContent?.includes('今月の支出'));
@@ -126,7 +126,7 @@ try {
   await context.setOffline(true);
   await addCategory('Synthetic Offline Category');
   await categoryDetail('Synthetic Offline Category');
-  await page.getByText('カテゴリ名：Synthetic Offline Category', { exact: true }).waitFor();
+  await page.locator('.detail-hero-title').getByText('Synthetic Offline Category', { exact: true }).waitFor();
   await context.setOffline(false);
   assert.deepEqual(errors, []);
   console.log('master management E2E passed: income/expense, CRUD safety, draft reselection, reload, backup/restore and mobile layout');

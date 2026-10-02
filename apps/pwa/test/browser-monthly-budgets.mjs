@@ -47,12 +47,10 @@ async function splitReceipt() {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function editor() { await page.locator('#settings-tab').click(); await click('予算設定'); await page.locator('#budget-edit-month').waitFor(); }
+let amountInput;
 async function selectCategory(categoryName) {
-  await page.locator('#budget-category').selectOption({ label: categoryName });
-  await page.waitForFunction(() => {
-    const amount = document.querySelector('#budget-amount');
-    return amount instanceof HTMLInputElement && !amount.disabled;
-  });
+  amountInput = page.getByLabel(`${categoryName}の予算`, { exact: true });
+  await amountInput.waitFor();
 }
 async function monthEditor(month) {
   await moveHome(month);
@@ -63,14 +61,14 @@ async function monthEditor(month) {
 async function setDefault(categoryName, amount) {
   await editor();
   await selectCategory(categoryName);
-  await page.locator('#budget-amount').fill(String(amount)); await click('基本予算を保存');
+  await amountInput.fill(String(amount)); await click('基本予算を保存');
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
 }
 async function setBudget(month, categoryName, amount) {
   await monthEditor(month);
   await selectCategory(categoryName);
-  await page.locator('#budget-amount').fill(String(amount));
+  await amountInput.fill(String(amount));
   await click('この月の予算を保存'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth(month);
 }
@@ -107,20 +105,11 @@ try {
 
   await setDefault('Synthetic Budget Food', 2500);
   await setDefault('Synthetic Budget Home', 1000);
+  // Every category is shown at once with its saved default.
   await editor();
-  await page.locator('#budget-category').evaluate(select => {
-    const options = [...select.options];
-    const food = options.find(option => option.text === 'Synthetic Budget Food');
-    const home = options.find(option => option.text === 'Synthetic Budget Home');
-    if (!food || !home) throw new Error('Synthetic budget categories are missing');
-    select.value = food.value; select.dispatchEvent(new Event('change'));
-    select.value = home.value; select.dispatchEvent(new Event('change'));
-  });
-  await page.waitForFunction(() => {
-    const amount = document.querySelector('#budget-amount');
-    return amount instanceof HTMLInputElement && !amount.disabled;
-  });
-  assert.equal(await page.locator('#budget-amount').inputValue(), '1000', 'the last selected category must win after rapid changes');
+  await selectCategory('Synthetic Budget Food'); assert.equal(await amountInput.inputValue(), '2500');
+  await selectCategory('Synthetic Budget Home'); assert.equal(await amountInput.inputValue(), '1000');
+  await page.locator('.budget-total-card').getByText('¥3,500', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await homeMonth('2026年10月');
   let summary = page.locator('details.monthly-budget-details');
@@ -146,8 +135,8 @@ try {
 
   // An explicit zero stays visible, then reset restores the default only for October.
   await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Food');
-  assert.equal(await page.locator('#budget-amount').inputValue(), '2500');
-  await page.locator('#budget-amount').fill('0'); await click('この月の予算を保存');
+  assert.equal(await amountInput.inputValue(), '2500');
+  await amountInput.fill('0'); await click('この月の予算を保存');
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
   await page.locator('details.monthly-budget-details summary').click();
@@ -157,13 +146,13 @@ try {
   await page.locator('details.monthly-budget-details summary').click();
   await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥1,000 · 超過 ¥1,900 · 290.0%', { exact: true }).waitFor();
   await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Food');
-  await click('この月の変更を解除して基本予算へ戻す'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await click('Synthetic Budget Foodの変更を解除して基本予算へ戻す'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
   await page.locator('details.monthly-budget-details summary').click();
   await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥3,500 · 残り ¥600 · 82.9%', { exact: true }).waitFor();
   await context.setOffline(true);
   await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Home');
-  await page.locator('#budget-amount').fill('1200'); await click('この月の予算を保存');
+  await amountInput.fill('1200'); await click('この月の予算を保存');
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
   await page.locator('details.monthly-budget-details summary').click();

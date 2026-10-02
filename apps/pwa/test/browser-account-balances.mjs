@@ -40,8 +40,8 @@ async function transfer(amount, source, destination) {
 async function accounts() { await page.locator('#settings-tab').click(); await click('支払元'); }
 async function balance(name, expected) {
   await accounts();
-  const row = page.locator('.account-balance-row').filter({ has: page.getByRole('button', { name: new RegExp(`^${name} ·`) }) });
-  await row.waitFor(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
+  const row = page.getByRole('button', { name: new RegExp(`^${name} ·`) });
+  await row.waitFor();
   assert.equal((await row.locator('.account-balance').innerText()).trim(), expected);
 }
 try {
@@ -57,10 +57,10 @@ try {
   await balance('Synthetic Cash', '¥6,500');
   await balance('Synthetic Bank', '¥192,000');
   // The two transfer sides contribute equal and opposite balance changes.
-  await page.locator('.account-balance-row').filter({ has: page.getByRole('button', { name: 'Synthetic Cash · 利用中', exact: true }) }).getByRole('button', { name: 'Synthetic Cash · 利用中', exact: true }).click();
-  await page.getByText('残高：+¥6,500', { exact: true }).waitFor(); await click('口座の記録を見る');
+  await page.getByRole('button', { name: 'Synthetic Cash · 利用中', exact: true }).click();
+  await page.locator('[data-detail="残高"] dd').getByText('+¥6,500', { exact: true }).waitFor(); await click('口座の記録を見る');
   await page.getByRole('heading', { name: 'Synthetic Cashの記録', exact: true }).waitFor();
-  await page.getByRole('button', { name: /2026-10-01 · .* · \+¥8,000/ }).click();
+  await page.getByRole('button', { name: /· 10\/1 · 振替 · .*¥8,000$/ }).click();
   await page.getByRole('heading', { name: '振替の記録', exact: true }).waitFor();
   await page.getByText('振替元口座', { exact: true }).waitFor();
   const detail = page.locator('#local-view dl.transaction-detail');
@@ -69,7 +69,7 @@ try {
   await click('記録一覧へ戻る');
 
   await accounts(); await page.getByRole('button', { name: 'Synthetic Closed Zero · 利用中', exact: true }).click();
-  await click('利用終了'); await page.getByText('状態：利用終了', { exact: true }).waitFor();
+  await click('利用終了'); await page.locator('[data-detail="状態"] dd').getByText('利用終了', { exact: true }).waitFor();
   await accounts(); await page.locator('.closed-accounts summary').click();
   await page.getByRole('button', { name: 'Synthetic Closed Zero · 利用終了', exact: true }).waitFor();
   assert.ok(await page.locator('.closed-accounts').count());

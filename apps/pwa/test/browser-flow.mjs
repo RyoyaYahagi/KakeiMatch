@@ -60,8 +60,8 @@ try {
   await page.locator('select[name="accountType"]').selectOption('other');
   await page.locator('select[name="statementProvider"]').selectOption('paypay_card');
   await page.getByRole('button', { name: '変更を保存', exact: true }).click();
-  await page.getByText('明細サービス：PayPayカード', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
+  await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
@@ -97,7 +97,7 @@ try {
   assert.equal(await page.locator('#receipt-category option:checked').textContent(), '食費');
   assert.equal(await page.getByRole('button', { name: 'カテゴリを提案する', exact: true }).count(), 0);
   await page.locator('#settings-tab').click();
-  await page.getByText('AI利用 · 1 / 30回 · Free', { exact: true }).waitFor();
+  await page.getByText('今月の読み取り 1 / 30回 · Free', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
   await page.locator('#receipt-merchant').fill('Manual Store');
@@ -120,7 +120,7 @@ try {
   await page.locator('#receipt-amount').fill('1280');
   assert.notEqual(aiRequests[1].flowId, aiRequests[0].flowId);
   await page.locator('#settings-tab').click();
-  await page.getByText('AI利用 · 2 / 30回 · Free', { exact: true }).waitFor();
+  await page.getByText('今月の読み取り 2 / 30回 · Free', { exact: true }).waitFor();
   if (process.env.PWA_USAGE_SCREENSHOT_PATH) { await page.locator('#usage-summary').scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_USAGE_SCREENSHOT_PATH }); }
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();

@@ -1,4 +1,7 @@
 import { accountOptions } from './local-account-ui';
+import { categoryTone } from './category-tone';
+import { backLink, detailHero, detailList, entryRow, pageActions, pageTitle, rowList } from './settings-ui';
+import { icon } from './ui-icons';
 import type { createActualBrowserLedger, RecurringSchedule, RecurringScheduleInput } from '../../../src/lib/actual-browser-ledger';
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 type Service = {
@@ -35,64 +38,66 @@ export async function showRecurringSchedules(options: {
     return { accounts, categories };
   }
   async function overview(message = '') {
-    view.replaceChildren(node('h2', '定期登録'));
-    const status = node('p', message); status.setAttribute('role', 'status'); view.append(status);
+    view.replaceChildren(backLink('設定', '設定へ戻る', options.onBack), pageTitle('定期登録'));
+    const status = node('p', message); status.setAttribute('role', 'status'); status.className = 'status'; view.append(status);
+    view.append(Object.assign(node('p', '決まった日に自動で記録します。'), { className: 'muted settings-footnote' }));
     const pending = await service.pending();
     if (pending) {
-      const notice = node('p', '前回の定期登録処理が保留中です。再試行してください。'); notice.className = 'error'; view.append(notice);
-      view.append(button('再試行する', async () => {
+      const notice = node('div'); notice.className = 'notice notice-danger';
+      notice.append(node('p', '前回の定期登録処理が保留中です。再試行してください。'), button('再試行する', async () => {
         status.textContent = '再試行しています。';
         try { await service.retry(); if (await service.pending()) { status.textContent = '処理がまだ保留中です。もう一度お試しください。'; return; } await overview('定期登録を復旧しました。'); }
         catch (error) { status.textContent = errorText(error); }
       }, true));
+      view.append(notice);
     }
-    const create = button('定期登録を追加する', () => editor(), !pending);
-    create.disabled = Boolean(pending); view.append(create);
-    const schedules = await ledger.listRecurringSchedules();
-    const accounts = await ledger.listAccounts();
-    const categories = await ledger.listCategories();
+    const [schedules, accounts, categories] = await Promise.all([ledger.listRecurringSchedules(), ledger.listAccounts(), ledger.listCategories()]);
     const accountNames = new Map(accounts.map(item => [item.id, item.name]));
     const categoryNames = new Map(categories.map(item => [item.id, item.name]));
-    const list = node('ul'); list.className = 'master-list recurring-list';
-    if (!schedules.length) list.append(node('li', '定期登録はありません。'));
-    for (const schedule of schedules) {
-      const row = node('li'); row.className = 'master-row recurring-row';
-      const summary = schedule.editable ? `${schedule.name} · ${schedule.kind === 'income' ? '収入' : '支出'} ${yen(schedule.amountYen)}` : `${schedule.name} · 未対応の予定条件`;
-      const open = button(summary, () => detail(schedule, accountNames, categoryNames));
-      const metadata = node('p', schedule.editable
-        ? `${categoryNames.get(schedule.categoryId) ?? 'カテゴリなし'} · ${accountNames.get(schedule.accountId) ?? '口座なし'} · ${frequencyLabel(schedule.frequency)} · 次回 ${schedule.nextDate ?? '未定'} · 自動登録 ${schedule.postsTransaction ? 'オン' : 'オフ'} · ${schedule.completed ? '終了済み' : '継続中'}`
-        : `未対応の予定条件を含むため編集できません · ${schedule.completed ? '終了済み' : '継続中'}`);
-      row.append(open, metadata); list.append(row);
-    }
-    view.append(list, button('設定へ戻る', options.onBack));
+    const rows = schedules.map(schedule => {
+      const categoryName = categoryNames.get(schedule.categoryId) ?? 'カテゴリなし';
+      const tone = schedule.kind === 'income' ? { icon: 'income' as const, tone: 'income' } : categoryTone(categoryName, schedule.categoryId);
+      const note = schedule.editable
+        ? `${categoryName} · ${accountNames.get(schedule.accountId) ?? '口座なし'} · ${frequencyLabel(schedule.frequency)} · 次回 ${schedule.nextDate ?? '未定'} · 自動登録 ${schedule.postsTransaction ? 'オン' : 'オフ'}${schedule.completed ? ' · 終了済み' : ''}`
+        : `未対応の予定条件を含むため編集できません · ${schedule.completed ? '終了済み' : '継続中'}`;
+      return entryRow({ icon: tone.icon, tone: tone.tone, title: schedule.name, note, dimmed: schedule.completed,
+        value: schedule.editable ? `${schedule.kind === 'income' ? '+' : '−'}${yen(schedule.amountYen)}` : undefined, valueClass: schedule.kind === 'income' ? 'amount-income' : '',
+        spokenName: schedule.editable ? `${schedule.name} · ${schedule.kind === 'income' ? '収入' : '支出'} ${yen(schedule.amountYen)}` : `${schedule.name} · 未対応の予定条件`,
+        onClick: () => detail(schedule, accountNames, categoryNames).catch(error => { status.textContent = errorText(error); }) });
+    });
+    if (rows.length) view.append(rowList(rows, 'recurring-list'));
+    else view.append(Object.assign(node('p', '定期登録はありません。'), { className: 'muted' }));
+    const create = button('定期登録を追加', () => editor(), true); create.setAttribute('aria-label', '定期登録を追加する');
+    create.prepend(icon('add')); create.disabled = Boolean(pending);
+    view.append(pageActions(create));
   }
   async function detail(schedule: RecurringSchedule, accountNames?: Map<string, string>, categoryNames?: Map<string, string>) {
-    view.replaceChildren(node('h2', schedule.name));
-    const status = node('p'); status.setAttribute('role', 'status'); view.append(status);
+    view.replaceChildren(backLink('定期登録', '一覧へ戻る', () => overview()));
+    const status = node('p'); status.setAttribute('role', 'status'); status.className = 'status'; view.append(status);
     accountNames ??= new Map((await ledger.listAccounts()).map(item => [item.id, item.name]));
     categoryNames ??= new Map((await ledger.listCategories()).map(item => [item.id, item.name]));
-    const lines = schedule.editable ? [
-      `種類：${schedule.kind === 'income' ? '収入' : '支出'}`, `金額：${yen(schedule.amountYen)}`,
-      `カテゴリ：${categoryNames.get(schedule.categoryId) ?? '利用できません'}`, `口座：${accountNames.get(schedule.accountId) ?? '利用できません'}`,
-      `頻度：${frequencyLabel(schedule.frequency)}`, `開始日：${schedule.startDate}`, `次回：${schedule.nextDate ?? '未定'}`,
-      `自動登録：${schedule.postsTransaction ? 'オン' : 'オフ'}`, `状態：${schedule.completed ? '終了済み' : '継続中'}`,
-    ] : ['この定期登録には画面で扱えない予定条件があります。金額や頻度を正確に表示できません。', `状態：${schedule.completed ? '終了済み' : '継続中'}`];
-    const list = node('dl'); list.className = 'recurring-detail';
-    for (const line of lines) list.append(node('dd', line));
-    view.append(list);
-    if (schedule.editable) view.append(button('編集する', () => editor(schedule), true));
-    else { const note = node('p', 'この定期登録の金額や頻度などの条件は編集できません。削除して作り直してください。'); note.className = 'muted'; view.append(note); }
-    view.append(button('削除する', async () => {
+    const categoryName = categoryNames.get(schedule.categoryId) ?? '利用できません';
+    const tone = schedule.kind === 'income' ? { icon: 'income' as const, tone: 'income' } : categoryTone(categoryName, schedule.categoryId);
+    const heading = detailHero(tone.icon, tone.tone, schedule.name, `${schedule.kind === 'income' ? '収入' : '支出'}の定期登録 · ${schedule.completed ? '終了済み' : '継続中'}`);
+    heading.querySelector('.detail-hero-title')?.setAttribute('role', 'heading');
+    heading.querySelector('.detail-hero-title')?.setAttribute('aria-level', '2');
+    view.append(heading);
+    if (schedule.editable) view.append(detailList([['金額', yen(schedule.amountYen)], ['カテゴリ', categoryName], ['口座', accountNames.get(schedule.accountId) ?? '利用できません'],
+      ['頻度', frequencyLabel(schedule.frequency)], ['開始日', schedule.startDate], ['次回', schedule.nextDate ?? '未定'], ['自動登録', schedule.postsTransaction ? 'オン' : 'オフ']], 'recurring-detail'));
+    else view.append(Object.assign(node('p', 'この定期登録には画面で扱えない予定条件があります。金額や頻度を正確に表示できません。金額や頻度などの条件は編集できません。削除して作り直してください。'), { className: 'muted' }));
+    const remove = button('削除する', async () => {
       if (!window.confirm('この定期登録を削除しますか？すでに作成された取引は残ります。')) return;
       try { await service.remove(schedule.id); await overview('定期登録を削除しました。生成済みの取引は残っています。'); }
       catch (error) { status.textContent = errorText(error); }
-    }));
-    view.append(button('一覧へ戻る', () => overview()));
+    }); remove.className = 'text-button destructive-text';
+    const actions = schedule.editable ? [button('編集する', () => editor(schedule), true), remove] : [remove];
+    if (schedule.editable) actions[0].prepend(icon('pencil'));
+    view.append(pageActions(...actions));
   }
   async function editor(existing?: RecurringSchedule) {
     let kind = existing?.kind ?? 'expense';
     const masters = await loadMasters(kind);
-    view.replaceChildren(node('h2', existing ? '定期登録を編集' : '定期登録を追加'));
+    view.replaceChildren(backLink(existing ? existing.name : '定期登録', '一覧へ戻る', () => existing ? detail(existing) : overview()), pageTitle(existing ? '定期登録を編集' : '定期登録を追加'));
     const status = node('p'); status.setAttribute('role', 'status'); view.append(status);
     const form = node('form');
     const nameLabel = node('label', '名前'); nameLabel.htmlFor = 'recurring-name';
@@ -154,7 +159,7 @@ export async function showRecurringSchedules(options: {
         } else for (const control of controls) control.disabled = control === retry;
       });
     });
-    view.append(form, button('一覧へ戻る', () => overview()));
+    view.append(form);
   }
   await overview();
 }

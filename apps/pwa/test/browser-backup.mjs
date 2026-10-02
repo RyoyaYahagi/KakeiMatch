@@ -114,8 +114,8 @@ async function setupLedger() {
   await page.locator('select[name="accountType"]').selectOption('other');
   await page.locator('select[name="statementProvider"]').selectOption('paypay_card');
   await page.getByRole('button', { name: '変更を保存', exact: true }).click();
-  await page.getByText('明細サービス：PayPayカード', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
+  await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();

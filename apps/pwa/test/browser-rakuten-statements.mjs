@@ -32,14 +32,14 @@ async function createMappedCardAccount(name) {
   await page.locator('select[name="accountType"]').selectOption('credit_card');
   await page.locator('select[name="statementProvider"]').selectOption('rakuten_card');
   await page.getByRole('button', { name: '変更を保存', exact: true }).click();
-  await page.getByText('明細サービス：楽天カード', { exact: true }).waitFor();
+  await page.locator('[data-detail="明細サービス"] dd').getByText('楽天カード', { exact: true }).waitFor();
 }
 async function addNativeExpense(account) {
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('#settings-tab').click();
   await page.locator('#home-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.getByRole('button', { name: '支出を手入力', exact: true }).click();
