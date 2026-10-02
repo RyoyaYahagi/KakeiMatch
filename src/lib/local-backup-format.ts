@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
 import { scheduleAuditSchema } from "./recurring-schedule";
 import { categoryLearningObservationSchema } from "./category-learning";
+import { monthlyBudgetSettingsSchema } from "./monthly-budget-settings";
 import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
@@ -123,6 +124,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "correction-audit": return allCorrectionAudits;
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
+      if (id.startsWith("settings:monthly-budgets:")) return monthlyBudgetSettingsSchema;
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();
       if (id === "settings:backup") return z.object({ lastExportAt: isoDateTime }).strict();
       return z.never();
@@ -144,6 +146,10 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
     if (recordIds.has(id)) fail("同じ記録IDが複数あります。");
     recordIds.add(id);
     if (!recordValueSchema(kind, id).safeParse(recordValue).success) fail(`「${kind}」の記録内容が不正です。`);
+    if (id.startsWith("settings:monthly-budgets:")
+      && id.slice("settings:monthly-budgets:".length) !== (recordValue as { budgetId: string }).budgetId) {
+      fail("予算設定と家計簿の対応が一致しません。");
+    }
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
     if (kind === "receipt-metadata" || kind === "category-state") {
       const detail = (kind === "receipt-metadata" ? (recordValue as { confirmedValue: unknown }).confirmedValue : recordValue) as { items?: Array<{ id: string }>; adjustments?: Array<{ id: string; targetItemId?: string | null }> } | null;
@@ -154,6 +160,9 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
     }
     return { id, kind, value: recordValue, updatedAt };
   });
+  if (records.filter(record => record.id.startsWith("settings:monthly-budgets:")).length > 1) {
+    fail("バックアップに複数の家計簿の予算設定があります。");
+  }
   const blobIds = new Set<string>();
   const blobs: LocalBlob[] = backup.blobs.map((raw) => {
     const base = z.object({ id: z.string().min(1), ownerKind: z.enum(["receipt", "statement-import"]), ownerId: z.string().min(1), blob: z.instanceof(Blob), contentType: z.string().min(1), createdAt: isoDateTime }).strict().safeParse(raw);

@@ -1,4 +1,5 @@
 import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
+import { LocalMonthlyBudgetService } from './local-monthly-budget-service';
 import { LocalRecurringService } from './local-recurring';
 import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
@@ -48,9 +49,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const saved = await repository.get<LocalBudgetSettings>('settings:budget');
   let budgetId = saved?.value.budgetId ?? null;
   const dataDir = saved?.value.dataDir ?? '/documents';
+  let monthlyBudgets: LocalMonthlyBudgetService | null = null;
   const ledger = createActualBrowserLedger({ getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
     budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id, dataDir }, updatedAt: new Date().toISOString() });
+    monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, id);
   } });
+  if (budgetId) monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, budgetId);
   const receipts = new LocalReceiptService(repository, ledger);
   const statements = new LocalStatementService(repository);
   const reconciliation = new LocalReconciliationService(repository, ledger);
@@ -99,13 +103,14 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el('home-summary').setAttribute('aria-busy', 'true');
     await open('home');
     const month = selectedMonth;
-    const [rows, summary, budgetSummary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), ledger.getMonthlyBudgets({ yearMonth: month })]);
+    if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
+    const [rows, summary, budgetSummary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), monthlyBudgets.getSummary(month)]);
     if (revision !== homeRevision || el('household-view').hidden) return;
     renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), action => {
       selectedMonth = action.type === 'current' ? today().slice(0, 7) : shiftMonth(selectedMonth, action.offset);
       void home().catch(report);
     });
-    renderMonthlyBudgets(el('home-summary'), budgetSummary, () => { void budgetEditor().catch(report); });
+    renderMonthlyBudgets(el('home-summary'), budgetSummary, () => { void budgetEditor('monthly').catch(report); });
     const list = el('transactions'); list.replaceChildren();
     for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
       const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
@@ -118,9 +123,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     el('home-attention').replaceChildren(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
     if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
   }
-  async function budgetEditor() {
+  async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
     await open('statement');
-    await showMonthlyBudgetEditor({ view, ledger, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
+    if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
+    await showMonthlyBudgetEditor({ view, ledger, service: monthlyBudgets, mode, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
   }
   async function recurringOverview() {
     await open('statement');

@@ -1,6 +1,7 @@
 import { ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
 import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
+import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '../../../src/lib/monthly-budget-settings';
 
 export const PREVIOUS_PROFILE_KEY = 'kakeimatch.previous-local-profile.v1';
 export const INCOMPLETE_RESTORE_KEY = 'kakeimatch.incomplete-actual-restore.v1';
@@ -31,8 +32,10 @@ function directories(storage: Dependencies['storage']): string[] {
 /** Called only for an explicit user export. A timestamp records generation, never file-save success. */
 export async function exportLocalBackup(repository: LocalDataRepository, ledger: BackupLedger, now = new Date()): Promise<Blob> {
   const localData = await repository.serialize();
+  const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
-  localData.records = localData.records.filter(record => record.id !== 'settings:budget');
+  localData.records = localData.records.filter(record => record.id !== 'settings:budget'
+    && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : '')));
   const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
   await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
   return result;
@@ -68,11 +71,20 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     if (existing.records.length || existing.blobs.length) throw new ActualRestoreTargetExistsError();
     ownsLocalTarget = true;
     const budgetId = await ledger.restoreBackup(backup.actualBackup, dataDir);
-    await staging.restore(backup.localData);
+    const localData = {
+      ...backup.localData,
+      records: backup.localData.records.map(record => {
+        if (!record.id.startsWith('settings:monthly-budgets:')) return record;
+        const separator = record.id.slice('settings:monthly-budgets:'.length);
+        const settings = validateMonthlyBudgetSettings(record.value, separator);
+        return { ...record, id: monthlyBudgetSettingsRecordId(budgetId), value: { ...settings, budgetId } };
+      }),
+    };
+    await staging.restore(localData);
     const timestamp = deps.now().toISOString();
     await staging.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId, dataDir }, updatedAt: timestamp });
     const readback = await staging.serialize();
-    await verifyLocalReadback(backup.localData, readback);
+    await verifyLocalReadback(localData, readback);
     // Write the return pointer first. Failure still leaves the active pointer unchanged.
     if (previous) deps.storage.setItem(PREVIOUS_PROFILE_KEY, previous);
     deps.storage.setItem(LOCAL_PROFILE_KEY, profileId);

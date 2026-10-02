@@ -7,4 +7,4 @@
 - [Legacy runtime inventory](../LEGACY_RUNTIME_INVENTORY.md): 旧runtimeの分類と隔離先
 - [Current architecture](../ARCHITECTURE.md): 現行PWA・Cloudflare構成
 
-legacy sourceは旧テストや移行参照のため、すべてをこのdirectoryへ移動したわけではありません。現行productionから参照できるbrowser-safe root modulesは、[PWA build configuration](../../apps/pwa/vite.config.ts)で9ファイルに限定し、bundlerのmodule graph全体を検査します。legacy sourceをproduction bundleへ混入させないでください。
+legacy sourceは旧テストや移行参照のため、すべてをこのdirectoryへ移動したわけではありません。現行productionから参照できるbrowser-safe root modulesは、[PWA build configuration](../../apps/pwa/vite.config.ts)で12ファイルに限定し、bundlerのmodule graph全体を検査します。legacy sourceをproduction bundleへ混入させないでください。

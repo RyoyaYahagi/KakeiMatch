@@ -1022,6 +1022,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const month = await api.getBudgetMonth(yearMonth);
         const raw = month.categoryGroups.flatMap(group => group.categories ?? []).find(value =>
           value && typeof value === "object" && "id" in value && value.id === parsedId.data);
+        if (budgetYen === 0 && raw === undefined) return;
         const readback = budgetCategorySchema.safeParse(raw);
         if (!readback.success || readback.data.budgeted !== budgetYen) throw new ActualBrowserUnavailableError("invalid_data");
       });

@@ -420,6 +420,15 @@ describe("Actual browser ledger", () => {
     expect(api.setBudgetAmount).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts Actual removing a zero budget row after clearing the native month amount", async () => {
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+    api.getBudgetMonth.mockResolvedValueOnce({
+      month: "2026-09", incomeAvailable: 0, lastMonthOverspent: 0, forNextMonth: 0, totalBudgeted: 0,
+      toBudget: 0, fromLastMonth: 0, totalIncome: 0, totalSpent: 0, totalBalance: 0, categoryGroups: [{ categories: [] }],
+    });
+    await expect(ledger.setMonthlyBudget({ yearMonth: "2026-09", categoryId: "food", budgetYen: 0 })).resolves.toBeUndefined();
+  });
+
   it("rejects malformed budget values, unsafe totals, invalid months, and native readback mismatches", async () => {
     const { ledger, api, budgetValues } = fixture([{ id: "budget", name: "Local" }]);
     api.getBudgetMonth.mockResolvedValueOnce({
