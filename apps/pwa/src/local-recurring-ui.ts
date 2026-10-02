@@ -1,3 +1,4 @@
+import { accountOptions } from './local-account-ui';
 import type { createActualBrowserLedger, RecurringSchedule, RecurringScheduleInput } from '../../../src/lib/actual-browser-ledger';
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 type Service = {
@@ -122,14 +123,14 @@ export async function showRecurringSchedules(options: {
         if (revision !== categoryLoadRevision) return;
         category.replaceChildren(new Option('選択してください', ''), ...next.categories.map(item => new Option(item.name, item.id)));
         category.value = next.categories.some(item => item.id === selectedCategory) ? selectedCategory : '';
-        account.replaceChildren(new Option('選択してください', ''), ...next.accounts.map(item => new Option(item.name, item.id)));
+        account.replaceChildren(new Option('選択してください', ''), ...accountOptions(next.accounts, kind));
         account.value = next.accounts.some(item => item.id === selectedAccount) ? selectedAccount : '';
       }).catch(error => { if (revision === categoryLoadRevision) status.textContent = errorText(error); })
         .finally(() => { if (revision === categoryLoadRevision) category.disabled = false; });
     }
     kindSelect.addEventListener('change', updateOptions);
     category.replaceChildren(new Option('選択してください', ''), ...masters.categories.map(item => new Option(item.name, item.id)));
-    account.replaceChildren(new Option('選択してください', ''), ...masters.accounts.map(item => new Option(item.name, item.id)));
+    account.replaceChildren(new Option('選択してください', ''), ...accountOptions(masters.accounts, kind));
     if (existing) { category.value = existing.categoryId; account.value = existing.accountId; }
     const submit = node('button', '保存する'); submit.type = 'submit';
     form.append(nameLabel, name, kindLabel, kindSelect, amountLabel, amount, categoryLabel, category, accountLabel, account,

@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBKeyRange, IDBObjectStore } from 'fake-indexeddb';
 import { ActualRestoreIncompleteError } from './actual-browser-ledger';
+import { accountMetadataRecordId } from './actual-browser-ledger';
 import { LocalDataRepository, LOCAL_PROFILE_KEY } from './local-data';
-import { createPortableBackup } from './local-backup-format';
+import { createPortableBackup, readPortableBackup } from './local-backup-format';
 import { exportLocalBackup, PREVIOUS_PROFILE_KEY, restoreLocalBackup, returnToPreviousProfile, wipeLocalHousehold } from '../../apps/pwa/src/local-backup';
 
 const sourceId = '00000000-0000-4000-8000-000000000001';
@@ -135,5 +136,24 @@ describe('combined staging restore', () => {
     budget.exportBackup.mockRejectedValue(new Error('unavailable'));
     await expect(exportLocalBackup(source, budget, new Date('2026-11-01T00:00:00Z'))).rejects.toThrow();
     expect((await source.get('settings:backup'))?.value).toEqual({ lastExportAt: generated.toISOString() });
+  });
+
+  it('exports only active-budget account types and remaps them to the restored Actual budget', async () => {
+    await source.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: 'source-budget' }, updatedAt: at });
+    await source.put({ id: accountMetadataRecordId('source-budget', 'cash-account'), kind: 'account-metadata', value: { budgetId: 'source-budget', accountId: 'cash-account', accountType: 'cash' }, updatedAt: at });
+    await source.put({ id: accountMetadataRecordId('other-budget', 'cash-account'), kind: 'account-metadata', value: { budgetId: 'other-budget', accountId: 'cash-account', accountType: 'bank' }, updatedAt: at });
+    const archive = await exportLocalBackup(source, ledger());
+    const portableData = (await readPortableBackup(archive)).localData;
+    expect(portableData.records.filter(record => record.kind === 'account-metadata').map(record => record.value)).toEqual([
+      { budgetId: 'source-budget', accountId: 'cash-account', accountType: 'cash' },
+    ]);
+
+    const budget = ledger();
+    await restoreLocalBackup(archive, budget, overrides());
+    const restored = await openRepository(stagingId);
+    expect(await restored.get(accountMetadataRecordId('actual-source-id', 'cash-account'))).toMatchObject({
+      kind: 'account-metadata', value: { budgetId: 'actual-source-id', accountId: 'cash-account', accountType: 'cash' },
+    });
+    restored.close();
   });
 });
