@@ -214,7 +214,7 @@ function makePaypayCardParseResult(rows: string[][], encoding: StatementParseRes
 
   const transactions: CanonicalStatementTransaction[] = [];
   const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
-  let duplicateRowsInFile = 0;
+  const duplicateRowsInFile = 0;
   const fatalErrors: StatementParseResult["fatalErrors"] = [];
   const fingerprintOrdinals = new Map<string, number>();
 
