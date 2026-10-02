@@ -7,7 +7,8 @@ import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
-import { renderHomeAttention } from './home-attention';
+import { renderHomeAttention, type HomeAttentionCounts } from './home-attention';
+import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { icon } from './ui-icons';
@@ -134,11 +135,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。', 'empty'));
 
-    const resolutions = await reconciliation.resolutions();
-    const latest = await reconciliation.latest();
-    const pending = latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)) ?? [];
-    const failed = resolutions.filter(r => r.status !== 'applied').length;
-    renderHomeAttention(el('home-attention'), latest ? { needsReview: pending.filter(r => r.status === 'needs_review').length, unmatched: pending.filter(r => r.status !== 'needs_review').length, failed } : null, () => reviewPage().catch(report));
+    const { counts } = await reconciliationState();
+    renderHomeAttention(el('home-attention'), counts, () => reviewPage().catch(report));
     if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
@@ -672,20 +670,45 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (!await repository.getBlob(`statement-source:${record.id}`)) section.append(text('p', '取込元CSVの原本はありません。原本を確認できませんが、明細行と照合結果は利用できます。'));
     }
     if (!collapsed) return section;
-    const disclosure = document.createElement('details'); disclosure.className = 'statement-import-disclosure';
-    disclosure.append(text('summary', '明細CSVを取り込む'), section);
+    const disclosure = document.createElement('details'); disclosure.className = 'statement-import-disclosure surface-section';
+    const disclosureSummary = text('summary', '明細CSVを取り込む'); disclosureSummary.prepend(icon('upload'));
+    disclosure.append(disclosureSummary, section);
     return disclosure;
   }
+  async function reconciliationState() {
+    const [run, decisions] = await Promise.all([reconciliation.latest(), reconciliation.resolutions()]);
+    const pending = run?.statementResults.filter(row => row.status !== 'matched' && !decisions.some(d => d.statementId === row.statementTransactionId)) ?? [];
+    const counts: HomeAttentionCounts | null = run ? { needsReview: pending.filter(row => row.status === 'needs_review').length, unmatched: pending.filter(row => row.status !== 'needs_review').length, failed: decisions.filter(d => d.status !== 'applied').length } : null;
+    updateReconciliationBadge(counts);
+    return { run, decisions, pending, counts };
+  }
   async function reviewPage() {
-    await open('reconciliation'); view.append(text('h2', '明細の確認'));
-    view.append(button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }));
-    const run = await reconciliation.latest(); const decisions = await reconciliation.resolutions();
-    for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reconciliation.run(); await reviewPage(); }));
-    if (!run) { view.append(await renderStatementImporter(false), text('p', '明細を取り込んでから照合してください。')); return; }
-    const pending = run.statementResults.filter(row => !decisions.some(d => d.statementId === row.statementTransactionId));
+    await open('reconciliation');
+    const header = document.createElement('div'); header.className = 'page-header';
+    const refresh = button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }); refresh.className = 'secondary compact';
+    header.append(text('h2', '照合'), refresh); view.append(header);
+    const { run, decisions, pending } = await reconciliationState();
+    for (const decision of decisions.filter(d => d.status !== 'applied')) {
+      const failure = document.createElement('div'); failure.className = 'notice notice-danger';
+      failure.append(icon('warning'), text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reconciliation.run(); await reviewPage(); }, false));
+      view.append(failure);
+    }
+    if (!run) { view.append(text('p', '明細を取り込んでから照合してください。', 'muted'), await renderStatementImporter(false)); return; }
     const automatic = decisions.filter(d => d.source === 'automatic' && d.status === 'applied');
     const auto = automatic.length;
-    view.append(text('p', `自動確認済み ${auto}件 · 要確認 ${pending.filter(r => r.status === 'needs_review').length}件 · 記録なし ${pending.filter(r => r.status === 'unmatched_statement').length}件 · 明細待ち ${run.receiptResults.filter(r => r.status === 'unmatched_receipt').length}件`));
+    const needsReview = pending.filter(r => r.status === 'needs_review').length, unmatched = pending.filter(r => r.status === 'unmatched_statement').length;
+    const waiting = run.receiptResults.filter(r => r.status === 'unmatched_receipt').length;
+    const tiles = document.createElement('div'); tiles.className = 'review-tiles'; tiles.setAttribute('aria-hidden', 'true');
+    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['danger', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
+      const tile = document.createElement('div'); tile.className = `review-tile tile-${tone}`;
+      const name = document.createElement('span'); name.className = 'review-tile-label'; name.append(icon(symbol), document.createTextNode(label));
+      const value = document.createElement('span'); value.className = 'review-tile-count'; value.append(document.createTextNode(String(count)), text('small', '件'));
+      tile.append(name, value); tiles.append(tile);
+    }
+    const resultSummary = text('p', `照合の結果：自動で一致 ${auto}件 · 要確認 ${needsReview}件 · 記録なし ${unmatched}件 · 明細待ち ${waiting}件`, 'visually-hidden'); resultSummary.setAttribute('role', 'status');
+    view.append(tiles, resultSummary);
+    if (waiting) view.append(text('p', `明細待ちの支出 ${waiting}件（明細を取り込むと照合します）`, 'muted review-waiting'));
+    view.append(await renderStatementImporter(true));
     const [allStatements, allReceipts, imports, allAccounts, expenseCategories] = await Promise.all([
       statements.list(), receipts.list(), statements.imports(), ledger.listAccounts(), ledger.listExpenseCategories(),
     ]);
@@ -701,35 +724,48 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (mapped.length === 1) return mapped[0].id;
       return registrationAccounts.length === 1 ? registrationAccounts[0].id : '';
     };
-    const list = document.createElement('ul');
+    const list = document.createElement('ul'); list.className = 'review-list';
     const reviewOrder = (status: string) => status === 'needs_review' ? 0 : 1;
     for (const row of pending.filter(r => r.status !== 'matched').sort((a, b) => reviewOrder(a.status) - reviewOrder(b.status) || a.statementTransactionId.localeCompare(b.statementTransactionId))) {
       const statement = allStatements.find(s => s.id === row.statementTransactionId); if (!statement) continue;
-      const item = document.createElement('li'); const detail = document.createElement('details');
-      detail.append(text('summary', `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}`));
-      if (statement.kind === 'refund') detail.append(text('p', '返金の記録です。現在は自動処理できません。'));
+      const item = document.createElement('li'); const detail = document.createElement('details'); detail.className = 'review-item';
+      const needsDecision = row.status === 'needs_review';
+      const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'danger');
+      const setReason = (reason: string) => { summary.note.textContent = `${shortDay(statement.usedDate)} · ${reason}`; };
+      setReason(needsDecision ? '内容を確認してください' : '記録が見つかりません');
+      detail.append(summary.element);
+      const body = document.createElement('div'); body.className = 'review-body'; detail.append(body);
+      if (statement.kind === 'refund') { setReason('返金のため自動で処理できません'); body.append(text('p', '返金の記録です。現在は自動処理できません。')); }
       else {
         const statementSource = statementProviderLabels[statement.provider as StatementProvider] ?? '明細';
-        detail.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${statementSource}`));
+        body.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${statementSource}`, 'compare-statement'));
         const candidates = run.candidates.filter(c => c.statementTransactionId === statement.id);
+        const reasons: string[] = [];
         for (const candidate of candidates) {
           const receipt = allReceipts.find(r => r.id === candidate.receiptId);
           const actualId = receipt?.registration.actualTransactionId ?? (candidate.receiptId.startsWith('actual:') ? candidate.receiptId.slice('actual:'.length) : null);
           const actual = actualId ? await ledger.getTransactionById(actualId) : null;
           if (!actual || actual.kind !== 'expense') continue;
+          const block = document.createElement('div'); block.className = 'compare-candidate';
           const actualAccount = accountsById.get(actual.accountId)?.name ?? '利用できない支払元';
-          detail.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
+          block.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
+          const amountGap = Math.abs(statement.amountYen - Math.abs(actual.amountYen));
+          const dayGap = Math.abs(daysBetween(statement.usedDate, actual.date));
           const differences = [
             ...(actual.date !== statement.usedDate ? [`日付差 ${statement.usedDate} / ${actual.date}`] : []),
-            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(Math.abs(statement.amountYen - Math.abs(actual.amountYen)))}（明細 ${yen(Math.abs(statement.amountYen))} / 家計簿 ${yen(Math.abs(actual.amountYen))}）`] : []),
+            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(amountGap)}（明細 ${yen(Math.abs(statement.amountYen))} / 家計簿 ${yen(Math.abs(actual.amountYen))}）`] : []),
           ];
-          if (differences.length) detail.append(text('p', `差分：${differences.join(' · ')}`));
+          reasons.push(actual.amountYen !== -statement.amountYen ? `金額が${yen(amountGap)}違います` : dayGap ? `日付が${dayGap}日ずれています` : '内容を確認してください');
+          if (differences.length) block.append(text('p', `差分：${differences.join(' · ')}`, 'compare-diff'));
           const unsupportedSplitAmount = actual.isSplit === true && actual.amountYen !== -statement.amountYen;
-          if (unsupportedSplitAmount) detail.append(text('p', '分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。'));
+          if (unsupportedSplitAmount) block.append(text('p', '分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。'));
           const sameExpense = button('同じ支出', async () => { await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }, false);
           sameExpense.disabled = unsupportedSplitAmount;
-          detail.append(sameExpense, button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }));
+          const otherExpense = button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }); otherExpense.className = 'text-button';
+          block.append(sameExpense, otherExpense);
+          body.append(block);
         }
+        if (reasons.length > 1) setReason(`候補が${reasons.length}件あります`); else if (reasons.length === 1) setReason(reasons[0]);
         if (!candidates.length) {
           const category = document.createElement('select'); category.id = `category-${statement.id}`; category.required = true;
           const categoryLabel = fieldLabel('label', 'カテゴリ', category.id);
@@ -744,7 +780,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
             account.value = rows.some(row => row.id === selected) ? selected : '';
           };
           fillAccounts(registrationAccounts, defaultRegistrationAccount(statement));
-          detail.append(text('p', `記録が見つかりません。${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} を支出として登録できます。`), categoryLabel, category, accountLabel, account);
+          body.append(text('p', `記録が見つかりません。${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} を支出として登録できます。`), categoryLabel, category, accountLabel, account);
           const noAccountNote = text('p', '支払元がありません。登録するには支払元を追加してください。');
           if (!registrationAccounts.length) account.before(noAccountNote);
           account.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
@@ -762,7 +798,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
               category.value = refreshed.some(c => c.id === previous) ? previous : id;
             },
           } }));
-          detail.append(button('支出として登録', async () => {
+          body.append(button('支出として登録', async () => {
             if (!category.value) throw new Error('カテゴリを選択してください。');
             if (!account.value) throw new Error('支払元を選択してください。');
             await reconciliation.noReceipt(run.runId, statement.id, { categoryId: category.value, accountId: account.value });
@@ -772,11 +808,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       }
       item.append(detail); list.append(item);
     }
-    view.append(list);
-    view.append(await renderStatementImporter(true));
+    if (list.children.length) {
+      const section = document.createElement('section'); section.className = 'surface-section review-section';
+      section.append(text('h3', '確認してください'), list); view.append(section);
+    } else if (!decisions.some(d => d.status !== 'applied')) {
+      const clear = document.createElement('p'); clear.className = 'review-clear'; clear.append(icon('check'), document.createTextNode('確認が必要な明細はありません')); view.append(clear);
+    }
     if (automatic.length) {
-      const history = document.createElement('details');
-      history.append(text('summary', `自動確認済みの内容を見る（${auto}件）`));
+      const history = document.createElement('details'); history.className = 'surface-section review-history';
+      history.append(text('summary', `自動で一致した内容を見る（${auto}件）`));
       const matchedList = document.createElement('ul');
       const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
       const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));
@@ -785,7 +825,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const statement = statementById.get(decision.statementId), receipt = receiptById.get(decision.receiptId ?? '');
         const item = document.createElement('li'), detail = document.createElement('details');
         detail.append(text('summary', statement ? `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}` : `保存済みの照合 · ${yen(decision.statementAmountYen)}`));
-        detail.append(text('p', '同じ支出として自動確認済みです。'));
+        detail.append(text('p', '同じ支出として自動で一致しました。'));
         detail.append(text('p', statement ? `明細：${statement.usedDate}${statement.usedTime ? ` ${statement.usedTime.slice(0, 5)}` : ''} · ${statement.merchant} · ${yen(statement.amountYen)}${statement.paymentMethod ? ` · ${statement.paymentMethod}` : ''}` : '対応する明細を端末で見つけられませんでした。'));
         const value = receipt?.confirmedValue;
         const savedExpense = decision.actualSnapshot;

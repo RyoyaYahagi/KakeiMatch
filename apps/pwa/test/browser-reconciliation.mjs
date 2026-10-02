@@ -88,7 +88,7 @@ try {
   await click('取り込んで照合');
   await page.getByText('5件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   // A record in another card account still matches: payment sources do not scope reconciliation.
-  await page.getByText(/自動確認済み 2件/).waitFor();
+  await page.getByText(/自動で一致 2件/).waitFor();
   await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   await page.getByText(/明細待ち 0件/).waitFor();
 
@@ -125,7 +125,7 @@ try {
   await page.reload(); await page.locator('#reconciliation-tab').click();
   await page.getByText(/要確認 0件 · 記録なし 2件/).waitFor();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
-  await page.getByText('自動確認済みの内容を見る（2件）', { exact: true }).click();
+  await page.getByText('自動で一致した内容を見る（2件）', { exact: true }).click();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Other Account Shop' }).click();
   await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥600', { exact: true }).waitFor();
   assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
