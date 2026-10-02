@@ -1,3 +1,4 @@
+import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
@@ -147,7 +148,7 @@ export function showManualTransactionEditor(options: {
 
     const accountLabel = fieldLabel('label', transfer ? '振替元口座' : kind === 'expense' ? '支払元' : '入金先口座', 'manual-transaction-account');
     const account = node('select'); account.id = accountLabel.htmlFor; account.required = true;
-    account.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
+    account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts, kind));
     const selectedAccountId = draftSnapshot?.accountId ?? transaction?.accountId;
     if (selectedAccountId && !accounts.some(value => value.id === selectedAccountId)) {
       account.append(new Option('現在の口座（利用終了）', selectedAccountId));
@@ -156,7 +157,7 @@ export function showManualTransactionEditor(options: {
 
     const destinationLabel = fieldLabel('label', '振替先口座', 'manual-transaction-destination');
     const destination = node('select'); destination.id = destinationLabel.htmlFor; destination.required = transfer;
-    destination.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
+    destination.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts, kind));
     const destinationId = draftSnapshot?.destinationAccountId ?? transaction?.transferAccountId ?? '';
     if (destinationId && !accounts.some(value => value.id === destinationId)) destination.append(new Option('現在の口座（利用終了）', destinationId));
     destination.value = destinationId;
@@ -189,7 +190,7 @@ export function showManualTransactionEditor(options: {
             const updated = await ledger.listOpenAccounts(); accounts.splice(0, accounts.length, ...updated);
             for (const select of transfer ? [account, destination] : [account]) {
               const previous = select.value;
-              select.replaceChildren(new Option('選択してください', ''), ...accounts.map(value => new Option(value.name, value.id)));
+              select.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts, kind));
               if (previous && !accounts.some(value => value.id === previous)) select.append(new Option('現在の口座（利用終了）', previous));
               select.value = previous;
             }

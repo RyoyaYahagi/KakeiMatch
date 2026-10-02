@@ -18,6 +18,7 @@ export type LocalDataKind =
   | "reconciliation-result"
   | "reconciliation-resolution"
   | "correction-audit"
+  | "account-metadata"
   | "app-settings";
 
 export interface LocalDataRecord<T = unknown> {
@@ -117,7 +118,7 @@ export function migrateLocalDataBackup(input: LocalDataBackup): LocalDataBackupV
 }
 
 function isLocalDataKind(kind: string): kind is LocalDataKind {
-  return ["receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "app-settings"].includes(kind);
+  return ["receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"].includes(kind);
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {

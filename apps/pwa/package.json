@@ -25,7 +25,8 @@
     "test:transaction-search-e2e": "node test/browser-transaction-search.mjs",
     "test:category-learning-e2e": "node test/browser-category-learning.mjs",
     "test:entry-masters-e2e": "node test/browser-entry-masters.mjs",
-    "test:record-navigation-e2e": "node test/browser-record-navigation.mjs"
+    "test:record-navigation-e2e": "node test/browser-record-navigation.mjs",
+    "test:account-types-e2e": "node test/browser-account-types.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",
