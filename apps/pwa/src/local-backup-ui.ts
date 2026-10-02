@@ -63,7 +63,18 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     button('statement-csv-cleanup', '取込元CSVを削除', async () => { await refresh(); if (!window.confirm(`${cleanupInfo.textContent}\n取り込み済みのCSV原本を削除しますか？後から原本を確認できなくなります。`)) return; const result = await cleanupStatementCsv(repository); await refresh(); status.textContent = `${result.deletedCount}件のCSV原本を削除しました。明細行と照合結果は残っています。`; }),
     text('h3', 'この端末の家計データをすべて削除'), text('p', '切り替え前のデータと復元途中のデータを含め、このサイトの端末内家計簿・レシート・画像・明細・照合・設定を削除します。バックアップがなければ復旧できません。アカウント・Passkey・契約・AI利用権限には影響しません。'),
     button('local-wipe', 'この端末の家計データをすべて削除', async () => { if (!window.confirm('この端末の家計データをすべて削除します。バックアップがなければ復旧できません。続けますか？')) return; if (window.prompt('削除を確定するには「すべて削除」と入力してください。') !== 'すべて削除') { status.textContent = '削除を取り消しました。'; return; } await wipeLocalHousehold(repository, ledger); location.reload(); }), status);
-  document.getElementById('local-settings')!.after(section);
+  // docs/UX.md 設定: everyday backup actions stay visible; explanations and destructive tools are folded.
+  section.className = 'surface-section settings-panel';
+  const firstToolHeading = section.querySelector('h3')!;
+  const children = Array.from(section.children);
+  const statusLines = new Set<Element>([exportDate, reminder, capacity, incompleteWarning, status]);
+  const about = document.createElement('details'); about.className = 'settings-inner-disclosure';
+  about.append(text('summary', 'バックアップについて'), ...children.slice(1, children.indexOf(firstToolHeading)).filter(child => child.tagName === 'P' && !statusLines.has(child)));
+  const tools = document.createElement('details'); tools.className = 'settings-inner-disclosure danger-zone'; tools.id = 'backup-cleanup-tools';
+  tools.append(text('summary', '原本の整理・全削除'), ...children.slice(children.indexOf(firstToolHeading), children.indexOf(status)));
+  section.append(about, tools);
+  section.querySelector('#restore-previous')!.after(status);
+  document.getElementById('data-settings')!.append(section);
   (document.getElementById('restore-previous') as HTMLButtonElement).disabled = !localStorage.getItem(PREVIOUS_PROFILE_KEY);
   input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); location.reload(); }); });
   document.getElementById('settings-tab')!.addEventListener('click', () => { void refresh().catch(error => { status.textContent = error instanceof Error ? error.message : '保存状況を確認できません。'; }); });

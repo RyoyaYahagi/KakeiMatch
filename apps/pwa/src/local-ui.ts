@@ -887,7 +887,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   await initializeBackupUi(repository, ledger);
-  setup.append(text('h2', 'この端末の家計簿'), el('import-section'), el('budget-section'));
+  const ledgerTools = document.createElement('details'); ledgerTools.className = 'surface-section settings-disclosure';
+  ledgerTools.append(text('summary', '家計簿の読み込み・切り替え'), el('import-section'), el('budget-section'));
+  el('data-settings').append(ledgerTools);
   const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
   const recurringEntry = button('定期登録', recurringOverview); recurringEntry.classList.add('master-entry'); recurringEntry.setAttribute('aria-label', '定期登録'); setup.append(recurringEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
@@ -905,6 +907,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     getStatementProvider: accountId => budgetId ? accountMetadata.getStatementProvider(budgetId, accountId) : Promise.resolve(null),
     setStatementProvider: (accountId, provider, accountType) => budgetId ? accountMetadata.saveStatementProvider(budgetId, accountId, provider, accountType) : Promise.reject(new Error('家計簿を選択してください。')) });
   resetMasterUi = masterUi;
+  setup.append(budgetEntry, recurringEntry); // docs/UX.md 設定: カテゴリ, 支払元, 予算, 定期登録
   openAccountBalances = masterUi.openAccounts;
   el('settings-tab').addEventListener('click', () => { searchOrigin = false; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {

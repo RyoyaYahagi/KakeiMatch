@@ -260,7 +260,7 @@ async function wipeLocalData() {
     assert.match(prompt.message(), /すべて削除/);
     await prompt.accept('すべて削除');
   });
-  await page.locator('#local-wipe').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#local-wipe').click();
   await navigation;
 }
 
@@ -326,10 +326,10 @@ try {
   // Cleanup removes only image/CSV blobs; canonical rows and decisions remain.
   await page.locator('#settings-tab').click();
   page.once('dialog', dialog => dialog.accept());
-  await page.locator('#receipt-image-cleanup').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-image-cleanup').click();
   await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '2件のレシート画像を削除しました。');
   page.once('dialog', dialog => dialog.accept());
-  await page.locator('#statement-csv-cleanup').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#statement-csv-cleanup').click();
   await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '1件のCSV原本を削除しました。');
   await page.locator('#home-tab').click();
   await waitForReady();
