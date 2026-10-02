@@ -22,6 +22,7 @@ export function renderRecordGroups(target: HTMLElement, rows: ActualTransaction[
   filter: RecordKindFilter;
   accountName: (accountId: string) => string | null;
   hasReceipt: (row: ActualTransaction) => boolean;
+  needsReview: (row: ActualTransaction) => boolean;
   open: (row: ActualTransaction) => void;
 }) {
   target.replaceChildren();
@@ -37,7 +38,7 @@ export function renderRecordGroups(target: HTMLElement, rows: ActualTransaction[
     const list = document.createElement('ul'); list.className = 'record-rows';
     for (const row of dayRows) {
       const item = document.createElement('li');
-      item.append(recordRow(row, options.accountName(row.accountId), () => options.open(row), { showDate: false, hasReceipt: options.hasReceipt(row) }));
+      item.append(recordRow(row, options.accountName(row.accountId), () => options.open(row), { showDate: false, hasReceipt: options.hasReceipt(row), needsReview: options.needsReview(row) }));
       list.append(item);
     }
     section.append(header, list);

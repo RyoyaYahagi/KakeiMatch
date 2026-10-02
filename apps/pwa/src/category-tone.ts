@@ -26,3 +26,9 @@ export function categoryTone(name: string, id: string | null = null): { tone: Ca
   if (known) return { tone: known.tone, icon: known.icon };
   return { tone: TONES[stableIndex(id ?? name)], icon: 'tag' };
 }
+
+/** Everyday categories first when there is no usage history yet (docs/UX.md 支出の入力). */
+export function categoryRank(name: string) {
+  const index = KNOWN.findIndex(entry => entry.match.test(name));
+  return index < 0 ? KNOWN.length : index;
+}
