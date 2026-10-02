@@ -19,7 +19,7 @@ try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   await page.locator('#settings-tab').click();
   await click('カテゴリ'); await click('基本カテゴリを用意する'); await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
-  await click('設定へ戻る');
+  await page.locator('#settings-tab').click();
 
   // No payment source exists: choosing the statement service and CSV is enough to reach results.
   await page.locator('#reconciliation-tab').click();

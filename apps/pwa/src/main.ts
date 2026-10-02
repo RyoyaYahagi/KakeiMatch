@@ -18,9 +18,10 @@ root.innerHTML = `
     <h1 class="visually-hidden">KakeiMatch</h1>
     <p class="network-status" id="network" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
+      <p class="nav-brand" aria-hidden="true">KakeiMatch</p>
       <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${iconMarkup('home')}<span>ホーム</span></button>
       <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('records')}<span>記録</span></button>
-      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${iconMarkup('add')}</span><span>追加</span></button>
+      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${iconMarkup('add')}</span><span><span class="nav-add-prefix">記録を</span>追加</span></button>
       <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('reconciliation')}<span>照合</span><span id="reconciliation-badge" class="nav-badge" aria-hidden="true" hidden></span></button>
       <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('settings')}<span>設定</span></button>
     </nav>
@@ -53,10 +54,15 @@ root.innerHTML = `
       <div id="data-settings" class="settings-stack"></div>
       <h3 class="settings-group-title">写真の読み取り</h3>
       <section id="ai-settings" class="surface-section settings-panel" aria-label="AI利用">
-      <h4>AI利用</h4>
-      <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
-      <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
-      <p id="account-status" class="muted"></p>
+      <div class="ai-status">
+        <span class="record-icon record-icon-large tone-daily">${iconMarkup('scan')}</span>
+        <div><h4>AIアカウント</h4><p id="account-status" class="muted"></p></div>
+      </div>
+      <div class="ai-usage">
+        <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
+        <div id="usage-meter" class="usage-meter" hidden><span></span></div>
+        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
+      </div>
       <div id="signed-out-actions" hidden>
         <p>AI機能を利用するにはアカウントが必要です。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
         <button id="passkey-login" type="button">Passkeyで続ける</button>
@@ -64,7 +70,7 @@ root.innerHTML = `
         <button id="manual-entry" class="secondary" type="button">家計簿に戻る</button>
       </div>
       <div id="signed-in-actions" hidden>
-        <button id="use-ai" type="button">AI利用を確認</button>
+        <button id="use-ai" class="secondary" type="button">AI利用を確認</button>
         <section id="developer-costs" hidden aria-labelledby="developer-costs-heading">
           <h5 id="developer-costs-heading">APIコスト（推定）</h5>
           <div class="month-selector">
@@ -79,7 +85,8 @@ root.innerHTML = `
         <h5>Passkey</h5>
         <ul id="passkey-list"></ul>
         <button id="add-passkey" class="secondary" type="button">Passkeyを追加</button>
-        <button id="logout" class="secondary" type="button">ログアウト</button>
+        <button id="logout" class="text-button" type="button">ログアウト</button>
+        <p class="muted">ログアウトしても、この端末の家計簿はそのまま使えます。</p>
       </div>
       <p class="status" id="account-message" role="status"></p>
       </section>
@@ -230,8 +237,12 @@ async function refreshAccount() {
 function renderUsage(usage: UsageResponse) {
   const planName = usage.plan === 'family' ? 'Family' : usage.plan === 'pro' ? 'Pro' : 'Free';
   usageSummary.textContent = usage.limit === null
-    ? `AI利用 · ${usage.used}回 · ${planName} · 上限なし`
-    : `AI利用 · ${usage.used} / ${usage.limit}回 · ${planName}`;
+    ? `今月の読み取り ${usage.used}回 · ${planName} · 上限なし`
+    : `今月の読み取り ${usage.used} / ${usage.limit}回 · ${planName}`;
+  // The meter only repeats the text above; the text stays the source for assistive technology.
+  const meter = element<HTMLElement>('usage-meter');
+  meter.hidden = usage.limit === null;
+  if (usage.limit !== null) meter.style.setProperty('--usage', `${Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100))}%`);
 }
 
 async function renderPasskeys() {

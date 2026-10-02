@@ -56,10 +56,10 @@ try {
   await page.locator('#receipt-tab').click();
 
   await click('口座・残高を見る');
-  await page.getByRole('heading', { name: '支払元・口座残高' }).waitFor();
+  await page.getByRole('heading', { name: '支払元・口座' }).waitFor();
   await page.getByRole('button', { name: 'Synthetic Navigation Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#settings-tab').click(); await click('支払元');
-  await page.getByRole('heading', { name: '支払元・口座残高' }).waitFor();
+  await page.getByRole('heading', { name: '支払元・口座' }).waitFor();
   await page.locator('#receipt-tab').click(); await openChooser(); await click('収入');
   await page.locator('#manual-transaction-payee').fill('Synthetic Employer');
   await page.locator('#manual-transaction-amount').fill('1000');

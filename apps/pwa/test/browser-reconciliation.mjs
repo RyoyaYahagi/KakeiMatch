@@ -22,7 +22,7 @@ async function createAccount(name, type, provider) {
     await page.locator('select[name="accountType"]').selectOption(type);
     await page.locator('select[name="statementProvider"]').selectOption(provider);
     await click('変更を保存');
-    await page.getByText(`明細サービス：${({ paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード' })[provider]}`, { exact: true }).waitFor();
+    await page.locator('[data-detail="明細サービス"] dd').getByText(`${({ paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード' })[provider]}`, { exact: true }).waitFor();
   }
 }
 
@@ -71,9 +71,9 @@ try {
   await createAccount('Synthetic SMBC Card', 'credit_card', 'smbc_card');
   await createAccount('Synthetic Rakuten Card', 'credit_card', 'rakuten_card');
   await createAccount('Synthetic Cash Wallet', 'cash', null);
-  await click('設定へ戻る');
+  await page.locator('#settings-tab').click();
   await click('カテゴリ'); await click('基本カテゴリを用意する'); await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
-  await click('設定へ戻る');
+  await page.locator('#settings-tab').click();
 
   await addExpense('Synthetic Auto Market', 1200, '食費', 'Synthetic PayPay Card');
   await addExpense('Synthetic Difference Shop', 550, '食費', 'Synthetic PayPay Card');

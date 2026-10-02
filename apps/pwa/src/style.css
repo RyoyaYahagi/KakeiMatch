@@ -32,6 +32,9 @@
   --radius-sm: 10px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 20px; --radius-sheet: 24px; --radius-full: 999px;
   --font-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
   --nav-height: 64px;
+  --sidebar-width: 240px;
+  --content-max: 760px;
+  --content-wide: 1080px;
   font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.5;
@@ -117,12 +120,12 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .app-nav .nav-add { color: var(--primary); font-weight: 700; }
 .nav-add-circle { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; margin-top: -32px; border-radius: var(--radius-full); background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-raised); }
 .nav-add-circle .icon { width: 28px; height: 28px; stroke-width: 2.5; }
+.nav-brand, .nav-add-prefix { display: none; }
 
 /* Lists and entries */
 .master-entry, .master-row button { display: block; width: 100%; text-align: left; }
 .master-entry, .master-row button { background: transparent; color: var(--text); border: 0; border-radius: 0; margin: 0; padding: var(--space-2) 0; font-weight: 400; overflow-wrap: anywhere; }
 .master-entry::after { content: " ›"; float: right; color: var(--muted); }
-.master-switcher [aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
 .master-header { display: flex; align-items: center; gap: var(--space-3); }
 .master-header h2 { margin: var(--space-4) 0 var(--space-3); }
 .master-switcher { display: flex; flex-wrap: wrap; gap: var(--space-1); }
@@ -135,7 +138,7 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 /* Records list and detail: docs/UX.md 記録一覧, 記録の詳細 */
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: var(--space-2) 0 var(--space-3); }
 .page-header h2 { margin: 0; font-size: 1.375rem; }
-.segmented { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--sunken); }
+.segmented { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--sunken); }
 .segmented button { min-height: 36px; margin: 0; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: .875rem; font-weight: 500; }
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--shadow); }
 .link-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 44px; margin: var(--space-2) 0; padding: 0 var(--space-1); text-align: left; }
@@ -302,6 +305,69 @@ form .category-picker button { margin: 0; }
 .detail-disclosure[open] { padding-bottom: var(--space-4); }
 .notice-warning { background: var(--warning-soft); color: var(--warning); }
 
+/* Screens under settings: docs/UX.md 設定の奥の画面 */
+.page-title { margin: 0 0 var(--space-3); font-size: 1.375rem; }
+.master-settings > .segmented { margin-bottom: var(--space-3); }
+.master-settings > .master-status:empty { display: none; }
+.settings-rows { padding: 0 var(--space-4); margin-bottom: var(--space-3); }
+.settings-rows ul { list-style: none; margin: 0; padding: 0; }
+.settings-rows li { padding: 0; border-bottom: 1px solid var(--border); }
+.settings-rows li:last-child { border-bottom: 0; }
+.settings-rows li.empty { padding: var(--space-3) 0; }
+.settings-row > .icon:last-child { width: 16px; height: 16px; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.settings-row.dimmed .record-title, .settings-row.dimmed .record-icon { opacity: .55; }
+.settings-row .record-amount { font-weight: 500; font-size: .9375rem; }
+.record-icon-large { width: 52px; height: 52px; }
+.record-icon-large .icon { width: 26px; height: 26px; }
+.detail-hero { display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-3); }
+.detail-hero-title { font-size: 1.375rem; font-weight: 700; overflow-wrap: anywhere; }
+.detail-hero-subtitle { font-size: .875rem; color: var(--muted); }
+.detail-amount-value { font-size: 1.375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.account-total { display: flex; flex-direction: column; margin-bottom: var(--space-3); padding: var(--space-3) var(--space-4); }
+.account-total strong { font-size: 1.625rem; font-variant-numeric: tabular-nums; }
+.account-group .settings-group-title { margin-top: var(--space-2); }
+.link-row-center { display: flex; justify-content: center; width: 100%; min-height: 48px; margin: 0; }
+.page-actions { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 5; display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-5) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); background: var(--surface); border-top: 1px solid var(--border); }
+.page-actions > button { width: 100%; margin: 0; }
+.page-actions > button:first-child:not(.text-button) { display: flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 52px; border-radius: var(--radius-lg); font-size: 1.0625rem; }
+.page-actions > button .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+.settings-footnote { margin: var(--space-2) var(--space-1); }
+.master-settings .master-delete label { display: flex; align-items: center; gap: var(--space-2); }
+
+.budget-total-card { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin: var(--space-3) 0; padding: var(--space-3) var(--space-4); }
+.budget-total-card span { font-size: .875rem; color: var(--muted); }
+.budget-total-card strong { font-size: 1.375rem; }
+.budget-month { margin: var(--space-3) 0 0; }
+.budget-rows li.budget-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: 64px; padding: var(--space-2) 0; }
+.budget-row label { margin: 0; flex: 1; min-width: 0; }
+.budget-input { display: flex; align-items: center; gap: 2px; width: 128px; padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg); color: var(--muted); }
+.budget-input input { min-height: 44px; padding: 0; border: 0; background: transparent; text-align: right; font-weight: 700; }
+.budget-row .text-button { margin: 0 0 0 auto; padding: 0 var(--space-1); font-size: .875rem; }
+
+.search-field { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); border: 2px solid var(--primary); border-radius: var(--radius-lg); background: var(--surface); color: var(--muted); }
+.search-field .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.search-field input { min-height: 44px; padding: 0; border: 0; background: transparent; }
+.search-field input:focus-visible { outline: none; }
+.search-field:focus-within { outline: 3px solid var(--warning); outline-offset: 2px; }
+.search-chips { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+form .search-chips .chip { display: inline-flex; align-items: center; gap: var(--space-1); min-height: 36px; margin: 0; font-size: .875rem; }
+.search-chips .chip .icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.transaction-search-advanced { margin-top: var(--space-2); }
+form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius-lg); }
+.search-summary { display: flex; justify-content: space-between; align-items: baseline; margin: var(--space-4) var(--space-1) var(--space-2); }
+.search-summary #transaction-search-count { font-size: .875rem; color: var(--muted); }
+.search-total { font-weight: 700; }
+.ai-status { display: flex; align-items: center; gap: var(--space-4); }
+.ai-status h4 { margin: 0; }
+.ai-status p { margin: 0; }
+.ai-usage { margin: var(--space-4) 0; padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--sunken); }
+.ai-usage #usage-summary { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ai-usage p.muted { margin: var(--space-2) 0 0; }
+.usage-meter { height: 10px; margin-top: var(--space-2); border-radius: var(--radius-full); background: var(--surface); overflow: hidden; }
+.usage-meter span { display: block; width: var(--usage, 0%); height: 100%; border-radius: var(--radius-full); background: var(--primary); }
+#passkey-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 48px; padding: var(--space-1) 0; }
+#passkey-list .text-button { color: var(--danger); }
+
 /* Receipts */
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }
@@ -426,6 +492,53 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 .master-create-dialog { width: min(100% - 32px, 480px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
 .master-create-dialog::backdrop { background: var(--scrim); }
 .master-create-dialog h2 { margin-top: 0; }
+
+/* PC: docs/UX.md PCでの表示, docs/DESIGN.md PC. The phone layout above stays the base. */
+@media (min-width: 1024px) {
+  :root { --nav-height: 0px; }
+  main { max-width: none; margin: 0 0 0 var(--sidebar-width); padding: var(--space-8) var(--space-8) var(--space-8); }
+  main > p, #local-view, #settings-view { max-width: var(--content-max); margin-inline: auto; }
+  #household-view { max-width: var(--content-wide); margin-inline: auto; }
+
+  .app-nav { top: 0; right: auto; bottom: 0; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); width: var(--sidebar-width); max-width: none; min-height: 0; margin: 0; padding: var(--space-6) var(--space-4); border-top: 0; border-right: 1px solid var(--border); }
+  .nav-brand { display: block; order: -2; margin: 0 var(--space-3) var(--space-5); font-size: 1.125rem; font-weight: 700; color: var(--primary); }
+  .app-nav button { flex-direction: row; justify-content: flex-start; gap: var(--space-3); min-height: 48px; padding: 0 var(--space-3); font-size: 1rem; }
+  .app-nav .nav-button.active { background: var(--primary-soft); }
+  .app-nav .nav-add { order: -1; justify-content: center; gap: var(--space-2); margin-bottom: var(--space-5); border-radius: var(--radius-lg); background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-raised); }
+  .nav-add-prefix { display: inline; }
+  .nav-add-circle { width: auto; height: auto; margin: 0; background: transparent; color: inherit; box-shadow: none; }
+  .nav-add-circle .icon { width: 22px; height: 22px; }
+  #settings-tab { margin-top: auto; }
+  .nav-badge { position: static; margin-left: auto; }
+
+  /* Home: the month and what to do next on the left, where the money went on the right. */
+  #household-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "import import" "budget budget" "summary categories" "attention categories" "recent categories"; column-gap: var(--space-6); row-gap: 0; align-items: start; }
+  #household-view > * { margin: 0 0 var(--space-4); }
+  #import-section { grid-area: import; }
+  #budget-section { grid-area: budget; }
+  #home-attention { grid-area: attention; }
+  #home-summary { grid-area: summary; }
+  #home-categories { grid-area: categories; }
+  #household-view > .surface-section { grid-area: recent; }
+  .donut-chart, .category-donut { width: 160px; height: 160px; }
+
+  .page-header h2 { font-size: 1.5rem; }
+  /* The spread in the page color hides the form scrolling behind the rounded corners. */
+  .form-actions { bottom: var(--space-4); margin: var(--space-6) 0 0; border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: 0 0 0 var(--space-4) var(--bg); }
+  form .form-actions button { width: auto; min-width: 240px; margin-left: auto; display: block; }
+
+  /* The record chooser opens as a centered dialog instead of a bottom sheet. */
+  .record-sheet { inset: 0; max-width: 520px; height: fit-content; max-height: calc(100dvh - 2 * var(--space-8)); margin: auto; border-radius: var(--radius-xl); }
+  .record-sheet[open] { animation: dialog-in .2s ease-out; }
+  .sheet-grabber { display: none; }
+  .sheet-body { padding: var(--space-5) var(--space-5) var(--space-6); }
+
+  @media (hover: hover) {
+    .app-nav .nav-button:hover:not(.active) { background: var(--sunken); color: var(--text); }
+    .record-row:hover, .choice-row:hover, .settings-list > .master-entry:hover, .review-row:hover { background: var(--sunken); box-shadow: 0 0 0 var(--space-2) var(--sunken); border-radius: var(--radius-sm); }
+  }
+}
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

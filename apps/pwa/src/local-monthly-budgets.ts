@@ -1,5 +1,8 @@
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { shiftMonth } from './local-monthly-dashboard';
+import { categoryRank, categoryTone } from './category-tone';
+import { backLink } from './settings-ui';
+import { icon } from './ui-icons';
 import type { LocalMonthlyBudgetService, MonthlyBudgetSummary } from './local-monthly-budget-service';
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 const yen = (value: number) => `${value < 0 ? '−' : ''}¥${Math.abs(value).toLocaleString('ja-JP')}`;
@@ -42,86 +45,100 @@ export async function showMonthlyBudgetEditor(options: {
   view: HTMLElement; ledger: Ledger; service: LocalMonthlyBudgetService; yearMonth: string;
   mode: 'default' | 'monthly'; onBack: () => void; onMonth: (month: string) => void;
 }) {
+  // docs/UX.md 予算: every expense category on one screen, entered in place and saved together.
   let month = options.yearMonth;
+  let mode = options.mode;
   let revision = 0;
+  const monthLabel = (value: string) => `${Number(value.slice(0, 4))}年${Number(value.slice(5))}月`;
   async function render(saved = false) {
     const current = ++revision;
-    const title = node('h2', options.mode === 'default' ? '毎月の基本予算' : `${Number(month.slice(0, 4))}年${Number(month.slice(5))}月の予算`); title.id = 'budget-edit-month';
-    const status = node('p', saved ? '予算を保存しました。' : '予算を読み込んでいます。'); status.setAttribute('role', 'status');
-    options.view.replaceChildren(title, status);
-    const summary = await options.service.getSummary(month);
-    if (current !== revision || !title.isConnected) return;
-    const navigation = node('div'); navigation.className = 'month-selector';
-    if (options.mode === 'monthly') for (const [label, offset] of [['予算の前月へ', -1], ['予算の翌月へ', 1]] as const) {
-      const control = button(offset < 0 ? '‹' : '›', () => { month = shiftMonth(month, offset); options.onMonth(month); void render().catch(report); });
-      control.setAttribute('aria-label', label); control.disabled = shiftMonth(month, offset) === month; navigation.append(control);
+    const back = backLink('設定', '設定へ戻る', options.onBack);
+    const title = node('h2', mode === 'default' ? '毎月の基本予算' : `${monthLabel(month)}の予算`); title.id = 'budget-edit-month'; title.className = 'page-title';
+    const switcher = node('div'); switcher.className = 'segmented'; switcher.setAttribute('role', 'group'); switcher.setAttribute('aria-label', '予算の種類');
+    for (const [value, label] of [['default', '毎月の基本予算'], ['monthly', `${Number(month.slice(5))}月だけ変更`]] as const) {
+      const option = node('button', label); option.type = 'button'; option.setAttribute('aria-pressed', String(mode === value));
+      option.addEventListener('click', () => { if (mode === value) return; mode = value; void render().catch(report); });
+      switcher.append(option);
     }
-    if (options.mode === 'monthly') options.view.append(navigation);
-    const form = node('form');
-    const categoryLabel = node('label', '予算カテゴリ'); categoryLabel.htmlFor = 'budget-category';
-    const category = node('select'); category.id = categoryLabel.htmlFor; category.required = true;
-    category.append(new Option('選択してください', ''), ...summary.categories.map(row => new Option(row.categoryName, row.categoryId)));
-    const amountLabel = node('label', options.mode === 'default' ? '基本予算（円）' : 'この月の予算（円）'); amountLabel.htmlFor = 'budget-amount';
-    const amount = node('input'); amount.id = amountLabel.htmlFor; amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '0'; amount.step = '1'; amount.required = true;
-    const resetDefault = button('この月の変更を解除して基本予算へ戻す', () => {
-      const selectedMonth = month;
-      void save(categoryId => options.service.resetMonthlyOverride(selectedMonth, categoryId));
-    });
-    const clearDefault = button('基本予算を解除', () => void save(categoryId => options.service.setDefault(categoryId, null)));
-    resetDefault.disabled = true; clearDefault.disabled = true;
-    let selectionRevision = 0;
-    category.addEventListener('change', () => {
-      const selectedRevision = ++selectionRevision;
-      const selectedCategoryId = category.value;
-      const selectedMonth = month;
-      const row = summary.categories.find(item => item.categoryId === selectedCategoryId);
-      amount.value = '';
-      amount.disabled = true; submit.disabled = true; resetDefault.disabled = true; clearDefault.disabled = true;
-      void (options.mode === 'default' ? options.service.defaultBudget(selectedCategoryId) : options.service.monthOverride(selectedCategoryId, selectedMonth)).then(value => {
-        if (!title.isConnected || selectedRevision !== selectionRevision) return;
-        if (options.mode === 'default') amount.value = value === null ? '' : String(value);
-        else amount.value = typeof value === 'number' ? String(value) : String(row?.budgetYen ?? '');
-        amount.disabled = false; submit.disabled = false;
-        resetDefault.disabled = options.mode !== 'monthly' || !category.value;
-        clearDefault.disabled = options.mode !== 'default' || value === null;
-      }).catch(error => {
-        if (!title.isConnected || selectedRevision !== selectionRevision) return;
-        report(error); amount.value = ''; amount.disabled = false; submit.disabled = true;
-        resetDefault.disabled = options.mode !== 'monthly' || !category.value;
-        clearDefault.disabled = options.mode !== 'default';
-      });
-    });
-    const submit = node('button', options.mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'submit';
-    amount.addEventListener('input', () => { if (!amount.disabled) submit.disabled = !amount.value; });
-    form.append(categoryLabel, category, amountLabel, amount,
-      node('p', options.mode === 'default' ? '基本予算は各月に適用されます。月ごとの変更はホームから設定できます。' : '0円もこの月の予算として保存できます。変更を解除すると基本予算へ戻ります。'),
-      submit, ...(options.mode === 'default' ? [clearDefault] : [resetDefault]));
-    form.addEventListener('submit', event => {
-      event.preventDefault();
-      const selectedMonth = month;
-      const budgetYen = Number(amount.value);
-      void save(categoryId => options.mode === 'default'
-        ? options.service.setDefault(categoryId, budgetYen)
-        : options.service.setMonthlyOverride(selectedMonth, categoryId, budgetYen));
-    });
-    async function save(action: (categoryId: string) => Promise<void>) {
-      const categoryId = category.value;
-      if (!categoryId) { status.textContent = '予算カテゴリを選んでください。'; return; }
-      submit.disabled = true; category.disabled = true; amount.disabled = true; resetDefault.disabled = true; clearDefault.disabled = true;
-      try { await action(categoryId); if (title.isConnected) await render(true); }
-      catch (error) { report(error); }
-      finally {
-        submit.disabled = false; category.disabled = false; amount.disabled = false;
-        if (title.isConnected) {
-          resetDefault.disabled = options.mode !== 'monthly' || !categoryId;
-          clearDefault.disabled = options.mode !== 'default';
-        }
+    const status = node('p', saved ? '予算を保存しました。' : '予算を読み込んでいます。'); status.setAttribute('role', 'status'); status.className = 'status';
+    options.view.replaceChildren(back, title, switcher, status);
+    if (mode === 'monthly') {
+      const navigation = node('div'); navigation.className = 'month-selector budget-month';
+      const label = node('strong', monthLabel(month));
+      for (const [ariaLabel, offset] of [['予算の前月へ', -1], ['予算の翌月へ', 1]] as const) {
+        const control = node('button'); control.type = 'button'; control.className = 'icon-button'; control.append(icon(offset < 0 ? 'chevronLeft' : 'chevronRight'));
+        control.setAttribute('aria-label', ariaLabel); control.disabled = shiftMonth(month, offset) === month;
+        control.addEventListener('click', () => { month = shiftMonth(month, offset); options.onMonth(month); void render().catch(report); });
+        if (offset < 0) navigation.append(control, label); else navigation.append(control);
       }
+      options.view.append(navigation);
     }
-    options.view.append(form);
-    const overview = node('section'); renderMonthlyBudgets(overview, summary, () => category.focus()); options.view.append(overview, button('設定へ戻る', options.onBack));
-    if (!saved) status.textContent = summary.categories.length ? '変更した金額は保存してください。' : '先に支出カテゴリを追加してください。';
+    const loaded = await options.service.getSummary(month);
+    // Everyday categories first, the same order as the category screens.
+    const summary = { ...loaded, categories: [...loaded.categories].sort((a, b) => categoryRank(a.categoryName) - categoryRank(b.categoryName)) };
+    const stored = await Promise.all(summary.categories.map(row => mode === 'default' ? options.service.defaultBudget(row.categoryId) : options.service.monthOverride(row.categoryId, month)));
+    if (current !== revision || !title.isConnected) return;
+    if (!summary.categories.length) { status.textContent = '先に支出カテゴリを追加してください。'; return; }
+    const totalValue = node('strong'); totalValue.className = 'num';
+    const total = node('div'); total.className = 'surface-section budget-total-card';
+    total.append(node('span', mode === 'default' ? '毎月の予算の合計' : `${monthLabel(month)}の予算の合計`), totalValue);
+    const list = node('ul'); const section = node('section'); section.className = 'surface-section settings-rows budget-rows'; section.append(list);
+    const inputs: Array<{ categoryId: string; input: HTMLInputElement; initial: string }> = [];
+    summary.categories.forEach((row, index) => {
+      const value = stored[index];
+      const overridden = mode === 'monthly' && typeof value === 'number';
+      const initial = mode === 'default' ? (typeof value === 'number' ? String(value) : '') : overridden ? String(value) : row.budgetYen === null ? '' : String(row.budgetYen);
+      const item = node('li'); item.className = 'budget-row'; item.dataset.budgetEditorCategory = row.categoryId;
+      const tone = categoryTone(row.categoryName, row.categoryId);
+      const badge = node('span'); badge.className = `record-icon tone-${tone.tone}`; badge.append(icon(tone.icon));
+      const id = `budget-amount-${index}`;
+      const label = node('label'); label.htmlFor = id; label.className = 'record-main';
+      const notes = [`今月 ${yen(row.spentYen)} 使用`, overridden ? 'この月だけ変更中' : ''].filter(Boolean).join(' · ');
+      label.append(Object.assign(node('span', row.categoryName), { className: 'record-title' }), Object.assign(node('span', notes), { className: 'record-note' }));
+      const field = node('span'); field.className = 'budget-input';
+      const input = node('input'); input.id = id; input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1'; input.value = initial; input.className = 'num';
+      input.setAttribute('aria-label', `${row.categoryName}の予算`); input.placeholder = '予算なし';
+      field.append(node('span', '¥'), input);
+      item.append(badge, label, field);
+      if (overridden) {
+        const reset = button('基本に戻す', () => { void save([{ categoryId: row.categoryId, reset: true }]); });
+        reset.className = 'text-button'; reset.setAttribute('aria-label', `${row.categoryName}の変更を解除して基本予算へ戻す`);
+        item.append(reset);
+      }
+      list.append(item);
+      inputs.push({ categoryId: row.categoryId, input, initial });
+    });
+    const updateTotal = () => { totalValue.textContent = yen(inputs.reduce((sum, row) => sum + (row.input.value === '' ? 0 : Math.max(0, Math.trunc(Number(row.input.value)) || 0)), 0)); };
+    for (const row of inputs) row.input.addEventListener('input', updateTotal);
+    updateTotal();
+    const submit = node('button', mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'button';
+    submit.addEventListener('click', () => {
+      const changes = inputs.filter(row => row.input.value !== row.initial).map(row => ({ categoryId: row.categoryId, value: row.input.value }));
+      if (!changes.length) { status.textContent = '変更はありません。'; return; }
+      void save(changes);
+    });
+    const actions = node('div'); actions.className = 'page-actions'; actions.append(submit);
+    options.view.append(total, section,
+      node('p', mode === 'default' ? '空欄は「予算なし」、0円は「使わない予定」として区別します。基本予算は毎月に適用されます。' : '空欄にすると基本予算に戻ります。0円もこの月の予算として保存できます。'),
+      actions);
+    if (!saved) status.textContent = '金額を入力して保存してください。';
+    async function save(changes: Array<{ categoryId: string; value?: string; reset?: boolean }>) {
+      for (const row of inputs) row.input.disabled = true;
+      submit.disabled = true;
+      try {
+        for (const change of changes) {
+          const amount = change.value === undefined || change.value === '' ? null : Number(change.value);
+          if (amount !== null && (!Number.isSafeInteger(amount) || amount < 0)) throw new Error('予算は0円以上の整数で入力してください。');
+          if (mode === 'default') await options.service.setDefault(change.categoryId, amount);
+          else if (change.reset || amount === null) await options.service.resetMonthlyOverride(month, change.categoryId);
+          else await options.service.setMonthlyOverride(month, change.categoryId, amount);
+        }
+        if (title.isConnected) await render(true);
+      } catch (error) { report(error); }
+      finally { if (title.isConnected) { for (const row of inputs) row.input.disabled = false; submit.disabled = false; } }
+    }
     function report(error: unknown) { if (title.isConnected) status.textContent = error instanceof Error ? error.message : '予算を保存できませんでした。'; }
   }
+  function report(error: unknown) { const status = options.view.querySelector('[role=status]'); if (status) status.textContent = error instanceof Error ? error.message : '予算を読み込めませんでした。'; }
   await render();
 }

@@ -34,7 +34,8 @@
     "test:provider-only-reconciliation-e2e": "node test/browser-provider-only-reconciliation.mjs",
     "test:account-types-e2e": "node test/browser-account-types.mjs",
     "test:ai-costs-e2e": "node test/browser-ai-costs.mjs",
-    "test:ai-paused-e2e": "node test/browser-ai-paused.mjs"
+    "test:ai-paused-e2e": "node test/browser-ai-paused.mjs",
+    "test:desktop-layout-e2e": "node test/browser-desktop-layout.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

@@ -212,8 +212,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     recordSheet.replaceChildren(body);
     // Swiping the sheet down by more than 80px closes it, like other bottom sheets on the phone.
     let dragStart: number | null = null;
-    header.addEventListener('pointerdown', event => { dragStart = event.clientY; });
-    grabber.addEventListener('pointerdown', event => { dragStart = event.clientY; });
+    // A mouse on a PC drags nothing: there the sheet is a centered dialog (docs/DESIGN.md PC).
+    const startDrag = (event: PointerEvent) => { if (event.pointerType !== 'mouse') dragStart = event.clientY; };
+    header.addEventListener('pointerdown', startDrag);
+    grabber.addEventListener('pointerdown', startDrag);
     body.addEventListener('pointermove', event => { if (dragStart === null) return; const distance = Math.max(0, event.clientY - dragStart); recordSheet.style.setProperty('--sheet-drag', `${distance}px`); });
     const endDrag = (event: PointerEvent) => { if (dragStart === null) return; const distance = event.clientY - dragStart; dragStart = null; recordSheet.style.removeProperty('--sheet-drag'); if (distance > 80) closeRecordSheet(); };
     body.addEventListener('pointerup', endDrag); body.addEventListener('pointercancel', () => { dragStart = null; recordSheet.style.removeProperty('--sheet-drag'); });
@@ -944,7 +946,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   resetMasterUi = masterUi;
   setup.append(budgetEntry, recurringEntry); // docs/UX.md 設定: カテゴリ, 支払元, 予算, 定期登録
   openAccountBalances = masterUi.openAccounts;
-  el('settings-tab').addEventListener('click', () => { searchOrigin = false; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
+  el('settings-tab').addEventListener('click', () => { searchOrigin = false; el('message').textContent = ''; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
     await deletions.recoverPending();
     await recurring.retry();
