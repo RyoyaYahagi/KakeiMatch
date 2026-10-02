@@ -1,5 +1,6 @@
 import { LocalDataStorageError } from '../../../src/lib/local-data';
 import { initializeLocalUi } from './local-ui';
+import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
@@ -55,12 +56,32 @@ root.innerHTML = `
       </div>
       <div id="signed-in-actions" hidden>
         <button id="use-ai" type="button">AI利用を確認</button>
+        <section id="developer-costs" hidden aria-labelledby="developer-costs-heading">
+          <h3 id="developer-costs-heading">APIコスト（推定）</h3>
+          <div class="month-selector">
+            <button id="costs-previous-month" class="secondary" type="button" aria-label="前月のAI利用料金">‹</button>
+            <strong id="costs-month" aria-live="polite"></strong>
+            <button id="costs-next-month" class="secondary" type="button" aria-label="翌月のAI利用料金">›</button>
+          </div>
+          <p id="costs-total" aria-live="polite">利用料金を読み込んでいます…</p>
+          <p id="costs-unknown" class="muted" hidden></p>
+          <ul id="costs-providers"></ul>
+        </section>
         <h3>Passkey</h3>
         <ul id="passkey-list"></ul>
         <button id="add-passkey" class="secondary" type="button">Passkeyを追加</button>
         <button id="logout" class="secondary" type="button">ログアウト</button>
       </div>
       <p class="status" id="account-message" role="status"></p>
+      <section id="app-info">
+        <h2>アプリ情報</h2>
+        <label class="developer-option" for="developer-options">
+          <input id="developer-options" type="checkbox" />
+          開発者向け機能を表示
+        </label>
+        <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
+        <p id="developer-options-status" class="status" role="status"></p>
+      </section>
     </section>
   </main>`;
 
@@ -83,6 +104,19 @@ const manualButton = element<HTMLButtonElement>('manual-entry');
 const addPasskeyButton = element<HTMLButtonElement>('add-passkey');
 const logoutButton = element<HTMLButtonElement>('logout');
 const useAiButton = element<HTMLButtonElement>('use-ai');
+const developerOptions = element<HTMLInputElement>('developer-options');
+const developerCosts = element<HTMLElement>('developer-costs');
+const developerCostsUi = initializeDeveloperCostsUi({
+  toggle: developerOptions,
+  section: developerCosts,
+  status: element<HTMLParagraphElement>('developer-options-status'),
+  month: element<HTMLElement>('costs-month'),
+  total: element<HTMLElement>('costs-total'),
+  unknown: element<HTMLElement>('costs-unknown'),
+  providers: element<HTMLUListElement>('costs-providers'),
+  previous: element<HTMLButtonElement>('costs-previous-month'),
+  next: element<HTMLButtonElement>('costs-next-month'),
+});
 
 
 function showTab(tab: 'home' | 'settings') {
@@ -125,6 +159,7 @@ async function refreshAccount() {
     const signedIn = Boolean(session?.user);
     signedOutActions.hidden = signedIn;
     signedInActions.hidden = !signedIn;
+    developerCostsUi.setSignedIn(signedIn);
     if (!signedIn) {
       usageSummary.textContent = 'ログインすると今月のAI利用回数を確認できます。';
       accountStatus.textContent = '未ログインです。';
@@ -142,6 +177,7 @@ async function refreshAccount() {
     accountStatus.textContent = 'Cloud accountへ接続できません。家計簿のデータはこの端末で引き続き利用できます。';
     signedOutActions.hidden = true;
     signedInActions.hidden = true;
+    developerCostsUi.setSignedIn(false);
   }
 }
 
@@ -244,6 +280,7 @@ logoutButton.addEventListener('click', () => {
     clearAiAccessToken();
     signedInActions.hidden = true;
     signedOutActions.hidden = false;
+    developerCostsUi.setSignedIn(false);
     accountStatus.textContent = '未ログインです。';
     accountMessage.textContent = 'ログアウトしました。端末の家計簿データは保持されています。';
   }).catch(() => { accountMessage.textContent = 'ログアウトできませんでした。'; });

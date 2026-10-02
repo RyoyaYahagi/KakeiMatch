@@ -39,3 +39,9 @@ Apply versioned SQL under `migrations/` before deployment. For Issue #60, apply 
 The PWA and account/AI handlers run on the same origin. The default Issue #39 preview uses its own synthetic-test D1 database. Production uses the canonical origin `https://kakeimatch.yhgry.workers.dev`; its route, D1, and secrets must be provisioned for production use. Preview origin and data are never for household use. The Service Worker does not cache `/api/*`, and the Worker must preserve COOP/COEP behavior for the browser-side Actual engine.
 
 See the [deployment guide](../../docs/DEPLOYMENT.md) for production updates, owner secret handling, operator invites, and Passkey/provider/iPhone checks.
+
+## Provider cost events (Issue #117)
+
+Apply migration `0004_ai_provider_costs.sql` before updating the Worker. Each dispatch, including retries, creates an operational-only cost event; pre-dispatch rejects create none. Interrupted or unmeasured requests remain `unknown`. Model IDs and safe HTTP codes are persisted, never request/response bodies or household facts. Existing product-flow quota semantics are unchanged.
+
+`GET /api/ai/costs?month=YYYY-MM` uses the account session and returns only that account's Tokyo-calendar-month totals. Omit the month for the current month. Pricing is a versioned server-only catalog in `src/ai-provider-costs.ts`; append versions and preserve event snapshots. Standard paid USD costs are integers in micro-dollars, rounded up per request. Unknown model/usage or unsupported cache/tool billing remains unknown, not free. Gemini Interactions and GenerateContent usage shapes are supported; Jev requires its returned versioned model ID. The PWA exposes costs only with local developer options enabled; this toggle is not authorization. No global-cost endpoint is exposed to users.

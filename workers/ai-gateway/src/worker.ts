@@ -1,3 +1,4 @@
+import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
 import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory } from "./receipt-ai-usage";
 import { getAccountSession, type AccountEnv } from "./account-auth";
 
@@ -193,6 +194,21 @@ async function readProviderJson(response: Response): Promise<unknown | null> {
   if (!bytes) return null;
   try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return null; }
 }
+async function dispatchProvider(db: AccountD1Binding, user: string, flow: string, provider: "gemini" | "jev", model: string, now: number, url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch, clock: () => number): Promise<{ response: Response; decoded: unknown }> {
+  // Persist before dispatch: interrupted/failed completion stays visibly unknown.
+  const id = await beginCostEvent(db, user, flow, provider, model, now);
+  let response: Response;
+  try { response = await callProvider(url, init, timeoutMs, fetchImpl); }
+  catch {
+    await completeCostEvent(db, id, provider, null, now, clock(), "provider_timeout");
+    throw new Error("provider_timeout");
+  }
+  let decoded: unknown = null;
+  try { decoded = await readProviderJson(response); }
+  catch { /* Persist only a safe code; never provider bodies or exceptions. */ }
+  await completeCostEvent(db, id, provider, decoded, now, clock(), response.ok ? (decoded === null ? "invalid_provider_response" : null) : `provider_http_${response.status}`);
+  return { response, decoded };
+}
 function geminiOutputText(value: unknown): string | null {
   if (!isRecord(value)) return null;
   // Keep accepting SDK-shaped fixtures while parsing the current REST response below.
@@ -207,7 +223,7 @@ function geminiOutputText(value: unknown): string | null {
 
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === "/api/ai/token" || url.pathname === "/api/ai/usage") {
+  if (url.pathname === "/api/ai/token" || url.pathname === "/api/ai/usage" || url.pathname === "/api/ai/costs") {
     const method = url.pathname.endsWith("/token") ? "POST" : "GET";
     if (request.method !== method) return json(405, { error: "method_not_allowed" });
     const origin = request.headers.get("origin");
@@ -222,6 +238,11 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
       return json(200, { token: await issueAiToken(account.user.id, env.AI_GATEWAY_AUTH_SECRET, now), expiresAt: now + TOKEN_LIFETIME_SECONDS });
     }
     try {
+      if (url.pathname === "/api/ai/costs") {
+        const month = url.searchParams.get("month") ?? monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
+        if (!monthBounds(month)) return json(400, { error: "invalid_month" });
+        return json(200, await monthlyCosts(env.ACCOUNT_DB, account.user.id, month));
+      }
       const month = monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
       const [ent, used] = await Promise.all([entitlement(env.ACCOUNT_DB, account.user.id, freeLimit(env)), flowUsage(env.ACCOUNT_DB, account.user.id, month)]);
       return json(200, { plan: ent.plan, month, used, limit: ent.limit, remaining: ent.limit === null ? null : Math.max(0, ent.limit - used) });
@@ -247,6 +268,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   const flowId = body.flowId;
   const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
   const fetchImpl = options.fetchImpl ?? fetch;
+  const clock = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
 
   if (provider === "gemini") {
     const image = parseImage(body);
@@ -258,12 +280,11 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
       if (!await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, freeLimit(env))) return json(429, { error: "ai_quota_exceeded" });
       if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "gemini", mac, now)) return json(409, { error: "invalid_flow" });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
-    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, store: false };
-    let response: Response;
-    try { response = await callProvider("https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl); } catch { return json(504, { error: "provider_timeout" }); }
+    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, service_tier: "standard", store: false };
+    let response: Response, decoded: unknown;
+    try { ({ response, decoded } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, "https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl, clock)); }
+    catch (error) { return error instanceof Error && error.message === "provider_timeout" ? json(504, { error: "provider_timeout" }) : json(503, { error: "temporarily_unavailable" }); }
     if (!response.ok) return providerError(response.status);
-    let decoded: unknown;
-    try { decoded = await readProviderJson(response); } catch { return json(502, { error: "invalid_provider_response" }); }
     const outputText = geminiOutputText(decoded);
     if (!outputText) return json(502, { error: "invalid_provider_response" });
     let extraction: unknown;
@@ -301,11 +322,10 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   const selectedReceipt = { ...normalized.receipt, items: selectedItems };
   const question = { type: "choice", instructions: "この商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。", criteria };
   const payload = { model: env.JEV_MODEL?.trim() || "jev-latest", state: { receipt: selectedReceipt }, questions: Object.fromEntries(questionKeys.map((key, index) => [key, { ...question, instructions: selectedItems.length > 0 ? `state.receipt.items[${index}]の商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。${fallbackInstruction}` : `このレシートの店名と合計金額から、該当する家計簿カテゴリを1つ選んでください。${fallbackInstruction}`, criteria }])) };
-  let response: Response;
-  try { response = await callProvider(env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl); } catch { return json(504, { error: "provider_timeout" }); }
+  let response: Response, decoded: unknown;
+  try { ({ response, decoded } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl, clock)); }
+  catch (error) { return error instanceof Error && error.message === "provider_timeout" ? json(504, { error: "provider_timeout" }) : json(503, { error: "temporarily_unavailable" }); }
   if (!response.ok) return providerError(response.status);
-  let decoded: unknown;
-  try { decoded = await readProviderJson(response); } catch { return json(502, { error: "invalid_provider_response" }); }
   const result = normalizeJevResponse(decoded, questionKeys, categoryIds);
   return result ? json(200, result) : json(502, { error: "invalid_provider_response" });
 }
