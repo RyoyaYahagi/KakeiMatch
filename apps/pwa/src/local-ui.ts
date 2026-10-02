@@ -420,9 +420,16 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     let adjustments = initial.adjustments.map(item => ({ ...item }));
     const blob = await repository.getBlob(receipt.image?.blobId ?? 'missing');
     ensureScreen(screen);
-    if (!blob && receipt.image) view.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
-    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; view.append(img); }
-    if (receipt.extraction?.warnings.length) view.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
+    const editorTabs = document.createElement('div'); editorTabs.className = 'segmented entry-editor-tabs';
+    editorTabs.setAttribute('role', 'group'); editorTabs.setAttribute('aria-label', '入力内容の表示');
+    const overviewTab = button('全体', () => undefined); overviewTab.type = 'button';
+    const itemsTab = button('品目一覧', () => undefined); itemsTab.type = 'button';
+    editorTabs.append(overviewTab, itemsTab);
+    const overviewExtras = document.createElement('div'); overviewExtras.className = 'entry-overview-extras';
+    view.append(editorTabs, overviewExtras);
+    if (!blob && receipt.image) overviewExtras.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
+    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; overviewExtras.append(img); }
+    if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
 
     const form = document.createElement('form');
     const inputId = (field: string) => !receipt.image ? `manual-transaction-${field === 'merchant' ? 'payee' : field}` : `receipt-${field}`;
@@ -484,7 +491,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = false; });
       }
     });
-    if (blob && !editing) { aiArea.append(aiButton); view.append(aiArea); }
+    if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
     if (editing) aiArea.replaceChildren();
     const merchantLabel = fieldLabel('label', receipt.image ? '店名' : '店名・支払先', merchant.id);
     const dateLabel = fieldLabel('label', receipt.image ? '購入日' : '日付', date.id);
@@ -497,9 +504,24 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     purchaseDetails.append(text('summary', '購入内容（任意）'), applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
     amount.classList.add('amount-input');
     const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
-    form.append(amountLabel, amount, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
-      categoryLabel, category, accountLabel, account, optional, purchaseDetails, warning, status);
+    const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields';
+    overviewFields.append(amountLabel, amount, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
+      categoryLabel, category, accountLabel, account, optional);
+    form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
+    const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
+      const itemsOnly = pane === 'items';
+      overviewTab.setAttribute('aria-pressed', String(!itemsOnly));
+      itemsTab.setAttribute('aria-pressed', String(itemsOnly));
+      overviewExtras.hidden = itemsOnly;
+      overviewFields.hidden = itemsOnly;
+      purchaseDetails.classList.toggle('items-only', itemsOnly);
+      if (itemsOnly) purchaseDetails.open = true;
+      if (scroll) editorTabs.scrollIntoView({ block: 'start' });
+    };
+    overviewTab.addEventListener('click', () => setEditorPane('overview'));
+    itemsTab.addEventListener('click', () => setEditorPane('items'));
+    setEditorPane('overview', false);
     function addCategoryShortcut(field: HTMLSelectElement) {
       return createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
         field, beforeOpen: saveDraft,
@@ -577,6 +599,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     function drawItems() {
       itemsList.replaceChildren();
+      itemsTab.textContent = items.length ? `品目一覧 (${items.length})` : '品目一覧';
       for (const item of items) {
         const details = document.createElement('details'); details.className = 'receipt-item';
         details.dataset.receiptItem = item.id;
