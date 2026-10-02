@@ -25,13 +25,17 @@ try {
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
-  // This assertion fails on #98: manual expense entry has no purchase-content editor.
   assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: '全体', exact: true }).getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.getByRole('button', { name: '品目一覧', exact: true }).count(), 1);
   await page.locator('#manual-transaction-payee').fill('Synthetic Manual Items');
   await page.locator('#manual-transaction-amount').fill('1400');
   await page.locator('#manual-transaction-category').selectOption({ label: '食費' });
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic memo');
-  await page.getByText('購入内容（任意）', { exact: true }).click();
+  await click('品目一覧');
+  assert.equal(await page.locator('#manual-transaction-payee').isVisible(), false);
+  assert.equal(await page.getByRole('button', { name: '品目を追加', exact: true }).isVisible(), true);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   for (const [name, amount, category] of [['Synthetic Apple', '1000', '食費'], ['Synthetic Soap', '500', '日用品'], ['Temporary', '20', '食費']]) {
     await click('品目を追加'); const row = page.locator('[data-receipt-item]').last();
     await row.locator('[data-item-name]').fill(name); await row.locator('[data-item-amount]').fill(amount);
@@ -45,6 +49,9 @@ try {
   if (await item(2).getAttribute('open') === null) await item(2).locator('summary').click();
   const remove = item(2).getByRole('button', { name: '品目を削除', exact: true });
   assert.ok((await remove.boundingBox()).height >= 44);
+  // Returning to the full view keeps the opened purchase section and entered items.
+  await click('全体');
+  assert.equal(await page.locator('#manual-transaction-payee').isVisible(), true);
   // Blur must not close the editor before a touch on the delete button.
   await item(2).locator('[data-item-name]').focus(); await page.locator('#manual-transaction-amount').focus();
   assert.equal(await remove.isVisible(), true);
