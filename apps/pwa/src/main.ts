@@ -4,6 +4,7 @@ import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
+import { navIcon, setNavActive } from './app-nav';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -12,13 +13,14 @@ const root = document.querySelector<HTMLDivElement>('#app');
 if (!root) throw new Error('App root is missing');
 root.innerHTML = `
   <main>
-    <header><h1>KakeiMatch</h1><span class="status" id="network"></span></header>
-    <p class="muted">この端末の家計簿を表示します。</p>
+    <h1 class="visually-hidden">KakeiMatch</h1>
+    <p class="network-status" id="network" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
-      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true">ホーム</button>
-      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">記録</button>
-      <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">照合</button>
-      <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">設定</button>
+      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${navIcon('home')}<span>ホーム</span></button>
+      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('records')}<span>記録</span></button>
+      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${navIcon('add')}</span><span>追加</span></button>
+      <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('reconciliation')}<span>照合</span></button>
+      <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('settings')}<span>設定</span></button>
     </nav>
     <p class="status" id="message" role="status"></p>
     <section id="household-view">
@@ -33,7 +35,6 @@ root.innerHTML = `
     </section>
     <div id="home-summary"></div>
     <div id="home-attention"></div>
-    <button id="home-capture" type="button">＋記録</button>
     <section>
       <h2>選択月の記録</h2>
       <ul id="transactions"></ul>
@@ -122,16 +123,13 @@ function showTab(tab: 'home' | 'settings') {
   document.getElementById('local-view')!.hidden = true;
   for (const id of ['receipt-tab', 'reconciliation-tab']) {
     const button = element<HTMLButtonElement>(id);
-    button.classList.remove('active');
-    button.setAttribute('aria-pressed', 'false');
+    setNavActive(button, false);
   }
   const isSettings = tab === 'settings';
   householdView.hidden = isSettings;
   settingsView.hidden = !isSettings;
-  homeTab.classList.toggle('active', !isSettings);
-  homeTab.setAttribute('aria-pressed', String(!isSettings));
-  settingsTab.classList.toggle('active', isSettings);
-  settingsTab.setAttribute('aria-pressed', String(isSettings));
+  setNavActive(homeTab, !isSettings);
+  setNavActive(settingsTab, isSettings);
   if (isSettings) void refreshAccount();
 }
 
@@ -288,7 +286,8 @@ logoutButton.addEventListener('click', () => {
 useAiButton.addEventListener('click', () => { void issueAiToken(); });
 
 function showNetwork() {
-  network.textContent = navigator.onLine ? 'オンライン' : 'オフライン';
+  network.hidden = navigator.onLine;
+  network.textContent = navigator.onLine ? '' : 'オフライン';
 }
 window.addEventListener('online', showNetwork);
 window.addEventListener('offline', showNetwork);

@@ -36,7 +36,7 @@ async function noOverflow() {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
 }
 async function newReceipt() {
-  await page.locator('#receipt-tab').click(); await click('＋記録'); await click('支出'); await click('レシートから入力');
+  await page.locator('#receipt-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').waitFor();
 }

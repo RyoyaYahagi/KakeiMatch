@@ -21,6 +21,7 @@ import type { StatementProvider } from './statement-parser';
 import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
+import { setNavActive } from './app-nav';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`;
@@ -95,7 +96,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
     for (const id of ['home', 'receipt', 'reconciliation', 'settings']) {
-      const item = el(`${id}-tab`); const active = id === tab || (tab === 'statement' && id === 'settings'); item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
+      setNavActive(el(`${id}-tab`), id === tab || (tab === 'statement' && id === 'settings'));
     }
     el('message').textContent = ''; view.replaceChildren();
   }
@@ -181,7 +182,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function recordsPage() {
     searchOrigin = false;
     newEntryReturn = recordsPage;
-    await open('receipt'); view.append(text('h2', '記録'), button('＋記録', recordChooser, false));
+    await open('receipt'); view.append(text('h2', '記録'));
     view.append(button('検索・絞り込み', searchPage), button('口座・残高を見る', accountBalancesPage));
     const localReceipts = await receipts.list();
     const list = document.createElement('ul'); list.className = 'record-list';
@@ -754,7 +755,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
   }
   for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
-  el('home-capture').addEventListener('click', () => { void recordChooser().catch(report); });
+  el('add-record').addEventListener('click', () => { void recordChooser().catch(report); });
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   await initializeBackupUi(repository, ledger);

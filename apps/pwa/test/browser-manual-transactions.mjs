@@ -21,7 +21,7 @@ async function category(name, income) {
   await click('カテゴリを追加する'); await page.getByLabel('カテゴリ名', { exact: true }).fill(name); await click('追加する');
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
-async function chooser(kind) { await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-payee').waitFor(); }
+async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-payee').waitFor(); }
 async function fill(name, amount, categoryName, accountName, memo) {
   await page.locator('#manual-transaction-payee').fill(name);
   await page.locator('#manual-transaction-amount').fill(String(amount));
@@ -34,7 +34,8 @@ async function save(editing = false) { await click(editing ? '変更を保存す
 async function detail(name) { await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click(); await click('編集する'); await page.locator('#manual-transaction-payee').waitFor(); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
-  assert.deepEqual(await page.locator('nav button').allTextContents(), ['ホーム', '記録', '照合', '設定']);
+  assert.deepEqual(await page.locator('nav .nav-button').allTextContents(), ['ホーム', '記録', '照合', '設定']);
+  assert.equal(await page.locator('nav').getByRole('button', { name: '記録を追加', exact: true }).count(), 1);
   await account('Synthetic Wallet'); await account('Synthetic Bank');
   await category('Synthetic Food', false); await category('Synthetic Salary', true);
   await chooser('支出');
@@ -50,7 +51,7 @@ try {
   await other.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
   await other.goto(process.env.PWA_E2E_URL);
   await other.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
-  await other.getByRole('button', { name: '＋記録', exact: true }).click();
+  await other.getByRole('button', { name: '記録を追加', exact: true }).click();
   await other.getByRole('button', { name: '収入', exact: true }).click();
   await other.getByText('別の画面でこの記録を編集中です。閉じてから開き直してください。', { exact: true }).waitFor();
   assert.equal(await other.locator('#manual-transaction-payee').count(), 0);

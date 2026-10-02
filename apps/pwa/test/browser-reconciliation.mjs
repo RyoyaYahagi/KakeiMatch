@@ -27,7 +27,7 @@ async function createAccount(name, type, provider) {
 }
 
 async function addExpense(merchant, amount, category, account) {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('支出'); await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('手入力');
   await page.locator('#manual-transaction-payee').fill(merchant);
   await page.locator('#manual-transaction-date').fill('2026-09-30');
   await page.locator('#manual-transaction-amount').fill(String(amount));

@@ -1,7 +1,7 @@
 import type { ActualMonthlySummary as MonthlySummary } from '../../../src/lib/actual-ledger';
 
 const yen = (value: number) => `¥${Math.abs(value).toLocaleString('ja-JP')}`;
-const colors = ['#2f6b59', '#bd773b', '#476a91', '#9475a6', '#818342', '#a65c69'];
+const SLICE_COLOR_COUNT = 6;
 function node(tag: string, value = '') { const result = document.createElement(tag); result.textContent = value; return result; }
 export function shiftMonth(month: string, offset: number): string {
   const [year, index] = month.split('-').map(Number);
@@ -49,13 +49,13 @@ export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySumm
     const percentage = category.amountYen / summary.expenseYen * 100;
     const label = `${category.categoryName} · ${category.amountYen < 0 ? "−" : ""}${yen(category.amountYen)} · ${percentage.toFixed(1)}%`;
     const slicePercentage = Math.max(0, category.amountYen) / positiveTotal * 100;
-    const color = colors[index % colors.length];
+    const sliceClass = `slice-${index % SLICE_COLOR_COUNT}`;
     const circle = document.createElementNS(svg.namespaceURI, 'circle');
-    for (const [key, value] of Object.entries({ cx: '60', cy: '60', r: '42', fill: 'none', stroke: color, 'stroke-width': '22', pathLength: '100', 'stroke-dasharray': `${slicePercentage} ${100 - slicePercentage}`, 'stroke-dashoffset': String(-offset), transform: 'rotate(-90 60 60)', tabindex: '0', role: 'button', 'aria-label': label })) circle.setAttribute(key, value);
+    for (const [key, value] of Object.entries({ cx: '60', cy: '60', r: '42', fill: 'none', class: sliceClass, 'stroke-width': '22', pathLength: '100', 'stroke-dasharray': `${slicePercentage} ${100 - slicePercentage}`, 'stroke-dashoffset': String(-offset), transform: 'rotate(-90 60 60)', tabindex: '0', role: 'button', 'aria-label': label })) circle.setAttribute(key, value);
     circle.addEventListener('click', () => { selection.textContent = label; });
     circle.addEventListener('keydown', event => { const key = (event as KeyboardEvent).key; if (key === 'Enter' || key === ' ') { event.preventDefault(); selection.textContent = label; } });
     if (slicePercentage > 0) svg.append(circle); offset += slicePercentage;
-    const entry = node('li'); const button = node('button', label) as HTMLButtonElement; button.type = 'button'; button.className = 'category-legend-entry'; button.style.borderLeftColor = color; button.addEventListener('click', () => { selection.textContent = label; }); entry.append(button); list.append(entry);
+    const entry = node('li'); const button = node('button', label) as HTMLButtonElement; button.type = 'button'; button.className = `category-legend-entry ${sliceClass}`; button.addEventListener('click', () => { selection.textContent = label; }); entry.append(button); list.append(entry);
   });
   details.append(svg, selection, list); target.append(details);
 }
