@@ -1,6 +1,7 @@
 import { accountMetadataRecordId, ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
 import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
+import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '../../../src/lib/monthly-budget-settings';
 
 export const PREVIOUS_PROFILE_KEY = 'kakeimatch.previous-local-profile.v1';
 export const INCOMPLETE_RESTORE_KEY = 'kakeimatch.incomplete-actual-restore.v1';
@@ -31,13 +32,11 @@ function directories(storage: Dependencies['storage']): string[] {
 /** Called only for an explicit user export. A timestamp records generation, never file-save success. */
 export async function exportLocalBackup(repository: LocalDataRepository, ledger: BackupLedger, now = new Date()): Promise<Blob> {
   const localData = await repository.serialize();
+  const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
-  const activeBudgetId = (localData.records.find(record => record.id === 'settings:budget')?.value as LocalBudgetSettings | undefined)?.budgetId;
-  localData.records = localData.records.filter(record => {
-    if (record.id === 'settings:budget') return false;
-    if (record.kind !== 'account-metadata') return true;
-    return Boolean(activeBudgetId) && (record.value as { budgetId?: unknown }).budgetId === activeBudgetId;
-  });
+  localData.records = localData.records.filter(record => record.id !== 'settings:budget'
+    && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
+    && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
   const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
   await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
   return result;
@@ -76,13 +75,16 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     const localData = {
       ...backup.localData,
       records: backup.localData.records.map(record => {
-        if (record.kind !== 'account-metadata') return record;
-        const metadata = record.value as { budgetId: string; accountId: string };
-        return {
-          ...record,
-          id: accountMetadataRecordId(budgetId, metadata.accountId),
-          value: { ...metadata, budgetId },
-        };
+        if (record.kind === 'account-metadata') {
+          const metadata = record.value as { budgetId: string; accountId: string };
+          return { ...record, id: accountMetadataRecordId(budgetId, metadata.accountId), value: { ...metadata, budgetId } };
+        }
+        if (record.id.startsWith('settings:monthly-budgets:')) {
+          const oldBudgetId = record.id.slice('settings:monthly-budgets:'.length);
+          const settings = validateMonthlyBudgetSettings(record.value, oldBudgetId);
+          return { ...record, id: monthlyBudgetSettingsRecordId(budgetId), value: { ...settings, budgetId } };
+        }
+        return record;
       }),
     };
     await staging.restore(localData);

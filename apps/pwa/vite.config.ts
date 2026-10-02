@@ -11,6 +11,7 @@ const productionSharedModules = new Set([
   'lib/receipt-validation.ts', 'lib/reconciliation-engine.ts', 'lib/statement-parser-core.ts',
   'lib/recurring-schedule.ts',
   'lib/category-learning.ts',
+  'lib/monthly-budget-settings.ts',
 ]);
 const runtimeBoundary: Plugin = {
   name: 'local-first-runtime-boundary',
