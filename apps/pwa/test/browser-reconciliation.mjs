@@ -132,8 +132,19 @@ try {
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
+
+  // Leaving for home while the reconciliation redraw is still running keeps home on screen.
+  const refresh = await page.evaluateHandle(() => {
+    const button = [...document.querySelectorAll('#local-view button')].find(node => node.textContent === '照合を更新する');
+    button.click(); document.querySelector('#home-tab').click();
+    return button;
+  });
+  await page.waitForFunction(button => !button.disabled, refresh);
+  await page.waitForFunction(() => document.querySelector('#home-summary')?.getAttribute('aria-busy') === 'false', undefined, { timeout: 10000 });
+  assert.equal(await page.locator('#household-view').isVisible(), true, 'home must stay shown after the old redraw finishes');
+  assert.equal(await page.locator('#reconciliation-tab').getAttribute('aria-pressed'), 'false');
   assert.deepEqual(errors, []);
-  console.log('PASS: provider-only import, cross-account automatic Actual expense matching, amount comparison and pair rejection, category learning and inline creation, and offline resolution persistence at 375px.');
+  console.log('PASS: provider-only import, cross-account automatic Actual expense matching, amount comparison and pair rejection, category learning and inline creation, and offline resolution persistence, and leaving mid-redraw keeps home at 375px.');
 } catch (error) {
   console.log(await page.locator('body').innerText()); throw error;
 } finally { await browser.close(); }
