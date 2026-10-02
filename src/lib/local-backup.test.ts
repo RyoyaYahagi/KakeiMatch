@@ -56,6 +56,36 @@ describe('combined staging restore', () => {
     expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId);
   });
 
+  it('preserves budget settings in .kmb and remaps them to the restored Actual budget ID', async () => {
+    await source.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: 'actual-old' }, updatedAt: at });
+    await source.put({ id: 'settings:monthly-budgets:actual-old', kind: 'app-settings', value: {
+      budgetId: 'actual-old', defaults: { 'synthetic-food': 30_000 },
+      monthlyOverrides: { '2026-10': { 'synthetic-food': 0 }, '2026-11': { 'synthetic-food': { inherit: true } } },
+    }, updatedAt: at });
+    const budget = ledger();
+    const file = await exportLocalBackup(source, budget, new Date(at));
+    await restoreLocalBackup(file, budget, overrides());
+    const restored = await openRepository(stagingId);
+    expect(await restored.get('settings:monthly-budgets:actual-old')).toBeNull();
+    expect(await restored.get('settings:monthly-budgets:actual-source-id')).toMatchObject({ value: {
+      budgetId: 'actual-source-id', defaults: { 'synthetic-food': 30_000 },
+      monthlyOverrides: { '2026-10': { 'synthetic-food': 0 }, '2026-11': { 'synthetic-food': { inherit: true } } },
+    } });
+    restored.close();
+  });
+
+  it('rejects budget metadata whose record ID mismatches or mixes Actual budgets', async () => {
+    const base = await source.serialize();
+    const record = (budgetId: string) => ({ id: `settings:monthly-budgets:${budgetId}`, kind: 'app-settings' as const,
+      value: { budgetId, defaults: {}, monthlyOverrides: {} }, updatedAt: at });
+    await expect(createPortableBackup({ actualBackup: new Uint8Array([1]), localData: {
+      ...base, records: [...base.records, { ...record('actual-a'), value: { ...record('actual-a').value, budgetId: 'actual-b' } }],
+    } })).rejects.toThrow('対応が一致しません');
+    await expect(createPortableBackup({ actualBackup: new Uint8Array([1]), localData: {
+      ...base, records: [...base.records, record('actual-a'), record('actual-b')],
+    } })).rejects.toThrow('複数の家計簿');
+  });
+
   it.each(['manifest', 'checksum'])('rejects %s before any target or engine writes', async type => {
     const file = await portable(); const bytes = new Uint8Array(await file.arrayBuffer());
     if (type === 'manifest') bytes[0] ^= 1; else bytes[bytes.length - 1] ^= 1;

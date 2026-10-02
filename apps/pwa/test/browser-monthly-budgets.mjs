@@ -47,16 +47,50 @@ async function splitReceipt() {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function editor() { await page.locator('#settings-tab').click(); await click('予算設定'); await page.locator('#budget-edit-month').waitFor(); }
-async function setBudget(month, categoryName, amount) {
-  await editor();
-  if (month === '2026年9月') await page.getByRole('button', { name: '予算の前月へ', exact: true }).click();
-  if (month === '2026年11月') await page.getByRole('button', { name: '予算の翌月へ', exact: true }).click();
-  await page.getByRole('heading', { name: `${month}の予算`, exact: true }).waitFor();
+async function selectCategory(categoryName) {
   await page.locator('#budget-category').selectOption({ label: categoryName });
+  await page.waitForFunction(() => {
+    const amount = document.querySelector('#budget-amount');
+    return amount instanceof HTMLInputElement && !amount.disabled;
+  });
+}
+async function monthEditor(month) {
+  await moveHome(month);
+  const summary = page.locator('details.monthly-budget-details');
+  await summary.locator('summary').click(); await summary.getByRole('button', { name: 'この月の予算を変更', exact: true }).click();
+  await page.getByRole('heading', { name: `${month}の予算`, exact: true }).waitFor();
+}
+async function setDefault(categoryName, amount) {
+  await editor();
+  await selectCategory(categoryName);
+  await page.locator('#budget-amount').fill(String(amount)); await click('基本予算を保存');
+  await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+}
+async function setBudget(month, categoryName, amount) {
+  await monthEditor(month);
+  await selectCategory(categoryName);
   await page.locator('#budget-amount').fill(String(amount));
-  await click('予算を保存'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await click('この月の予算を保存'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth(month);
 }
 async function homeMonth(month) { await page.locator('#home-tab').click(); await page.locator('#selected-month').getByText(month, { exact: true }).waitFor(); await page.waitForFunction(() => document.querySelector('#home-summary')?.getAttribute('aria-busy') === 'false'); }
+async function moveHome(month) {
+  await page.locator('#home-tab').click();
+  const parsedTarget = /^(\d{4})年(\d+)月$/.exec(month);
+  assert.ok(parsedTarget, `target month was invalid: ${month}`);
+  const target = Number(parsedTarget[1]) * 100 + Number(parsedTarget[2]);
+  for (let attempts = 0; attempts < 24; attempts++) {
+    await page.waitForFunction(() => document.querySelector('#home-summary')?.getAttribute('aria-busy') === 'false');
+    const selected = await page.locator('#selected-month').innerText();
+    const found = selected.match(/(\d{4})年(\d+)月/);
+    assert.ok(found, `selected month was not found in ${selected}`);
+    const current = Number(`${found[1]}${String(found[2]).padStart(2, '0')}`);
+    if (current === target) return;
+    await click(current < target ? '翌月へ' : '前月へ');
+  }
+  throw new Error(`Could not navigate home to ${month}`);
+}
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   await account('Synthetic Budget Wallet'); await account('Synthetic Budget Bank');
@@ -71,74 +105,71 @@ try {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await splitReceipt();
 
-  await setBudget('2026年10月', 'Synthetic Budget Food', 2000);
-  await setBudget('2026年10月', 'Synthetic Budget Home', 1000);
+  await setDefault('Synthetic Budget Food', 2500);
+  await setDefault('Synthetic Budget Home', 1000);
+  await editor();
+  await page.locator('#budget-category').evaluate(select => {
+    const options = [...select.options];
+    const food = options.find(option => option.text === 'Synthetic Budget Food');
+    const home = options.find(option => option.text === 'Synthetic Budget Home');
+    if (!food || !home) throw new Error('Synthetic budget categories are missing');
+    select.value = food.value; select.dispatchEvent(new Event('change'));
+    select.value = home.value; select.dispatchEvent(new Event('change'));
+  });
+  await page.waitForFunction(() => {
+    const amount = document.querySelector('#budget-amount');
+    return amount instanceof HTMLInputElement && !amount.disabled;
+  });
+  assert.equal(await page.locator('#budget-amount').inputValue(), '1000', 'the last selected category must win after rapid changes');
+  await page.locator('#settings-tab').click();
   await homeMonth('2026年10月');
   let summary = page.locator('details.monthly-budget-details');
-  await summary.locator('summary').getByText('10月の予算 · ¥2,900 / ¥3,000', { exact: true }).waitFor();
+  await summary.locator('summary').getByText('10月の予算 · ¥2,900 / ¥3,500', { exact: true }).waitFor();
   await summary.locator('summary').click();
-  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥3,000 · 残り ¥100 · 96.7%', { exact: true }).waitFor();
-  await page.locator('[data-budget-category]').filter({ hasText: 'Synthetic Budget Food · ¥2,400 / ¥2,000 · 超過 ¥400 · 120.0%' }).waitFor();
+  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥3,500 · 残り ¥600 · 82.9%', { exact: true }).waitFor();
+  await page.locator('[data-budget-category]').filter({ hasText: 'Synthetic Budget Food · ¥2,400 / ¥2,500 · 残り ¥100 · 96.0%' }).waitFor();
   await page.locator('[data-budget-category]').filter({ hasText: 'Synthetic Budget Home · ¥500 / ¥1,000 · 残り ¥500 · 50.0%' }).waitFor();
   if (process.env.PWA_BUDGET_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_BUDGET_SCREENSHOT_PATH, fullPage: true });
 
-  // Budget views navigate month-by-month and store a separate budget for each category-month.
-  await editor(); await page.getByRole('button', { name: '予算の前月へ', exact: true }).click();
-  await page.getByRole('heading', { name: '2026年9月の予算', exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年9月');
-  await page.getByText('9月の予算 · ¥0 / ¥0', { exact: true }).waitFor();
-  await editor(); await page.getByRole('button', { name: '予算の翌月へ', exact: true }).click();
-  await page.getByRole('heading', { name: '2026年10月の予算', exact: true }).waitFor();
-  await page.getByRole('button', { name: '予算の翌月へ', exact: true }).click();
-  await page.getByRole('heading', { name: '2026年11月の予算', exact: true }).waitFor();
-  await page.locator('#budget-category').selectOption({ label: 'Synthetic Custom Budget' });
-  await page.locator('#budget-amount').fill('600'); await click('予算を保存');
-  await page.getByText('予算を保存しました。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年11月');
-  await page.getByText('11月の予算 · ¥0 / ¥600', { exact: true }).waitFor();
-  // Tap the still-visible previous-month control twice before IndexedDB reads
-  // finish. Both taps must be applied instead of collapsing onto October.
-  await page.getByRole('button', { name: '前月へ', exact: true }).evaluate(button => { button.click(); button.click(); });
-  await homeMonth('2026年9月');
-  await page.getByText('9月の予算 · ¥0 / ¥0', { exact: true }).waitFor();
-  await page.locator('#monthly-income').getByText('¥0', { exact: true }).waitFor();
-  await page.locator('#monthly-expense').getByText('¥0', { exact: true }).waitFor();
-  await page.getByText('まだ記録がありません。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年10月');
-  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年11月');
-  // Opening the editor from the home budget summary and returning must preserve
-  // the month selected in the editor.
-  summary = page.locator('details.monthly-budget-details');
-  await summary.locator('summary').click(); await summary.getByRole('button', { name: '予算を設定', exact: true }).click();
-  await page.getByRole('button', { name: '予算の前月へ', exact: true }).click();
-  await page.getByRole('heading', { name: '2026年10月の予算', exact: true }).waitFor();
-  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
-  await page.getByText('10月の予算 · ¥2,900 / ¥3,000', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '前月へ', exact: true }).click(); await homeMonth('2026年9月');
-  await page.getByText('9月の予算 · ¥0 / ¥0', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '翌月へ', exact: true }).click(); await homeMonth('2026年10月');
+  // One month override applies only to December. January inherits the default.
+  await setBudget('2026年12月', 'Synthetic Budget Food', 4000);
+  await homeMonth('2026年12月');
+  await page.getByText('12月の予算 · ¥0 / ¥5,000', { exact: true }).waitFor();
+  await moveHome('2027年1月');
+  await page.getByText('1月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
 
-  // Zero removes the Food budget, leaving the Home category as the monthly total.
-  await editor(); await page.locator('#budget-category').selectOption({ label: 'Synthetic Budget Food' });
-  assert.equal(await page.locator('#budget-amount').inputValue(), '2000');
-  await page.locator('#budget-amount').fill('0'); await click('予算を保存');
+  // Two rapid month taps must keep both changes, and the selected month uses its default.
+  await page.getByRole('button', { name: '前月へ', exact: true }).evaluate(button => { button.click(); button.click(); });
+  await homeMonth('2026年11月');
+  await page.getByText('11月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
+  await moveHome('2026年10月');
+
+  // An explicit zero stays visible, then reset restores the default only for October.
+  await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Food');
+  assert.equal(await page.locator('#budget-amount').inputValue(), '2500');
+  await page.locator('#budget-amount').fill('0'); await click('この月の予算を保存');
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
   await page.locator('details.monthly-budget-details summary').click();
-  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥500 / ¥1,000 · 残り ¥500 · 50.0%', { exact: true }).waitFor();
-  assert.equal(await page.locator('[data-budget-category]').filter({ hasText: 'Synthetic Budget Food' }).count(), 0);
+  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥1,000 · 超過 ¥1,900 · 290.0%', { exact: true }).waitFor();
+  await page.locator('[data-budget-category]').filter({ hasText: 'Synthetic Budget Food · ¥2,400 / ¥0 · 超過 ¥2,400' }).waitFor();
   await page.reload(); await page.locator('#selected-month').getByText('2026年10月', { exact: true }).waitFor();
   await page.locator('details.monthly-budget-details summary').click();
-  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥500 / ¥1,000 · 残り ¥500 · 50.0%', { exact: true }).waitFor();
+  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥1,000 · 超過 ¥1,900 · 290.0%', { exact: true }).waitFor();
+  await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Food');
+  await click('この月の変更を解除して基本予算へ戻す'); await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
+  await page.locator('details.monthly-budget-details summary').click();
+  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥3,500 · 残り ¥600 · 82.9%', { exact: true }).waitFor();
   await context.setOffline(true);
-  await editor(); await page.locator('#budget-category').selectOption({ label: 'Synthetic Budget Home' });
-  await page.locator('#budget-amount').fill('1200'); await click('予算を保存');
+  await monthEditor('2026年10月'); await selectCategory('Synthetic Budget Home');
+  await page.locator('#budget-amount').fill('1200'); await click('この月の予算を保存');
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click(); await homeMonth('2026年10月');
   await page.locator('details.monthly-budget-details summary').click();
-  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥500 / ¥1,200 · 残り ¥700 · 41.7%', { exact: true }).waitFor();
+  await page.locator('#budget-total').getByText('予算対象カテゴリの合計：¥2,900 / ¥3,700 · 残り ¥800 · 78.4%', { exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);
   await context.setOffline(false);
-  console.log('PASS: monthly budgets follow quick month switches and editor navigation, clear in no-budget months, and persist through reload/offline use');
+  console.log('PASS: default budgets inherit, single-month overrides and explicit zero/reset work, rapid month changes stay current, and settings persist through reload/offline use');
 } catch (error) { console.log(await page.locator('body').innerText(), errors); throw error; } finally { await browser.close(); }
