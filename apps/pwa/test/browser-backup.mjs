@@ -161,7 +161,7 @@ async function importStatementCsv() {
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
+  await page.getByText(/自動で一致 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
 }
 
 async function seedAuditAndPreferences() {
@@ -274,7 +274,7 @@ try {
   await addReceipt('Synthetic Corner Market', 1280);
   await importStatementCsv();
   await page.getByText(/要確認 1件/).waitFor();
-  await page.locator('details').filter({ hasText: 'Synthetic Corner · ¥1,280' }).locator('summary').click();
+  await page.locator('details.review-item').filter({ has: page.locator('summary .record-title', { hasText: 'Synthetic Corner' }) }).locator('summary').click();
   await page.locator('details p').filter({ hasText: 'Synthetic Corner Market' }).locator('xpath=following-sibling::button[1]').click();
   await waitForProfileRecords(rows => rows.some(row => row.kind === 'reconciliation-resolution' && row.value.source === 'user' && row.value.status === 'applied') &&
     rows.some(row => row.kind === 'merchant-mapping' && row.value.aliasMerchant === 'Synthetic Corner Market'), 'applied user resolution and merchant alias');
