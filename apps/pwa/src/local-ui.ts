@@ -18,6 +18,7 @@ import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptA
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
 import { LocalReconciliationService } from './local-reconciliation';
+import { LocalCategoryLearning } from './local-category-learning';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -51,12 +52,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const saved = await repository.get<LocalBudgetSettings>('settings:budget');
   let budgetId = saved?.value.budgetId ?? null;
   const dataDir = saved?.value.dataDir ?? '/documents';
-  const ledger = createActualBrowserLedger({ ...createAccountMetadataAccess(repository), getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
+  const accountMetadata = createAccountMetadataAccess(repository);
+  const ledger = createActualBrowserLedger({ ...accountMetadata, getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
     budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id, dataDir }, updatedAt: new Date().toISOString() });
   } });
   const receipts = new LocalReceiptService(repository, ledger);
+  const categoryLearning = new LocalCategoryLearning(repository);
   const statements = new LocalStatementService(repository);
-  const reconciliation = new LocalReconciliationService(repository, ledger);
+  const reconciliation = new LocalReconciliationService(repository, ledger,
+    accountId => budgetId ? accountMetadata.getStatementProvider(budgetId, accountId) : Promise.resolve(null));
   const deletions = new LocalTransactionDeletionService(repository, ledger);
   const recurring = new LocalRecurringService(repository, ledger);
   const view = el('local-view');
@@ -86,7 +90,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   let flushReceiptDraft: () => Promise<void> = () => Promise.resolve();
   async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') { await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve(); resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
-    for (const id of ['home', 'receipt', 'statement', 'reconciliation', 'settings']) {
+    for (const id of ['home', 'receipt', 'reconciliation', 'settings']) {
       const item = el(`${id}-tab`); const active = id === tab || (tab === 'statement' && id === 'settings'); item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active));
     }
     el('message').textContent = ''; view.replaceChildren();
@@ -574,69 +578,184 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     view.append(button(editing || !receipt.image ? 'キャンセル' : '支出の選択へ戻る', editing ? () => receiptDetail(receipt) : newEntryReturn));
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
   }
-  async function statementPage(initialProvider: StatementProvider = 'paypay') {
-    await open('statement'); view.append(text('h2', '明細を取り込む'), text('p', 'PayPay、三井住友カード、楽天カードのCSVに対応しています。ファイルは端末内で処理し、送信しません。'));
-    const providerLabel = text('label', 'サービス'); providerLabel.setAttribute('for', 'statement-provider');
+  let selectedStatementProvider: StatementProvider = 'paypay';
+  const statementProviderLabels: Record<StatementProvider, string> = { paypay: 'PayPay', smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード' };
+  async function eligibleStatementAccounts(provider: StatementProvider) {
+    const accounts = await ledger.listOpenAccounts();
+    return Promise.all(accounts.filter(account => account.accountType !== 'cash').map(async account => ({
+      account, provider: budgetId ? await accountMetadata.getStatementProvider(budgetId, account.id) : null,
+    }))).then(rows => rows.filter(row => row.provider === provider).map(row => row.account));
+  }
+  async function renderStatementImporter(collapsed: boolean) {
+    const section = document.createElement('section'); section.className = 'statement-importer';
+    section.append(text('p', 'PayPay、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。'));
+    const providerLabel = fieldLabel('label', '明細サービス', 'statement-provider');
     const provider = document.createElement('select'); provider.id = 'statement-provider';
     provider.append(new Option('PayPay', 'paypay'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'));
-    provider.value = initialProvider;
-    const label = text('label', 'CSVファイル'); label.setAttribute('for', 'statement-file');
-    const input = document.createElement('input'); input.id = 'statement-file'; input.type = 'file'; input.accept = '.csv,text/csv';
-    const submit = button('明細を取り込む', async () => {
-      const file = input.files?.[0];
-      if (!file) { el('message').textContent = 'CSVファイルを選択してください。'; return; }
-      const result = await statements.importFile(file, provider.value as StatementProvider);
-      await statementPage(provider.value as StatementProvider);
-      const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
-      el('message').textContent = `${result.added}件を取り込みました。重複 ${result.duplicates}件。対象外 ${result.excluded}件、要確認 ${result.needsReviewRows.length}件。${reasons}`;
-    }, false);
-    view.append(providerLabel, provider, label, input, submit, button('照合する', reviewPage));
-    const rows = await statements.list(); view.append(text('p', `取り込み済み ${rows.length}件`));
-    for (const record of await repository.list('statement-import')) {
-      const metadata = record.value as { provider?: string; needsReviewRows?: Array<{ rowNumber: number; reason: string }> };
-      if (metadata.needsReviewRows?.length) {
-        const providerName = metadata.provider === 'smbc_card' ? '三井住友カード' : metadata.provider === 'rakuten_card' ? '楽天カード' : 'PayPay';
-        view.append(text('p', `${providerName}: 要確認 ${metadata.needsReviewRows.length}件`));
-        for (const row of metadata.needsReviewRows) view.append(text('p', `${row.rowNumber}行目: ${row.reason}`));
+    provider.value = selectedStatementProvider;
+    const accountLabel = fieldLabel('label', '支払元', 'statement-account');
+    const account = document.createElement('select'); account.id = 'statement-account'; account.required = true;
+    let accountRefreshVersion = 0;
+    let submit: HTMLButtonElement | null = null;
+    const refreshAccounts = async () => {
+      const version = ++accountRefreshVersion;
+      account.disabled = true;
+      if (submit) submit.disabled = true;
+      const selected = account.value;
+      try {
+        const options = await eligibleStatementAccounts(provider.value as StatementProvider);
+        if (version !== accountRefreshVersion) return;
+        account.replaceChildren(new Option(options.length ? '支払元を選択してください' : '設定が必要です', ''), ...options.map(item => new Option(item.name, item.id)));
+        if (options.some(item => item.id === selected)) account.value = selected;
+      } finally {
+        if (version === accountRefreshVersion) { account.disabled = false; if (submit) submit.disabled = false; }
       }
-      if (!await repository.getBlob(`statement-source:${record.id}`)) view.append(text('p', '取込元CSVの原本はありません。原本の確認はできませんが、明細行と照合結果は利用できます。'));
+    };
+    await refreshAccounts();
+    provider.addEventListener('change', () => { selectedStatementProvider = provider.value as StatementProvider; void refreshAccounts().catch(report); });
+    const fileLabel = fieldLabel('label', 'CSVファイル', 'statement-file');
+    const file = document.createElement('input'); file.id = 'statement-file'; file.type = 'file'; file.accept = '.csv,text/csv';
+    submit = button('取り込んで照合', async () => {
+      const selectedFile = file.files?.[0];
+      if (!selectedFile) throw new Error('CSVファイルを選択してください。');
+      if (account.disabled || !account.value) throw new Error('明細サービスを支払元に設定し、支払元を選択してください。');
+      const chosenProvider = provider.value as StatementProvider;
+      const chosenAccountId = account.value;
+      selectedStatementProvider = chosenProvider;
+      provider.disabled = true; account.disabled = true; file.disabled = true;
+      try {
+        const eligibleAccounts = await eligibleStatementAccounts(chosenProvider);
+        if (!eligibleAccounts.some(item => item.id === chosenAccountId)) throw new Error('選択した支払元の明細サービス設定を確認して、もう一度選んでください。');
+        const result = await statements.importFile(selectedFile, chosenProvider, chosenAccountId);
+        await reconciliation.run();
+        await reviewPage();
+        const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
+        el('message').textContent = `${result.added}件を取り込み、照合しました。重複 ${result.duplicates}件。対象外 ${result.excluded}件、要確認 ${result.needsReviewRows.length}件。${reasons}`;
+      } finally {
+        provider.disabled = false; account.disabled = false; file.disabled = false;
+      }
+    }, false);
+    section.append(providerLabel, provider, accountLabel, account, fileLabel, file, submit);
+    if (!account.options.length || !account.value && account.options.length === 1) {
+      section.append(text('p', '先に設定を開き、支払元の「明細サービス」を選んでください。現金口座は選べません。'));
     }
+
+    const imports = await statements.imports();
+    const unassigned = imports.filter(item => !item.value.accountId);
+    if (unassigned.length) {
+      const legacy = document.createElement('details');
+      legacy.append(text('summary', `支払元が未設定の過去の取込 ${unassigned.length}件を割り当てる`));
+      for (const item of unassigned) {
+        const row = document.createElement('div'); row.className = 'legacy-statement-import';
+        const label = fieldLabel('label', `${statementProviderLabels[item.value.provider]} · ${item.value.createdAt.slice(0, 10)} の取込`, `legacy-statement-account-${item.id}`);
+        const select = document.createElement('select'); select.id = `legacy-statement-account-${item.id}`;
+        const choices = await eligibleStatementAccounts(item.value.provider);
+        select.append(new Option('支払元を選択してください', ''), ...choices.map(choice => new Option(choice.name, choice.id)));
+        row.append(label, select, button('この明細の支払元を選ぶ', async () => {
+          if (!select.value) throw new Error('支払元を選択してください。');
+          await statements.associateAccount(item.id, select.value);
+          await reconciliation.run();
+          await reviewPage();
+          el('message').textContent = '支払元を保存し、照合しました。';
+        }, false));
+        if (!choices.length) row.append(text('p', '先に設定で同じ明細サービスを支払元へ割り当ててください。'));
+        legacy.append(row);
+      }
+      section.append(legacy);
+    }
+    const rows = await statements.list();
+    if (rows.length) section.append(text('p', `取り込み済み ${rows.length}件`));
+    for (const record of imports) {
+      if (record.value.needsReviewRows?.length) {
+        const review = document.createElement('details');
+        review.append(text('summary', `${statementProviderLabels[record.value.provider]} CSVの要確認 ${record.value.needsReviewRows.length}件`));
+        for (const row of record.value.needsReviewRows) review.append(text('p', `${row.rowNumber}行目: ${row.reason}`));
+        section.append(review);
+      }
+      if (!await repository.getBlob(`statement-source:${record.id}`)) section.append(text('p', '取込元CSVの原本はありません。原本を確認できませんが、明細行と照合結果は利用できます。'));
+    }
+    if (!collapsed) return section;
+    const disclosure = document.createElement('details'); disclosure.className = 'statement-import-disclosure';
+    disclosure.append(text('summary', '明細CSVを取り込む'), section);
+    return disclosure;
   }
   async function reviewPage() {
     await open('reconciliation'); view.append(text('h2', '明細の確認'));
     view.append(button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }, false));
     const run = await reconciliation.latest(); const decisions = await reconciliation.resolutions();
-    for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reviewPage(); }));
-    if (!run) { view.append(text('p', '明細を取り込んでから照合してください。')); return; }
+    for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reconciliation.run(); await reviewPage(); }));
+    if (!run) { view.append(await renderStatementImporter(false), text('p', '明細を取り込んでから照合してください。')); return; }
     const pending = run.statementResults.filter(row => !decisions.some(d => d.statementId === row.statementTransactionId));
     const automatic = decisions.filter(d => d.source === 'automatic' && d.status === 'applied');
     const auto = automatic.length;
     view.append(text('p', `自動確認済み ${auto}件 · 要確認 ${pending.filter(r => r.status === 'needs_review').length}件 · 記録なし ${pending.filter(r => r.status === 'unmatched_statement').length}件 · 明細待ち ${run.receiptResults.filter(r => r.status === 'unmatched_receipt').length}件`));
-    const allStatements = await statements.list(), allReceipts = await receipts.list();
+    const [allStatements, allReceipts, imports, allAccounts, expenseCategories] = await Promise.all([
+      statements.list(), receipts.list(), statements.imports(), ledger.listAccounts(), ledger.listExpenseCategories(),
+    ]);
+    const importsById = new Map(imports.map(item => [item.id, item.value]));
+    const accountsById = new Map(allAccounts.map(account => [account.id, account]));
+    const validMappedAccount = async (statement: Awaited<ReturnType<typeof statements.list>>[number]) => {
+      const metadata = importsById.get(statement.importId), accountId = metadata?.accountId;
+      if (!accountId) return false;
+      const account = accountsById.get(accountId);
+      return Boolean(account && !account.closed && account.accountType !== 'cash' && budgetId &&
+        await accountMetadata.getStatementProvider(budgetId, accountId) === statement.provider);
+    };
     const list = document.createElement('ul');
-    for (const row of pending.filter(r => r.status !== 'matched')) {
+    const reviewOrder = (status: string) => status === 'needs_review' ? 0 : 1;
+    for (const row of pending.filter(r => r.status !== 'matched').sort((a, b) => reviewOrder(a.status) - reviewOrder(b.status) || a.statementTransactionId.localeCompare(b.statementTransactionId))) {
       const statement = allStatements.find(s => s.id === row.statementTransactionId); if (!statement) continue;
-      const item = document.createElement('li'); const detail = document.createElement('details'); detail.append(text('summary', `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}`));
+      const item = document.createElement('li'); const detail = document.createElement('details');
+      detail.append(text('summary', `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}`));
       if (statement.kind === 'refund') detail.append(text('p', '返金の記録です。現在は自動処理できません。'));
+      else if (!await validMappedAccount(statement)) detail.append(text('p', 'この明細には照合できる支払元がありません。CSVの取込時に選んだ口座と「明細サービス」の設定を確認してください。過去の未割当明細は上の欄から支払元を選べます。'));
       else {
         const candidates = run.candidates.filter(c => c.statementTransactionId === statement.id);
         for (const candidate of candidates) {
-          const receipt = allReceipts.find(r => r.id === candidate.receiptId); const value = receipt?.confirmedValue; if (!value) continue;
-          detail.append(text('p', `似た支出：${value.purchasedDate} · ${value.merchant} · ${yen(value.totalAmountYen)}${candidate.amountDeltaYen ? `（金額差 ${yen(candidate.amountDeltaYen)}）` : ''}`));
-          detail.append(button('同じ支出', async () => { await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId); await reviewPage(); }, false), button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }));
+          const receipt = allReceipts.find(r => r.id === candidate.receiptId);
+          const actualId = receipt?.registration.actualTransactionId ?? (candidate.receiptId.startsWith('actual:') ? candidate.receiptId.slice('actual:'.length) : null);
+          const actual = actualId ? await ledger.getTransactionById(actualId) : null;
+          if (!actual || actual.kind !== 'expense') continue;
+          const actualAccount = accountsById.get(actual.accountId)?.name ?? '利用できない支払元';
+          detail.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
+          const differences = [
+            ...(actual.date !== statement.usedDate ? [`日付差 ${statement.usedDate} / ${actual.date}`] : []),
+            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(Math.abs(statement.amountYen))} / ${yen(Math.abs(actual.amountYen))}`] : []),
+            ...(actual.accountId !== importsById.get(statement.importId)?.accountId ? [`支払元差 ${accountsById.get(importsById.get(statement.importId)?.accountId ?? '')?.name ?? '明細の支払元'} / ${actualAccount}`] : []),
+          ];
+          if (differences.length) detail.append(text('p', `差分：${differences.join(' · ')}`));
+          const unsupportedSplitAmount = actual.isSplit === true && actual.amountYen !== -statement.amountYen;
+          if (unsupportedSplitAmount) detail.append(text('p', '分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。'));
+          const sameExpense = button('同じ支出', async () => { await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }, false);
+          sameExpense.disabled = unsupportedSplitAmount;
+          detail.append(sameExpense, button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await reconciliation.run(); await reviewPage(); }));
         }
         if (!candidates.length) {
-          const accountLabel = text('label', '支払元'), categoryLabel = text('label', 'カテゴリ');
-          const account = document.createElement('select'), category = document.createElement('select');
-          account.id = `account-${statement.id}`; category.id = `category-${statement.id}`; accountLabel.setAttribute('for', account.id); categoryLabel.setAttribute('for', category.id);
-          account.append(new Option('選択してください', ''), ...(await ledger.listOpenAccounts()).map(a => new Option(a.name, a.id)));
-          category.append(new Option('選択してください', ''), ...(await ledger.listExpenseCategories()).map(c => new Option(c.name, c.id)));
-          detail.append(text('p', '記録が見つかりません。ご自身の利用であれば登録できます。'), accountLabel, account, categoryLabel, category, button('自分の利用・レシートなし', async () => { await reconciliation.noReceipt(run.runId, statement.id, { accountId: account.value, categoryId: category.value }); await reviewPage(); }, false));
+          const category = document.createElement('select'); category.id = `category-${statement.id}`; category.required = true;
+          const categoryLabel = fieldLabel('label', 'カテゴリ', category.id);
+          category.append(new Option('カテゴリを選択してください', ''), ...expenseCategories.map(c => new Option(c.name, c.id)));
+          const suggestion = await categoryLearning.suggest({ merchant: statement.merchant, items: [], categories: expenseCategories });
+          if (suggestion.merchantCategoryId) category.value = suggestion.merchantCategoryId;
+          detail.append(text('p', `記録が見つかりません。${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${accountsById.get(importsById.get(statement.importId)?.accountId ?? '')?.name ?? '選択した支払元'} として登録できます。`), categoryLabel, category);
+          category.after(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
+            field: category, beforeOpen: async () => {}, onCreated: async id => {
+              const previous = category.value;
+              const refreshed = await ledger.listExpenseCategories();
+              category.replaceChildren(new Option('カテゴリを選択してください', ''), ...refreshed.map(c => new Option(c.name, c.id)));
+              category.value = refreshed.some(c => c.id === previous) ? previous : id;
+            },
+          } }));
+          detail.append(button('支出として登録', async () => {
+            if (!category.value) throw new Error('カテゴリを選択してください。');
+            await reconciliation.noReceipt(run.runId, statement.id, { categoryId: category.value });
+            await reconciliation.run(); await reviewPage();
+          }, false));
         }
       }
       item.append(detail); list.append(item);
     }
     view.append(list);
+    view.append(await renderStatementImporter(true));
     if (automatic.length) {
       const history = document.createElement('details');
       history.append(text('summary', `自動確認済みの内容を見る（${auto}件）`));
@@ -658,7 +777,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       history.append(matchedList); view.append(history);
     }
   }
-  for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['statement', statementPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
+  for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
   el('home-capture').addEventListener('click', () => { void recordChooser().catch(report); });
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
@@ -677,7 +796,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function protectUndoReference(id: string, field: 'account' | 'category') {
     if ((await deletions.list()).some(audit => (audit.status === 'pending' || audit.status === 'restoring' || audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()) && audit.nativeSnapshot.some(row => row[field] === id))) throw new Error('取り消せる削除の記録があります。取り消し時間が終わってから削除してください。');
   }
-  const masterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; }, onTransaction: async row => { const displayed = row.kind === 'transfer' && row.amountYen > 0 && row.transferId ? await ledger.getTransactionById(row.transferId) : row; if (!displayed) throw new Error('取引が見つかりません。'); await transactionDetail(displayed); }, beforeDeleteAccount: id => protectUndoReference(id, 'account'), beforeDeleteCategory: id => protectUndoReference(id, 'category') });
+  const masterUi = initializeMasterUi(setup, ledger, { onBack: () => { el('message').textContent = ''; }, onTransaction: async row => { const displayed = row.kind === 'transfer' && row.amountYen > 0 && row.transferId ? await ledger.getTransactionById(row.transferId) : row; if (!displayed) throw new Error('取引が見つかりません。'); await transactionDetail(displayed); }, beforeDeleteAccount: id => protectUndoReference(id, 'account'), beforeDeleteCategory: id => protectUndoReference(id, 'category'),
+    getStatementProvider: accountId => budgetId ? accountMetadata.getStatementProvider(budgetId, accountId) : Promise.resolve(null),
+    setStatementProvider: (accountId, provider, accountType) => budgetId ? accountMetadata.saveStatementProvider(budgetId, accountId, provider, accountType) : Promise.reject(new Error('家計簿を選択してください。')) });
   resetMasterUi = masterUi;
   openAccountBalances = masterUi.openAccounts;
   el('settings-tab').addEventListener('click', () => { searchOrigin = false; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });

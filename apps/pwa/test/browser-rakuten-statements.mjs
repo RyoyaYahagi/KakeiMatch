@@ -18,20 +18,61 @@ const pairParent = ['2026/09/30', 'Synthetic Pair Parent', '本人', '1回払い
 const continuation = ['', 'Synthetic Item Continuation', '', '', '', '', '', '', '', '', ''];
 const csv = `\uFEFF${[header, normal, installment, pairParent, continuation].map(row => row.map(value => `"${value.replaceAll('"', '""')}"`).join(',')).join('\r\n')}\r\n`;
 const bytes = Buffer.from(csv, 'utf8');
+async function createMappedCardAccount(name) {
+  await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: '支払元', exact: true }).click();
+  await page.getByRole('button', { name: '支払元を追加する', exact: true }).click();
+  await page.locator('select[name="accountType"]').selectOption('credit_card');
+  await page.getByLabel('支払元の名前', { exact: true }).fill(name);
+  await page.getByRole('button', { name: '追加する', exact: true }).click();
+  const account = page.getByRole('button', { name: `${name} · 利用中`, exact: true });
+  await account.waitFor();
+  await account.click();
+  await page.getByRole('button', { name: '編集する', exact: true }).click();
+  await page.locator('select[name="accountType"]').selectOption('credit_card');
+  await page.locator('select[name="statementProvider"]').selectOption('rakuten_card');
+  await page.getByRole('button', { name: '変更を保存', exact: true }).click();
+  await page.getByText('明細サービス：楽天カード', { exact: true }).waitFor();
+}
+async function addNativeExpense(account) {
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
+  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
+  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('#home-tab').click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: '支出', exact: true }).click();
+  await page.getByRole('button', { name: '手入力', exact: true }).click();
+  await page.locator('#manual-transaction-payee').fill('Synthetic Market');
+  await page.locator('#manual-transaction-date').fill('2026-09-28');
+  await page.locator('#manual-transaction-amount').fill('1200');
+  await page.locator('#manual-transaction-category').selectOption({ label: '食費' });
+  await page.locator('#manual-transaction-account').selectOption({ label: account });
+  await page.getByRole('button', { name: '登録する', exact: true }).click();
+  await page.getByText('登録しました。', { exact: true }).waitFor();
+}
 
 try {
   await page.goto(process.env.PWA_E2E_URL);
   await page.getByText('今月の支出 ¥0').waitFor();
+  await createMappedCardAccount('Synthetic Rakuten Card');
+  await addNativeExpense('Synthetic Rakuten Card');
   const upload = async () => {
-    await page.locator('#settings-tab').click();
-    await page.locator('#statement-tab').click();
+    await page.locator('#reconciliation-tab').click();
+    const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
+    if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
     await page.locator('#statement-provider').selectOption('rakuten_card');
+    await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Rakuten Card');
+    await page.locator('#statement-account').selectOption({ label: 'Synthetic Rakuten Card' });
     await page.locator('#statement-file').setInputFiles({ name: 'synthetic-rakuten.csv', mimeType: 'text/csv', buffer: bytes });
-    await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
+    await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   };
 
   await upload();
-  await page.getByText(/1件を取り込みました。重複 0件。対象外 0件、要確認 3件。/).waitFor();
+  await page.getByText(/1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 3件。/).waitFor();
+  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/記録なし 0件/).waitFor();
   await page.getByText('楽天カード: 要確認 3件', { exact: true }).waitFor();
   await page.getByText('4行目: 複数行明細の可能性があるため確認してください', { exact: true }).waitFor();
   await page.getByText('5行目: 継続行または部分行の可能性があります', { exact: true }).waitFor();
@@ -40,9 +81,7 @@ try {
   if (process.env.PWA_RAKUTEN_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RAKUTEN_SCREENSHOT_PATH, fullPage: true });
 
   await upload();
-  await page.getByText(/0件を取り込みました。重複 1件。対象外 0件、要確認 3件。/).waitFor();
-  await page.locator('#reconciliation-tab').click();
-  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
+  await page.getByText(/0件を取り込み、照合しました。重複 1件。対象外 0件、要確認 3件。/).waitFor();
   await page.getByText(/記録なし 1件/).waitFor();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Market' }).waitFor();
   assert.deepEqual(errors, []);

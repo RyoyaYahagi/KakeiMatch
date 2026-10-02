@@ -20,13 +20,13 @@ AI要求を始める前に、レシート画像とレシートrecordを端末へ
 
 登録画面で品目・値引き・カテゴリを確認し、「登録する」を押します。登録後はレシート一覧へ戻り、「登録しました」と表示します。登録済みの詳細は一覧から開けます。品目・調整がない過去のレシート、入力途中の記録、`.kmb`バックアップもそのまま読み込めます。
 
-PayPay CSVはブラウザー内で解析します。元ファイル、canonical行、import情報、照合run、候補、利用者の判断、候補の却下、Actualへの反映状態を端末に保存します。取引の意味を確認できていない他社形式は取り込みません。照合には確認済みレシートとcanonical明細を使います。AIは照合に関与しません。自動一致はActualへ反映し、判断が必要な明細は確認画面に残します。
+PayPay、三井住友カードVpass、楽天カードの対応CSVはブラウザー内で解析します。元ファイル、canonical行、import情報、照合run、候補、利用者の判断、候補の却下、Actualへの反映状態を端末に保存します。取引の意味を確認できていない他社形式は取り込みません。照合には現在のActualの支出とcanonical明細を使います。レシート登録分と手入力分を同じ支出として扱い、取込時に指定した支払元に候補を限定します。AIは照合に関与しません。自動一致はActualへ反映し、判断が必要な明細は確認画面に残します。
 
 レシート登録状態は `pending`、`processing`、`applied`、`failed` で管理し、登録後はActualの取引IDを保存します。再試行では同じ `kakeimatch:${receiptId}` imported IDを使います（PWA実装ではreceipt IDを `id` として補間します）。Actualへの反映結果が不明な失敗後は、再試行で状態を回復するまで確認値を変更できません。Web Locks APIを使い、複数タブから同じレシートを同時更新しないようにします。
 
 ## 手入力による収入・支出と後編集
 
-主要な移動先は「ホーム / 記録 / 照合 / 設定」です。ホームと記録一覧の「＋記録」から支出、収入、レシートからの支出を選びます。明細の取り込みは設定から開きます。
+主要な移動先は「ホーム / 記録 / 照合 / 設定」です。ホームと記録一覧の「＋記録」から支出、収入、レシートからの支出を選びます。明細の取り込みは照合タブから開き、支払元を選んで取り込んだ後に自動照合します。
 
 手入力した収入・支出の正本はActualの取引です。金額は1円以上の整数で入力し、保存時に支出は負、収入は正の金額へ変換します。カテゴリはActualの収入・支出区分と一致することを検証します。振替やレシートの分割取引は、この手入力フォームから編集しません。
 
@@ -34,7 +34,7 @@ PayPay CSVはブラウザー内で解析します。元ファイル、canonical�
 
 ## Cloud accountとログアウト
 
-端末内の家計表示、レシート入力、PayPay import、照合にCloud account sessionは不要です。GeminiとJevの要求は同一originの `/api/ai/token` で取得する短時間有効なBearer tokenを使います。このrouteは認証sessionからaccountを特定し、PWAはuser IDを送信しません。GatewayがGeminiへ画像と抽出promptを送り、TypeSafeへ検証済みの最小Jev stateを送ります。account用D1には認証record、entitlement、月間AI利用量だけを保存し、家計データは保存しません。
+端末内の家計表示、レシート入力、対応明細のimport、照合にCloud account sessionは不要です。GeminiとJevの要求は同一originの `/api/ai/token` で取得する短時間有効なBearer tokenを使います。このrouteは認証sessionからaccountを特定し、PWAはuser IDを送信しません。GatewayがGeminiへ画像と抽出promptを送り、TypeSafeへ検証済みの最小Jev stateを送ります。account用D1には認証record、entitlement、月間AI利用量だけを保存し、家計データは保存しません。
 
 ログアウトするとCloud account sessionを終了し、メモリ上のAI tokenを消します。Actualのブラウザ用データベース、端末profile、レシート画像、明細、照合データは端末に残ります。次のAI要求には再ログインが必要ですが、通常の家計操作には不要です。
 

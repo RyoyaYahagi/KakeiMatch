@@ -188,6 +188,36 @@ describe("portable local backup format", () => {
     expect(new Set(result.localData.records.map(({ kind }) => kind)).size).toBe(11);
   });
 
+  it("round-trips reconciliation snapshots while accepting older runs and resolutions without them", async () => {
+    const data = fixture();
+    data.records.push(
+      { id: "reconciliation-run:new-run", kind: "reconciliation-run", updatedAt: time, value: {
+        runId: "new-run", createdAt: time, completedAt: time, ruleVersion: "1.0.0", candidates: [], statementResults: [], receiptResults: [],
+        inputFingerprint: "b".repeat(64),
+      } },
+      { id: "reconciliation-resolution:new-statement", kind: "reconciliation-resolution", updatedAt: time, value: {
+        id: "reconciliation-resolution:new-statement", runId: "new-run", statementId: "new-statement", resolution: "same_expense",
+        source: "automatic", receiptId: "receipt:synthetic-1", categoryId: null, accountId: null, statementAmountYen: 1200,
+        importedId: null, status: "failed", actualTransactionId: "actual-synthetic-transaction",
+        actualSnapshot: { date: "2026-09-28", amountYen: -1200, payeeName: "Synthetic Cafe", accountId: "synthetic-account", isSplit: false },
+        statementSnapshot: { usedDate: "2026-09-28", merchant: "Synthetic Cafe", kind: "purchase" },
+        errorCode: "actual_apply_failed", createdAt: time, updatedAt: time,
+      } },
+      { id: accountMetadataRecordId("synthetic-budget-id", "synthetic-account"), kind: "account-metadata", updatedAt: time, value: {
+        budgetId: "synthetic-budget-id", accountId: "synthetic-account", accountType: "credit_card", statementProvider: "paypay",
+      } },
+    );
+
+    const restored = await readPortableBackup(await create(data));
+
+    expect(restored.localData.records.find(({ id }) => id === "reconciliation-run:synthetic-run")?.value).not.toHaveProperty("inputFingerprint");
+    expect(restored.localData.records.find(({ id }) => id === "reconciliation-run:new-run")?.value).toMatchObject({ inputFingerprint: "b".repeat(64) });
+    expect(restored.localData.records.find(({ id }) => id === "reconciliation-resolution:new-statement")?.value).toMatchObject({
+      actualSnapshot: { amountYen: -1200, isSplit: false }, statementSnapshot: { kind: "purchase" },
+    });
+    expect(restored.localData.records.find(({ kind }) => kind === "account-metadata")?.value).toMatchObject({ statementProvider: "paypay" });
+  });
+
   it("preserves deletion undo snapshots in archives and rejects unverified native fields", async () => {
     const data = fixture();
     const originalReceipt = data.records.find(record => record.kind === "receipt-metadata")!.value;

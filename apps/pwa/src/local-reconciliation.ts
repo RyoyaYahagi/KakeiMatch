@@ -1,11 +1,16 @@
 import {
   merchantAliasKey,
+  normalizeReconciliationMerchant,
   runReconciliationEngine,
   type ReconciliationEngineResult,
   type ReconciliationStatement,
   type ReconciliationReceipt,
 } from "../../../src/lib/reconciliation-engine";
 import type { LocalDataRecord, LocalDataRepository } from "../../../src/lib/local-data";
+import type { ActualTransaction } from "../../../src/lib/actual-ledger";
+import { sha256Hex } from "./statement-parser";
+import type { StatementImportMetadata } from "./local-statements";
+import type { StatementProvider } from "./statement-parser";
 
 export type LocalReceipt = {
   id: string;
@@ -41,7 +46,11 @@ export type LocalRun = ReconciliationEngineResult & {
   runId: string;
   createdAt: string;
   completedAt: string;
+  inputFingerprint?: string;
 };
+
+type ActualTransactionSnapshot = Pick<ActualTransaction, "date" | "amountYen" | "payeeName" | "accountId" | "isSplit">;
+type StatementSnapshot = Pick<LocalStatement, "usedDate" | "merchant" | "kind">;
 
 export type LocalResolution = {
   id: string;
@@ -56,6 +65,8 @@ export type LocalResolution = {
   importedId: string | null;
   status: "pending" | "processing" | "applied" | "failed";
   actualTransactionId: string | null;
+  actualSnapshot?: ActualTransactionSnapshot;
+  statementSnapshot?: StatementSnapshot;
   errorCode: string | null;
   createdAt: string;
   updatedAt: string;
@@ -63,6 +74,32 @@ export type LocalResolution = {
 
 type BrowserLedger = ReturnType<typeof import("../../../src/lib/actual-browser-ledger").createActualBrowserLedger>;
 type PairRejection = { runId: string; statementId: string; receiptId: string };
+type CandidateSource = { actualTransaction: ActualTransaction; receipt: LocalReceipt | null };
+type StatementWindow = { importId: string; provider: StatementProvider; accountId: string | null; startDate: string; endDate: string; statements: LocalStatement[] };
+type PreparedInput = {
+  result: ReconciliationEngineResult;
+  fingerprint: string;
+  sourcesByCandidateId: Map<string, CandidateSource>;
+  statementsById: Map<string, LocalStatement>;
+};
+
+const NATIVE_TRANSACTION_PREFIX = "actual:";
+const nativeCandidateId = (transactionId: string) => `${NATIVE_TRANSACTION_PREFIX}${transactionId}`;
+const actualSnapshot = (transaction: ActualTransaction): ActualTransactionSnapshot => ({
+  date: transaction.date, amountYen: transaction.amountYen, payeeName: transaction.payeeName,
+  accountId: transaction.accountId, isSplit: transaction.isSplit,
+});
+const matchesSnapshot = (transaction: ActualTransaction, snapshot: ActualTransactionSnapshot) =>
+  transaction.kind === "expense" && transaction.date === snapshot.date && transaction.amountYen === snapshot.amountYen &&
+  transaction.accountId === snapshot.accountId && transaction.payeeName === snapshot.payeeName &&
+  Boolean(transaction.isSplit) === Boolean(snapshot.isSplit);
+const matchesSnapshotFields = (transaction: ActualTransaction, snapshot: ActualTransactionSnapshot) =>
+  transaction.kind === "expense" && transaction.date === snapshot.date && transaction.accountId === snapshot.accountId &&
+  transaction.payeeName === snapshot.payeeName && Boolean(transaction.isSplit) === Boolean(snapshot.isSplit);
+function shiftDate(date: string, days: number): string {
+  const time = Date.parse(`${date}T00:00:00.000Z`) + days * 86_400_000;
+  return new Date(time).toISOString().slice(0, 10);
+}
 
 export class LocalReconciliationError extends Error {
   constructor(readonly code: string) {
@@ -82,6 +119,7 @@ export class LocalReconciliationError extends Error {
       resolution_snapshot_invalid: "判断内容を確認できません。",
       actual_readback_mismatch: "家計簿への反映を確認できませんでした。もう一度お試しください。",
       actual_apply_failed: "家計簿への反映に失敗しました。判断内容は保存されています。もう一度お試しください。",
+      split_amount_adjustment_unsupported: "分割された記録の金額差は反映できません。内容を確認してから別の候補を選んでください。",
     };
     super(messages[code] ?? "照合を完了できませんでした。画面を更新して再試行してください。");
     this.name = "LocalReconciliationError";
@@ -105,19 +143,167 @@ function freezeDeep<T>(value: T): T {
   return value;
 }
 
-let localTail: Promise<void> = Promise.resolve();
-async function serialize<T>(task: () => Promise<T>): Promise<T> {
+const localTails = new Map<string, Promise<void>>();
+async function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
   const run = () => {
-    const result = localTail.then(task, task);
-    localTail = result.then(() => undefined, () => undefined);
+    const previous = localTails.get(key) ?? Promise.resolve();
+    const result = previous.then(task, task);
+    localTails.set(key, result.then(() => undefined, () => undefined));
     return result;
   };
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-  return locks ? locks.request("kakeimatch-local-reconciliation", run) : run();
+  return locks ? locks.request(`kakeimatch-local-reconciliation:${key}`, run) : run();
 }
 
 export class LocalReconciliationService {
-  constructor(private readonly repo: LocalDataRepository, private readonly ledger: BrowserLedger) {}
+  constructor(
+    private readonly repo: LocalDataRepository,
+    private readonly ledger: BrowserLedger,
+    private readonly getStatementProvider: (accountId: string) => Promise<StatementProvider | null> = async () => null,
+  ) {}
+
+  private async prepareInput(): Promise<PreparedInput> {
+    const [statementRecords, receiptRecords, resolutionRecords, rejectionRecords, aliasRecords, importRecords, accounts] = await Promise.all([
+      this.repo.list<LocalStatement>("statement-transaction"),
+      this.repo.list<LocalReceipt>("receipt-metadata"),
+      this.repo.list<LocalResolution>("reconciliation-resolution"),
+      this.repo.list<PairRejection>("correction-audit"),
+      this.repo.list<{ merchant: string; aliasMerchant: string }>("merchant-mapping"),
+      this.repo.list<StatementImportMetadata>("statement-import"),
+      this.ledger.listAccounts(),
+    ]);
+    const statements = statementRecords.map(({ value }) => value);
+    const statementById = new Map(statements.map((statement) => [statement.id, statement]));
+    const importsById = new Map(importRecords.map(({ id, value }) => [id, value]));
+    const priorResolutions = resolutionRecords.map(({ value }) => value);
+    const excludedStatementIds = new Set(priorResolutions.map((item) => item.statementId));
+    const excludedActualIds = new Set(priorResolutions.flatMap((item) => item.actualTransactionId ? [item.actualTransactionId] : []));
+    const excludedImportedIds = new Set(priorResolutions.flatMap((item) => item.importedId ? [item.importedId] : []));
+    const excludedReceiptIds = new Set(priorResolutions.filter((item) => item.resolution === "same_expense" && item.receiptId).map((item) => item.receiptId!));
+    const rejected = rejectionRecords.map(({ value }) => value).filter((value) => value && "statementId" in value && "receiptId" in value) as PairRejection[];
+    const aliases = new Set(aliasRecords.flatMap(({ value }) => value?.merchant && value.aliasMerchant
+      ? [merchantAliasKey(value.merchant, value.aliasMerchant)] : []));
+
+    const windowsByImport = new Map<string, StatementWindow>();
+    for (const statement of statements) {
+      const metadata = importsById.get(statement.importId);
+      const provider = (metadata?.provider ?? statement.provider) as StatementProvider;
+      const accountId = metadata?.accountId ?? null;
+      const current = windowsByImport.get(statement.importId);
+      if (current) {
+        if (statement.usedDate < current.startDate) current.startDate = statement.usedDate;
+        if (statement.usedDate > current.endDate) current.endDate = statement.usedDate;
+        continue;
+      }
+      windowsByImport.set(statement.importId, { importId: statement.importId, provider, accountId,
+        startDate: statement.usedDate, endDate: statement.usedDate, statements: [] });
+    }
+    for (const statement of statements) windowsByImport.get(statement.importId)?.statements.push(statement);
+    const windows = [...windowsByImport.values()].map((window) => ({
+      ...window, startDate: shiftDate(window.startDate, -7), endDate: shiftDate(window.endDate, 7),
+    }));
+    const rowsByImport = new Map<string, ActualTransaction[]>();
+    const rowGroups = await Promise.all(windows.map(async (window) => [window.importId,
+      await this.ledger.getTransactions({ startDate: window.startDate, endDate: window.endDate })] as const));
+    for (const [importId, rows] of rowGroups) rowsByImport.set(importId, rows);
+    const transactionsById = new Map<string, ActualTransaction>();
+    for (const rows of rowsByImport.values()) for (const transaction of rows) {
+      if (transaction.kind === "expense" && Number.isSafeInteger(transaction.amountYen) && transaction.amountYen < 0) transactionsById.set(transaction.id, transaction);
+    }
+    const accountsById = new Map(accounts.map((account) => [account.id, account]));
+    const accountProviders = new Map<string, StatementProvider | null>();
+    await Promise.all(accounts.map(async (account) => accountProviders.set(account.id, await this.getStatementProvider(account.id))));
+
+    const receiptByActualId = new Map<string, LocalReceipt>();
+    for (const { value: receipt } of receiptRecords) {
+      const actualId = receipt.registration.actualTransactionId;
+      if (receipt.confirmedValue && receipt.registration.status === "applied" && actualId && !receiptByActualId.has(actualId)) {
+        receiptByActualId.set(actualId, receipt);
+      }
+    }
+    const sourcesByCandidateId = new Map<string, CandidateSource>();
+    const engineReceipts: ReconciliationReceipt[] = [];
+    for (const transaction of transactionsById.values()) {
+      const account = accountsById.get(transaction.accountId);
+      if (!account || account.accountType === "cash" || account.closed || transaction.cleared || excludedActualIds.has(transaction.id) ||
+        (transaction.importedId && excludedImportedIds.has(transaction.importedId))) continue;
+      const receipt = receiptByActualId.get(transaction.id) ?? null;
+      const candidateId = receipt?.id ?? nativeCandidateId(transaction.id);
+      const source = { actualTransaction: transaction, receipt };
+      sourcesByCandidateId.set(candidateId, source);
+      engineReceipts.push({
+        receiptId: candidateId, actualTransactionId: transaction.id,
+        merchant: transaction.payeeName ?? "", purchasedDate: transaction.date,
+        amountYen: Math.abs(transaction.amountYen), actualAccountId: transaction.accountId,
+      });
+    }
+
+    const engineStatements: ReconciliationStatement[] = statements.filter((statement) => !excludedStatementIds.has(statement.id)).map((statement) => ({
+      statementTransactionId: statement.id, provider: statement.provider, externalId: statement.externalId,
+      kind: statement.kind, usedDate: statement.usedDate, postedDate: statement.postedDate,
+      merchant: statement.merchant, amountYen: statement.amountYen, paymentMethod: statement.paymentMethod,
+    }));
+    const accountScopeByStatement = new Map<string, string>();
+    const autoMatchEligibleStatementIds = new Set<string>();
+    const candidateEligibleStatementIds = new Set<string>();
+    for (const statement of statements) {
+      if (excludedStatementIds.has(statement.id)) continue;
+      const metadata = importsById.get(statement.importId);
+      const accountId = metadata?.accountId;
+      if (accountId) {
+        accountScopeByStatement.set(statement.id, accountId);
+        const account = accountsById.get(accountId);
+        if (account && account.accountType !== "cash" && !account.closed && accountProviders.get(accountId) === statement.provider) {
+          autoMatchEligibleStatementIds.add(statement.id);
+          candidateEligibleStatementIds.add(statement.id);
+        }
+      }
+    }
+
+    const waitingReceiptIds = new Set<string>();
+    for (const window of windows) {
+      if (!window.accountId || accountsById.get(window.accountId)?.accountType === "cash" || accountsById.get(window.accountId)?.closed ||
+        accountProviders.get(window.accountId) !== window.provider) continue;
+      for (const transaction of rowsByImport.get(window.importId) ?? []) {
+        if (transaction.kind !== "expense" || transaction.cleared || transaction.accountId !== window.accountId || transaction.amountYen >= 0 ||
+          excludedActualIds.has(transaction.id) || (transaction.importedId && excludedImportedIds.has(transaction.importedId))) continue;
+        const receipt = receiptByActualId.get(transaction.id) ?? null;
+        waitingReceiptIds.add(receipt?.id ?? nativeCandidateId(transaction.id));
+      }
+    }
+
+    const engineResult = runReconciliationEngine({
+      statements: engineStatements, receipts: engineReceipts, aliases,
+      excludedStatementIds, excludedReceiptIds,
+      rejectedPairs: new Set(rejected.map((item) => pairKey(item.statementId, item.receiptId))),
+      accountScopeByStatement, autoMatchEligibleStatementIds, candidateEligibleStatementIds,
+    });
+    const result: ReconciliationEngineResult = {
+      ...engineResult,
+      receiptResults: engineResult.receiptResults.filter((item) => waitingReceiptIds.has(item.receiptId)),
+    };
+    const inputSnapshot = {
+      statements: statements.map((statement) => [statement.id, statement.provider, statement.externalId, statement.kind,
+        statement.usedDate, statement.postedDate, statement.merchant, statement.amountYen, statement.paymentMethod,
+        statement.importId, statement.sourceFingerprint ?? null, statement.duplicateOrdinal ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      receipts: receiptRecords.map(({ value: receipt }) => [receipt.id, receipt.registration.status,
+        receipt.registration.actualTransactionId, receipt.confirmedValue ? [receipt.confirmedValue.merchant,
+          receipt.confirmedValue.purchasedDate, receipt.confirmedValue.totalAmountYen, receipt.confirmedValue.accountId] : null])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      imports: importRecords.map(({ id, value }) => [id, value.provider, value.accountId ?? null, value.fileHash]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      transactions: [...transactionsById.values()].map((transaction) => [transaction.id, transaction.date, transaction.amountYen,
+        transaction.payeeName, transaction.accountId, Boolean(transaction.isSplit), transaction.cleared]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      accounts: accounts.map((account) => [account.id, account.name, account.accountType, account.closed,
+        accountProviders.get(account.id) ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      resolutions: priorResolutions.map((item) => [item.statementId, item.resolution, item.receiptId, item.status,
+        item.actualTransactionId, item.accountId, item.categoryId, item.statementAmountYen, item.importedId,
+        item.actualSnapshot ?? null, item.statementSnapshot ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      rejected: rejected.map((item) => [item.runId, item.statementId, item.receiptId]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+      aliases: [...aliases].sort(),
+    };
+    const fingerprint = sha256Hex(new TextEncoder().encode(JSON.stringify(inputSnapshot)));
+    return { result, fingerprint, sourcesByCandidateId, statementsById: statementById };
+  }
 
   private async getLatestRecord(): Promise<LocalRun | null> {
     const pointer = await this.repo.get<{ runId: string }>(latestRunPointerId);
@@ -127,59 +313,32 @@ export class LocalReconciliationService {
   }
 
   async run(): Promise<LocalRun> {
-    return serialize(async () => {
-      const [statementRecords, receiptRecords, resolutionRecords, rejectionRecords, aliasRecords] = await Promise.all([
-        this.repo.list<LocalStatement>("statement-transaction"),
-        this.repo.list<LocalReceipt>("receipt-metadata"),
-        this.repo.list<LocalResolution>("reconciliation-resolution"),
-        this.repo.list<PairRejection>("correction-audit"),
-        this.repo.list<{ merchant: string; aliasMerchant: string }>("merchant-mapping"),
-      ]);
-      const statements = statementRecords.map((row) => row.value);
-      const receipts = receiptRecords.map((row) => row.value);
-      const priorResolutions = resolutionRecords.map((row) => row.value);
-      const rejected = rejectionRecords.map((row) => row.value).filter((value) => value && "statementId" in value && "receiptId" in value) as PairRejection[];
-      const engineStatements: ReconciliationStatement[] = statements.map((statement) => ({
-        statementTransactionId: statement.id, provider: statement.provider, externalId: statement.externalId,
-        kind: statement.kind, usedDate: statement.usedDate, postedDate: statement.postedDate,
-        merchant: statement.merchant, amountYen: statement.amountYen, paymentMethod: statement.paymentMethod,
-      }));
-      const engineReceipts: ReconciliationReceipt[] = receipts.flatMap((receipt) => {
-        const confirmed = receipt.confirmedValue;
-        if (!confirmed || receipt.registration.status !== "applied" || !receipt.registration.actualTransactionId) return [];
-        return [{ receiptId: receipt.id, actualTransactionId: receipt.registration.actualTransactionId,
-          merchant: confirmed.merchant, purchasedDate: confirmed.purchasedDate, amountYen: confirmed.totalAmountYen,
-          actualAccountId: confirmed.accountId }];
-      });
-      const aliases = new Set(aliasRecords.flatMap(({ value }) => value?.merchant && value.aliasMerchant
-        ? [merchantAliasKey(value.merchant, value.aliasMerchant)] : []));
-      const result = runReconciliationEngine({
-        statements: engineStatements,
-        receipts: engineReceipts,
-        aliases,
-        excludedStatementIds: new Set(priorResolutions.map((item) => item.statementId)),
-        excludedReceiptIds: new Set(priorResolutions.filter((item) => item.resolution === "same_expense" && item.receiptId).map((item) => item.receiptId!)),
-        rejectedPairs: new Set(rejected.map((item) => pairKey(item.statementId, item.receiptId))),
-      });
+    return serialize(this.repo.profileId, async () => {
+      const prepared = await this.prepareInput();
       const completedAt = now();
       const runId = crypto.randomUUID();
-      const run = freezeDeep({ ...result, runId, createdAt: completedAt, completedAt });
+      let run = freezeDeep({ ...prepared.result, runId, createdAt: completedAt, completedAt, inputFingerprint: prepared.fingerprint });
       await this.repo.put({ id: runRecordId(runId), kind: "reconciliation-run", value: run, updatedAt: completedAt });
-      await this.repo.put({ id: resultRecordId(runId), kind: "reconciliation-result", value: result, updatedAt: completedAt });
+      await this.repo.put({ id: resultRecordId(runId), kind: "reconciliation-result", value: prepared.result, updatedAt: completedAt });
       await this.repo.put({ id: latestRunPointerId, kind: "app-settings", value: { runId }, updatedAt: completedAt });
 
-      const automatic = result.statementResults.flatMap((item) => item.status === "matched" && item.matchedReceiptId
+      const automatic = prepared.result.statementResults.flatMap((item) => item.status === "matched" && item.matchedReceiptId
         ? [{ statementId: item.statementTransactionId, receiptId: item.matchedReceiptId }] : []);
-      const receiptById = new Map(engineReceipts.map((receipt) => [receipt.receiptId, receipt]));
       const resolutionBatch: LocalResolution[] = automatic.map(({ statementId, receiptId }) => ({
         id: resolutionRecordId(statementId), runId, statementId, resolution: "same_expense", source: "automatic",
         receiptId, categoryId: null, accountId: null,
-        statementAmountYen: statements.find((item) => item.id === statementId)!.amountYen,
-        importedId: null, status: "pending", actualTransactionId: receiptById.get(receiptId)!.actualTransactionId,
+        statementAmountYen: prepared.statementsById.get(statementId)!.amountYen,
+        importedId: null, status: "pending", actualTransactionId: prepared.sourcesByCandidateId.get(receiptId)!.actualTransaction.id,
+        actualSnapshot: actualSnapshot(prepared.sourcesByCandidateId.get(receiptId)!.actualTransaction),
+        statementSnapshot: { usedDate: prepared.statementsById.get(statementId)!.usedDate,
+          merchant: prepared.statementsById.get(statementId)!.merchant, kind: prepared.statementsById.get(statementId)!.kind },
         errorCode: null, createdAt: completedAt, updatedAt: completedAt,
       }));
       for (const resolution of resolutionBatch) await this.repo.put({ id: resolution.id, kind: "reconciliation-resolution", value: resolution, updatedAt: completedAt });
       if (resolutionBatch.length) await this.applyBatch(resolutionBatch);
+      const afterAutomaticMatches = await this.prepareInput();
+      run = freezeDeep({ ...run, inputFingerprint: afterAutomaticMatches.fingerprint });
+      await this.repo.put({ id: runRecordId(runId), kind: "reconciliation-run", value: run, updatedAt: now() });
       return run;
     });
   }
@@ -190,44 +349,48 @@ export class LocalReconciliationService {
     return (await this.repo.list<LocalResolution>("reconciliation-resolution")).map((row) => row.value);
   }
 
-  private async requireLatest(runId: string): Promise<LocalRun> {
+  private async requireLatest(runId: string): Promise<{ run: LocalRun; prepared: PreparedInput }> {
     const [latest, stored] = await Promise.all([this.getLatestRecord(), this.repo.get<LocalRun>(runRecordId(runId))]);
     if (!latest || latest.runId !== runId || !stored || stored.value.runId !== runId) throw new LocalReconciliationError("stale_run");
-    return stored.value;
+    const prepared = await this.prepareInput();
+    if (!stored.value.inputFingerprint || stored.value.inputFingerprint !== prepared.fingerprint) throw new LocalReconciliationError("stale_run");
+    return { run: stored.value, prepared };
   }
 
   async sameExpense(runId: string, statementId: string, receiptId: string): Promise<LocalResolution> {
-    return serialize(async () => {
-      const run = await this.requireLatest(runId);
+    return serialize(this.repo.profileId, async () => {
+      if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
+      const { run, prepared } = await this.requireLatest(runId);
       const candidate = run.candidates.find((item) => item.statementTransactionId === statementId && item.receiptId === receiptId);
       if (!candidate) throw new LocalReconciliationError("candidate_unavailable");
-      const [statementRecord, receiptRecord, existing, priorResolutions] = await Promise.all([
-        this.repo.get<LocalStatement>(`statement-transaction:${statementId}`).then((value) => value ?? this.findStatement(statementId)),
-        this.findReceipt(receiptId), this.repo.get<LocalResolution>(resolutionRecordId(statementId)),
+      const [statementRecord, existing, priorResolutions] = await Promise.all([
+        this.findStatement(statementId), this.repo.get<LocalResolution>(resolutionRecordId(statementId)),
         this.repo.list<LocalResolution>("reconciliation-resolution"),
       ]);
-      if (!statementRecord || !receiptRecord || existing) throw new LocalReconciliationError("decision_conflict");
+      const source = prepared.sourcesByCandidateId.get(receiptId);
+      if (!statementRecord || !source || existing) throw new LocalReconciliationError("decision_conflict");
       if (priorResolutions.some(({ value }) => value.resolution === "same_expense" && value.receiptId === receiptId)) throw new LocalReconciliationError("receipt_already_used");
       const statement = statementRecord.value;
-      const receipt = receiptRecord.value;
-      if (statement.kind !== "purchase" || !receipt.confirmedValue || receipt.registration.status !== "applied" || !receipt.registration.actualTransactionId) throw new LocalReconciliationError("record_unavailable");
+      const transaction = source.actualTransaction;
+      if (statement.kind !== "purchase" || transaction.kind !== "expense") throw new LocalReconciliationError("record_unavailable");
+      if (transaction.isSplit && transaction.amountYen !== -statement.amountYen) throw new LocalReconciliationError("split_amount_adjustment_unsupported");
       const timestamp = now();
       const resolution: LocalResolution = {
         id: resolutionRecordId(statementId), runId, statementId, resolution: "same_expense", source: "user",
         receiptId, categoryId: null, accountId: null, statementAmountYen: statement.amountYen, importedId: null,
-        status: "pending", actualTransactionId: receipt.registration.actualTransactionId, errorCode: null,
+        status: "pending", actualTransactionId: transaction.id, actualSnapshot: actualSnapshot(transaction), errorCode: null,
         createdAt: timestamp, updatedAt: timestamp,
       };
       await this.repo.put({ id: resolution.id, kind: "reconciliation-resolution", value: resolution, updatedAt: timestamp });
-      if (statement.merchant !== receipt.confirmedValue.merchant) await this.saveAlias(statement.merchant, receipt.confirmedValue.merchant);
+      if (transaction.payeeName && statement.merchant !== transaction.payeeName) await this.saveAlias(statement.merchant, transaction.payeeName);
       const updated = await this.applyOne(resolution);
       return updated;
     });
   }
 
   async rejectPair(runId: string, statementId: string, receiptId: string): Promise<void> {
-    return serialize(async () => {
-      const run = await this.requireLatest(runId);
+    return serialize(this.repo.profileId, async () => {
+      const { run } = await this.requireLatest(runId);
       if (!run.candidates.some((item) => item.statementTransactionId === statementId && item.receiptId === receiptId)) throw new LocalReconciliationError("candidate_unavailable");
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
       const id = rejectionRecordId(runId, statementId, receiptId);
@@ -237,9 +400,9 @@ export class LocalReconciliationService {
     });
   }
 
-  async noReceipt(runId: string, statementId: string, options: { accountId: string; categoryId: string }): Promise<LocalResolution> {
-    return serialize(async () => {
-      const run = await this.requireLatest(runId);
+  async noReceipt(runId: string, statementId: string, options: { accountId?: string; categoryId: string }): Promise<LocalResolution> {
+    return serialize(this.repo.profileId, async () => {
+      const { run } = await this.requireLatest(runId);
       const result = run.statementResults.find((item) => item.statementTransactionId === statementId);
       const statementRecord = await this.findStatement(statementId);
       if (!result || result.status === "matched" || !statementRecord || statementRecord.value.kind !== "purchase") throw new LocalReconciliationError("decision_unavailable");
@@ -247,16 +410,24 @@ export class LocalReconciliationService {
       const rejected = new Set((await this.repo.list<PairRejection>("correction-audit")).filter(item => "statementId" in item.value && "receiptId" in item.value).map((item) => pairKey(item.value.statementId, item.value.receiptId)));
       if (candidates.some((candidate) => !rejected.has(pairKey(statementId, candidate.receiptId)))) throw new LocalReconciliationError("candidates_remaining");
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
-      const [accounts, categories] = await Promise.all([this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories()]);
-      if (!accounts.some((account) => account.id === options.accountId)) throw new LocalReconciliationError("account_unavailable");
+      const [accounts, categories, importRecord] = await Promise.all([
+        this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories(), this.repo.get<StatementImportMetadata>(statementRecord.value.importId),
+      ]);
+      const fixedAccountId = importRecord?.value.accountId;
+      const mappedProvider = fixedAccountId ? await this.getStatementProvider(fixedAccountId) : null;
+      if (!fixedAccountId || mappedProvider !== statementRecord.value.provider) throw new LocalReconciliationError("account_unavailable");
+      if (fixedAccountId && options.accountId && fixedAccountId !== options.accountId) throw new LocalReconciliationError("account_unavailable");
+      const accountId = fixedAccountId ?? options.accountId;
+      if (!accountId || !accounts.some((account) => account.id === accountId && account.accountType !== "cash")) throw new LocalReconciliationError("account_unavailable");
       if (!categories.some((category) => category.id === options.categoryId)) throw new LocalReconciliationError("category_unavailable");
       const statement = statementRecord.value;
       const timestamp = now();
       const resolution: LocalResolution = {
         id: resolutionRecordId(statementId), runId, statementId, resolution: "no_receipt", source: "user",
-        receiptId: null, categoryId: options.categoryId, accountId: options.accountId,
+        receiptId: null, categoryId: options.categoryId, accountId,
         statementAmountYen: statement.amountYen, importedId: `kakeimatch:statement:${statement.id}`,
         status: "pending", actualTransactionId: null, errorCode: null, createdAt: timestamp, updatedAt: timestamp,
+        statementSnapshot: { usedDate: statement.usedDate, merchant: statement.merchant, kind: statement.kind },
       };
       await this.repo.put({ id: resolution.id, kind: "reconciliation-resolution", value: resolution, updatedAt: timestamp });
       return this.applyOne(resolution);
@@ -264,7 +435,7 @@ export class LocalReconciliationService {
   }
 
   async retry(resolutionId: string): Promise<LocalResolution> {
-    return serialize(async () => {
+    return serialize(this.repo.profileId, async () => {
       const record = await this.repo.get<LocalResolution>(resolutionId);
       if (!record || record.value.status === "applied") throw new LocalReconciliationError("retry_unavailable");
       const run = await this.repo.get<LocalRun>(runRecordId(record.value.runId));
@@ -295,25 +466,67 @@ export class LocalReconciliationService {
     return updated;
   }
 
+  private async hydrateLegacySnapshot(resolution: LocalResolution): Promise<LocalResolution> {
+    if (resolution.resolution !== "same_expense" || resolution.actualSnapshot) return resolution;
+    if (!resolution.receiptId || !resolution.actualTransactionId) throw new LocalReconciliationError("resolution_snapshot_invalid");
+    const receiptRecord = await this.findReceipt(resolution.receiptId);
+    const receipt = receiptRecord?.value;
+    const confirmed = receipt?.confirmedValue;
+    if (!receipt || !confirmed || receipt.registration.actualTransactionId !== resolution.actualTransactionId) {
+      throw new LocalReconciliationError("resolution_snapshot_invalid");
+    }
+    const transaction = await this.ledger.getTransactionById(resolution.actualTransactionId);
+    const merchantMatches = transaction?.payeeName !== null && transaction?.payeeName !== undefined &&
+      normalizeReconciliationMerchant(transaction.payeeName) === normalizeReconciliationMerchant(confirmed.merchant);
+    const originalAmount = -confirmed.totalAmountYen;
+    const targetAmount = -resolution.statementAmountYen;
+    const hasOriginalAmount = transaction?.amountYen === originalAmount;
+    const alreadyClearedTarget = resolution.source === "user" && transaction?.cleared === true && transaction.amountYen === targetAmount;
+    if (!transaction || transaction.kind !== "expense" || transaction.date !== confirmed.purchasedDate ||
+      transaction.accountId !== confirmed.accountId || !merchantMatches || (!hasOriginalAmount && !alreadyClearedTarget) ||
+      (resolution.source === "automatic" && transaction.amountYen !== targetAmount) ||
+      (transaction.isSplit && transaction.amountYen !== targetAmount)) {
+      throw new LocalReconciliationError("actual_readback_mismatch");
+    }
+    return { ...resolution, actualSnapshot: actualSnapshot(transaction) };
+  }
+
   private async applyOne(input: LocalResolution): Promise<LocalResolution> {
-    let resolution = await this.storeResolution({ ...input, status: "processing", errorCode: null });
+    let resolution = input;
     try {
+      resolution = await this.hydrateLegacySnapshot(resolution);
+      resolution = await this.storeResolution({ ...resolution, status: "processing", errorCode: null });
       if (resolution.resolution === "same_expense") {
-        if (!resolution.receiptId || !resolution.actualTransactionId) throw new LocalReconciliationError("receipt_unavailable");
+        if (!resolution.receiptId || !resolution.actualTransactionId || !resolution.actualSnapshot) throw new LocalReconciliationError("resolution_snapshot_invalid");
+        const current = await this.ledger.getTransactionById(resolution.actualTransactionId);
+        if (!current || !matchesSnapshotFields(current, resolution.actualSnapshot)) throw new LocalReconciliationError("actual_readback_mismatch");
+        const targetAmount = -resolution.statementAmountYen;
+        const amountAlreadyApplied = resolution.source === "user" && !current.isSplit && current.amountYen === targetAmount && current.cleared;
+        if (!matchesSnapshot(current, resolution.actualSnapshot) && !amountAlreadyApplied) throw new LocalReconciliationError("actual_readback_mismatch");
+        if (resolution.source === "automatic" && current.amountYen !== targetAmount) throw new LocalReconciliationError("actual_readback_mismatch");
+        if (current.isSplit && current.amountYen !== targetAmount) throw new LocalReconciliationError("split_amount_adjustment_unsupported");
         await this.ledger.applyTransactionUpdates([{ transactionId: resolution.actualTransactionId,
-          ...(resolution.source === "user" ? { amountYen: -resolution.statementAmountYen } : {}), cleared: true }]);
+          ...(resolution.source === "user" && current.amountYen !== targetAmount ? { amountYen: targetAmount } : {}), cleared: true }]);
         const actual = await this.ledger.getTransactionById(resolution.actualTransactionId);
-        if (!actual || actual.kind !== "expense" || !actual.cleared || (resolution.source === "user" && actual.amountYen !== -resolution.statementAmountYen)) throw new LocalReconciliationError("actual_readback_mismatch");
+        if (!actual || !matchesSnapshotFields(actual, resolution.actualSnapshot) || !actual.cleared ||
+          (resolution.source === "user" && actual.amountYen !== targetAmount) ||
+          (resolution.source === "automatic" && actual.amountYen !== resolution.actualSnapshot.amountYen)) {
+          throw new LocalReconciliationError("actual_readback_mismatch");
+        }
       } else {
         if (!resolution.accountId || !resolution.categoryId || !resolution.importedId) throw new LocalReconciliationError("resolution_snapshot_invalid");
-        const statement = await this.findStatement(resolution.statementId);
-        if (!statement || statement.value.kind !== "purchase") throw new LocalReconciliationError("statement_unavailable");
-        const imported = await this.ledger.importReceipt({ accountId: resolution.accountId, date: statement.value.usedDate,
-          amountYen: -resolution.statementAmountYen, merchant: statement.value.merchant,
+        const statement = resolution.statementSnapshot ?? (await this.findStatement(resolution.statementId))?.value;
+        if (!statement || statement.kind !== "purchase") throw new LocalReconciliationError("statement_unavailable");
+        const imported = await this.ledger.importReceipt({ accountId: resolution.accountId, date: statement.usedDate,
+          amountYen: -resolution.statementAmountYen, merchant: statement.merchant,
           categoryId: resolution.categoryId, importedId: resolution.importedId });
         await this.ledger.applyTransactionUpdates([{ transactionId: imported.id, cleared: true }]);
         const actual = await this.ledger.getTransactionById(imported.id);
-        if (!actual || actual.kind !== "expense" || !actual.cleared || actual.amountYen !== -resolution.statementAmountYen || actual.accountId !== resolution.accountId || actual.date !== statement.value.usedDate) throw new LocalReconciliationError("actual_readback_mismatch");
+        if (!actual || actual.kind !== "expense" || !actual.cleared || actual.amountYen !== -resolution.statementAmountYen ||
+          actual.accountId !== resolution.accountId || actual.date !== statement.usedDate || actual.payeeName === null ||
+          normalizeReconciliationMerchant(actual.payeeName) !== normalizeReconciliationMerchant(statement.merchant)) {
+          throw new LocalReconciliationError("actual_readback_mismatch");
+        }
         resolution = { ...resolution, actualTransactionId: imported.id };
       }
       return this.storeResolution({ ...resolution, status: "applied", errorCode: null });
@@ -326,10 +539,16 @@ export class LocalReconciliationService {
   private async applyBatch(resolutions: LocalResolution[]): Promise<void> {
     const processing = await Promise.all(resolutions.map((item) => this.storeResolution({ ...item, status: "processing" })));
     try {
+      const before = await Promise.all(processing.map((item) => item.actualTransactionId ? this.ledger.getTransactionById(item.actualTransactionId) : Promise.resolve(null)));
+      if (processing.some((item, index) => !item.actualSnapshot || !before[index] ||
+        !matchesSnapshot(before[index]!, item.actualSnapshot!) ||
+        before[index]!.amountYen !== -item.statementAmountYen)) throw new LocalReconciliationError("actual_readback_mismatch");
       const updates = processing.map((item) => ({ transactionId: item.actualTransactionId!, cleared: true as const }));
       await this.ledger.applyTransactionUpdates(updates);
       const checks = await Promise.all(processing.map((item) => this.ledger.getTransactionById(item.actualTransactionId!)));
-      if (checks.some((item) => !item || item.kind !== "expense" || !item.cleared)) throw new LocalReconciliationError("actual_readback_mismatch");
+      if (checks.some((transaction, index) => !transaction || !transaction.cleared ||
+        !matchesSnapshotFields(transaction, processing[index]!.actualSnapshot!) ||
+        transaction.amountYen !== processing[index]!.actualSnapshot!.amountYen)) throw new LocalReconciliationError("actual_readback_mismatch");
       await Promise.all(processing.map((item) => this.storeResolution({ ...item, status: "applied" })));
     } catch (error) {
       await Promise.all(processing.map((item) => this.storeResolution({ ...item, status: "failed", errorCode: error instanceof LocalReconciliationError ? error.code : "actual_apply_failed" })));

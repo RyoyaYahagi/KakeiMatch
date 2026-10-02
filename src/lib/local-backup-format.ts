@@ -67,6 +67,7 @@ const deletionAudit = z.object({
 const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
+  accountId: z.string().min(1).max(128).optional(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
   duplicateRowsInFile: z.number().int().safe().nonnegative(),
   needsReviewRows: z.array(z.object({ rowNumber: z.number().int().positive(), reason: z.string().min(1).max(100) }).strict()).optional(),
@@ -83,10 +84,17 @@ const runResult = z.object({
   statementResults: z.array(z.object({ statementTransactionId: z.string(), status: z.enum(["matched", "needs_review", "unmatched_statement"]), matchedReceiptId: nullableString, reasonCodes: z.array(z.string()) }).strict()),
   receiptResults: z.array(z.object({ receiptId: z.string(), status: z.enum(["matched", "needs_review", "unmatched_receipt"]), matchedStatementTransactionId: nullableString, reasonCodes: z.array(z.string()) }).strict()),
 }).strict();
+const reconciliationRun = runResult.extend({
+  runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime,
+  inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+}).strict();
 const resolution = z.object({
   id: z.string(), runId: z.string(), statementId: z.string(), resolution: z.enum(["same_expense", "no_receipt"]), source: z.enum(["automatic", "user"]),
   receiptId: nullableString, categoryId: nullableString, accountId: nullableString, statementAmountYen: safeYen, importedId: nullableString,
-  status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString, errorCode: nullableString, createdAt: isoDateTime, updatedAt: isoDateTime,
+  status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString,
+  actualSnapshot: z.object({ date, amountYen: z.number().int().safe(), payeeName: nullableString, accountId: z.string().min(1), isSplit: z.boolean().optional() }).strict().optional(),
+  statementSnapshot: z.object({ usedDate: date, merchant: z.string(), kind: z.enum(["purchase", "refund"]) }).strict().optional(),
+  errorCode: nullableString, createdAt: isoDateTime, updatedAt: isoDateTime,
 }).strict();
 
 const rawBlobMetadata = z.object({
@@ -119,11 +127,15 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
       : z.object({ merchant: z.string(), aliasMerchant: z.string() }).strict();
     case "statement-import": return statementImport;
     case "statement-transaction": return statement;
-    case "reconciliation-run": return runResult.extend({ runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime }).strict();
+    case "reconciliation-run": return reconciliationRun;
     case "reconciliation-result": return runResult;
     case "reconciliation-resolution": return resolution;
     case "correction-audit": return allCorrectionAudits;
-    case "account-metadata": return z.object({ budgetId: z.string().min(1).max(128), accountId: z.string().min(1).max(128), accountType: z.enum(["bank", "credit_card", "cash", "other"]) }).strict();
+    case "account-metadata": return z.object({
+      budgetId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
+      accountType: z.enum(["bank", "credit_card", "cash", "other"]),
+      statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]).optional(),
+    }).strict();
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();

@@ -109,6 +109,12 @@ async function setupLedger() {
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Backup Wallet');
   await page.getByRole('button', { name: '追加する', exact: true }).click();
   await page.getByRole('button', { name: 'Synthetic Backup Wallet · 利用中', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Synthetic Backup Wallet · 利用中', exact: true }).click();
+  await page.getByRole('button', { name: '編集する', exact: true }).click();
+  await page.locator('select[name="accountType"]').selectOption('other');
+  await page.locator('select[name="statementProvider"]').selectOption('paypay');
+  await page.getByRole('button', { name: '変更を保存', exact: true }).click();
+  await page.getByText('明細サービス：PayPay', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
@@ -142,10 +148,16 @@ async function addReceipt(merchant, amount) {
 }
 
 async function importStatementCsv() {
-  await page.locator('#settings-tab').click(); await page.locator('#statement-tab').click();
+  await page.locator('#reconciliation-tab').click();
+  const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
+  if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
+  await page.locator('#statement-provider').selectOption('paypay');
+  await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Backup Wallet');
+  await page.locator('#statement-account').selectOption({ label: 'Synthetic Backup Wallet' });
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
-  await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
-  await page.getByText('2件を取り込みました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
+  await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
+  await page.getByText(/自動確認済み 1件/).waitFor();
 }
 
 async function seedAuditAndPreferences() {
@@ -226,6 +238,15 @@ async function exportSnapshot() {
   return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: summary };
 }
 
+function assertPayPayStatementMapping(snapshot) {
+  const imports = snapshot.data.records.filter(row => row.kind === 'statement-import' && row.value.provider === 'paypay');
+  assert.equal(imports.length, 1, 'backup should preserve the mapped PayPay import');
+  const imported = imports[0].value;
+  assert.ok(imported.accountId, 'statement import should retain its explicitly selected account');
+  const accountMapping = snapshot.data.records.find(row => row.kind === 'account-metadata' && row.value.accountId === imported.accountId);
+  assert.equal(accountMapping?.value.statementProvider, 'paypay', 'backup should retain the account-to-provider mapping');
+}
+
 async function wipeLocalData() {
   const navigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', async dialog => {
@@ -248,8 +269,6 @@ try {
   await addReceipt('Synthetic Corner', 1280);
   await addReceipt('Synthetic Corner Market', 1280);
   await importStatementCsv();
-  await page.locator('#reconciliation-tab').click();
-  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.getByText(/要確認 1件/).waitFor();
   await page.locator('details').filter({ hasText: 'Synthetic Corner · ¥1,280' }).locator('summary').click();
   await page.locator('details p').filter({ hasText: 'Synthetic Corner Market' }).locator('xpath=following-sibling::button[1]').click();
@@ -262,6 +281,7 @@ try {
   // Prime the backup timestamp; the next archive must carry that saved setting.
   await exportBackup();
   const sourceSnapshot = await exportSnapshot();
+  assertPayPayStatementMapping(sourceSnapshot);
   const originalBackup = await exportBackup();
   assert.ok(originalBackup.byteLength > 64, 'portable backup should contain Actual and local data');
 
@@ -282,6 +302,7 @@ try {
   await page.reload();
   await waitForReady();
   const restoredSnapshot = await exportSnapshot();
+  assertPayPayStatementMapping(restoredSnapshot);
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
   await page.locator('#settings-tab').click();
@@ -321,6 +342,7 @@ try {
   await page.reload();
   await waitForReady();
   const noRawRestored = await exportSnapshot();
+  assertPayPayStatementMapping(noRawRestored);
   assert.deepEqual(noRawRestored.data.records, cleanedSnapshot.data.records);
   assert.equal(noRawRestored.data.blobs.length, 0);
   assert.deepEqual(noRawRestored.renderedTransactions, cleanedSnapshot.renderedTransactions);

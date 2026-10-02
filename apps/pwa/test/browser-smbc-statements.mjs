@@ -17,18 +17,59 @@ const csv = [
   '2026/09/29,Synthetic Installment,9000,installment,2,3000,',
   ',,,,,9000,',
 ].join('\r\n') + '\r\n';
+async function createMappedCardAccount(name) {
+  await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: '支払元', exact: true }).click();
+  await page.getByRole('button', { name: '支払元を追加する', exact: true }).click();
+  await page.locator('select[name="accountType"]').selectOption('credit_card');
+  await page.getByLabel('支払元の名前', { exact: true }).fill(name);
+  await page.getByRole('button', { name: '追加する', exact: true }).click();
+  const account = page.getByRole('button', { name: `${name} · 利用中`, exact: true });
+  await account.waitFor();
+  await account.click();
+  await page.getByRole('button', { name: '編集する', exact: true }).click();
+  await page.locator('select[name="accountType"]').selectOption('credit_card');
+  await page.locator('select[name="statementProvider"]').selectOption('smbc_card');
+  await page.getByRole('button', { name: '変更を保存', exact: true }).click();
+  await page.getByText('明細サービス：三井住友カード', { exact: true }).waitFor();
+}
+async function addNativeExpense(account) {
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
+  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
+  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await page.locator('#home-tab').click();
+  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: '支出', exact: true }).click();
+  await page.getByRole('button', { name: '手入力', exact: true }).click();
+  await page.locator('#manual-transaction-payee').fill('Synthetic Market');
+  await page.locator('#manual-transaction-date').fill('2026-09-28');
+  await page.locator('#manual-transaction-amount').fill('1200');
+  await page.locator('#manual-transaction-category').selectOption({ label: '食費' });
+  await page.locator('#manual-transaction-account').selectOption({ label: account });
+  await page.getByRole('button', { name: '登録する', exact: true }).click();
+  await page.getByText('登録しました。', { exact: true }).waitFor();
+}
 try {
   await page.goto(process.env.PWA_E2E_URL);
   await page.getByText('今月の支出 ¥0').waitFor();
+  await createMappedCardAccount('Synthetic SMBC Card');
+  await addNativeExpense('Synthetic SMBC Card');
   const upload = async () => {
-    await page.locator('#settings-tab').click();
-    await page.locator('#statement-tab').click();
+    await page.locator('#reconciliation-tab').click();
+    const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
+    if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
     await page.locator('#statement-provider').selectOption('smbc_card');
+    await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic SMBC Card');
+    await page.locator('#statement-account').selectOption({ label: 'Synthetic SMBC Card' });
     await page.locator('#statement-file').setInputFiles({ name: 'synthetic-vpass.csv', mimeType: 'text/csv', buffer: cp932(csv) });
-    await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
+    await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   };
   await upload();
-  await page.getByText('1件を取り込みました。重複 0件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
+  await page.getByText('1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
+  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/記録なし 0件/).waitFor();
   await page.getByText('三井住友カード: 要確認 1件', { exact: true }).waitFor();
   await page.getByText('3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
   assert.equal(await page.getByText('SYNTHETIC MEMBER', { exact: false }).count(), 0);
@@ -36,9 +77,7 @@ try {
   if (process.env.PWA_SMBC_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SMBC_SCREENSHOT_PATH, fullPage: true });
 
   await upload();
-  await page.getByText('0件を取り込みました。重複 1件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
-  await page.locator('#reconciliation-tab').click();
-  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
+  await page.getByText('0件を取り込み、照合しました。重複 1件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
   await page.getByText(/記録なし 1件/).waitFor();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Market' }).waitFor();
   assert.deepEqual(errors, []);
