@@ -91,6 +91,7 @@ jobs:
             test:account-balances-e2e \
             test:account-types-e2e \
             test:ai-costs-e2e \
+            test:ai-paused-e2e \
             test:recurring-e2e \
             test:transaction-search-e2e \
             test:entry-masters-e2e &
