@@ -47,7 +47,9 @@ try {
   await page.getByText(/要確認 0件 · 記録なし 0件/).waitFor();
 
   // Re-importing the same CSV does not create a second statement row.
-  const again = page.locator('summary').filter({ hasText: '明細CSVを取り込む' }); if (await again.count()) await again.click();
+  // The collapsed importer is drawn last, so waiting for it means the redraw after registering has finished.
+  const again = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
+  await again.waitFor(); await again.click();
   await page.locator('#statement-provider').selectOption('rakuten_card');
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-provider-only-rakuten.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await click('取り込んで照合');
