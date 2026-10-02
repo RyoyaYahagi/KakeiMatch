@@ -111,7 +111,7 @@ export class LocalReconciliationError extends Error {
       record_unavailable: "レシートまたは明細を利用できません。画面を更新してください。",
       candidates_remaining: "似たレシート候補を先に確認してください。",
       decision_unavailable: "この明細は支出として登録できません。",
-      account_unavailable: "選択した支払元を利用できません。",
+      account_unavailable: "支払元を選択してください。現金以外の利用中の支払元を選べます。",
       category_unavailable: "選択したカテゴリを利用できません。",
       retry_unavailable: "再試行できる判断記録がありません。",
       receipt_unavailable: "レシートの家計簿記録を見つけられません。",
@@ -243,29 +243,17 @@ export class LocalReconciliationService {
       kind: statement.kind, usedDate: statement.usedDate, postedDate: statement.postedDate,
       merchant: statement.merchant, amountYen: statement.amountYen, paymentMethod: statement.paymentMethod,
     }));
-    const accountScopeByStatement = new Map<string, string>();
-    const autoMatchEligibleStatementIds = new Set<string>();
-    const candidateEligibleStatementIds = new Set<string>();
-    for (const statement of statements) {
-      if (excludedStatementIds.has(statement.id)) continue;
-      const metadata = importsById.get(statement.importId);
-      const accountId = metadata?.accountId;
-      if (accountId) {
-        accountScopeByStatement.set(statement.id, accountId);
-        const account = accountsById.get(accountId);
-        if (account && account.accountType !== "cash" && !account.closed && accountProviders.get(accountId) === statement.provider) {
-          autoMatchEligibleStatementIds.add(statement.id);
-          candidateEligibleStatementIds.add(statement.id);
-        }
-      }
-    }
-
+    // Matching uses statement data only (date, amount, merchant, aliases). Payment-source metadata is
+    // auxiliary: it decides which unmatched records are shown as waiting for this provider's statement.
+    const waitsForWindow = (accountId: string, window: StatementWindow) => {
+      const account = accountsById.get(accountId);
+      return Boolean(account && account.accountType !== "cash" && !account.closed &&
+        (accountProviders.get(accountId) === window.provider || accountId === window.accountId));
+    };
     const waitingReceiptIds = new Set<string>();
     for (const window of windows) {
-      if (!window.accountId || accountsById.get(window.accountId)?.accountType === "cash" || accountsById.get(window.accountId)?.closed ||
-        accountProviders.get(window.accountId) !== window.provider) continue;
       for (const transaction of rowsByImport.get(window.importId) ?? []) {
-        if (transaction.kind !== "expense" || transaction.cleared || transaction.accountId !== window.accountId || transaction.amountYen >= 0 ||
+        if (transaction.kind !== "expense" || transaction.cleared || transaction.amountYen >= 0 || !waitsForWindow(transaction.accountId, window) ||
           excludedActualIds.has(transaction.id) || (transaction.importedId && excludedImportedIds.has(transaction.importedId))) continue;
         const receipt = receiptByActualId.get(transaction.id) ?? null;
         waitingReceiptIds.add(receipt?.id ?? nativeCandidateId(transaction.id));
@@ -276,12 +264,12 @@ export class LocalReconciliationService {
       statements: engineStatements, receipts: engineReceipts, aliases,
       excludedStatementIds, excludedReceiptIds,
       rejectedPairs: new Set(rejected.map((item) => pairKey(item.statementId, item.receiptId))),
-      accountScopeByStatement, autoMatchEligibleStatementIds, candidateEligibleStatementIds,
     });
     const result: ReconciliationEngineResult = {
       ...engineResult,
       receiptResults: engineResult.receiptResults.filter((item) => waitingReceiptIds.has(item.receiptId)),
     };
+    const referencedAccountIds = new Set([...rowsByImport.values()].flatMap((rows) => rows.map((transaction) => transaction.accountId)));
     const inputSnapshot = {
       statements: statements.map((statement) => [statement.id, statement.provider, statement.externalId, statement.kind,
         statement.usedDate, statement.postedDate, statement.merchant, statement.amountYen, statement.paymentMethod,
@@ -293,8 +281,10 @@ export class LocalReconciliationService {
       imports: importRecords.map(({ id, value }) => [id, value.provider, value.accountId ?? null, value.fileHash]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       transactions: [...transactionsById.values()].map((transaction) => [transaction.id, transaction.date, transaction.amountYen,
         transaction.payeeName, transaction.accountId, Boolean(transaction.isSplit), transaction.cleared]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-      accounts: accounts.map((account) => [account.id, account.name, account.accountType, account.closed,
-        accountProviders.get(account.id) ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+      // Only accounts used by records in the matching windows affect the result; adding an unused payment
+      // source (for example while registering an unrecorded statement) must not invalidate the run.
+      accounts: accounts.filter((account) => referencedAccountIds.has(account.id)).map((account) => [account.id, account.name,
+        account.accountType, account.closed, accountProviders.get(account.id) ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       resolutions: priorResolutions.map((item) => [item.statementId, item.resolution, item.receiptId, item.status,
         item.actualTransactionId, item.accountId, item.categoryId, item.statementAmountYen, item.importedId,
         item.actualSnapshot ?? null, item.statementSnapshot ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
@@ -400,7 +390,7 @@ export class LocalReconciliationService {
     });
   }
 
-  async noReceipt(runId: string, statementId: string, options: { accountId?: string; categoryId: string }): Promise<LocalResolution> {
+  async noReceipt(runId: string, statementId: string, options: { accountId: string; categoryId: string }): Promise<LocalResolution> {
     return serialize(this.repo.profileId, async () => {
       const { run } = await this.requireLatest(runId);
       const result = run.statementResults.find((item) => item.statementTransactionId === statementId);
@@ -410,14 +400,9 @@ export class LocalReconciliationService {
       const rejected = new Set((await this.repo.list<PairRejection>("correction-audit")).filter(item => "statementId" in item.value && "receiptId" in item.value).map((item) => pairKey(item.value.statementId, item.value.receiptId)));
       if (candidates.some((candidate) => !rejected.has(pairKey(statementId, candidate.receiptId)))) throw new LocalReconciliationError("candidates_remaining");
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
-      const [accounts, categories, importRecord] = await Promise.all([
-        this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories(), this.repo.get<StatementImportMetadata>(statementRecord.value.importId),
-      ]);
-      const fixedAccountId = importRecord?.value.accountId;
-      const mappedProvider = fixedAccountId ? await this.getStatementProvider(fixedAccountId) : null;
-      if (!fixedAccountId || mappedProvider !== statementRecord.value.provider) throw new LocalReconciliationError("account_unavailable");
-      if (fixedAccountId && options.accountId && fixedAccountId !== options.accountId) throw new LocalReconciliationError("account_unavailable");
-      const accountId = fixedAccountId ?? options.accountId;
+      const [accounts, categories] = await Promise.all([this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories()]);
+      // A payment source is needed only here, because a new ledger transaction must belong to an account.
+      const accountId = options.accountId;
       if (!accountId || !accounts.some((account) => account.id === accountId && account.accountType !== "cash")) throw new LocalReconciliationError("account_unavailable");
       if (!categories.some((category) => category.id === options.categoryId)) throw new LocalReconciliationError("category_unavailable");
       const statement = statementRecord.value;

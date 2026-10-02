@@ -53,7 +53,7 @@ describe("LocalStatementService", () => {
   it("stores the validated source blob, canonical purchases, and review reasons", async () => {
     const { repository, service } = await openService();
     const input = csv([headers, base, cardRow({ "支払区分": "分割払い", "利用金額": "1,200", "支払総額": "1,200", "当月支払金額": "400", "翌月以降繰越金額": "800" })]);
-    const result = await service.importFile(input, "paypay_card", "account-1");
+    const result = await service.importFile(input, "paypay_card");
     expect(result).toMatchObject({ added: 1, duplicates: 0, excluded: 0, needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }] });
     const raw = await repository.getBlob(`statement-source:${result.id}`);
     expect(raw?.ownerId).toBe(result.id);
@@ -66,61 +66,66 @@ describe("LocalStatementService", () => {
   it("counts same-file repeats and whole-file repeats as duplicates", async () => {
     const { service } = await openService();
     const input = csv([headers, base, base]);
-    const first = await service.importFile(input, "paypay_card", "account-1");
+    const first = await service.importFile(input, "paypay_card");
     expect(first).toMatchObject({ added: 2, duplicates: 0, duplicateRowsInFile: 0 });
-    const again = await service.importFile(input, "paypay_card", "account-1");
+    const again = await service.importFile(input, "paypay_card");
     expect(again).toMatchObject({ id: first.id, added: 0, duplicates: 2, duplicateRowsInFile: 0 });
   });
 
-  it("keeps identical provider rows separate across explicitly selected accounts", async () => {
-    const { service } = await openService();
-    const input = csv([headers, base]);
-    const first = await service.importFile(input, "paypay_card", "account-1");
-    const second = await service.importFile(input, "paypay_card", "account-2");
-    const repeatedFirst = await service.importFile(input, "paypay_card", "account-1");
-
-    expect(first.added).toBe(1);
-    expect(second.added).toBe(1);
-    expect(second.id).not.toBe(first.id);
-    expect(repeatedFirst).toMatchObject({ id: first.id, added: 0, duplicates: 1 });
-    const rows = await service.list();
-    expect(rows).toHaveLength(2);
-    expect(new Set(rows.map(row => row.id)).size).toBe(2);
+  it("imports with provider and CSV only and never stores a payment source", async () => {
+    const { repository, service } = await openService();
+    const result = await service.importFile(csv([headers, base]), "paypay_card");
+    const metadata = (await repository.get<Record<string, unknown>>(result.id))!.value;
+    expect(metadata).toMatchObject({ provider: "paypay_card" });
+    expect(metadata).not.toHaveProperty("accountId");
   });
 
-  it("associates an unassigned legacy import and deduplicates rows with old unscoped IDs", async () => {
+  it("deduplicates rows from legacy account-scoped imports and keeps their metadata", async () => {
     const { repository, service } = await openService();
     const input = csv([headers, base]);
-    const imported = await service.importFile(input, "paypay_card", "account-1");
-    const metadata = (await repository.get<Record<string, unknown>>(imported.id))!.value;
-    const legacyMetadata = { ...metadata };
-    delete legacyMetadata.accountId;
-    await repository.put({ id: imported.id, kind: "statement-import", value: legacyMetadata, updatedAt: new Date().toISOString() });
-    const row = (await service.list())[0]!;
-    await repository.delete(row.id);
-    await repository.put({ id: "legacy-unscoped-row", kind: "statement-transaction", value: { ...row, id: "legacy-unscoped-row" }, updatedAt: new Date().toISOString() });
+    const parsed = await parseStatementBlob(input, "paypay_card");
+    const row = parsed.transactions[0]!;
+    const legacyImportId = "legacy-import";
+    await repository.put({ id: legacyImportId, kind: "statement-import", value: {
+      provider: "paypay_card", fileHash: "b".repeat(64), accountId: "account-1", encoding: parsed.encoding,
+      headerSignature: parsed.headerSignature!, totalRows: 1, excludedRows: 0, duplicateRowsInFile: 0, createdAt: new Date().toISOString(),
+    }, updatedAt: new Date().toISOString() });
+    await repository.put({ id: "legacy-scoped-row", kind: "statement-transaction", value: { ...row, id: "legacy-scoped-row", importId: legacyImportId }, updatedAt: new Date().toISOString() });
 
-    await service.associateAccount(imported.id, "account-1");
-    const repeated = await service.importFile(input, "paypay_card", "account-1");
+    const repeated = await service.importFile(input, "paypay_card");
+
+    expect(repeated).toMatchObject({ added: 0, duplicates: 1 });
+    expect((await service.list()).map(({ id }) => id)).toEqual(["legacy-scoped-row"]);
+    expect((await repository.get<Record<string, unknown>>(legacyImportId))?.value).toMatchObject({ accountId: "account-1" });
+  });
+
+  it("reuses a legacy import with the same file without dropping its payment source", async () => {
+    const { repository, service } = await openService();
+    const input = csv([headers, base]);
+    const imported = await service.importFile(input, "paypay_card");
+    const metadata = (await repository.get<Record<string, unknown>>(imported.id))!.value;
+    await repository.put({ id: imported.id, kind: "statement-import", value: { ...metadata, accountId: "account-1" }, updatedAt: new Date().toISOString() });
+
+    const repeated = await service.importFile(input, "paypay_card");
 
     expect(repeated).toMatchObject({ id: imported.id, added: 0, duplicates: 1 });
+    expect((await repository.get<Record<string, unknown>>(imported.id))?.value).toMatchObject({ accountId: "account-1" });
     expect(await service.list()).toHaveLength(1);
-    await expect(service.associateAccount(imported.id, "account-2")).rejects.toThrow("一度割り当てた明細の支払元は変更できません");
   });
 
   it("rejects malformed and unsupported files without storing their originals", async () => {
     const { repository, service } = await openService();
-    await expect(service.importFile(csv([[...headers].reverse(), base]), "paypay_card", "account-1")).rejects.toMatchObject({ issues: [{ code: "header_mismatch" }] });
-    await expect(service.importFile(new Blob(["a,b\nc,d\n"]), "smbc_card", "account-1")).rejects.toMatchObject({ issues: [{ code: "unsupported_layout" }] });
+    await expect(service.importFile(csv([[...headers].reverse(), base]), "paypay_card")).rejects.toMatchObject({ issues: [{ code: "header_mismatch" }] });
+    await expect(service.importFile(new Blob(["a,b\nc,d\n"]), "smbc_card")).rejects.toMatchObject({ issues: [{ code: "unsupported_layout" }] });
     expect(await repository.list("statement-import")).toHaveLength(0);
     expect((await repository.serialize()).blobs).toHaveLength(0);
   });
 
   it("treats a changed amount as a distinct purchase when no external ID is available", async () => {
     const { service } = await openService();
-    await service.importFile(csv([headers, base]), "paypay_card", "account-1");
+    await service.importFile(csv([headers, base]), "paypay_card");
     const changed = cardRow({ "利用金額": "2,000", "支払総額": "2,000", "当月支払金額": "2,000" });
-    const result = await service.importFile(csv([headers, changed]), "paypay_card", "account-1");
+    const result = await service.importFile(csv([headers, changed]), "paypay_card");
     expect(result.added).toBe(1);
     expect(await service.list()).toHaveLength(2);
   });
@@ -128,7 +133,7 @@ describe("LocalStatementService", () => {
   it("stores SMBC review reasons without row values and keeps them in backup records", async () => {
     const { repository, service } = await openService();
     const input = smbcCsv([smbcMeta, smbcPurchase, smbcReview, smbcFooter("4200")]);
-    const result = await service.importFile(input, "smbc_card", "account-1");
+    const result = await service.importFile(input, "smbc_card");
     expect(result).toMatchObject({ added: 1, excluded: 0, needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }] });
     const metadata = (await repository.get<{ headerSignature: string; needsReviewRows?: unknown[]; totalRows: number }>(result.id))?.value;
     expect(metadata).toMatchObject({ headerSignature: "smbc-vpass-cp932-v1", needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }], totalRows: 2 });
@@ -141,31 +146,15 @@ describe("LocalStatementService", () => {
   it("deduplicates overlapping SMBC exports by fingerprint and ordinal", async () => {
     const { service } = await openService();
     const firstSubset = smbcCsv([smbcMeta, smbcPurchase, smbcFooter("1200")]);
-    const first = await service.importFile(firstSubset, "smbc_card", "account-1");
+    const first = await service.importFile(firstSubset, "smbc_card");
     expect(first.added).toBe(1);
     const overlapping = smbcCsv([smbcMeta, smbcPurchase, smbcPurchase, smbcFooter("2400")]);
-    const second = await service.importFile(overlapping, "smbc_card", "account-1");
+    const second = await service.importFile(overlapping, "smbc_card");
     expect(second).toMatchObject({ added: 1, duplicates: 1 });
     expect((await service.list()).map(({ duplicateOrdinal }) => duplicateOrdinal).sort()).toEqual([1, 2]);
-    const repeat = await service.importFile(overlapping, "smbc_card", "account-1");
+    const repeat = await service.importFile(overlapping, "smbc_card");
     expect(repeat).toMatchObject({ added: 0, duplicates: 2 });
     expect(await service.list()).toHaveLength(2);
-  });
-
-  it("keeps no-ID statement fingerprints and duplicate ordinals scoped to the selected account", async () => {
-    const { service } = await openService();
-    const input = smbcCsv([smbcMeta, smbcPurchase, smbcFooter("1200")]);
-    const first = await service.importFile(input, "smbc_card", "account-1");
-    const second = await service.importFile(input, "smbc_card", "account-2");
-    const repeatedFirst = await service.importFile(input, "smbc_card", "account-1");
-    const rows = await service.list();
-
-    expect(first.added).toBe(1);
-    expect(second.added).toBe(1);
-    expect(rows).toHaveLength(2);
-    expect(new Set(rows.map(({ id }) => id)).size).toBe(2);
-    expect(rows.map(({ duplicateOrdinal }) => duplicateOrdinal)).toEqual([1, 1]);
-    expect(repeatedFirst).toMatchObject({ id: first.id, added: 0, duplicates: 1 });
   });
 
   it("persists Rakuten review reasons and deduplicates overlapping one-time purchases", async () => {
@@ -174,7 +163,7 @@ describe("LocalStatementService", () => {
     const partialParent = ["2026/09/29", "Synthetic Partial", "本人", "1回払い", "500", "0", "500", "", "", "", ""];
     const continuation = ["", "Synthetic Continuation", "", "", "", "", "", "", "", "", ""];
     const firstInput = csv([rakutenHeaders, rakutenPurchase, installment, partialParent, continuation]);
-    const first = await service.importFile(firstInput, "rakuten_card", "account-1");
+    const first = await service.importFile(firstInput, "rakuten_card");
     expect(first).toMatchObject({ added: 1, duplicates: 0, needsReviewRows: [
       { rowNumber: 3, reason: "1回払い以外の可能性があります" },
       { rowNumber: 4, reason: "複数行明細または部分行の可能性があります" },
@@ -187,10 +176,10 @@ describe("LocalStatementService", () => {
     const changedMonths = [...rakutenHeaders];
     changedMonths[7] = "10月支払金額";
     changedMonths[9] = "11月繰越残高";
-    const overlapping = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card", "account-1");
+    const overlapping = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card");
     expect(overlapping).toMatchObject({ added: 1, duplicates: 1 });
     expect((await service.list()).map(({ duplicateOrdinal }) => duplicateOrdinal).sort()).toEqual([1, 2]);
-    const repeatedFile = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card", "account-1");
+    const repeatedFile = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card");
     expect(repeatedFile).toMatchObject({ added: 0, duplicates: 2 });
   });
 });

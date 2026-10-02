@@ -36,7 +36,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [セキュリティ](SECURITY.md): データとサービスの保護
 - [明細形式](docs/STATEMENT_FORMATS.md): 確認済みのCSV形式
-- [端末内の明細照合](docs/LOCAL_RECONCILIATION.md): 支払元の対応付けと確認・支出登録
+- [端末内の明細照合](docs/LOCAL_RECONCILIATION.md): 明細サービスとCSVだけで取り込む照合と、登録時の支払元選択
 - [UX](docs/UX.md)と[デザイン](docs/DESIGN.md): 画面設計の方針
 - [コントリビューション](CONTRIBUTING.md): branchとPull Requestの運用
 

@@ -149,8 +149,6 @@ try {
     if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
     await page.locator('#statement-provider').waitFor({ state: 'visible' });
     await page.locator('#statement-provider').selectOption('paypay_card');
-    await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Wallet');
-    await page.locator('#statement-account').selectOption({ label: 'Synthetic Wallet' });
     await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   };
@@ -181,7 +179,8 @@ try {
   await openAutomaticMatch();
   const unmatchedStatement = page.locator('#local-view details').filter({ hasText: 'Synthetic New Store' });
   await unmatchedStatement.locator('summary').click();
-  await unmatchedStatement.locator('select').selectOption({ label: '日用品' });
+  await unmatchedStatement.locator('select[id^="category-"]').selectOption({ label: '日用品' });
+  assert.equal(await unmatchedStatement.locator('select[id^="account-"]').locator('option:checked').textContent(), 'Synthetic Wallet');
   await unmatchedStatement.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/記録なし 0件/).waitFor();
   await page.locator('#home-tab').click();

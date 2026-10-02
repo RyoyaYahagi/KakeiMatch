@@ -195,42 +195,24 @@ describe("runReconciliationEngine", () => {
     expect(result.statementResults[0]?.status).toBe("unmatched_statement");
   });
 
-  it("limits candidates to the account assigned to each statement", () => {
+  it("matches statements against records in any payment source without account scoping", () => {
     const result = runReconciliationEngine({
       statements: [statement("s1")],
-      receipts: [receipt("r1", { actualAccountId: "account-1" }), receipt("r2", { actualAccountId: "account-2" })],
-      accountScopeByStatement: new Map([["s1", "account-1"]]),
-      autoMatchEligibleStatementIds: new Set(["s1"]),
-      candidateEligibleStatementIds: new Set(["s1"]),
+      receipts: [receipt("r1", { actualAccountId: "account-2" }), receipt("r2", { actualAccountId: "account-3", amountYen: 5000 })],
     });
 
     expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1"]);
     expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r1" });
-    expect(result.receiptResults.map((row) => [row.receiptId, row.status])).toEqual([[
-      "r1", "matched",
-    ], ["r2", "unmatched_receipt"]]);
   });
 
-  it("keeps explicitly eligible unmapped-provider rows for review without auto-matching", () => {
+  it("keeps identical records in different payment sources for review instead of auto-matching", () => {
     const result = runReconciliationEngine({
-      statements: [statement("s1")], receipts: [receipt("r1")],
-      candidateEligibleStatementIds: new Set(["s1"]),
-      autoMatchEligibleStatementIds: new Set(),
+      statements: [statement("s1")],
+      receipts: [receipt("r1", { actualAccountId: "account-1" }), receipt("r2", { actualAccountId: "account-2" })],
     });
 
-    expect(result.candidates).toHaveLength(1);
-    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", reasonCodes: expect.arrayContaining(["provider_account_unmapped"]) });
-  });
-
-  it("does not offer candidates when the statement is not eligible for the mapped provider account", () => {
-    const result = runReconciliationEngine({
-      statements: [statement("s1")], receipts: [receipt("r1")],
-      candidateEligibleStatementIds: new Set(),
-      autoMatchEligibleStatementIds: new Set(),
-    });
-
-    expect(result.candidates).toEqual([]);
-    expect(result.statementResults[0]?.status).toBe("unmatched_statement");
-    expect(result.receiptResults[0]?.status).toBe("unmatched_receipt");
+    expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null,
+      reasonCodes: expect.arrayContaining(["ambiguous_candidates"]) });
   });
 });

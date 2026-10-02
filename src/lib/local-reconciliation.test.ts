@@ -17,7 +17,8 @@ async function repository(): Promise<LocalDataRepository> {
 function makeLedger() {
   const transactions = new Map<string, ActualTransaction>();
   const accounts = [{ id: "account-1", name: "カード", accountType: "credit_card" as const, closed: false },
-    { id: "account-2", name: "別カード", accountType: "credit_card" as const, closed: false }];
+    { id: "account-2", name: "別カード", accountType: "credit_card" as const, closed: false },
+    { id: "account-cash", name: "財布", accountType: "cash" as const, closed: false }];
   let failNextImport = false;
   let failNextUpdate = false;
   let importCount = 0;
@@ -69,10 +70,10 @@ function makeReceipt(id: string, patch: Partial<LocalReceipt> = {}): LocalReceip
     registration: { status: "applied", actualTransactionId: `actual-${id}` }, ...patch };
 }
 
-async function seed(repo: LocalDataRepository, statements: LocalStatement[], receipts: LocalReceipt[] = []) {
+async function seed(repo: LocalDataRepository, statements: LocalStatement[], receipts: LocalReceipt[] = [], legacyAccountId?: string) {
   const imports = new Map(statements.map(statement => [statement.importId, statement.provider]));
   for (const [id, provider] of imports) await repo.put({ id, kind: "statement-import",
-    value: { provider, accountId: "account-1", fileHash: "a".repeat(64), encoding: "utf-8", headerSignature: "test",
+    value: { provider, ...(legacyAccountId ? { accountId: legacyAccountId } : {}), fileHash: "a".repeat(64), encoding: "utf-8", headerSignature: "test",
       totalRows: 0, excludedRows: 0, duplicateRowsInFile: 0, createdAt: timestamp }, updatedAt: timestamp });
   for (const value of statements) await repo.put({ id: value.id, kind: "statement-transaction", value, updatedAt: timestamp });
   for (const value of receipts) await repo.put({ id: value.id, kind: "receipt-metadata", value, updatedAt: timestamp });
@@ -241,11 +242,11 @@ describe("LocalReconciliationService", () => {
     expect(mock.transactions.get("actual-kakeimatch:statement:statement-1")?.payeeName).toBe("記録のない店");
   });
 
-  it("scopes native Actual candidates to the mapped account and excludes cleared or previously resolved imports", async () => {
+  it("excludes cash, cleared, or previously resolved Actual expenses from candidates", async () => {
     const repo = await repository();
     const mock = makeLedger();
-    mock.transactions.set("wrong-account", { id: "wrong-account", date: "2026-09-10", amountYen: -1200,
-      kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-2", cleared: false });
+    mock.transactions.set("cash-expense", { id: "cash-expense", date: "2026-09-10", amountYen: -1200,
+      kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-cash", cleared: false });
     mock.transactions.set("already-cleared", { id: "already-cleared", date: "2026-09-10", amountYen: -1200,
       kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: true });
     mock.transactions.set("already-imported", { id: "already-imported", date: "2026-09-10", amountYen: -1200,
@@ -264,6 +265,97 @@ describe("LocalReconciliationService", () => {
     expect(run.statementResults).toMatchObject([{ status: "unmatched_statement" }]);
     expect(run.candidates).toEqual([]);
     expect(run.receiptResults).toEqual([]);
+  });
+
+  it("matches a provider-only import without any payment source mapping", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    mock.transactions.set("actual-other-card", { id: "actual-other-card", date: "2026-09-10", amountYen: -1200,
+      kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-2", cleared: false });
+    await seed(repo, [makeStatement("statement-1")]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never);
+
+    const run = await service.run();
+
+    expect(run.statementResults).toMatchObject([{ status: "matched", matchedReceiptId: "actual:actual-other-card" }]);
+    expect(run.statementResults[0]?.reasonCodes).not.toContain("provider_account_unmapped");
+    expect((await service.resolutions())[0]).toMatchObject({ source: "automatic", status: "applied", accountId: null });
+    expect(mock.transactions.get("actual-other-card")).toMatchObject({ accountId: "account-2", amountYen: -1200, cleared: true });
+  });
+
+  it("returns the same matching result for legacy account-scoped and provider-only imports", async () => {
+    const results = [];
+    for (const legacyAccountId of [undefined, "account-1"]) {
+      const repo = await repository();
+      const mock = makeLedger();
+      mock.transactions.set("actual-a", { id: "actual-a", date: "2026-09-10", amountYen: -1200,
+        kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-2", cleared: false });
+      mock.transactions.set("actual-b", { id: "actual-b", date: "2026-09-12", amountYen: -900,
+        kind: "expense", payeeName: "別の店", categoryName: null, accountId: "account-1", cleared: false });
+      await seed(repo, [makeStatement("statement-1"), makeStatement("statement-2", { usedDate: "2026-09-12", merchant: "表記の違う加盟店", amountYen: 900 }),
+        makeStatement("statement-3", { usedDate: "2026-09-20", merchant: "記録のない店", amountYen: 3000 })], [], legacyAccountId);
+      const run = await createLocalReconciliationService(repo, mock).run();
+      results.push({ statements: run.statementResults, candidates: run.candidates });
+    }
+
+    expect(results[1]).toEqual(results[0]);
+    expect(results[0]!.statements.map(row => row.status)).toEqual(["matched", "needs_review", "unmatched_statement"]);
+  });
+
+  it("reaches results with zero payment sources and asks for one only when registering an unrecorded statement", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    mock.accounts.splice(0);
+    await seed(repo, [makeStatement("statement-1", { merchant: "記録のない店" })]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never);
+
+    const run = await service.run();
+
+    expect(run.statementResults).toMatchObject([{ status: "unmatched_statement", reasonCodes: ["no_candidate"] }]);
+    await expect(service.noReceipt(run.runId, "statement-1", { accountId: "account-1", categoryId: "category-1" })).rejects.toMatchObject({ code: "account_unavailable" });
+    expect(await service.resolutions()).toEqual([]);
+  });
+
+  it("requires a non-cash payment source chosen at registration time", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    await seed(repo, [makeStatement("statement-1", { merchant: "記録のない店" })]);
+    const service = createLocalReconciliationService(repo, mock);
+    const run = await service.run();
+
+    await expect(service.noReceipt(run.runId, "statement-1", { accountId: "", categoryId: "category-1" })).rejects.toMatchObject({ code: "account_unavailable" });
+    await expect(service.noReceipt(run.runId, "statement-1", { accountId: "account-cash", categoryId: "category-1" })).rejects.toMatchObject({ code: "account_unavailable" });
+    await expect(service.noReceipt(run.runId, "statement-1", { accountId: "account-2", categoryId: "category-1" }))
+      .resolves.toMatchObject({ status: "applied", accountId: "account-2" });
+    expect(mock.transactions.get("actual-kakeimatch:statement:statement-1")).toMatchObject({ accountId: "account-2", cleared: true });
+  });
+
+  it("keeps the run valid when a payment source is added during registration", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    mock.accounts.splice(0);
+    await seed(repo, [makeStatement("statement-1", { merchant: "記録のない店" })]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never);
+    const run = await service.run();
+    mock.accounts.push({ id: "account-new", name: "追加したカード", accountType: "credit_card", closed: false });
+
+    await expect(service.noReceipt(run.runId, "statement-1", { accountId: "account-new", categoryId: "category-1" }))
+      .resolves.toMatchObject({ status: "applied", accountId: "account-new" });
+  });
+
+  it("lists waiting records only for payment sources mapped to the statement provider", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    for (const accountId of ["account-1", "account-2", "account-cash"]) {
+      mock.transactions.set(`waiting-${accountId}`, { id: `waiting-${accountId}`, date: "2026-09-15", amountYen: -5000,
+        kind: "expense", payeeName: "未照合の店", categoryName: null, accountId, cleared: false });
+    }
+    await seed(repo, [makeStatement("statement-1")]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never, async accountId => accountId === "account-1" ? "paypay" : null);
+
+    const run = await service.run();
+
+    expect(run.receiptResults.map(row => [row.receiptId, row.status])).toEqual([["actual:waiting-account-1", "unmatched_receipt"]]);
   });
 
   it.each([

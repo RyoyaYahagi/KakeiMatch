@@ -95,7 +95,8 @@ jobs:
             test:ai-paused-e2e \
             test:recurring-e2e \
             test:transaction-search-e2e \
-            test:entry-masters-e2e &
+            test:entry-masters-e2e \
+            test:provider-only-reconciliation-e2e &
           second_group=$!
           result=0
           wait "$first_group" || result=1
