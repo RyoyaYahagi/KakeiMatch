@@ -3,7 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
 
 permissions:
   contents: read
@@ -17,6 +23,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -34,18 +41,6 @@ jobs:
       - run: pnpm --dir apps/pwa test
       - run: pnpm build
 
-  browser-spike:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: spikes/actual-browser/package-lock.json
-      - run: npm ci --prefix spikes/actual-browser
-      - run: npm run build --prefix spikes/actual-browser
-
   local-first:
     runs-on: ubuntu-latest
     strategy:
@@ -62,6 +57,7 @@ jobs:
           - shard: 4
             scripts: test:receipt-items-e2e test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e test:provider-only-reconciliation-e2e
     name: local-first (${{ matrix.shard }}/4)
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -93,10 +89,30 @@ jobs:
             sleep 1
           done
           export PWA_E2E_URL=http://127.0.0.1:5173
-          printf '%s\n' $SCRIPTS | xargs -P 2 -n 1 pnpm --dir apps/pwa
+          mkdir -p e2e-logs
+          # Keep each script's output separate so parallel logs stay readable.
+          run_script() {
+            if pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
+              echo "PASS $1"
+            else
+              echo "FAIL $1"; cat "e2e-logs/${1//:/-}.log"; return 1
+            fi
+          }
+          export -f run_script
+          printf '%s\n' $SCRIPTS | xargs -P 2 -I {} bash -c 'run_script "$1"' _ {}
+      - name: Upload E2E logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs-${{ matrix.shard }}
+          path: |
+            e2e-logs/
+            /tmp/kakeimatch-pwa-dev.log
+          retention-days: 7
 
   ai-gateway:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
