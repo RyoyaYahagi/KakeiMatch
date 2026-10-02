@@ -82,36 +82,30 @@ try {
 
   await page.locator('#reconciliation-tab').click();
   const importer = page.locator('summary').filter({ hasText: '明細CSVを取り込む' }); if (await importer.count()) await importer.click();
-  await page.locator('#statement-provider').selectOption('smbc_card');
-  await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic SMBC Card');
-  assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic SMBC Card']);
-  await page.locator('#statement-provider').selectOption('rakuten_card');
-  await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic Rakuten Card');
-  assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic Rakuten Card']);
   await page.locator('#statement-provider').selectOption('paypay_card');
-  await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic PayPay Card');
-  assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic PayPay Card']);
-  await page.locator('#statement-account').selectOption({ label: 'Synthetic PayPay Card' });
+  assert.equal(await page.locator('#statement-account').count(), 0, 'statement import must not ask for a payment source');
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-reconciliation-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await click('取り込んで照合');
   await page.getByText('5件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 1件/).waitFor();
-  await page.getByText(/要確認 1件 · 記録なし 3件/).waitFor();
+  // A record in another card account still matches: payment sources do not scope reconciliation.
+  await page.getByText(/自動確認済み 2件/).waitFor();
+  await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   await page.getByText(/明細待ち 0件/).waitFor();
 
   const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });
   await difference.locator('summary').click();
   await difference.getByText('家計簿：2026-09-30 · Synthetic Difference Shop · ¥550 · Synthetic PayPay Card', { exact: true }).waitFor();
   await difference.getByText('差分：金額差 ¥50（明細 ¥500 / 家計簿 ¥550）', { exact: true }).waitFor();
+  assert.equal(await difference.locator('select').count(), 0, 'matching an existing record must not ask for a payment source');
   await difference.getByRole('button', { name: '別の支出', exact: true }).click();
-  await page.getByText(/要確認 0件 · 記録なし 4件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
   const learned = page.locator('#local-view details').filter({ hasText: 'Synthetic Learned Market' }); await learned.locator('summary').click();
-  const learnedCategory = learned.locator('select');
+  const learnedCategory = learned.locator('select[id^="category-"]');
   const foodId = await learnedCategory.locator('option').evaluateAll(options => options.find(option => option.textContent === '食費')?.value ?? '');
   await seedMerchantLearning('synthetic learned market', foodId);
   await page.reload(); await page.locator('#reconciliation-tab').click();
   const refreshedLearned = page.locator('#local-view details').filter({ hasText: 'Synthetic Learned Market' }); await refreshedLearned.locator('summary').click();
-  assert.equal(await refreshedLearned.locator('select').locator('option:checked').textContent(), '食費');
+  assert.equal(await refreshedLearned.locator('select[id^="category-"]').locator('option:checked').textContent(), '食費');
 
   const newMerchant = page.locator('#local-view details').filter({ hasText: 'Synthetic New Merchant' }); await newMerchant.locator('summary').click();
   await newMerchant.getByRole('button', { name: 'カテゴリを追加', exact: true }).click();
@@ -119,21 +113,27 @@ try {
   await dialog.getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Reconciliation Category');
   await dialog.getByRole('button', { name: '追加する', exact: true }).click();
   await dialog.waitFor({ state: 'detached' });
-  assert.equal(await newMerchant.locator('select').locator('option:checked').textContent(), 'Synthetic Reconciliation Category');
+  assert.equal(await newMerchant.locator('select[id^="category-"]').locator('option:checked').textContent(), 'Synthetic Reconciliation Category');
+  // The payment source is asked for only when registering, preselected from the optional provider metadata.
+  const registrationAccount = newMerchant.locator('select[id^="account-"]');
+  assert.equal(await registrationAccount.locator('option:checked').textContent(), 'Synthetic PayPay Card');
+  assert.equal(await registrationAccount.locator('option', { hasText: 'Synthetic Cash Wallet' }).count(), 0);
   await context.setOffline(true);
   await newMerchant.getByRole('button', { name: '支出として登録', exact: true }).click();
-  await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 2件/).waitFor();
   await context.setOffline(false);
   await page.reload(); await page.locator('#reconciliation-tab').click();
-  await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 2件/).waitFor();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
-  await page.getByText('自動確認済みの内容を見る（1件）', { exact: true }).waitFor();
+  await page.getByText('自動確認済みの内容を見る（2件）', { exact: true }).click();
+  await page.locator('#local-view summary').filter({ hasText: 'Synthetic Other Account Shop' }).click();
+  await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥600', { exact: true }).waitFor();
   assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: provider-scoped accounts, automatic Actual expense matching, amount comparison and pair rejection, category learning and inline creation, and offline resolution persistence at 375px.');
+  console.log('PASS: provider-only import, cross-account automatic Actual expense matching, amount comparison and pair rejection, category learning and inline creation, and offline resolution persistence at 375px.');
 } catch (error) {
   console.log(await page.locator('body').innerText()); throw error;
 } finally { await browser.close(); }

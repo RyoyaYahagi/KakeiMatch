@@ -29,6 +29,7 @@
     "test:smbc-statements-e2e": "node test/browser-smbc-statements.mjs",
     "test:rakuten-statements-e2e": "node test/browser-rakuten-statements.mjs",
     "test:reconciliation-e2e": "node test/browser-reconciliation.mjs",
+    "test:provider-only-reconciliation-e2e": "node test/browser-provider-only-reconciliation.mjs",
     "test:account-types-e2e": "node test/browser-account-types.mjs",
     "test:ai-costs-e2e": "node test/browser-ai-costs.mjs",
     "test:ai-paused-e2e": "node test/browser-ai-paused.mjs"

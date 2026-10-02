@@ -67,8 +67,6 @@ try {
     if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
     await page.locator('#statement-provider').waitFor({ state: 'visible' });
     await page.locator('#statement-provider').selectOption('smbc_card');
-    await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic SMBC Card');
-    await page.locator('#statement-account').selectOption({ label: 'Synthetic SMBC Card' });
     await page.locator('#statement-file').setInputFiles({ name: 'synthetic-vpass.csv', mimeType: 'text/csv', buffer: cp932(csv) });
     await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   };

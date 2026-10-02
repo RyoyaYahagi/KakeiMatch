@@ -158,8 +158,6 @@ async function importStatementCsv() {
   if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
   await page.locator('#statement-provider').waitFor({ state: 'visible' });
   await page.locator('#statement-provider').selectOption('paypay_card');
-  await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Backup Wallet');
-  await page.locator('#statement-account').selectOption({ label: 'Synthetic Backup Wallet' });
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
@@ -248,9 +246,9 @@ function assertPayPayCardStatementMapping(snapshot) {
   const imports = snapshot.data.records.filter(row => row.kind === 'statement-import' && row.value.provider === 'paypay_card');
   assert.equal(imports.length, 1, 'backup should preserve the mapped PayPay Card import');
   const imported = imports[0].value;
-  assert.ok(imported.accountId, 'statement import should retain its explicitly selected account');
-  const accountMapping = snapshot.data.records.find(row => row.kind === 'account-metadata' && row.value.accountId === imported.accountId);
-  assert.equal(accountMapping?.value.statementProvider, 'paypay_card', 'backup should retain the account-to-provider mapping');
+  assert.equal(imported.accountId, undefined, 'a provider-only statement import should not record a payment source');
+  const accountMapping = snapshot.data.records.find(row => row.kind === 'account-metadata' && row.value.statementProvider === 'paypay_card');
+  assert.ok(accountMapping, 'backup should retain the optional account-to-provider metadata');
 }
 
 async function wipeLocalData() {
