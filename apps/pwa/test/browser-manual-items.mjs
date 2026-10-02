@@ -55,9 +55,9 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await save();
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
-  await page.getByText('支出のカテゴリ内訳', { exact: true }).click();
-  await page.getByRole('button', { name: /^食費 · ¥900 ·/ }).last().waitFor();
-  await page.getByRole('button', { name: /^日用品 · ¥500 ·/ }).last().waitFor();
+  await page.getByText('すべてのカテゴリ', { exact: true }).click();
+  await page.locator('.category-list').getByText(/^食費 · ¥900 ·/).waitFor();
+  await page.locator('.category-list').getByText(/^日用品 · ¥500 ·/).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click();
   await click('編集する'); await item(0).locator('summary').click();
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');

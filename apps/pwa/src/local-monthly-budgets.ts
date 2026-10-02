@@ -14,11 +14,18 @@ function progress(value: { budgetYen: number; spentYen: number }, label: string)
 export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudgetSummary, edit: () => void) {
   const configured = summary.categories.filter(category => category.budgetYen !== null);
   const details = node('details'); details.className = 'monthly-budget-details';
-  details.append(node('summary', `${Number(summary.yearMonth.slice(5))}月の予算 · ${yen(summary.spentYen)} / ${yen(summary.budgetYen)}`));
+  const heading = node('summary');
+  const headline = node('span', `${Number(summary.yearMonth.slice(5))}月の予算 · ${yen(summary.spentYen)} / ${yen(summary.budgetYen)}`); headline.className = 'budget-headline';
+  heading.append(headline);
+  if (summary.budgetYen > 0) {
+    const meter = progress(summary, '予算全体の使用額'); meter.classList.add('budget-meter'); meter.classList.toggle('over', summary.remainingYen < 0);
+    const remaining = node('span', summary.remainingYen < 0 ? `超過 ${yen(-summary.remainingYen)}` : `残り ${yen(summary.remainingYen)}`); remaining.className = `budget-remaining${summary.remainingYen < 0 ? ' over' : ''}`;
+    heading.append(meter, remaining);
+  } else if (!configured.length) { const setup = node('span', '予算を設定する'); setup.className = 'budget-remaining'; heading.append(setup); }
+  details.append(heading);
   if (!configured.length) details.append(node('p', 'この月の予算は未設定です。'));
   else if (configured.some(category => category.budgetYen! >= 0)) {
     const total = node('p', `予算対象カテゴリの合計：${amountLine(summary)}`); total.id = 'budget-total'; details.append(total);
-    if (summary.budgetYen > 0) details.append(progress(summary, '予算全体の使用額'));
   }
   const list = node('ul'); list.className = 'budget-category-list';
   for (const category of configured) {

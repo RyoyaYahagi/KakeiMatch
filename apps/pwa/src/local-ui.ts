@@ -6,7 +6,9 @@ import { LocalRecurringService } from './local-recurring';
 import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
 import { showTransactionSearch } from './local-transaction-search-ui';
-import { renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
+import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
+import { renderHomeAttention } from './home-attention';
+import { recordRow } from './record-row';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -24,6 +26,7 @@ import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const HOME_RECENT_LIMIT = 3;
 const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`;
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 function text(tag: string, value: string, className = '') { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; }
@@ -112,23 +115,28 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     await open('home');
     const month = selectedMonth;
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
-    const [rows, summary, budgetSummary] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), monthlyBudgets.getSummary(month)]);
+    const [rows, summary, budgetSummary, accounts] = await Promise.all([ledger.getTransactions({ startDate: `${month}-01`, endDate: monthEnd(month) }), ledger.getMonthlySummary({ yearMonth: month }), monthlyBudgets.getSummary(month), ledger.listAccounts()]);
     if (revision !== homeRevision || el('household-view').hidden) return;
-    renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), action => {
+    const overview = renderMonthlyDashboard(el('home-summary'), summary, today().slice(0, 7), action => {
       selectedMonth = action.type === 'current' ? today().slice(0, 7) : shiftMonth(selectedMonth, action.offset);
       void home().catch(report);
     });
-    renderMonthlyBudgets(el('home-summary'), budgetSummary, () => { void budgetEditor('monthly').catch(report); });
+    renderMonthlyBudgets(overview, budgetSummary, () => { void budgetEditor('monthly').catch(report); });
+    renderCategoryBreakdown(el('home-categories'), summary);
+    const accountNames = new Map(accounts.map(account => [account.id, account.name]));
     const list = el('transactions'); list.replaceChildren();
-    for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0)) {
-      const item = document.createElement('li'); item.className = 'row'; const entry = button(`${row.date} · ${row.payeeName || (row.kind === 'transfer' ? '口座間振替' : row.kind === 'income' ? '収入' : '支出')} · ${row.kind === 'transfer' ? '振替 ' : row.kind === 'income' ? '収入 ' : ''}${yen(row.amountYen)}`, () => transactionDetail(row)); entry.className = 'transaction-entry'; item.append(entry); list.append(item);
+    for (const row of rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0).slice(0, HOME_RECENT_LIMIT)) {
+      const item = document.createElement('li');
+      item.append(recordRow(row, accountNames.get(row.accountId) ?? null, () => { void transactionDetail(row).catch(report); }));
+      list.append(item);
     }
-    if (!rows.length) list.append(text('li', 'まだ記録がありません。'));
+    if (!rows.length) list.append(text('li', 'まだ記録がありません。', 'empty'));
 
     const resolutions = await reconciliation.resolutions();
     const latest = await reconciliation.latest();
-    const attention = resolutions.filter(r => r.status !== 'applied').length + (latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)).length ?? 0);
-    el('home-attention').replaceChildren(button(latest ? `確認が必要な明細 ${attention}件` : '明細を取り込んで照合してください', reviewPage));
+    const pending = latest?.statementResults.filter(r => r.status !== 'matched' && !resolutions.some(d => d.statementId === r.statementTransactionId)) ?? [];
+    const failed = resolutions.filter(r => r.status !== 'applied').length;
+    renderHomeAttention(el('home-attention'), latest ? { needsReview: pending.filter(r => r.status === 'needs_review').length, unmatched: pending.filter(r => r.status !== 'needs_review').length, failed } : null, () => reviewPage().catch(report));
     if (revision === homeRevision) el('home-summary').setAttribute('aria-busy', 'false');
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
@@ -756,6 +764,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
   el('add-record').addEventListener('click', () => { void recordChooser().catch(report); });
+  el('home-all-records').addEventListener('click', () => el('receipt-tab').click());
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   await initializeBackupUi(repository, ledger);
