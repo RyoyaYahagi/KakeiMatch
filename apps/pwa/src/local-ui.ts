@@ -1,3 +1,5 @@
+import { createAccountMetadataAccess } from './local-account-metadata';
+import { accountOptions } from './local-account-ui';
 import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
 import { LocalRecurringService } from './local-recurring';
 import { showRecurringSchedules } from './local-recurring-ui';
@@ -48,7 +50,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const saved = await repository.get<LocalBudgetSettings>('settings:budget');
   let budgetId = saved?.value.budgetId ?? null;
   const dataDir = saved?.value.dataDir ?? '/documents';
-  const ledger = createActualBrowserLedger({ getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
+  const ledger = createActualBrowserLedger({ ...createAccountMetadataAccess(repository), getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
     budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id, dataDir }, updatedAt: new Date().toISOString() });
   } });
   const receipts = new LocalReceiptService(repository, ledger);
@@ -314,7 +316,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
     category.value = actualCategoryId(initial.categoryId);
     const account = document.createElement('select'); account.id = inputId('account'); account.required = true;
-    account.replaceChildren(new Option('選択してください', ''), ...accounts.map(entry => new Option(entry.name, entry.id)));
+    account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts));
     account.value = initial.accountId;
     if (initial.accountId && !account.value) view.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
     if (base?.categoryId && !category.value) view.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
@@ -400,7 +402,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       field: account, beforeOpen: saveDraft,
       onCreated: async id => {
         accounts = await ledger.listOpenAccounts();
-        account.replaceChildren(new Option('選択してください', ''), ...accounts.map(entry => new Option(entry.name, entry.id)));
+        account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts));
         account.value = id; await saveDraft();
       },
     } }));

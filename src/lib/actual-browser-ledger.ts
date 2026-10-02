@@ -56,6 +56,7 @@ export type ActualSearchTransaction = {
 
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
+const accountTypeSchema = z.enum(["bank", "credit_card", "cash", "other"]);
 const budgetCategorySchema = z.object({ id: idSchema, budgeted: z.number().int().safe() }).passthrough();
 const manualTransactionSchema = z.object({
   kind: z.enum(["expense", "income"]),
@@ -102,8 +103,14 @@ export class ActualMasterValidationError extends Error {
 }
 
 export type ManagedCategory = { id: string; name: string; isIncome: boolean; hidden: boolean; groupName: string };
-export type ManagedAccount = { id: string; name: string; closed: boolean };
+export type ActualAccountType = "bank" | "credit_card" | "cash" | "other";
+export type ManagedAccount = { id: string; name: string; closed: boolean; accountType: ActualAccountType };
 export type ManagedAccountBalance = ManagedAccount & { balanceYen: number };
+
+const accountTypes = new Set<ActualAccountType>(accountTypeSchema.options);
+export function accountMetadataRecordId(budgetId: string, accountId: string): string {
+  return `account-metadata:${encodeURIComponent(budgetId)}:${encodeURIComponent(accountId)}`;
+}
 
 export class ActualBudgetSelectionRequiredError extends Error {
   constructor() {
@@ -113,8 +120,8 @@ export class ActualBudgetSelectionRequiredError extends Error {
 }
 
 export class ActualBrowserUnavailableError extends Error {
-  constructor(readonly reason: "storage" | "invalid_data" | "operation") {
-    super("The local budget is temporarily unavailable.");
+  constructor(readonly reason: "storage" | "invalid_data" | "operation", cause?: unknown) {
+    super("The local budget is temporarily unavailable.", { cause });
     this.name = "ActualBrowserUnavailableError";
   }
 }
@@ -137,6 +144,9 @@ export type ActualBrowserLedgerOptions = {
   /** Device-local profile state. Never pass a Cloudflare user or session ID. */
   getBudgetId: () => string | null;
   saveBudgetId: (budgetId: string) => void | Promise<void>;
+  /** Account kinds live in the active local profile and are scoped by Actual budget and account IDs. */
+  getAccountType?: (budgetId: string, accountId: string) => ActualAccountType | null | Promise<ActualAccountType | null>;
+  saveAccountType?: (budgetId: string, accountId: string, type: ActualAccountType | null) => void | Promise<void>;
   /** Browser Actual virtual filesystem directory. Defaults to Actual's /documents. */
   getDataDir?: () => string;
   newBudgetName?: () => string;
@@ -303,7 +313,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   skipDeletedScheduleOccurrences(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   runDueSchedules(): Promise<void>;
   getSearchTransactions(params?: { startDate?: string; endDate?: string }): Promise<ActualSearchTransaction[]>;
-  listOpenAccounts(): Promise<ActualAccount[]>;
+  listOpenAccounts(): Promise<Array<ActualAccount & { accountType: ActualAccountType }>>;
   listExpenseCategories(): Promise<ActualCategory[]>;
   listIncomeCategories(): Promise<ActualCategory[]>;
   listCategories(): Promise<ManagedCategory[]>;
@@ -313,7 +323,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   deleteCategory(id: string): Promise<void>;
   listAccounts(): Promise<ManagedAccount[]>;
   getAccountBalances(): Promise<ManagedAccountBalance[]>;
-  addAccount(name: string): Promise<string>;
+  addAccount(name: string, accountType?: ActualAccountType): Promise<string>;
+  setAccountType(id: string, accountType: ActualAccountType): Promise<void>;
   renameAccount(id: string, name: string): Promise<void>;
   getAccountUsage(id: string): Promise<{ transactionCount: number; balanceYen: number }>;
   closeAccount(id: string): Promise<void>;
@@ -451,7 +462,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return await operation(api);
     } catch (error) {
       if (error instanceof ActualBudgetSelectionRequiredError || error instanceof ActualBrowserUnavailableError || error instanceof ActualMasterValidationError) throw error;
-      throw new ActualBrowserUnavailableError("operation");
+      throw new ActualBrowserUnavailableError("operation", error);
     }
     };
     const result = runtime.tail.then(run, run);
@@ -814,6 +825,22 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     if (!account) throw new ActualMasterValidationError("支払元が見つかりません。一覧を開き直してください。");
     return account;
   };
+  const accountTypeFor = async (accountId: string): Promise<ActualAccountType> => {
+    const budgetId = options.getBudgetId();
+    if (!budgetId) throw new ActualBudgetSelectionRequiredError();
+    const type = await options.getAccountType?.(budgetId, accountId);
+    if (type == null) return "other";
+    const parsed = accountTypeSchema.safeParse(type);
+    if (!parsed.success) throw new ActualBrowserUnavailableError("invalid_data");
+    return parsed.data;
+  };
+  const accountRows = async (api: ActualApi) => {
+    const budgetId = options.getBudgetId();
+    if (!budgetId) throw new ActualBudgetSelectionRequiredError();
+    return Promise.all((await api.getAccounts()).map(async account => ({
+      id: account.id, name: account.name, closed: Boolean(account.closed), accountType: await accountTypeFor(account.id),
+    })));
+  };
   const categoryUsage = async (api: ActualApi, id: string) => {
     await requireCategory(api, id);
     return (await allRows(api, "0001-01-01", "9999-12-31")).filter(row => row.category === id).length;
@@ -1126,8 +1153,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     },
 
     listOpenAccounts() {
-      return withBudget(async (api) => (await api.getAccounts())
-        .filter((account) => !account.closed).map(({ id, name }) => ({ id, name })));
+      return withBudget(async (api) => (await accountRows(api))
+        .filter((account) => !account.closed).map(({ id, name, accountType }) => ({ id, name, accountType })));
     },
 
     listExpenseCategories() { return withBudget(listCategories); },
@@ -1315,20 +1342,48 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       });
     },
 
-    listAccounts() { return withBudget(async api => (await api.getAccounts()).map(a => ({ id: a.id, name: a.name, closed: Boolean(a.closed) }))); },
+    listAccounts() { return withBudget(accountRows); },
     getAccountBalances() {
       return withBudget(async api => {
-        const accounts = await api.getAccounts();
+        const accounts = await accountRows(api);
         return Promise.all(accounts.map(async account => {
           const balanceYen = await api.getAccountBalance(account.id);
           if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
-          return { id: account.id, name: account.name, closed: Boolean(account.closed), balanceYen };
+          return { ...account, balanceYen };
         }));
       });
     },
-    addAccount(name) {
+    addAccount(name, accountType = "other") {
       const validName = masterName(name);
-      return withBudget(api => api.createAccount({ name: validName, offbudget: false, closed: false }));
+      if (!accountTypes.has(accountType)) throw new ActualMasterValidationError("口座の種類を選び直してください。");
+      if (accountType !== "other" && !options.saveAccountType) throw new ActualMasterValidationError("口座の種類を保存できません。画面を再読み込みしてください。");
+      return withBudget(async api => {
+        const id = await api.createAccount({ name: validName, offbudget: false, closed: false });
+        const budgetId = options.getBudgetId();
+        if (!budgetId) throw new ActualBudgetSelectionRequiredError();
+        try {
+          await options.saveAccountType?.(budgetId, id, accountType);
+        } catch (metadataError) {
+          try {
+            await api.deleteAccount(id);
+          } catch (rollbackError) {
+            throw new ActualBrowserUnavailableError("operation", new AggregateError([metadataError, rollbackError], "Account metadata save and rollback both failed."));
+          }
+          throw metadataError;
+        }
+        return id;
+      });
+    },
+    setAccountType(id, accountType) {
+      masterId(id);
+      if (!accountTypes.has(accountType)) throw new ActualMasterValidationError("口座の種類を選び直してください。");
+      if (!options.saveAccountType) throw new ActualMasterValidationError("口座の種類を保存できません。画面を再読み込みしてください。");
+      return withBudget(async api => {
+        await requireAccount(api, id);
+        const budgetId = options.getBudgetId();
+        if (!budgetId) throw new ActualBudgetSelectionRequiredError();
+        await options.saveAccountType?.(budgetId, id, accountType);
+      });
     },
     renameAccount(id, name) {
       masterId(id); const validName = masterName(name);
@@ -1355,6 +1410,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const usage = await accountUsage(api, id);
         if (usage.transactionCount || usage.balanceYen !== 0) throw new ActualMasterValidationError("取引または残高がある支払元は完全削除できません。履歴を残すため、利用終了を選んでください。");
         await api.deleteAccount(id);
+        const budgetId = options.getBudgetId();
+        if (budgetId) await options.saveAccountType?.(budgetId, id, null);
       });
     },
 

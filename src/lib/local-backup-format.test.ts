@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { accountMetadataRecordId } from "./actual-browser-ledger";
 import { createPortableBackup, readPortableBackup } from "./local-backup-format";
 import type { LocalDataBackupV2 } from "./local-data";
 
@@ -41,6 +42,38 @@ const MAX_ENTRIES = 10_000;
 async function create(input = fixture()): Promise<Blob> {
   return createPortableBackup({ actualBackup, localData: input });
 }
+
+describe("account metadata backup", () => {
+  it("preserves a budget-scoped account type and accepts backups without account metadata", async () => {
+    const oldBackup = await readPortableBackup(await create());
+    expect(oldBackup.localData.records.some(record => record.kind === "account-metadata")).toBe(false);
+    const data = fixture();
+    const budgetId = "synthetic-budget-id";
+    const accountId = "synthetic-account";
+    data.records.push({ id: accountMetadataRecordId(budgetId, accountId), kind: "account-metadata", updatedAt: time, value: { budgetId, accountId, accountType: "credit_card" } });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.at(-1)).toEqual(data.records.at(-1));
+  });
+
+  it.each([
+    { accountType: "wallet" },
+    { accountType: "cash", extra: true },
+  ])("rejects invalid account metadata values", async invalid => {
+    const data = fixture();
+    data.records.push({ id: accountMetadataRecordId("budget", "account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "budget", accountId: "account", ...invalid } });
+    await expect(create(data)).rejects.toThrow(/記録内容が不正/);
+  });
+
+  it("rejects account metadata whose record ID or budget scope is inconsistent", async () => {
+    const data = fixture();
+    data.records.push({ id: "account-metadata:wrong-id", kind: "account-metadata", updatedAt: time, value: { budgetId: "budget", accountId: "account", accountType: "cash" } });
+    await expect(create(data)).rejects.toThrow(/IDが一致/);
+    data.records.pop();
+    data.records.push({ id: accountMetadataRecordId("budget-a", "account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "budget-a", accountId: "account", accountType: "cash" } });
+    data.records.push({ id: accountMetadataRecordId("budget-b", "account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "budget-b", accountId: "account", accountType: "bank" } });
+    await expect(create(data)).rejects.toThrow(/複数の家計簿/);
+  });
+});
 
 async function rewriteManifest(file: Blob, edit: (manifest: Record<string, unknown>) => void): Promise<Blob> {
   const bytes = new Uint8Array(await file.arrayBuffer());

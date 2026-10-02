@@ -1,4 +1,4 @@
-import { ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
+import { accountMetadataRecordId, ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
 import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
 
@@ -32,7 +32,12 @@ function directories(storage: Dependencies['storage']): string[] {
 export async function exportLocalBackup(repository: LocalDataRepository, ledger: BackupLedger, now = new Date()): Promise<Blob> {
   const localData = await repository.serialize();
   // The target budget location belongs to this device, not to a portable household snapshot.
-  localData.records = localData.records.filter(record => record.id !== 'settings:budget');
+  const activeBudgetId = (localData.records.find(record => record.id === 'settings:budget')?.value as LocalBudgetSettings | undefined)?.budgetId;
+  localData.records = localData.records.filter(record => {
+    if (record.id === 'settings:budget') return false;
+    if (record.kind !== 'account-metadata') return true;
+    return Boolean(activeBudgetId) && (record.value as { budgetId?: unknown }).budgetId === activeBudgetId;
+  });
   const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
   await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
   return result;
@@ -68,11 +73,23 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     if (existing.records.length || existing.blobs.length) throw new ActualRestoreTargetExistsError();
     ownsLocalTarget = true;
     const budgetId = await ledger.restoreBackup(backup.actualBackup, dataDir);
-    await staging.restore(backup.localData);
+    const localData = {
+      ...backup.localData,
+      records: backup.localData.records.map(record => {
+        if (record.kind !== 'account-metadata') return record;
+        const metadata = record.value as { budgetId: string; accountId: string };
+        return {
+          ...record,
+          id: accountMetadataRecordId(budgetId, metadata.accountId),
+          value: { ...metadata, budgetId },
+        };
+      }),
+    };
+    await staging.restore(localData);
     const timestamp = deps.now().toISOString();
     await staging.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId, dataDir }, updatedAt: timestamp });
     const readback = await staging.serialize();
-    await verifyLocalReadback(backup.localData, readback);
+    await verifyLocalReadback(localData, readback);
     // Write the return pointer first. Failure still leaves the active pointer unchanged.
     if (previous) deps.storage.setItem(PREVIOUS_PROFILE_KEY, previous);
     deps.storage.setItem(LOCAL_PROFILE_KEY, profileId);

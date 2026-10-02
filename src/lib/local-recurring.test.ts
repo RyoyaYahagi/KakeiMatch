@@ -13,7 +13,7 @@ async function setup() {
   const schedules: RecurringSchedule[] = [];
   const ledger = {
     listCategories: vi.fn(async () => [{ id: "rent", name: "Synthetic Rent", isIncome: false, hidden: false, groupName: "Synthetic" }]),
-    listAccounts: vi.fn(async () => [{ id: "bank", name: "Synthetic Bank", closed: false }]),
+    listAccounts: vi.fn(async () => [{ id: "bank", name: "Synthetic Bank", closed: false, accountType: "bank" as const }]),
     listRecurringSchedules: vi.fn(async () => schedules),
     createRecurringSchedule: vi.fn(async (value: RecurringScheduleInput) => {
       let schedule = schedules.find(row => row.name === value.name);
@@ -69,7 +69,7 @@ describe("durable recurring operations", () => {
   it("checks category kind and closed accounts before saving any operation", async () => {
     const { service, ledger, repository } = await setup();
     await expect(service.save({ ...input, kind: "income" })).rejects.toThrow("種類");
-    ledger.listAccounts.mockResolvedValue([{ id: "bank", name: "Synthetic Bank", closed: true }]);
+    ledger.listAccounts.mockResolvedValue([{ id: "bank", name: "Synthetic Bank", closed: true, accountType: "bank" }]);
     await expect(service.save(input)).rejects.toThrow("利用中");
     expect(await repository.list("correction-audit")).toHaveLength(0);
     expect(ledger.createRecurringSchedule).not.toHaveBeenCalled();
