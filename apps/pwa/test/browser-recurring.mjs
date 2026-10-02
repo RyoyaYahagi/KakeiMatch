@@ -3,11 +3,15 @@ import { chromium } from 'playwright-core';
 
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
-const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+const context = await browser.newContext({ viewport: { width: 375, height: 812 }, timezoneId: 'Asia/Tokyo' });
 await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
 await context.route('**/api/**', route => route.fulfill({ status: 403, json: { error: 'synthetic_signed_out' } }));
 const page = await context.newPage();
-await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
+// Actual runs schedules in its Worker, outside Playwright's page-only clock.
+// Use the same real Tokyo day so creating a due schedule never skips to next month.
+const now = new Date();
+const scheduleDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(now);
+await page.clock.setFixedTime(now);
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
 async function settings(name) { await page.locator('#settings-tab').click(); await click(name); }
@@ -23,7 +27,7 @@ async function addCategory(name, income = false) {
 }
 async function recurringList() { await settings('定期登録'); await page.getByRole('heading', { name: '定期登録', exact: true }).waitFor(); }
 async function openCreate() { await recurringList(); await click('定期登録を追加する'); await page.locator('#recurring-name').waitFor(); }
-async function fill({ name, kind = 'expense', amount, category, account, frequency = 'monthly', startDate = '2026-10-01', auto = false }) {
+async function fill({ name, kind = 'expense', amount, category, account, frequency = 'monthly', startDate = scheduleDate, auto = false }) {
   await page.locator('#recurring-name').fill(name);
   await page.locator('#recurring-kind').selectOption(kind);
   await page.waitForFunction(categoryName => {
