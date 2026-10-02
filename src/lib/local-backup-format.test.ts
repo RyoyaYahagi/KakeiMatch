@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { accountMetadataRecordId } from "./actual-browser-ledger";
+import { monthlyBudgetSettingsRecordId } from "./monthly-budget-settings";
 import { createPortableBackup, readPortableBackup } from "./local-backup-format";
 import type { LocalDataBackupV2 } from "./local-data";
 
@@ -71,6 +72,15 @@ describe("account metadata backup", () => {
     data.records.pop();
     data.records.push({ id: accountMetadataRecordId("budget-a", "account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "budget-a", accountId: "account", accountType: "cash" } });
     data.records.push({ id: accountMetadataRecordId("budget-b", "account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "budget-b", accountId: "account", accountType: "bank" } });
+    await expect(create(data)).rejects.toThrow(/複数の家計簿/);
+  });
+
+  it("rejects account metadata and monthly settings scoped to different budgets", async () => {
+    const data = fixture();
+    data.records.push(
+      { id: accountMetadataRecordId("metadata-budget", "synthetic-account"), kind: "account-metadata", updatedAt: time, value: { budgetId: "metadata-budget", accountId: "synthetic-account", accountType: "cash" } },
+      { id: monthlyBudgetSettingsRecordId("settings-budget"), kind: "app-settings", updatedAt: time, value: { budgetId: "settings-budget", defaults: {}, monthlyOverrides: {} } },
+    );
     await expect(create(data)).rejects.toThrow(/複数の家計簿/);
   });
 });
