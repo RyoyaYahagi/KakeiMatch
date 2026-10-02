@@ -8,6 +8,8 @@ export default defineConfig({
     env: {
       AI_GATEWAY_AUTH_SECRET: bindings.secret(),
       GEMINI_API_KEY: bindings.secret(),
+      GITHUB_ISSUES_TOKEN: bindings.secret(),
+      GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
       TYPESAFE_API_KEY: bindings.secret(),
       AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: "360036", simple: { limit: 20, period: 60 } }),
       AI_EMERGENCY_STOP: bindings.secret(),

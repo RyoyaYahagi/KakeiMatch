@@ -5,6 +5,7 @@ import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
+import { initializeContactUi } from './contact-ui';
 import { iconMarkup } from './ui-icons';
 import './style.css';
 
@@ -45,6 +46,7 @@ root.innerHTML = `
     </section>
     <section id="local-view" hidden></section>
     <section id="settings-view" hidden>
+      <div id="settings-content">
       <div class="page-header"><h2>設定</h2></div>
       <h3 class="settings-group-title">家計簿</h3>
       <section id="local-settings" class="surface-section settings-list" aria-label="家計簿の設定"></section>
@@ -59,7 +61,7 @@ root.innerHTML = `
       <div class="ai-usage">
         <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
         <div id="usage-meter" class="usage-meter" hidden><span></span></div>
-        <p class="muted">レシートの読み取りからカテゴリ提案までで1回です。読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
+        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       </div>
       <div id="signed-out-actions" hidden>
         <p>AI機能を利用するにはアカウントが必要です。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
@@ -98,7 +100,13 @@ root.innerHTML = `
         <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
         <p id="developer-options-status" class="status" role="status"></p>
       </section>
+      <h3 class="settings-group-title">サポート</h3>
+      <section class="surface-section settings-list" aria-label="サポート">
+        <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
+      </section>
       <p class="muted settings-footnote">家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
+      </div>
+      <section id="contact-view" hidden></section>
     </section>
   </main>`;
 
@@ -107,8 +115,21 @@ const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');
 const settingsView = element<HTMLElement>('settings-view');
+const settingsContent = element<HTMLElement>('settings-content');
+const contactView = element<HTMLElement>('contact-view');
 const homeTab = element<HTMLButtonElement>('home-tab');
 const settingsTab = element<HTMLButtonElement>('settings-tab');
+const contactUi = initializeContactUi(contactView, {
+  onBackToSettings: (focusLogin = false) => {
+    settingsContent.hidden = false;
+    contactView.hidden = true;
+    if (focusLogin) {
+      void refreshAccount();
+      element<HTMLElement>('ai-settings').scrollIntoView({ block: 'start' });
+      window.setTimeout(() => (signedOutActions.hidden ? useAiButton : loginButton).focus(), 0);
+    }
+  },
+});
 const usageSummary = element<HTMLParagraphElement>('usage-summary');
 const accountStatus = element<HTMLParagraphElement>('account-status');
 const signedOutActions = element<HTMLElement>('signed-out-actions');
@@ -137,6 +158,9 @@ const developerCostsUi = initializeDeveloperCostsUi({
 
 
 function showTab(tab: 'home' | 'settings') {
+  contactUi.close();
+  settingsContent.hidden = false;
+  contactView.hidden = true;
   document.getElementById('local-view')!.hidden = true;
   for (const id of ['receipt-tab', 'reconciliation-tab']) {
     const button = element<HTMLButtonElement>(id);
@@ -149,6 +173,21 @@ function showTab(tab: 'home' | 'settings') {
   setNavActive(settingsTab, isSettings);
   if (isSettings) void refreshAccount();
 }
+
+element<HTMLButtonElement>('settings-contact').addEventListener('click', () => {
+  settingsContent.hidden = true;
+  contactView.hidden = false;
+  contactUi.open();
+});
+
+document.querySelector('nav.app-nav')!.addEventListener('click', event => {
+  const target = event.target;
+  if (target instanceof Element && target.closest('button')?.id !== 'settings-tab' && contactUi.isOpen()) {
+    contactUi.close();
+    settingsContent.hidden = false;
+    contactView.hidden = true;
+  }
+}, { capture: true });
 
 homeTab.addEventListener('click', () => showTab('home'));
 settingsTab.addEventListener('click', () => showTab('settings'));
