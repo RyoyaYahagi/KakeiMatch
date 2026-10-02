@@ -74,7 +74,7 @@ try {
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   await page.waitForFunction(() => document.querySelectorAll('#transactions li').length === 2);
   assert.equal(await page.locator('#transactions li').count(), 2);
-  assert.match(await page.locator('#transactions').innerText(), /収入 ¥200,000/);
+  assert.match(await page.locator('#transactions').innerText(), /収入[\s\S]*\+¥200,000/);
   await detail('Synthetic Shop');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic expense memo');
   await fill('Synthetic Shop Edited', 2000, 'Synthetic Food', 'Synthetic Bank', 'Synthetic edited expense');

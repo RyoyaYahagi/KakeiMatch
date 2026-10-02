@@ -1,7 +1,8 @@
 import type { ActualMonthlySummary as MonthlySummary } from '../../../src/lib/actual-ledger';
+import { categoryTone } from './category-tone';
+import { icon } from './ui-icons';
 
 const yen = (value: number) => `¥${Math.abs(value).toLocaleString('ja-JP')}`;
-const SLICE_COLOR_COUNT = 6;
 function node(tag: string, value = '') { const result = document.createElement(tag); result.textContent = value; return result; }
 export function shiftMonth(month: string, offset: number): string {
   const [year, index] = month.split('-').map(Number);
@@ -21,41 +22,79 @@ export function renderMonthlyDashboard(target: HTMLElement, summary: MonthlySumm
   const [year, month] = summary.yearMonth.split('-');
   const label = node('strong', `${Number(year)}年${Number(month)}月`); label.id = 'selected-month';
   for (const [title, offset] of [['前月へ', -1], ['翌月へ', 1]] as const) {
-    const button = node('button', offset < 0 ? '‹' : '›') as HTMLButtonElement; button.type = 'button'; button.className = 'secondary'; button.setAttribute('aria-label', title);
+    const button = node('button') as HTMLButtonElement; button.type = 'button'; button.className = 'icon-button'; button.setAttribute('aria-label', title);
+    button.append(icon(offset < 0 ? 'chevronLeft' : 'chevronRight'));
     button.disabled = shiftMonth(summary.yearMonth, offset) === summary.yearMonth;
     button.addEventListener('click', () => select({ type: 'shift', offset }));
     if (offset < 0) selector.append(button, label); else selector.append(button);
   }
   target.append(selector);
   if (summary.yearMonth !== currentMonth) {
-    const reset = node('button', '当月へ戻る') as HTMLButtonElement; reset.type = 'button'; reset.className = 'secondary'; reset.addEventListener('click', () => select({ type: 'current' })); target.append(reset);
+    const reset = node('button', '当月へ戻る') as HTMLButtonElement; reset.type = 'button'; reset.className = 'text-button month-reset'; reset.addEventListener('click', () => select({ type: 'current' })); target.append(reset);
   }
+  const overview = node('section'); overview.className = 'home-section home-overview'; overview.setAttribute('aria-label', '月の収支');
   const totals = node('dl'); totals.className = 'monthly-totals';
   for (const [title, value, id] of [
-    ['収入', yen(summary.incomeYen), 'monthly-income'],
     [summary.yearMonth === currentMonth ? '今月の支出' : '支出', yen(summary.expenseYen), 'monthly-expense'],
+    ['収入', yen(summary.incomeYen), 'monthly-income'],
     ['収支', `${summary.balanceYen > 0 ? '+' : summary.balanceYen < 0 ? '−' : ''}${yen(summary.balanceYen)}`, 'monthly-balance'],
   ]) { const row = node('div'); row.id = id; row.append(node('dt', `${title} `), node('dd', value)); totals.append(row); }
-  target.append(totals);
-  const details = node('details'); details.className = 'monthly-category-details'; details.append(node('summary', '支出のカテゴリ内訳'));
-  if (!summary.expenseYen) { details.append(node('p', 'この月の支出はありません。')); target.append(details); return; }
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 120 120'); svg.classList.add('category-donut'); svg.setAttribute('aria-label', '支出カテゴリの割合'); svg.setAttribute('role', 'group');
-  const selection = node('p', 'カテゴリを選ぶと金額と割合を確認できます。'); selection.id = 'category-selection'; selection.setAttribute('role', 'status');
-  const list = node('ul'); list.className = 'category-legend';
-  const positiveTotal = summary.categories.reduce((total, category) => total + Math.max(0, category.amountYen), 0);
-  if (summary.categories.some(category => category.amountYen < 0)) details.append(node('p', '円グラフは支出が正のカテゴリの構成です。返金・調整は一覧に表示します。'));
-  let offset = 0;
-  summary.categories.forEach((category, index) => {
-    const percentage = category.amountYen / summary.expenseYen * 100;
-    const label = `${category.categoryName} · ${category.amountYen < 0 ? "−" : ""}${yen(category.amountYen)} · ${percentage.toFixed(1)}%`;
-    const slicePercentage = Math.max(0, category.amountYen) / positiveTotal * 100;
-    const sliceClass = `slice-${index % SLICE_COLOR_COUNT}`;
-    const circle = document.createElementNS(svg.namespaceURI, 'circle');
-    for (const [key, value] of Object.entries({ cx: '60', cy: '60', r: '42', fill: 'none', class: sliceClass, 'stroke-width': '22', pathLength: '100', 'stroke-dasharray': `${slicePercentage} ${100 - slicePercentage}`, 'stroke-dashoffset': String(-offset), transform: 'rotate(-90 60 60)', tabindex: '0', role: 'button', 'aria-label': label })) circle.setAttribute(key, value);
-    circle.addEventListener('click', () => { selection.textContent = label; });
-    circle.addEventListener('keydown', event => { const key = (event as KeyboardEvent).key; if (key === 'Enter' || key === ' ') { event.preventDefault(); selection.textContent = label; } });
-    if (slicePercentage > 0) svg.append(circle); offset += slicePercentage;
-    const entry = node('li'); const button = node('button', label) as HTMLButtonElement; button.type = 'button'; button.className = `category-legend-entry ${sliceClass}`; button.addEventListener('click', () => { selection.textContent = label; }); entry.append(button); list.append(entry);
+  overview.append(totals);
+  target.append(overview);
+  return overview;
+}
+
+const BREAKDOWN_SLICES = 3;
+const SLICE_TONES = ['food', 'daily', 'transport', 'fun', 'util', 'comm'] as const;
+const DONUT_RADIUS = 42;
+
+/** Home breakdown: up to three categories and "その他" in a donut, with every category listed on demand. */
+export function renderCategoryBreakdown(target: HTMLElement, summary: MonthlySummary) {
+  const section = node('section'); section.className = 'home-section category-breakdown'; section.setAttribute('aria-labelledby', 'category-breakdown-title');
+  const heading = node('h2', '支出の内訳'); heading.id = 'category-breakdown-title';
+  section.append(heading);
+  target.replaceChildren(section);
+  if (!summary.expenseYen) { section.append(node('p', 'この月の支出はありません。')); return; }
+  const share = (amount: number) => `${(amount / summary.expenseYen * 100).toFixed(1)}%`;
+  const positive = summary.categories.filter(category => category.amountYen > 0).sort((a, b) => b.amountYen - a.amountYen);
+  const positiveTotal = positive.reduce((total, category) => total + category.amountYen, 0);
+  const usedTones = new Set<string>();
+  const top = positive.slice(0, BREAKDOWN_SLICES).map(category => {
+    const preferred = categoryTone(category.categoryName, category.categoryId).tone;
+    const tone = usedTones.has(preferred) ? SLICE_TONES.find(candidate => !usedTones.has(candidate))! : preferred;
+    usedTones.add(tone);
+    return { name: category.categoryName, amountYen: category.amountYen, tone: tone as string };
   });
-  details.append(svg, selection, list); target.append(details);
+  if (!top.length) { section.append(node('p', 'この月は返金・調整だけです。')); return; }
+  const restYen = positive.slice(BREAKDOWN_SLICES).reduce((total, category) => total + category.amountYen, 0);
+  const slices = restYen > 0 ? [...top, { name: 'その他', amountYen: restYen, tone: 'rest' }] : top;
+  const chart = node('div'); chart.className = 'donut-chart';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('viewBox', '0 0 100 100'); svg.classList.add('category-donut'); svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', `支出の内訳：${slices.map(slice => `${slice.name} ${share(slice.amountYen)}`).join('、')}`);
+  const circumference = 2 * Math.PI * DONUT_RADIUS;
+  const gap = slices.length > 1 ? 1.5 : 0;
+  let offset = 0;
+  for (const slice of slices) {
+    const length = positiveTotal > 0 ? slice.amountYen / positiveTotal * circumference : 0;
+    const circle = document.createElementNS(svg.namespaceURI, 'circle');
+    for (const [key, value] of Object.entries({ cx: '50', cy: '50', r: String(DONUT_RADIUS), class: `tone-${slice.tone}`, 'stroke-dasharray': `${Math.max(0, length - gap)} ${circumference}`, 'stroke-dashoffset': String(-offset), transform: 'rotate(-90 50 50)' })) circle.setAttribute(key, value);
+    svg.append(circle); offset += length;
+  }
+  const center = node('div'); center.className = 'donut-center'; center.setAttribute('aria-hidden', 'true');
+  center.append(node('span', top[0].name), node('strong', share(top[0].amountYen)));
+  chart.append(svg, center);
+  const legend = node('ul'); legend.className = 'donut-legend';
+  for (const slice of slices) {
+    const item = node('li'); const dot = node('span'); dot.className = `legend-dot tone-${slice.tone}`;
+    item.append(dot, node('span', slice.name), node('span', share(slice.amountYen)));
+    legend.append(item);
+  }
+  const figure = node('div'); figure.className = 'donut-figure'; figure.append(chart, legend);
+  section.append(figure);
+  const details = node('details'); details.className = 'monthly-category-details'; details.append(node('summary', 'すべてのカテゴリ'));
+  if (summary.categories.some(category => category.amountYen < 0)) details.append(node('p', '円グラフは支出が正のカテゴリの構成です。返金・調整は一覧に表示します。'));
+  const list = node('ul'); list.className = 'category-list';
+  for (const category of summary.categories) list.append(node('li', `${category.categoryName} · ${category.amountYen < 0 ? '−' : ''}${yen(category.amountYen)} · ${share(category.amountYen)}`));
+  details.append(list);
+  section.append(details);
 }

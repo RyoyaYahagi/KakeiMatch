@@ -4,7 +4,8 @@ import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
-import { navIcon, setNavActive } from './app-nav';
+import { setNavActive } from './app-nav';
+import { iconMarkup } from './ui-icons';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -16,11 +17,11 @@ root.innerHTML = `
     <h1 class="visually-hidden">KakeiMatch</h1>
     <p class="network-status" id="network" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
-      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${navIcon('home')}<span>ホーム</span></button>
-      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('records')}<span>記録</span></button>
-      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${navIcon('add')}</span><span>追加</span></button>
-      <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('reconciliation')}<span>照合</span></button>
-      <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${navIcon('settings')}<span>設定</span></button>
+      <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${iconMarkup('home')}<span>ホーム</span></button>
+      <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('records')}<span>記録</span></button>
+      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${iconMarkup('add')}</span><span>追加</span></button>
+      <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('reconciliation')}<span>照合</span></button>
+      <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('settings')}<span>設定</span></button>
     </nav>
     <p class="status" id="message" role="status"></p>
     <section id="household-view">
@@ -33,11 +34,12 @@ root.innerHTML = `
       <label for="budget">家計簿</label>
       <select id="budget"></select>
     </section>
-    <div id="home-summary"></div>
+    <div id="home-summary" aria-busy="true"></div>
     <div id="home-attention"></div>
-    <section>
-      <h2>選択月の記録</h2>
-      <ul id="transactions"></ul>
+    <div id="home-categories"></div>
+    <section class="home-section" aria-labelledby="recent-records-title">
+      <div class="section-header"><h2 id="recent-records-title">最近の記録</h2><button id="home-all-records" class="text-button" type="button" aria-label="記録をすべて見る">すべて${iconMarkup('chevronRight')}</button></div>
+      <ul id="transactions" class="record-rows"></ul>
     </section>
     </section>
     <section id="local-view" hidden></section>
