@@ -8,8 +8,9 @@ import { parseStatementBlob } from "../../apps/pwa/src/statement-parser";
 import { sha256Hex } from "./statement-parser-core";
 import { createPortableBackup, readPortableBackup } from "./local-backup-format";
 
-const headers = ["取引日", "出金金額（円）", "入金金額（円）", "海外出金金額", "通貨", "変換レート（円）", "利用国", "取引内容", "取引先", "取引方法", "支払い区分", "利用者", "取引番号"];
-const base = ["2026/09/28 12:34", "1,000", "", "", "", "", "", "支払い", "人工商店", "PayPay残高", "一回払い", "本人", "synthetic-1"];
+const headers = ["利用日/キャンセル日", "利用店名・商品名", "利用者", "決済方法", "支払区分", "利用金額", "手数料", "支払総額", "当月支払金額", "翌月以降繰越金額", "調整額", "当月お支払日"];
+const base = ["2026/09/28", "人工商店", "本人", "PayPayクレジット", "1回", "1,000", "0", "1,000", "1,000", "0", "0", "2026/10/27"];
+const cardRow = (overrides: Partial<Record<(typeof headers)[number], string>> = {}) => headers.map((header, index) => overrides[header] ?? base[index]);
 const csv = (rows: string[][]) => new Blob([`${rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n")}\r\n`], { type: "text/csv" });
 const smbcMeta = ["SYNTHETIC MEMBER", "SYNTHETIC CARD", "SYNTHETIC STATEMENT"];
 const smbcPurchase = ["2026/09/28", "Synthetic Market", "1200", "１", "１", "1200", ""];
@@ -46,37 +47,37 @@ describe("LocalStatementService", () => {
   it("rejects an oversized Blob before reading its bytes", async () => {
     const file = new Blob([new Uint8Array(5 * 1024 * 1024 + 1)]);
     Object.defineProperty(file, "arrayBuffer", { value: () => { throw new Error("must not read oversized file"); } });
-    await expect(parseStatementBlob(file, "paypay")).resolves.toMatchObject({ fatalErrors: [{ code: "limit_exceeded" }] });
+    await expect(parseStatementBlob(file, "paypay_card")).resolves.toMatchObject({ fatalErrors: [{ code: "limit_exceeded" }] });
   });
 
-  it("stores the validated source blob before canonical purchase and refund rows", async () => {
+  it("stores the validated source blob, canonical purchases, and review reasons", async () => {
     const { repository, service } = await openService();
-    const input = csv([headers, base, [...base.slice(0, 1), "", "250", ...base.slice(3, 7), "返金", "人工商店", "PayPay残高", "", "本人", "synthetic-refund"]]);
-    const result = await service.importFile(input, "paypay", "account-1");
-    expect(result).toMatchObject({ added: 2, duplicates: 0, excluded: 0 });
+    const input = csv([headers, base, cardRow({ "支払区分": "分割払い", "利用金額": "1,200", "支払総額": "1,200", "当月支払金額": "400", "翌月以降繰越金額": "800" })]);
+    const result = await service.importFile(input, "paypay_card", "account-1");
+    expect(result).toMatchObject({ added: 1, duplicates: 0, excluded: 0, needsReviewRows: [{ rowNumber: 3, reason: "1回払い以外の可能性があります" }] });
     const raw = await repository.getBlob(`statement-source:${result.id}`);
     expect(raw?.ownerId).toBe(result.id);
     expect(await raw?.blob.text()).toBe(await input.text());
-    expect((await service.list()).map(({ kind }) => kind).sort()).toEqual(["purchase", "refund"]);
-    expect((await service.list()).find(row => row.kind === "refund")?.amountYen).toBe(250);
+    expect((await service.list()).map(({ kind }) => kind)).toEqual(["purchase"]);
+    expect((await service.list())[0]?.amountYen).toBe(1000);
     expect((await service.list()).every(row => /^[a-f0-9]{64}$/.test(row.id))).toBe(true);
   });
 
   it("counts same-file repeats and whole-file repeats as duplicates", async () => {
     const { service } = await openService();
     const input = csv([headers, base, base]);
-    const first = await service.importFile(input, "paypay", "account-1");
-    expect(first).toMatchObject({ added: 1, duplicates: 1, duplicateRowsInFile: 1 });
-    const again = await service.importFile(input, "paypay", "account-1");
-    expect(again).toMatchObject({ id: first.id, added: 0, duplicates: 2, duplicateRowsInFile: 1 });
+    const first = await service.importFile(input, "paypay_card", "account-1");
+    expect(first).toMatchObject({ added: 2, duplicates: 0, duplicateRowsInFile: 0 });
+    const again = await service.importFile(input, "paypay_card", "account-1");
+    expect(again).toMatchObject({ id: first.id, added: 0, duplicates: 2, duplicateRowsInFile: 0 });
   });
 
   it("keeps identical provider rows separate across explicitly selected accounts", async () => {
     const { service } = await openService();
     const input = csv([headers, base]);
-    const first = await service.importFile(input, "paypay", "account-1");
-    const second = await service.importFile(input, "paypay", "account-2");
-    const repeatedFirst = await service.importFile(input, "paypay", "account-1");
+    const first = await service.importFile(input, "paypay_card", "account-1");
+    const second = await service.importFile(input, "paypay_card", "account-2");
+    const repeatedFirst = await service.importFile(input, "paypay_card", "account-1");
 
     expect(first.added).toBe(1);
     expect(second.added).toBe(1);
@@ -90,7 +91,7 @@ describe("LocalStatementService", () => {
   it("associates an unassigned legacy import and deduplicates rows with old unscoped IDs", async () => {
     const { repository, service } = await openService();
     const input = csv([headers, base]);
-    const imported = await service.importFile(input, "paypay", "account-1");
+    const imported = await service.importFile(input, "paypay_card", "account-1");
     const metadata = (await repository.get<Record<string, unknown>>(imported.id))!.value;
     const legacyMetadata = { ...metadata };
     delete legacyMetadata.accountId;
@@ -100,7 +101,7 @@ describe("LocalStatementService", () => {
     await repository.put({ id: "legacy-unscoped-row", kind: "statement-transaction", value: { ...row, id: "legacy-unscoped-row" }, updatedAt: new Date().toISOString() });
 
     await service.associateAccount(imported.id, "account-1");
-    const repeated = await service.importFile(input, "paypay", "account-1");
+    const repeated = await service.importFile(input, "paypay_card", "account-1");
 
     expect(repeated).toMatchObject({ id: imported.id, added: 0, duplicates: 1 });
     expect(await service.list()).toHaveLength(1);
@@ -109,17 +110,19 @@ describe("LocalStatementService", () => {
 
   it("rejects malformed and unsupported files without storing their originals", async () => {
     const { repository, service } = await openService();
-    await expect(service.importFile(csv([headers, [...base.slice(0, 1), "1.5", ...base.slice(2)]]), "paypay", "account-1")).rejects.toMatchObject({ issues: [{ code: "invalid_row" }] });
+    await expect(service.importFile(csv([[...headers].reverse(), base]), "paypay_card", "account-1")).rejects.toMatchObject({ issues: [{ code: "header_mismatch" }] });
     await expect(service.importFile(new Blob(["a,b\nc,d\n"]), "smbc_card", "account-1")).rejects.toMatchObject({ issues: [{ code: "unsupported_layout" }] });
     expect(await repository.list("statement-import")).toHaveLength(0);
     expect((await repository.serialize()).blobs).toHaveLength(0);
   });
 
-  it("rejects a changed row that reuses a previously imported external ID", async () => {
+  it("treats a changed amount as a distinct purchase when no external ID is available", async () => {
     const { service } = await openService();
-    await service.importFile(csv([headers, base]), "paypay", "account-1");
-    const changed = [...base]; changed[1] = "2,000";
-    await expect(service.importFile(csv([headers, changed]), "paypay", "account-1")).rejects.toMatchObject({ issues: [{ code: "duplicate_external_id_conflict" }] });
+    await service.importFile(csv([headers, base]), "paypay_card", "account-1");
+    const changed = cardRow({ "利用金額": "2,000", "支払総額": "2,000", "当月支払金額": "2,000" });
+    const result = await service.importFile(csv([headers, changed]), "paypay_card", "account-1");
+    expect(result.added).toBe(1);
+    expect(await service.list()).toHaveLength(2);
   });
 
   it("stores SMBC review reasons without row values and keeps them in backup records", async () => {

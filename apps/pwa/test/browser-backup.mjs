@@ -20,8 +20,8 @@ page.on('console', message => { if (message.type() === 'error') console.log('Bro
 page.on('requestfailed', request => console.log('Failed request', new URL(request.url()).pathname, request.failure()?.errorText));
 
 const syntheticPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
-const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
-const csv = `${headers}\n2026/09/30 12:00,1280,0,,,,,支払い,Synthetic Corner,PayPay,,,synthetic-match-1\n2026/09/30 13:00,500,0,,,,,支払い,Synthetic Unmatched,PayPay,,,synthetic-unmatched-1\n`;
+const headers = '利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日';
+const csv = `${headers}\n2026/09/30,Synthetic Corner,Synthetic User,PayPayクレジット,1回,1280,0,1280,1280,0,0,2026/10/27\n2026/09/30,Synthetic Unmatched,Synthetic User,PayPayクレジット,1回,500,0,500,500,0,0,2026/10/27\n`;
 
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -112,9 +112,9 @@ async function setupLedger() {
   await page.getByRole('button', { name: 'Synthetic Backup Wallet · 利用中', exact: true }).click();
   await page.getByRole('button', { name: '編集する', exact: true }).click();
   await page.locator('select[name="accountType"]').selectOption('other');
-  await page.locator('select[name="statementProvider"]').selectOption('paypay');
+  await page.locator('select[name="statementProvider"]').selectOption('paypay_card');
   await page.getByRole('button', { name: '変更を保存', exact: true }).click();
-  await page.getByText('明細サービス：PayPay', { exact: true }).waitFor();
+  await page.getByText('明細サービス：PayPayカード', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
@@ -157,10 +157,10 @@ async function importStatementCsv() {
   const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
   if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
   await page.locator('#statement-provider').waitFor({ state: 'visible' });
-  await page.locator('#statement-provider').selectOption('paypay');
+  await page.locator('#statement-provider').selectOption('paypay_card');
   await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Backup Wallet');
   await page.locator('#statement-account').selectOption({ label: 'Synthetic Backup Wallet' });
-  await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.getByText(/自動確認済み 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
@@ -244,13 +244,13 @@ async function exportSnapshot() {
   return { data: await readHouseholdSnapshot(), renderedTransactions: transactions, renderedSummary: summary };
 }
 
-function assertPayPayStatementMapping(snapshot) {
-  const imports = snapshot.data.records.filter(row => row.kind === 'statement-import' && row.value.provider === 'paypay');
-  assert.equal(imports.length, 1, 'backup should preserve the mapped PayPay import');
+function assertPayPayCardStatementMapping(snapshot) {
+  const imports = snapshot.data.records.filter(row => row.kind === 'statement-import' && row.value.provider === 'paypay_card');
+  assert.equal(imports.length, 1, 'backup should preserve the mapped PayPay Card import');
   const imported = imports[0].value;
   assert.ok(imported.accountId, 'statement import should retain its explicitly selected account');
   const accountMapping = snapshot.data.records.find(row => row.kind === 'account-metadata' && row.value.accountId === imported.accountId);
-  assert.equal(accountMapping?.value.statementProvider, 'paypay', 'backup should retain the account-to-provider mapping');
+  assert.equal(accountMapping?.value.statementProvider, 'paypay_card', 'backup should retain the account-to-provider mapping');
 }
 
 async function wipeLocalData() {
@@ -287,7 +287,7 @@ try {
   // Prime the backup timestamp; the next archive must carry that saved setting.
   await exportBackup();
   const sourceSnapshot = await exportSnapshot();
-  assertPayPayStatementMapping(sourceSnapshot);
+  assertPayPayCardStatementMapping(sourceSnapshot);
   const originalBackup = await exportBackup();
   assert.ok(originalBackup.byteLength > 64, 'portable backup should contain Actual and local data');
 
@@ -308,7 +308,7 @@ try {
   await page.reload();
   await waitForReady();
   const restoredSnapshot = await exportSnapshot();
-  assertPayPayStatementMapping(restoredSnapshot);
+  assertPayPayCardStatementMapping(restoredSnapshot);
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
   await page.locator('#settings-tab').click();
@@ -348,7 +348,7 @@ try {
   await page.reload();
   await waitForReady();
   const noRawRestored = await exportSnapshot();
-  assertPayPayStatementMapping(noRawRestored);
+  assertPayPayCardStatementMapping(noRawRestored);
   assert.deepEqual(noRawRestored.data.records, cleanedSnapshot.data.records);
   assert.equal(noRawRestored.data.blobs.length, 0);
   assert.deepEqual(noRawRestored.renderedTransactions, cleanedSnapshot.renderedTransactions);

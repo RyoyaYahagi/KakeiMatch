@@ -22,7 +22,7 @@ async function createAccount(name, type, provider) {
     await page.locator('select[name="accountType"]').selectOption(type);
     await page.locator('select[name="statementProvider"]').selectOption(provider);
     await click('変更を保存');
-    await page.getByText(`明細サービス：${({ paypay: 'PayPay', smbc_card: '三井住友カード', rakuten_card: '楽天カード' })[provider]}`, { exact: true }).waitFor();
+    await page.getByText(`明細サービス：${({ paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード' })[provider]}`, { exact: true }).waitFor();
   }
 }
 
@@ -55,19 +55,19 @@ async function seedMerchantLearning(merchant, categoryId) {
   }), { merchant: merchant.toLowerCase(), categoryId });
 }
 
-const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
+const headers = '利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日';
 const rows = [
-  ['2026/09/30 12:00', 1200, '支払い', 'Synthetic Auto Market', 'PayPay', 'synthetic-auto'],
-  ['2026/09/30 13:00', 500, '支払い', 'Synthetic Difference Shop', 'PayPay', 'synthetic-difference'],
-  ['2026/09/30 14:00', 600, '支払い', 'Synthetic Other Account Shop', 'PayPay', 'synthetic-other-account'],
-  ['2026/09/30 15:00', 700, '支払い', 'Synthetic Learned Market', 'PayPay', 'synthetic-learned'],
-  ['2026/09/30 16:00', 800, '支払い', 'Synthetic New Merchant', 'PayPay', 'synthetic-new'],
-].map(([date, out, kind, merchant, method, id]) => `${date},${out},0,,,,,${kind},${merchant},${method},,,${id}`);
+  ['2026/09/30', 1200, 'Synthetic Auto Market'],
+  ['2026/09/30', 500, 'Synthetic Difference Shop'],
+  ['2026/09/30', 600, 'Synthetic Other Account Shop'],
+  ['2026/09/30', 700, 'Synthetic Learned Market'],
+  ['2026/09/30', 800, 'Synthetic New Merchant'],
+].map(([date, amount, merchant]) => `${date},${merchant},Synthetic User,PayPayクレジット,1回,${amount},0,${amount},${amount},0,0,2026/10/27`);
 const csv = `${headers}\n${rows.join('\n')}\n`;
 
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
-  await createAccount('Synthetic PayPay Wallet', 'other', 'paypay');
+  await createAccount('Synthetic PayPay Card', 'credit_card', 'paypay_card');
   await createAccount('Synthetic SMBC Card', 'credit_card', 'smbc_card');
   await createAccount('Synthetic Rakuten Card', 'credit_card', 'rakuten_card');
   await createAccount('Synthetic Cash Wallet', 'cash', null);
@@ -75,8 +75,8 @@ try {
   await click('カテゴリ'); await click('基本カテゴリを用意する'); await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await click('設定へ戻る');
 
-  await addExpense('Synthetic Auto Market', 1200, '食費', 'Synthetic PayPay Wallet');
-  await addExpense('Synthetic Difference Shop', 550, '食費', 'Synthetic PayPay Wallet');
+  await addExpense('Synthetic Auto Market', 1200, '食費', 'Synthetic PayPay Card');
+  await addExpense('Synthetic Difference Shop', 550, '食費', 'Synthetic PayPay Card');
   await addExpense('Synthetic Other Account Shop', 600, '食費', 'Synthetic SMBC Card');
   await addExpense('Synthetic Cash Store', 300, '食費', 'Synthetic Cash Wallet');
 
@@ -88,11 +88,11 @@ try {
   await page.locator('#statement-provider').selectOption('rakuten_card');
   await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic Rakuten Card');
   assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic Rakuten Card']);
-  await page.locator('#statement-provider').selectOption('paypay');
-  await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic PayPay Wallet');
-  assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic PayPay Wallet']);
-  await page.locator('#statement-account').selectOption({ label: 'Synthetic PayPay Wallet' });
-  await page.locator('#statement-file').setInputFiles({ name: 'synthetic-reconciliation-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+  await page.locator('#statement-provider').selectOption('paypay_card');
+  await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic PayPay Card');
+  assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic PayPay Card']);
+  await page.locator('#statement-account').selectOption({ label: 'Synthetic PayPay Card' });
+  await page.locator('#statement-file').setInputFiles({ name: 'synthetic-reconciliation-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await click('取り込んで照合');
   await page.getByText('5件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.getByText(/自動確認済み 1件/).waitFor();
@@ -101,7 +101,7 @@ try {
 
   const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });
   await difference.locator('summary').click();
-  await difference.getByText('家計簿：2026-09-30 · Synthetic Difference Shop · ¥550 · Synthetic PayPay Wallet', { exact: true }).waitFor();
+  await difference.getByText('家計簿：2026-09-30 · Synthetic Difference Shop · ¥550 · Synthetic PayPay Card', { exact: true }).waitFor();
   await difference.getByText('差分：金額差 ¥50（明細 ¥500 / 家計簿 ¥550）', { exact: true }).waitFor();
   await difference.getByRole('button', { name: '別の支出', exact: true }).click();
   await page.getByText(/要確認 0件 · 記録なし 4件/).waitFor();

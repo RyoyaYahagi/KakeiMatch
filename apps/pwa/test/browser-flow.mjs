@@ -58,9 +58,9 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).click();
   await page.getByRole('button', { name: '編集する', exact: true }).click();
   await page.locator('select[name="accountType"]').selectOption('other');
-  await page.locator('select[name="statementProvider"]').selectOption('paypay');
+  await page.locator('select[name="statementProvider"]').selectOption('paypay_card');
   await page.getByRole('button', { name: '変更を保存', exact: true }).click();
-  await page.getByText('明細サービス：PayPay', { exact: true }).waitFor();
+  await page.getByText('明細サービス：PayPayカード', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
@@ -136,8 +136,8 @@ try {
   assert.deepEqual(Object.keys(aiRequests[0]).sort(), ['contentType', 'flowId', 'imageBase64']);
   await page.reload();
   await page.getByText(/Diagnostic Store Corrected/i).first().waitFor();
-  const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
-  const csv = `${headers}\n2026/09/30 12:00,1280,0,,,,,支払い,Diagnostic Store corrected,PayPay,,,synthetic-match\n2026/09/30 13:00,500,0,,,,,支払い,Synthetic New Store,PayPay,,,synthetic-unmatched\n`;
+  const headers = '利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日';
+  const csv = `${headers}\n2026/09/30,Diagnostic Store corrected,Synthetic User,PayPayクレジット,1回,1280,0,1280,1280,0,0,2026/10/27\n2026/09/30,Synthetic New Store,Synthetic User,PayPayクレジット,1回,500,0,500,500,0,0,2026/10/27\n`;
   const upload = async () => {
     const reconciliationTab = page.locator('#reconciliation-tab');
     if (await reconciliationTab.getAttribute('aria-pressed') !== 'true') {
@@ -148,10 +148,10 @@ try {
     const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
     if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
     await page.locator('#statement-provider').waitFor({ state: 'visible' });
-    await page.locator('#statement-provider').selectOption('paypay');
+    await page.locator('#statement-provider').selectOption('paypay_card');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Wallet');
     await page.locator('#statement-account').selectOption({ label: 'Synthetic Wallet' });
-    await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
+    await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
     await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   };
   await upload();
@@ -165,7 +165,7 @@ try {
     assert.equal(await summary.evaluate(node => node.parentElement.open), false);
     await summary.click();
     await page.locator('summary').filter({ hasText: 'Diagnostic Store corrected' }).click();
-    await page.getByText('明細：2026-09-30 12:00 · Diagnostic Store corrected · ¥1,280 · PayPay', { exact: true }).waitFor();
+    await page.getByText('明細：2026-09-30 · Diagnostic Store corrected · ¥1,280 · PayPayクレジット（1回）', { exact: true }).waitFor();
     await page.getByText('レシート：2026-09-30 12:00 · Diagnostic Store corrected · ¥1,280', { exact: true }).waitFor();
   };
   await openAutomaticMatch();
@@ -222,5 +222,5 @@ try {
   await page.getByText('今月の支出 ¥1,980', { exact: false }).waitFor();
   if (process.env.PWA_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREENSHOT_PATH, fullPage: true });
   assert.deepEqual(errors, []);
-  console.log('PASS: real browser ledger, mocked AI flow IDs and usage display, Gemini/Jev counted once, explicit reanalysis, manual registration after quota, receipt correction, stable reload, PayPay duplicates, automatic reconciliation, no-receipt review, offline reload/write.');
+  console.log('PASS: real browser ledger, mocked AI flow IDs and usage display, Gemini/Jev counted once, explicit reanalysis, manual registration after quota, receipt correction, stable reload, PayPay Card duplicates, automatic reconciliation, no-receipt review, offline reload/write.');
 } catch (error) { console.error(await page.locator('body').innerText()); console.error('Page errors:', errors); throw error; } finally { await browser.close(); }
