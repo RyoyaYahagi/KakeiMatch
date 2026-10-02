@@ -1,5 +1,7 @@
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
+import { dateShortcuts, formActions, optionalFields } from './entry-form';
+import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -171,11 +173,13 @@ export function showManualTransactionEditor(options: {
     cancel.type = 'button';
     cancel.addEventListener('click', () => { void options.onCancel().catch(error => { status.textContent = messageFor(error); }); });
 
-    form.append(dateLabel, date, amountLabel, amount, payeeLabel, payee,
-      categoryLabel, category, accountLabel, account, memoLabel, memo, status, submit);
+    amount.classList.add('amount-input');
+    const optional = optionalFields('メモを追加（任意）', [memoLabel, memo], Boolean(memo.value));
+    form.append(amountLabel, amount, payeeLabel, payee, dateLabel, date, dateShortcuts(date, localToday()),
+      categoryLabel, category, accountLabel, account, optional, status, formActions(submit));
     if (transfer) {
       payeeLabel.remove(); payee.remove(); categoryLabel.remove(); category.remove();
-      memoLabel.before(destinationLabel, destination);
+      optional.before(destinationLabel, destination);
     }
     const shortcuts: HTMLButtonElement[] = [];
     function addShortcut(field: HTMLSelectElement, request: { kind: 'category'; isIncome: boolean } | { kind: 'account' }) {
@@ -204,7 +208,8 @@ export function showManualTransactionEditor(options: {
     if (!transfer) addShortcut(category, { kind: 'category', isIncome: kind === 'income' });
     addShortcut(account, { kind: 'account' });
     if (transfer) addShortcut(destination, { kind: 'account' });
-    options.view.replaceChildren(heading, form, cancel);
+    cancel.className = 'text-button back-link'; cancel.prepend(icon('chevronLeft'));
+    options.view.replaceChildren(cancel, heading, form);
     status.textContent = '';
 
     const readValue = (): FormValue => ({

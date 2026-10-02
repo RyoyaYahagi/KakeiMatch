@@ -37,7 +37,7 @@ try {
   await click('編集する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Renamed Card'); await click('変更を保存');
   await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   const expenseField = '#manual-transaction-account';
   await page.locator(expenseField).waitFor();
   assert.deepEqual(await groups(expenseField), ['クレジットカード', '銀行口座', '現金', 'その他 / 未分類']);

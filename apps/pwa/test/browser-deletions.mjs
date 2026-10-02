@@ -12,7 +12,7 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 async function account(name) { await page.locator('#settings-tab').click(); await click('支払元'); await click('支払元を追加する'); await page.getByLabel('支払元の名前', { exact: true }).fill(name); await click('追加する'); await page.getByRole('button', { name: `${name} · 利用中`, exact: true }).waitFor(); }
 async function category(name, income) { await page.locator('#settings-tab').click(); await click('カテゴリ'); if (income) await click('収入カテゴリ'); await click('カテゴリを追加する'); await page.getByLabel('カテゴリ名', { exact: true }).fill(name); await click('追加する'); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor(); }
 async function manual(name, kind, amount, categoryName) {
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-payee').waitFor();
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-payee').waitFor();
   await page.getByLabel(kind === '支出' ? '店名・支払先' : '入金元・内容', { exact: true }).fill(name);
   await page.getByLabel('金額（円）', { exact: true }).fill(String(amount));
   await page.locator('#manual-transaction-category').selectOption({ label: categoryName });
@@ -37,7 +37,7 @@ try {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: / · 振替 · / }).click(); await remove(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 0);
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 1);
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
+  await page.locator('#home-tab').click(); await click('記録を追加');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').fill('Synthetic Split'); await page.locator('#receipt-amount').fill('1400'); await page.locator('#receipt-category').selectOption({ label: 'Synthetic Food' }); await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   let itemIndex = 0;

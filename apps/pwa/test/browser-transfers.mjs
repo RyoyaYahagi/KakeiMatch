@@ -24,7 +24,7 @@ async function fill(amount, source, destination, memo) {
   await page.getByLabel('日付', { exact: true }).fill('2026-10-01');
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: source });
   await page.getByLabel('振替先口座', { exact: true }).selectOption({ label: destination });
-  await page.getByLabel('メモ（任意）', { exact: true }).fill(memo);
+  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.getByLabel('メモ（任意）', { exact: true }).fill(memo);
 }
 async function save(edit = false) {
   await click(edit ? '変更を保存する' : '登録する');

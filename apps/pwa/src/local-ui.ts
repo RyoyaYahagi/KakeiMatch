@@ -11,6 +11,7 @@ import { renderHomeAttention, type HomeAttentionCounts } from './home-attention'
 import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
+import { dateShortcuts, formActions, optionalFields } from './entry-form';
 import { icon } from './ui-icons';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
@@ -148,18 +149,37 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     await open('statement');
     await showRecurringSchedules({ view, ledger, service: recurring, onBack: () => el('settings-tab').click() });
   }
+  let chooserOrigin: () => Promise<void> = () => recordsPage();
+  /** docs/UX.md ＋追加: one screen chooses the kind of record, including how to enter an expense. */
   async function recordChooser() {
-    newEntryReturn = recordsPage;
-    await open('receipt'); view.append(text('h2', '記録する'));
-    view.append(button('支出', expenseMethodChooser), button('収入', () => { newEntryReturn = recordChooser; return manualEditor('income'); }), button('口座間振替', () => { newEntryReturn = recordChooser; return manualEditor('transfer'); }),
-      button('記録一覧へ戻る', recordsPage));
-  }
-  async function expenseMethodChooser() {
-    newEntryReturn = expenseMethodChooser;
-    await open('receipt'); view.append(text('h2', '支出を記録'));
-    view.append(button('手入力', () => { newEntryReturn = expenseMethodChooser; return manualEditor('expense'); }),
-      button('レシートから入力', () => { newEntryReturn = expenseMethodChooser; return receiptPage(); }),
-      button('記録する画面へ戻る', recordChooser));
+    newEntryReturn = recordChooser;
+    await open('receipt'); el('receipt-tab').classList.remove('active'); el('receipt-tab').setAttribute('aria-pressed', 'false'); el('receipt-tab').removeAttribute('aria-current');
+    const header = document.createElement('div'); header.className = 'page-header';
+    const close = button('閉じる', chooserOrigin); close.className = 'icon-button'; close.setAttribute('aria-label', '閉じる'); close.replaceChildren(icon('close'));
+    header.append(text('h2', '何を記録しますか？'), close);
+    const capture = document.createElement('input'); capture.type = 'file'; capture.accept = 'image/jpeg,image/png,image/webp'; capture.setAttribute('capture', 'environment'); capture.hidden = true;
+    const library = document.createElement('input'); library.type = 'file'; library.accept = capture.accept; library.hidden = true;
+    const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void receipts.saveImage(file).then(receipt => receiptEditor(receipt)).catch(report); }); };
+    saveFile(capture); saveFile(library);
+    const camera = document.createElement('button'); camera.type = 'button'; camera.className = 'choice-primary'; camera.setAttribute('aria-label', 'レシートを撮る');
+    const cameraBadge = document.createElement('span'); cameraBadge.className = 'choice-primary-icon'; cameraBadge.append(icon('camera'));
+    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、内容を読み取れます'));
+    camera.append(cameraBadge, cameraText, icon('chevronRight'));
+    camera.addEventListener('click', () => capture.click());
+    const choices = document.createElement('ul'); choices.className = 'choice-list surface-section';
+    for (const [label, symbol, tone, action] of [
+      ['保存した写真から', 'image', 'food', () => library.click()],
+      ['支出を手入力', 'pencil', 'other', () => manualEditor('expense')],
+      ['収入', 'income', 'income', () => manualEditor('income')],
+      ['口座間振替', 'transfer', 'other', () => manualEditor('transfer')],
+    ] as const) {
+      const item = document.createElement('li');
+      const choice = button(label, action); choice.className = 'choice-row';
+      const badge = document.createElement('span'); badge.className = `record-icon tone-${tone}`; badge.append(icon(symbol));
+      choice.prepend(badge); choice.append(icon('chevronRight'));
+      item.append(choice); choices.append(item);
+    }
+    view.append(header, capture, library, camera, choices, text('p', '写真と入力内容はこの端末に保存します。読み取りは「AIで読み取る」を選んだ時だけ行います。', 'muted'));
   }
   async function accountBalancesPage() {
     await open('receipt');
@@ -261,21 +281,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (current.kind !== 'transfer' && !current.isSplit) actions.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
     const remove = deleteButton(current.id); remove.className = 'text-button destructive-text';
     actions.append(remove); view.append(actions);
-  }
-  async function receiptPage() {
-    await open('receipt'); view.append(text('h2', 'レシートを記録する'), text('p', '画像と入力内容はこの端末に保存します。AIを選んだときだけ画像を送信します。', 'muted'));
-    const capture = document.createElement('input'); capture.type = 'file'; capture.accept = 'image/jpeg,image/png,image/webp'; capture.setAttribute('capture', 'environment'); capture.hidden = true;
-    const library = document.createElement('input'); library.type = 'file'; library.accept = capture.accept; library.hidden = true;
-    const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (file) void receipts.saveImage(file).then(receiptEditor).catch(report); }); };
-    saveFile(capture); saveFile(library);
-    view.append(button('撮影する', () => capture.click(), false), button('写真・ファイルを選ぶ', () => library.click()), capture, library,
-      button('支出の選択へ戻る', newEntryReturn));
-    const list = document.createElement('ul');
-    for (const receipt of (await receipts.list()).filter(receipt => receipt.registration.status !== 'deleted')) {
-      const row = document.createElement('li'); const value = receipt.confirmedValue ?? receipt.extraction;
-      row.append(button(`${value?.merchant || '未入力のレシート'} · ${receipt.registration.status === 'applied' ? '登録済み' : '確認する'}`, () => receiptEditor(receipt))); list.append(row);
-    }
-    view.append(list);
   }
   async function receiptDetail(receipt: LocalReceipt) {
     await open('receipt');
@@ -431,8 +436,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const purchaseDetails = document.createElement('details'); purchaseDetails.className = 'purchase-details';
     purchaseDetails.open = Boolean(receipt.image) || items.length > 0 || adjustments.length > 0;
     purchaseDetails.append(text('summary', '購入内容（任意）'), applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
-    form.append(merchantLabel, merchant, dateLabel, date, timeLabel, time, amountLabel, amount,
-      categoryLabel, category, accountLabel, account, memoLabel, memo, purchaseDetails, warning, status);
+    amount.classList.add('amount-input');
+    const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
+    form.append(amountLabel, amount, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
+      categoryLabel, category, accountLabel, account, optional, purchaseDetails, warning, status);
     view.append(form);
     function addCategoryShortcut(field: HTMLSelectElement) {
       return createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
@@ -595,7 +602,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     const submit = document.createElement('button'); submit.type = 'submit';
     submit.textContent = editing ? pendingEdit ? '同じ内容で再試行する' : '変更を保存する' : receipt.registration.status === 'failed' ? '登録を再試行する' : '登録する';
-    form.append(submit);
+    form.append(formActions(submit));
     form.addEventListener('submit', event => {
       event.preventDefault();
       void busy(submit, async () => {
@@ -620,11 +627,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         await saveTail;
         flushReceiptDraft = () => Promise.resolve();
         await repository.delete(draftId);
-        if (editing) await receiptDetail(saved); else if (!receipt.image) await recordsPage(); else await receiptPage();
+        if (editing) await receiptDetail(saved); else await recordsPage();
         el('message').textContent = editing ? '変更を保存しました。' : '登録しました。';
       });
     });
-    view.append(button(editing || !receipt.image ? 'キャンセル' : '支出の選択へ戻る', editing ? () => receiptDetail(receipt) : newEntryReturn));
+    const cancelEntry = button('キャンセル', editing ? () => receiptDetail(receipt) : newEntryReturn); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
   }
   let selectedStatementProvider: StatementProvider = 'paypay_card';
@@ -839,7 +846,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
   }
   for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
-  el('add-record').addEventListener('click', () => { void recordChooser().catch(report); });
+  el('add-record').addEventListener('click', () => {
+    const active = ['home', 'receipt', 'reconciliation', 'settings'].find(id => el(`${id}-tab`).classList.contains('active'));
+    chooserOrigin = active === 'home' ? home : active === 'reconciliation' ? reviewPage : active === 'settings' ? async () => { el('settings-tab').click(); } : recordsPage;
+    void recordChooser().catch(report);
+  });
   el('home-all-records').addEventListener('click', () => el('receipt-tab').click());
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');

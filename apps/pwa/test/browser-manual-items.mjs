@@ -23,14 +23,14 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await click('設定へ戻る'); await click('カテゴリ'); await click('基本カテゴリを用意する');
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   // This assertion fails on #98: manual expense entry has no purchase-content editor.
   assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);
   await page.locator('#manual-transaction-payee').fill('Synthetic Manual Items');
   await page.locator('#manual-transaction-amount').fill('1400');
   await page.locator('#manual-transaction-category').selectOption({ label: '食費' });
-  await page.locator('#manual-transaction-memo').fill('Synthetic memo');
+  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic memo');
   await page.getByText('購入内容（任意）', { exact: true }).click();
   for (const [name, amount, category] of [['Synthetic Apple', '1000', '食費'], ['Synthetic Soap', '500', '日用品'], ['Temporary', '20', '食費']]) {
     await click('品目を追加'); const row = page.locator('[data-receipt-item]').last();
