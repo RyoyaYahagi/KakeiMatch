@@ -6,7 +6,7 @@ KakeiMatchは、レシートから支出を記録し、後日取り込んだカ�
 
 本番アプリは `apps/pwa` のPWAです。同一のCloudflare WorkerがアプリとAPIを配信します。本番の正規URLは <https://kakeimatch.yhgry.workers.dev> です。ブラウザーの保存領域はURLごとに分かれるため、利用開始後はWorker名やURLを変更しないでください。
 
-家計簿、レシート、明細、照合データは利用者の端末に保存します。家計簿エンジンにはActual Budgetのブラウザー版を使います。Cloud accountは通常の家計操作には不要で、AIを使うときの本人確認と利用枠に使います。D1には本人確認、session、Passkey、招待・回復、利用権限、AI利用量だけを保存します。端末内データは `.kmb` ファイルに書き出せます。
+家計簿、レシート、明細、照合データは利用者の端末に保存します。家計簿エンジンにはActual Budgetのブラウザー版を使います。Cloud accountは通常の家計操作には不要で、AIを使うときの本人確認と利用枠に使います。D1には本人確認、session、Passkey、招待・回復、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態を保存します。問い合わせ本文と音声はD1へ保存しません。端末内データは `.kmb` ファイルに書き出せます。
 
 本番利用に自宅Linux、Docker Compose、Next.jsサーバー、Actual Sync Server、サーバー側の家計簿SQLiteやファイル保存領域は必要ありません。previewは合成データの確認専用です。deploy前に[デプロイ](docs/DEPLOYMENT.md)を確認してください。
 
@@ -33,6 +33,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [口座間振替](docs/LOCAL_TRANSFERS.md): 登録・編集と両口座の残高
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
+- [お問い合わせ](docs/CONTACT.md): 音声入力と不具合・改善要望のIssue登録
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [セキュリティ](SECURITY.md): データとサービスの保護
 - [明細形式](docs/STATEMENT_FORMATS.md): 確認済みのCSV形式

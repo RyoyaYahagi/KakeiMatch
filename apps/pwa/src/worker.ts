@@ -21,7 +21,7 @@ const appWorker = {
     if (path.startsWith('/api/account/')) {
       return secureApiResponse(await handleAccountRequest(request, env));
     }
-    if (path.startsWith('/api/ai/')) {
+    if (path.startsWith('/api/ai/') || path === '/api/contact' || path.startsWith('/api/contact/')) {
       return secureApiResponse(await handleAiRequest(request, env));
     }
     return secureApiResponse(new Response(JSON.stringify({ error: 'not_found' }), {
