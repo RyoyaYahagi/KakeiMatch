@@ -145,7 +145,7 @@ async function importStatementCsv() {
   await page.locator('#settings-tab').click(); await page.locator('#statement-tab').click();
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '明細を取り込む', exact: true }).click();
-  await page.getByText('2件を取り込みました。重複 0件。', { exact: true }).waitFor();
+  await page.getByText('2件を取り込みました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
 }
 
 async function seedAuditAndPreferences() {
