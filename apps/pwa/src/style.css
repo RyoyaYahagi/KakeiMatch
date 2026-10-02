@@ -32,6 +32,9 @@
   --radius-sm: 10px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 20px; --radius-sheet: 24px; --radius-full: 999px;
   --font-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
   --nav-height: 64px;
+  --sidebar-width: 240px;
+  --content-max: 760px;
+  --content-wide: 1080px;
   font-family: var(--font-body);
   font-size: 16px;
   line-height: 1.5;
@@ -117,6 +120,7 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .app-nav .nav-add { color: var(--primary); font-weight: 700; }
 .nav-add-circle { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; margin-top: -32px; border-radius: var(--radius-full); background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-raised); }
 .nav-add-circle .icon { width: 28px; height: 28px; stroke-width: 2.5; }
+.nav-brand, .nav-add-prefix { display: none; }
 
 /* Lists and entries */
 .master-entry, .master-row button { display: block; width: 100%; text-align: left; }
@@ -406,6 +410,53 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 .master-create-dialog { width: min(100% - 32px, 480px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
 .master-create-dialog::backdrop { background: var(--scrim); }
 .master-create-dialog h2 { margin-top: 0; }
+
+/* PC: docs/UX.md PCでの表示, docs/DESIGN.md PC. The phone layout above stays the base. */
+@media (min-width: 1024px) {
+  :root { --nav-height: 0px; }
+  main { max-width: none; margin: 0 0 0 var(--sidebar-width); padding: var(--space-8) var(--space-8) var(--space-8); }
+  main > p, #local-view, #settings-view { max-width: var(--content-max); margin-inline: auto; }
+  #household-view { max-width: var(--content-wide); margin-inline: auto; }
+
+  .app-nav { top: 0; right: auto; bottom: 0; display: flex; flex-direction: column; align-items: stretch; gap: var(--space-1); width: var(--sidebar-width); max-width: none; min-height: 0; margin: 0; padding: var(--space-6) var(--space-4); border-top: 0; border-right: 1px solid var(--border); }
+  .nav-brand { display: block; order: -2; margin: 0 var(--space-3) var(--space-5); font-size: 1.125rem; font-weight: 700; color: var(--primary); }
+  .app-nav button { flex-direction: row; justify-content: flex-start; gap: var(--space-3); min-height: 48px; padding: 0 var(--space-3); font-size: 1rem; }
+  .app-nav .nav-button.active { background: var(--primary-soft); }
+  .app-nav .nav-add { order: -1; justify-content: center; gap: var(--space-2); margin-bottom: var(--space-5); border-radius: var(--radius-lg); background: var(--primary); color: var(--on-primary); box-shadow: var(--shadow-raised); }
+  .nav-add-prefix { display: inline; }
+  .nav-add-circle { width: auto; height: auto; margin: 0; background: transparent; color: inherit; box-shadow: none; }
+  .nav-add-circle .icon { width: 22px; height: 22px; }
+  #settings-tab { margin-top: auto; }
+  .nav-badge { position: static; margin-left: auto; }
+
+  /* Home: the month and what to do next on the left, where the money went on the right. */
+  #household-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-areas: "import import" "budget budget" "summary categories" "attention categories" "recent categories"; column-gap: var(--space-6); row-gap: 0; align-items: start; }
+  #household-view > * { margin: 0 0 var(--space-4); }
+  #import-section { grid-area: import; }
+  #budget-section { grid-area: budget; }
+  #home-attention { grid-area: attention; }
+  #home-summary { grid-area: summary; }
+  #home-categories { grid-area: categories; }
+  #household-view > .surface-section { grid-area: recent; }
+  .donut-chart, .category-donut { width: 160px; height: 160px; }
+
+  .page-header h2 { font-size: 1.5rem; }
+  /* The spread in the page color hides the form scrolling behind the rounded corners. */
+  .form-actions { bottom: var(--space-4); margin: var(--space-6) 0 0; border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: 0 0 0 var(--space-4) var(--bg); }
+  form .form-actions button { width: auto; min-width: 240px; margin-left: auto; display: block; }
+
+  /* The record chooser opens as a centered dialog instead of a bottom sheet. */
+  .record-sheet { inset: 0; max-width: 520px; height: fit-content; max-height: calc(100dvh - 2 * var(--space-8)); margin: auto; border-radius: var(--radius-xl); }
+  .record-sheet[open] { animation: dialog-in .2s ease-out; }
+  .sheet-grabber { display: none; }
+  .sheet-body { padding: var(--space-5) var(--space-5) var(--space-6); }
+
+  @media (hover: hover) {
+    .app-nav .nav-button:hover:not(.active) { background: var(--sunken); color: var(--text); }
+    .record-row:hover, .choice-row:hover, .settings-list > .master-entry:hover, .review-row:hover { background: var(--sunken); box-shadow: 0 0 0 var(--space-2) var(--sunken); border-radius: var(--radius-sm); }
+  }
+}
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

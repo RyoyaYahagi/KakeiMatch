@@ -17,9 +17,10 @@ root.innerHTML = `
     <h1 class="visually-hidden">KakeiMatch</h1>
     <p class="network-status" id="network" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
+      <p class="nav-brand" aria-hidden="true">KakeiMatch</p>
       <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${iconMarkup('home')}<span>ホーム</span></button>
       <button id="receipt-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('records')}<span>記録</span></button>
-      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${iconMarkup('add')}</span><span>追加</span></button>
+      <button id="add-record" class="nav-add" type="button" aria-label="記録を追加"><span class="nav-add-circle">${iconMarkup('add')}</span><span><span class="nav-add-prefix">記録を</span>追加</span></button>
       <button id="reconciliation-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('reconciliation')}<span>照合</span><span id="reconciliation-badge" class="nav-badge" aria-hidden="true" hidden></span></button>
       <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('settings')}<span>設定</span></button>
     </nav>
