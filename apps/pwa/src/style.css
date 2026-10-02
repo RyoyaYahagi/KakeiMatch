@@ -231,6 +231,30 @@ form .date-shortcuts button, .chip { min-height: 40px; margin: 0; padding: 0 var
 .form-actions { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 5; margin: var(--space-5) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); background: var(--surface); border-top: 1px solid var(--border); }
 form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-radius: var(--radius-lg); font-size: 1.0625rem; }
 
+/* Settings: docs/UX.md 設定 */
+.settings-group-title { margin: var(--space-5) var(--space-1) var(--space-2); font-size: .8125rem; font-weight: 700; color: var(--muted); }
+.settings-list { padding: 0 var(--space-4); }
+.settings-list > .master-entry { display: flex; align-items: center; min-height: 52px; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); font-size: 1rem; }
+.settings-list > .master-entry:last-child { border-bottom: 0; }
+.settings-list > .master-entry::after { content: "›"; float: none; margin-left: auto; font-size: 1.25rem; }
+.settings-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.settings-panel { padding: var(--space-4); }
+.settings-panel h2, .settings-panel h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.settings-panel h3 { font-size: .9375rem; }
+.settings-panel h5 { margin: var(--space-4) 0 var(--space-2); font-size: .9375rem; }
+.settings-panel > p { margin: var(--space-2) 0; }
+.settings-panel button { margin: var(--space-2) var(--space-2) 0 0; }
+#backup-export { width: 100%; min-height: 48px; margin: var(--space-3) 0 var(--space-1); border-radius: var(--radius-lg); }
+#backup-reminder:not(:empty) { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-weight: 500; }
+#backup-settings p:empty { display: none; }
+.settings-disclosure { padding: 0 var(--space-4); }
+.settings-disclosure > summary, .settings-inner-disclosure > summary { color: var(--primary); font-weight: 500; }
+.settings-disclosure[open] { padding-bottom: var(--space-4); }
+.settings-inner-disclosure { margin-top: var(--space-3); border-top: 1px solid var(--border); }
+.danger-zone > summary { color: var(--danger); }
+.danger-zone button { color: var(--danger); border-color: var(--danger); }
+.settings-footnote { margin: var(--space-5) var(--space-1) 0; }
+
 /* Receipts */
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }

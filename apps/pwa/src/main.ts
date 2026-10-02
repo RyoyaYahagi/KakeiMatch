@@ -44,9 +44,14 @@ root.innerHTML = `
     </section>
     <section id="local-view" hidden></section>
     <section id="settings-view" hidden>
-      <p>家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
-      <section id="local-settings"></section>
-      <h2>AI利用</h2>
+      <div class="page-header"><h2>設定</h2></div>
+      <h3 class="settings-group-title">家計簿</h3>
+      <section id="local-settings" class="surface-section settings-list" aria-label="家計簿の設定"></section>
+      <h3 class="settings-group-title">データ</h3>
+      <div id="data-settings" class="settings-stack"></div>
+      <h3 class="settings-group-title">写真の読み取り</h3>
+      <section id="ai-settings" class="surface-section settings-panel" aria-label="AI利用">
+      <h4>AI利用</h4>
       <p class="muted">レシートの読み取りからカテゴリ提案までで1回です。読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
       <p id="account-status" class="muted"></p>
@@ -59,7 +64,7 @@ root.innerHTML = `
       <div id="signed-in-actions" hidden>
         <button id="use-ai" type="button">AI利用を確認</button>
         <section id="developer-costs" hidden aria-labelledby="developer-costs-heading">
-          <h3 id="developer-costs-heading">APIコスト（推定）</h3>
+          <h5 id="developer-costs-heading">APIコスト（推定）</h5>
           <div class="month-selector">
             <button id="costs-previous-month" class="secondary" type="button" aria-label="前月のAI利用料金">‹</button>
             <strong id="costs-month" aria-live="polite"></strong>
@@ -69,14 +74,16 @@ root.innerHTML = `
           <p id="costs-unknown" class="muted" hidden></p>
           <ul id="costs-providers"></ul>
         </section>
-        <h3>Passkey</h3>
+        <h5>Passkey</h5>
         <ul id="passkey-list"></ul>
         <button id="add-passkey" class="secondary" type="button">Passkeyを追加</button>
         <button id="logout" class="secondary" type="button">ログアウト</button>
       </div>
       <p class="status" id="account-message" role="status"></p>
-      <section id="app-info">
-        <h2>アプリ情報</h2>
+      </section>
+      <h3 class="settings-group-title">アプリ</h3>
+      <section id="app-info" class="surface-section settings-panel">
+        <h4>アプリ情報</h4>
         <label class="developer-option" for="developer-options">
           <input id="developer-options" type="checkbox" />
           開発者向け機能を表示
@@ -84,6 +91,7 @@ root.innerHTML = `
         <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
         <p id="developer-options-status" class="status" role="status"></p>
       </section>
+      <p class="muted settings-footnote">家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
     </section>
   </main>`;
 
