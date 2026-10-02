@@ -100,8 +100,8 @@ try {
   const rows = page.locator('#transactions > li');
   assert.equal(await rows.count(), 3);
   await page.getByRole('button', { name: '記録をすべて見る', exact: true }).click();
-  await page.getByRole('button', { name: /振替 ¥8,000/ }).waitFor();
-  assert.equal(await page.getByRole('button', { name: /振替 ¥8,000/ }).count(), 1);
+  await page.getByRole('button', { name: /振替 · .*¥8,000$/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /振替 · .*¥8,000$/ }).count(), 1);
   await page.locator('#home-tab').click(); await waitForMonth('2026年10月');
 
   await click('前月へ'); await waitForMonth('2026年9月');

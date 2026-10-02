@@ -44,7 +44,7 @@ async function fill({ name, kind = 'expense', amount, category, account, frequen
 async function save() { await click('保存する'); }
 async function recordNames() {
   await page.locator('#receipt-tab').click();
-  return page.locator('.record-list').innerText();
+  return page.locator('.record-groups').innerText();
 }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
@@ -86,14 +86,14 @@ try {
   assert.match(beforeEditRecords, /Synthetic Monthly Expense/);
   assert.match(beforeEditRecords, /Synthetic Monthly Income/);
   assert.doesNotMatch(beforeEditRecords, /Synthetic Weekly Expense|Synthetic Yearly Expense/);
-  const generatedTransactionCount = await page.locator('.record-list > li').count();
+  const generatedTransactionCount = await page.locator('.record-groups li').count();
   assert.equal(generatedTransactionCount, 2);
   await page.getByRole('button', { name: /Synthetic Monthly Expense · .*¥1,500/ }).click();
   await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
   assert.match(await page.locator('.transaction-detail').innerText(), /カテゴリ\s+Synthetic Schedule Food/);
   assert.match(await page.locator('.transaction-detail').innerText(), /金額\s+¥1,500/);
   await click('記録一覧へ戻る');
-  await page.getByRole('button', { name: /Synthetic Monthly Income · .*収入 ¥200,000/ }).click();
+  await page.getByRole('button', { name: /^Synthetic Monthly Income · .*収入 · .*\+¥200,000$/ }).click();
   await page.getByRole('heading', { name: '収入の記録', exact: true }).waitFor();
   assert.match(await page.locator('.transaction-detail').innerText(), /カテゴリ\s+Synthetic Schedule Salary/);
   assert.match(await page.locator('.transaction-detail').innerText(), /金額\s+¥200,000/);
@@ -101,7 +101,7 @@ try {
   await page.getByText('削除しました。', { exact: true }).waitFor();
   const afterIncomeDelete = await recordNames();
   assert.doesNotMatch(afterIncomeDelete, /Synthetic Monthly Income/);
-  assert.equal(await page.locator('.record-list > li').count(), generatedTransactionCount - 1);
+  assert.equal(await page.locator('.record-groups li').count(), generatedTransactionCount - 1);
   await recurringList(); await click('Synthetic Monthly Expense · 支出 ¥1,500');
   await page.getByRole('heading', { name: 'Synthetic Monthly Expense', exact: true }).waitFor();
   await click('編集する'); await page.locator('#recurring-amount').waitFor();
@@ -109,7 +109,7 @@ try {
   await save(); await page.getByText('定期登録を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Synthetic Monthly Expense Edited · 支出 ¥1,700', exact: true }).waitFor();
   const editedRecords = await recordNames();
-  assert.equal(await page.locator('.record-list > li').count(), generatedTransactionCount - 1);
+  assert.equal(await page.locator('.record-groups li').count(), generatedTransactionCount - 1);
   assert.doesNotMatch(editedRecords, /Synthetic Weekly Expense|Synthetic Yearly Expense/);
   await page.getByRole('button', { name: /Synthetic Monthly Expense · .*¥1,500/ }).click();
   assert.match(await page.locator('.transaction-detail').innerText(), /カテゴリ\s+Synthetic Schedule Food/);
@@ -126,7 +126,7 @@ try {
   const afterReloadRecords = await recordNames();
   assert.doesNotMatch(afterReloadRecords, /Synthetic Monthly Income/);
   assert.match(afterReloadRecords, /Synthetic Monthly Expense/);
-  assert.equal(await page.locator('.record-list > li').count(), generatedTransactionCount - 1);
+  assert.equal(await page.locator('.record-groups li').count(), generatedTransactionCount - 1);
   await recurringList();
   assert.equal(await page.getByRole('button', { name: /Synthetic Monthly Expense Edited/ }).count(), 0);
   await page.getByRole('button', { name: 'Synthetic Monthly Income · 収入 ¥200,000', exact: true }).waitFor();
