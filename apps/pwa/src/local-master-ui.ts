@@ -328,7 +328,7 @@ export function initializeMasterUi(
   }
 
   const statementProviderLabels: Record<StatementProvider, string> = {
-    smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード', paypay: 'PayPay',
+    smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード', paypay: 'PayPay取引履歴（旧形式）', paypay_card: 'PayPayカード',
   };
 
   async function accountEditPage(account: Account) {
@@ -336,8 +336,11 @@ export function initializeMasterUi(
     const typeField = accountTypeField(account.accountType);
     const providerLabel = element('label', '明細サービス');
     const provider = element('select'); provider.name = 'statementProvider'; provider.id = `account-provider-${crypto.randomUUID()}`; providerLabel.htmlFor = provider.id;
-    provider.append(new Option('設定しない', ''), ...(['smbc_card', 'rakuten_card', 'paypay'] as const).map(value => new Option(statementProviderLabels[value], value)));
-    provider.value = await options.getStatementProvider?.(account.id) ?? '';
+    const currentProvider = await options.getStatementProvider?.(account.id) ?? '';
+    const legacyPaypay = currentProvider === 'paypay' ? new Option('PayPay取引履歴（旧形式・再取込不可）', 'paypay') : null;
+    if (legacyPaypay) legacyPaypay.disabled = true;
+    provider.append(new Option('設定しない', ''), ...(legacyPaypay ? [legacyPaypay] : []), ...(['smbc_card', 'rakuten_card', 'paypay_card'] as const).map(value => new Option(statementProviderLabels[value], value)));
+    provider.value = currentProvider;
     const providerField = element('div'); providerField.append(providerLabel, provider);
     const updateProviderVisibility = () => { providerField.hidden = typeField.select.value === 'cash'; if (providerField.hidden) provider.value = ''; };
     typeField.select.addEventListener('change', updateProviderVisibility);

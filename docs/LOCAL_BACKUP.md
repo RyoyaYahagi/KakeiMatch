@@ -50,7 +50,7 @@ KakeiMatch設定に保存しているActual `budgetId` と端末固有の `dataD
 
 ## ブラウザー検証とiPhone実機確認
 
-2026年9月30日、Chromiumで合成レシート2件とPayPay明細2行を使い、Actual取引と端末記録の書き出し、新しい保存先への復元、再読込、元データへの切り戻し、破損ファイルの拒否、原本整理、原本欠損状態の再復元、ログアウト状態の全消去を確認しました。確認値、canonical明細行、照合結果、同一支出判断、組み合わせ拒否、店舗対応、設定の保存内容を比較しています。組み合わせ拒否はKakeiMatch側の合成fixtureを使用しています。[ブラウザー試験: `browser-backup.mjs`](../apps/pwa/test/browser-backup.mjs)
+2026年9月30日、Chromiumで合成レシート2件と旧形式PayPay取引履歴2行を使い、Actual取引と端末記録の書き出し、新しい保存先への復元、再読込、元データへの切り戻し、破損ファイルの拒否、原本整理、原本欠損状態の再復元、ログアウト状態の全消去を確認しました。確認値、canonical明細行、照合結果、同一支出判断、組み合わせ拒否、店舗対応、設定の保存内容を比較しています。組み合わせ拒否はKakeiMatch側の合成fixtureを使用しています。[ブラウザー試験: `browser-backup.mjs`](../apps/pwa/test/browser-backup.mjs)
 
 設定画面の390px幅の表示は[スクリーンショット](screenshots/issue-37-mobile.png)で確認できます。
 

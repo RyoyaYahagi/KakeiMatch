@@ -66,7 +66,7 @@ PWAとCloud account APIとAI Gatewayは同一originの `/api/` 配下で提供�
 
 Cloud accountやAI Gatewayが利用できない場合も、PWAのローカル家計機能を閉じません。レシート画像は検証後に端末のIndexedDBへ保存し、AIを選んだ場合だけGemini routeへ送ります。アプリは画像を10 MiBまで端末保存し、AI Gatewayが受け付ける6 MiBを超える画像は送信せず手入力へ案内します。抽出JSONは共有schemaで再検証してから端末へ保存します。Jevには店舗名、合計金額、最大30件の商品名・金額のみを送ります。確認済み値とAI提案を分け、再解析で確認済み値を上書きしません。AIの利用上限、認証、通信、schemaエラーの後も画像を保持します。
 
-明細CSVはPayPayの対応headerだけを端末で解析し、原本とcanonical行をIndexedDBへ保存します。CSV原本や行はCloudflareへ送信しません。三井住友カード、楽天カード、イオンカードは形式の意味が未確認のため拒否します。照合は端末内のconfirmed receiptとcanonical statementだけを使う決定的処理です。自動一致・要確認・記録なしのrun、候補、判断、Actual反映状態を端末に保存します。Web Locksで同一レシートの更新・登録をタブ間で直列化し、Actual登録には安定したimported IDを使います。AIのログアウトは認証sessionとメモリ上のAI tokenを終了しますが、IndexedDBやActualの端末データを削除しません。
+旧版はPayPay取引履歴CSVの対応headerだけを端末で解析し、原本とcanonical行をIndexedDBへ保存していました。現在のPWAはPayPayカードCSVを読み込みます。CSV原本や行はCloudflareへ送信しません。三井住友カード、楽天カード、イオンカードは当時、形式の意味が未確認のため拒否していました。照合は端末内のconfirmed receiptとcanonical statementだけを使う決定的処理です。自動一致・要確認・記録なしのrun、候補、判断、Actual反映状態を端末に保存します。Web Locksで同一レシートの更新・登録をタブ間で直列化し、Actual登録には安定したimported IDを使います。AIのログアウトは認証sessionとメモリ上のAI tokenを終了しますが、IndexedDBやActualの端末データを削除しません。
 
 Issue #37では、Actual Budget ZIP、端末record、残っている画像・CSV原本を含む `.kmb` ファイルのバックアップを追加します。読み込み時は検証後に新しいIndexedDB profileとActual `dataDir` へstagingし、両方の読み戻し確認後にだけlocalStorageのprofile pointerを切り替えます。成功後は切替前のprofileを保持し、設定画面から戻せます。生成日時はファイルをFilesなどへ保存できたことを示しません。ファイルは暗号化されません。Actual metadataが欠けて公式APIに認識されない孤児budgetの可能性を検出した場合は、アプリの全消去を止めます。元データのバックアップ後にブラウザーのサイトデータ削除が必要です。[端末内データのバックアップと復元](../LOCAL_BACKUP.md)
 
@@ -226,7 +226,7 @@ Canonical Transaction
 - SMBC
 - Rakuten Card
 - AEON Card
-- PayPay
+- PayPay取引履歴（旧形式）
 
 provider固有の列名や文字コードをreconciliationロジックに漏らさないでください。
 

@@ -9,7 +9,7 @@ vi.mock("@/lib/current-user", () => ({ getCurrentUser: mocks.user }));
 vi.mock("@/lib/statement-import", () => ({ importStatement: mocks.importStatement, StatementImportError: class extends Error {} }));
 import { POST } from "./route";
 
-function request(provider = "paypay", name = "synthetic.csv", type = "text/csv") {
+function request(provider = "paypay_card", name = "synthetic.csv", type = "text/csv") {
   const form = new FormData();
   form.set("provider", provider);
   form.set("userId", "forged-user-b");
@@ -32,12 +32,12 @@ describe("statement upload authorization", () => {
 
   it("uses only the session identity", async () => {
     expect((await POST(request())).status).toBe(201);
-    expect(mocks.importStatement).toHaveBeenCalledWith(expect.objectContaining({ userId: "session-user-a", provider: "paypay" }));
+    expect(mocks.importStatement).toHaveBeenCalledWith(expect.objectContaining({ userId: "session-user-a", provider: "paypay_card" }));
   });
 
   it("rejects an unknown provider and a non-CSV filename", async () => {
     expect((await POST(request("unknown"))).status).toBe(400);
-    expect((await POST(request("paypay", "statement.xlsx"))).status).toBe(400);
+    expect((await POST(request("paypay_card", "statement.xlsx"))).status).toBe(400);
     expect(mocks.importStatement).not.toHaveBeenCalled();
   });
 });

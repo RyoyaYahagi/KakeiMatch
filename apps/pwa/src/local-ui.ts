@@ -584,8 +584,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     view.append(button(editing || !receipt.image ? 'キャンセル' : '支出の選択へ戻る', editing ? () => receiptDetail(receipt) : newEntryReturn));
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
   }
-  let selectedStatementProvider: StatementProvider = 'paypay';
-  const statementProviderLabels: Record<StatementProvider, string> = { paypay: 'PayPay', smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード' };
+  let selectedStatementProvider: StatementProvider = 'paypay_card';
+  const statementProviderLabels: Record<StatementProvider, string> = { paypay: 'PayPay取引履歴（旧形式）', paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード' };
   async function eligibleStatementAccounts(provider: StatementProvider) {
     const accounts = await ledger.listOpenAccounts();
     return Promise.all(accounts.filter(account => account.accountType !== 'cash').map(async account => ({
@@ -594,10 +594,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   async function renderStatementImporter(collapsed: boolean) {
     const section = document.createElement('section'); section.className = 'statement-importer';
-    section.append(text('p', 'PayPay、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。'));
+    section.append(text('p', 'PayPayカード、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。'));
     const providerLabel = fieldLabel('label', '明細サービス', 'statement-provider');
     const provider = document.createElement('select'); provider.id = 'statement-provider';
-    provider.append(new Option('PayPay', 'paypay'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'));
+    provider.append(new Option('PayPayカード', 'paypay_card'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'));
     provider.value = selectedStatementProvider;
     const accountLabel = fieldLabel('label', '支払元', 'statement-account');
     const account = document.createElement('select'); account.id = 'statement-account'; account.required = true;

@@ -159,7 +159,7 @@ function ReviewRow({ item, data, expanded, onExpand, busy, onPost }: {
 }
 
 function visibleReasons(codes: string[]): string[] { return codes.map(reasonLabel).filter((label): label is string => label !== null); }
-function providerLabel(provider: string): string { return ({ paypay: "PayPay", smbc_card: "三井住友カード", rakuten_card: "楽天カード", aeon: "イオンカード", aeon_card: "イオンカード" } as Record<string, string>)[provider] ?? "カード明細"; }
+function providerLabel(provider: string): string { return ({ paypay: "PayPay取引履歴（旧形式）", paypay_card: "PayPayカード", smbc_card: "三井住友カード", rakuten_card: "楽天カード", aeon: "イオンカード", aeon_card: "イオンカード" } as Record<string, string>)[provider] ?? "カード明細"; }
 function formatDate(value: string): string { const [, month, day] = value.split("-"); return `${Number(month)}/${Number(day)}`; }
 function formatCompletedDate(value: string): string { return `照合日 ${new Intl.DateTimeFormat("ja-JP", { dateStyle: "medium" }).format(new Date(value))}`; }
 function getErrorCode(value: unknown): string | null { return !!value && typeof value === "object" && typeof (value as { code?: unknown }).code === "string" ? (value as { code: string }).code : null; }

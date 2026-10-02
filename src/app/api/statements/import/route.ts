@@ -6,7 +6,7 @@ import type { StatementProvider } from "@/lib/statement-parser";
 export const runtime = "nodejs";
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_BODY_BYTES = MAX_FILE_BYTES + 64 * 1024;
-const providers = new Set<StatementProvider>(["smbc_card", "rakuten_card", "aeon_card", "paypay"]);
+const providers = new Set<StatementProvider>(["smbc_card", "rakuten_card", "aeon_card", "paypay_card"]);
 const csvTypes = new Set(["", "text/csv", "application/csv", "application/vnd.ms-excel", "application/octet-stream"]);
 
 function privateJson(value: unknown, status = 200) {

@@ -151,20 +151,20 @@ legacy Next.jsの実装済み機能: `/receipts/[id]` で店名・日付・整�
 
 目的: カード・決済明細を取り込めるようにする。
 
-legacy Next.js APIのIssue #11ではPayPayの公式13列headerを厳密に検証し、購入・返金と既知の対象外行を区別します。現在のPWAのPayPay adapterも同じ限定的な対応形式を端末内で解析します。楽天カードの実exportではUTF-8 BOMと11列headerを確認しましたが、継続行・部分行と金額列の意味を確認できないため取り込みを拒否します。三井住友カードの実exportはCP932でheaderがなく、列の意味が未確定です。イオンカードは形式未確認です。各社の確認状況は[STATEMENT_FORMATS.md](../STATEMENT_FORMATS.md)に記録します。
+legacy Next.js APIのIssue #11ではPayPay取引履歴の公式13列headerを検証し、購入・返金と既知の対象外行を区別していました。現在のPWAは、利用者提供CSVで確認したPayPayカードの12列形式を端末内で解析します。楽天カードと三井住友カードの確認状況は[STATEMENT_FORMATS.md](../STATEMENT_FORMATS.md)に記録します。イオンカードは形式未確認です。
 
 ### Adapter
 
 - SMBC
 - Rakuten Card
 - AEON Card
-- PayPay
+- PayPayカード
 
 各adapterは共通のcanonical schemaへ変換する。
 
 ```ts
 type CanonicalStatementTransaction = {
-  provider: "smbc_card" | "rakuten_card" | "aeon_card" | "paypay";
+  provider: "smbc_card" | "rakuten_card" | "aeon_card" | "paypay_card";
   externalId: string | null;
   kind: "purchase" | "refund";
   usedDate: string;
@@ -187,7 +187,7 @@ type CanonicalStatementTransaction = {
 
 ## Phase 7: Reconciliation
 
-照合engineの原実装はlegacy Next.js側にあります。PWAでは同じ決定的な照合engineを利用し、IndexedDBのconfirmed receiptとPayPay canonical statementだけを照合します。Gemini/JevやCSV原本は照合判定に使いません。候補の閾値と状態は実装共通のruleに従います。
+照合engineの原実装はlegacy Next.js側にあります。PWAでは同じ決定的な照合engineを利用し、IndexedDBのconfirmed receiptとcanonical statementだけを照合します。Gemini/JevやCSV原本は照合判定に使いません。候補の閾値と状態は実装共通のruleに従います。
 
 legacy Next.js APIはsession user単位でsnapshotを返します。PWAはrun、候補、明細・レシート結果、ユーザー判断、Actual反映状態を端末のIndexedDBにsnapshotとして保存し、以前のrunを上書きしません。判断済みの明細、使用済みレシート、拒否済み候補を次のrunから除外します。
 

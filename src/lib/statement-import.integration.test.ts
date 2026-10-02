@@ -4,9 +4,9 @@ import path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const header = "取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号";
-const row = (id: string, merchant = "人工商店", amount = "1200") =>
-  `2026/09/28 12:34,${amount},,,,,,支払い,${merchant},PayPay残高,一回払い,本人,${id}`;
+const header = "利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日";
+const row = (id: string, merchant = id, amount = "1200") =>
+  `2026/09/28,${merchant},本人,PayPayクレジット,1回,${amount},0,${amount},${amount},0,0,2026/10/27`;
 const csv = (...rows: string[]) => Buffer.from([header, ...rows].join("\r\n") + "\r\n", "utf8");
 
 describe("statement import persistence", () => {
@@ -39,16 +39,16 @@ describe("statement import persistence", () => {
   });
 
   it("keeps separate same-looking purchases, skips overlapping imports, and isolates users", async () => {
-    const first = await importStatement({ userId: "user-a", provider: "paypay", bytes: csv(row("test-a1"), row("test-a2")) });
+    const first = await importStatement({ userId: "user-a", provider: "paypay_card", bytes: csv(row("test-a1"), row("test-a2")) });
     expect(first).toMatchObject({ importedRows: 2, duplicateRows: 0 });
 
-    const repeat = await importStatement({ userId: "user-a", provider: "paypay", bytes: csv(row("test-a1"), row("test-a2")) });
+    const repeat = await importStatement({ userId: "user-a", provider: "paypay_card", bytes: csv(row("test-a1"), row("test-a2")) });
     expect(repeat).toMatchObject({ importedRows: 0, duplicateRows: 2 });
 
-    const overlap = await importStatement({ userId: "user-a", provider: "paypay", bytes: csv(row("test-a2"), row("test-a3")) });
+    const overlap = await importStatement({ userId: "user-a", provider: "paypay_card", bytes: csv(row("test-a2"), row("test-a3")) });
     expect(overlap).toMatchObject({ importedRows: 1, duplicateRows: 1 });
 
-    const otherUser = await importStatement({ userId: "user-b", provider: "paypay", bytes: csv(row("test-a1")) });
+    const otherUser = await importStatement({ userId: "user-b", provider: "paypay_card", bytes: csv(row("test-a1")) });
     expect(otherUser).toMatchObject({ importedRows: 1, duplicateRows: 0 });
 
     const rows = await db.select().from(schema.statementTransaction);
@@ -62,14 +62,15 @@ describe("statement import persistence", () => {
 
   it("does not save invalid files and removes raw bytes if the DB rejects an import", async () => {
     const before = (await readdir(path.join(root, "raw"))).length;
-    await expect(importStatement({ userId: "user-a", provider: "paypay", bytes: csv(row("bad-date").replace("2026/09/28", "2026/99/99")) }))
+    const unknownLayout = Buffer.from(`${header.replace("利用日/キャンセル日", "unknown")}\r\n${row("unknown-layout")}\r\n`, "utf8");
+    await expect(importStatement({ userId: "user-a", provider: "paypay_card", bytes: unknownLayout }))
       .rejects.toBeInstanceOf(StatementImportError);
     expect(await readdir(path.join(root, "raw"))).toHaveLength(before);
 
     const sqlite = new Database(databasePath);
     sqlite.exec("CREATE TRIGGER fail_statement_import BEFORE INSERT ON statement_import BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;");
     try {
-      await expect(importStatement({ userId: "user-a", provider: "paypay", bytes: csv(row("db-failure")) })).rejects.toThrow();
+      await expect(importStatement({ userId: "user-a", provider: "paypay_card", bytes: csv(row("db-failure")) })).rejects.toThrow();
       expect(await readdir(path.join(root, "raw"))).toHaveLength(before);
     } finally {
       sqlite.exec("DROP TRIGGER fail_statement_import");

@@ -29,7 +29,7 @@
 - Geminiレシート解析
 - Jev分類
 - レシート画像アップロード
-- 三井住友 / 楽天 / イオン / PayPay parser
+- 三井住友 / 楽天 / イオン / PayPayカード parser
 - 明細reconciliation本体
 - 不正利用判定
 - 家族間の家計簿共有
