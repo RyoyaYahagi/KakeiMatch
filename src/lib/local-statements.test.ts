@@ -15,6 +15,8 @@ const smbcMeta = ["SYNTHETIC MEMBER", "SYNTHETIC CARD", "SYNTHETIC STATEMENT"];
 const smbcPurchase = ["2026/09/28", "Synthetic Market", "1200", "１", "１", "1200", ""];
 const smbcReview = ["2026/09/29", "Synthetic Installment", "9000", "INSTALLMENT", "2", "3000", ""];
 const smbcFooter = (amount: string) => ["", "", "", "", "", amount, ""];
+const rakutenHeaders = ["利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額", "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン"];
+const rakutenPurchase = ["2026/09/28", "Synthetic Market", "本人", "1回払い", "1200", "0", "1200", "1200", "1100", "0", ""];
 const smbcCsv = (rows: string[][]) => {
   const text = `${rows.map((row) => row.map((field) => `"${field.replaceAll('"', '""')}"`).join(",")).join("\r\n")}\r\n`;
   const bytes = Buffer.concat(text.split(/(１)/).map((part) => part === "１" ? Buffer.from([0x82, 0x50]) : Buffer.from(part, "ascii")));
@@ -109,5 +111,31 @@ describe("LocalStatementService", () => {
     const repeat = await service.importFile(overlapping, "smbc_card");
     expect(repeat).toMatchObject({ added: 0, duplicates: 2 });
     expect(await service.list()).toHaveLength(2);
+  });
+
+  it("persists Rakuten review reasons and deduplicates overlapping one-time purchases", async () => {
+    const { repository, service } = await openService();
+    const installment = ["2026/09/28", "Synthetic Installment", "本人", "分割払い", "900", "0", "900", "300", "300", "0", ""];
+    const partialParent = ["2026/09/29", "Synthetic Partial", "本人", "1回払い", "500", "0", "500", "", "", "", ""];
+    const continuation = ["", "Synthetic Continuation", "", "", "", "", "", "", "", "", ""];
+    const firstInput = csv([rakutenHeaders, rakutenPurchase, installment, partialParent, continuation]);
+    const first = await service.importFile(firstInput, "rakuten_card");
+    expect(first).toMatchObject({ added: 1, duplicates: 0, needsReviewRows: [
+      { rowNumber: 3, reason: "1回払い以外の可能性があります" },
+      { rowNumber: 4, reason: "複数行明細または部分行の可能性があります" },
+      { rowNumber: 5, reason: "継続行または部分行の可能性があります" },
+    ] });
+    const metadata = (await repository.get<{ needsReviewRows?: unknown[]; headerSignature: string }>(first.id))?.value;
+    expect(metadata?.headerSignature).toContain("{month}月支払金額");
+    expect(metadata?.needsReviewRows).toEqual(first.needsReviewRows);
+
+    const changedMonths = [...rakutenHeaders];
+    changedMonths[7] = "10月支払金額";
+    changedMonths[9] = "11月繰越残高";
+    const overlapping = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card");
+    expect(overlapping).toMatchObject({ added: 1, duplicates: 1 });
+    expect((await service.list()).map(({ duplicateOrdinal }) => duplicateOrdinal).sort()).toEqual([1, 2]);
+    const repeatedFile = await service.importFile(csv([changedMonths, rakutenPurchase, rakutenPurchase]), "rakuten_card");
+    expect(repeatedFile).toMatchObject({ added: 0, duplicates: 2 });
   });
 });

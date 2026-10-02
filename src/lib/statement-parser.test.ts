@@ -113,6 +113,7 @@ describe("parseStatement", () => {
   it("rejects invalid files, empty/header-only files, malformed CSV, oversized fields, and unsupported providers", () => {
     expect(parseStatement(Buffer.alloc(0), "paypay").fatalErrors[0].code).toBe("empty_file");
     expect(parseStatement(Buffer.from([0xff, 0xfe, 0x00, 0x00]), "paypay").fatalErrors[0].code).toBe("invalid_file");
+    expect(parseStatement(Buffer.from([0xef, 0xbb, 0xbf, 0xc3, 0x28]), "rakuten_card").fatalErrors[0].code).toBe("invalid_file");
     expect(parseStatement(Buffer.from("a\u0000b", "utf8"), "paypay").fatalErrors[0].code).toBe("invalid_file");
     expect(parseStatement(csv([PAYPAY_HEADER]), "paypay").fatalErrors[0].code).toBe("header_only");
     expect(parseStatement(Buffer.from('"unterminated', "utf8"), "paypay").fatalErrors[0].code).toBe("malformed_csv");
@@ -124,17 +125,66 @@ describe("parseStatement", () => {
     expect(parseStatement(csv([PAYPAY_HEADER, ...Array.from({ length: 20_001 }, () => row())]), "paypay").fatalErrors[0].code).toBe("limit_exceeded");
   });
 
-  it("recognizes only the verified Rakuten header and still rejects unresolved row semantics", () => {
-    const synthetic = csv([RAKUTEN_2026_09_HEADER, ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "100", "0", "*"]]);
+  it("imports only strict Rakuten one-time purchases and uses 利用金額", () => {
+    const synthetic = csv([RAKUTEN_2026_09_HEADER, ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""]]);
     const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), synthetic]);
     const result = parseStatement(bytes, "rakuten_card");
     expect(result.encoding).toBe("utf-8-bom");
-    expect(result.fatalErrors[0].code).toBe("unsupported_provider");
-    expect(result.headerSignature).toBe(JSON.stringify(RAKUTEN_2026_09_HEADER));
-    expect(result.transactions).toEqual([]);
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions[0]).toMatchObject({
+      provider: "rakuten_card", kind: "purchase", usedDate: "2026-09-01", merchant: "人工商店",
+      amountYen: 100, paymentMethod: "1回払い", duplicateOrdinal: 1,
+    });
+    expect(result.headerSignature).toContain("{month}月支払金額");
+    expect(result.headerSignature).toContain("{month}月繰越残高");
     const changedMonth = [...RAKUTEN_2026_09_HEADER];
     changedMonth[7] = "10月支払金額";
-    expect(parseStatement(csv([changedMonth, ["synthetic"]]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+    changedMonth[9] = "11月繰越残高";
+    expect(parseStatement(csv([changedMonth, ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""]]), "rakuten_card").fatalErrors).toEqual([]);
+    changedMonth[7] = "13月支払金額";
+    expect(parseStatement(csv([changedMonth]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+  });
+
+  it("keeps split, revolving, bonus, refunds, cancellation, and continuation rows out of canonical purchases", () => {
+    const normal = ["2026/09/01", "Synthetic Market", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""];
+    const split = ["2026/09/02", "Synthetic Split", "本人", "分割払い", "900", "0", "900", "300", "300", "0", ""];
+    const revolvo = ["2026/09/03", "Synthetic Revolving", "本人", "リボ払い", "800", "0", "800", "200", "200", "0", ""];
+    const bonus = ["2026/09/04", "Synthetic Bonus", "本人", "ボーナス払い", "700", "0", "700", "700", "700", "0", ""];
+    const refund = ["2026/09/05", "Synthetic Refund", "本人", "1回払い", "-100", "0", "-100", "-100", "-100", "0", ""];
+    const cancel = ["2026/09/06", "Synthetic Cancel 取消", "本人", "1回払い", "100", "0", "100", "100", "100", "0", ""];
+    const continuation = ["", "Synthetic Product Detail", "", "", "", "", "", "", "", "", ""];
+    const result = parseStatement(csv([RAKUTEN_2026_09_HEADER, normal, split, revolvo, bonus, refund, cancel, normal, continuation]), "rakuten_card");
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toMatchObject([{ merchant: "Synthetic Market", amountYen: 100 }]);
+    expect(result.needsReviewRows?.map(({ rowNumber }) => rowNumber)).toEqual([3, 4, 5, 6, 7, 8, 9]);
+    expect(result.needsReviewRows?.find(({ rowNumber }) => rowNumber === 8)?.reason).toContain("複数行明細");
+    expect(result.needsReviewRows?.find(({ rowNumber }) => rowNumber === 9)?.reason).toContain("継続行");
+  });
+
+  it("uses stable ordinals for identical purchases and rejects unknown row layouts", () => {
+    const normal = ["2026/09/01", "Synthetic Market", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""];
+    const duplicate = parseStatement(csv([RAKUTEN_2026_09_HEADER, normal, normal]), "rakuten_card");
+    expect(duplicate.transactions.map(({ duplicateOrdinal }) => duplicateOrdinal)).toEqual([1, 2]);
+    expect(parseStatement(csv([RAKUTEN_2026_09_HEADER, normal.slice(0, 10)]), "rakuten_card").fatalErrors[0].code).toBe("unsupported_layout");
+    expect(parseStatement(csv([[...RAKUTEN_2026_09_HEADER.slice(0, 10), "未知列"]]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+  });
+
+  it("sends malformed Rakuten date and amount rows to human review", () => {
+    const badDate = ["2026/02/30", "Synthetic Market", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""];
+    const badAmount = ["2026/09/01", "Synthetic Market", "本人", "1回払い", "12.5", "0", "12.5", "12.5", "12.5", "0", ""];
+    const dashedDate = ["2026-09-01", "Synthetic Market", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""];
+    const unsafeAmount = ["2026/09/01", "Synthetic Market", "本人", "1回払い", "9007199254740992", "0", "9007199254740992", "9007199254740992", "9007199254740992", "0", ""];
+    const result = parseStatement(csv([RAKUTEN_2026_09_HEADER, badDate, badAmount, dashedDate, unsafeAmount]), "rakuten_card");
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toEqual([]);
+    expect(result.needsReviewRows?.map(({ rowNumber }) => rowNumber)).toEqual([2, 3, 4, 5]);
+  });
+
+  it("keeps a partial parent row out when columns 1–7 are filled but billing columns are empty", () => {
+    const partial = ["2026/09/01", "Synthetic Pair Parent", "本人", "1回払い", "500", "0", "500", "", "", "", ""];
+    const result = parseStatement(csv([RAKUTEN_2026_09_HEADER, partial]), "rakuten_card");
+    expect(result.transactions).toEqual([]);
+    expect(result.needsReviewRows?.map(({ rowNumber }) => rowNumber)).toEqual([2]);
   });
 
   it("decodes a synthetic CP932 file for the still-unsupported headerless SMBC format", () => {

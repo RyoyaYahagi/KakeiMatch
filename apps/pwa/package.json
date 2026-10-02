@@ -26,7 +26,8 @@
     "test:category-learning-e2e": "node test/browser-category-learning.mjs",
     "test:entry-masters-e2e": "node test/browser-entry-masters.mjs",
     "test:record-navigation-e2e": "node test/browser-record-navigation.mjs",
-    "test:smbc-statements-e2e": "node test/browser-smbc-statements.mjs"
+    "test:smbc-statements-e2e": "node test/browser-smbc-statements.mjs",
+    "test:rakuten-statements-e2e": "node test/browser-rakuten-statements.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

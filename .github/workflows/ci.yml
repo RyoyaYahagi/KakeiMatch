@@ -80,7 +80,8 @@ jobs:
             test:monthly-budgets-e2e \
             test:category-learning-e2e \
             test:record-navigation-e2e \
-            test:smbc-statements-e2e &
+            test:smbc-statements-e2e \
+            test:rakuten-statements-e2e &
           first_group=$!
           run_e2e_group \
             test:backup-e2e \
