@@ -1,0 +1,47 @@
+# お問い合わせ
+
+設定の「お問い合わせ」から、文章または音声で問い合わせを入力できます。録音後に文字へ変換し、認識結果を編集してから送信します。音声の録音は最大60秒、送信上限は2 MiBです。マイクを利用できない端末でも文章を入力できます。画面を移動すると録音を停止します。入力と完了済みの録音はページを再読み込みするまで保持します。録音途中で画面を移動した場合、その途中の音声は破棄します。バックアップには含みません。
+
+## 送信と登録
+
+文字起こしと問い合わせ送信には、既存のCloud accountへのログインが必要です。端末内の通常の家計操作にはログインを要求しません。録音・文字起こし・送信の実行は利用者が選びます。音声はGoogleへ送り、文章はGeminiで不具合・改善要望・質問のいずれかに分類します。認識結果、分類結果、回答はサーバー側で形式を検証します。質問には回答を表示し、不具合と具体的な改善要望はサーバーが固定したGitHubリポジトリのIssue（修正課題）へ登録します。
+
+問い合わせ本文はIssueに記載されます。公開リポジトリでは第三者も読めるため、送信前に画面でこのことを案内します。音声、家計簿、レシート、メールアドレス、利用者名、端末の診断情報をIssueへ自動添付しません。送信した文章に利用者が含めた個人情報を、自動で完全に除去する機能はありません。
+
+AIの分類は修正の確定判断ではありません。Issue本文には、利用者の申告であり原因と再現性は未確認と記載します。Issueからコードを自動変更したり、PRをマージしたりはしません。質問の回答はAIによる補助であり、問い合わせを別の受信箱へ保存する機能はありません。
+
+## 音声と利用量
+
+Googleの `gemini-3.5-transcribe` を使います。音声はBase64（バイナリーを文字列で表す形式）でリクエストに直接含めます。Files APIでの事前アップロードは行いません。iPhoneの録音形式であるMP4は、Googleに送る際に対応形式の `audio/m4a` として指定します。[Google文字起こし資料 (2026/10), Supported audio formats](https://ai.google.dev/gemini-api/docs/transcribe)
+
+日本語を指定し、話し言葉を読みやすく整えるsmartモードを利用します。処理時間の比較は未実施です。[Google文字起こし資料 (2026/10), Transcription modes](https://ai.google.dev/gemini-api/docs/transcribe)、[Google音声資料 (2026/10), Pass audio data inline](https://ai.google.dev/gemini-api/docs/audio)
+
+文字起こし1回と問い合わせの分類1回は、それぞれ月のAI利用枠を1回使います。音声入力から送信すると通常は合計2回です。同じ内容・識別子による再試行は最大3回で、同じ利用枠を使います。各API呼び出しの推定料金は既存のGemini集計に加算します。緊急停止、利用者別の回数制限、全体の料金上限も適用します。
+
+文字起こしの単価は、入力100万トークンあたり2米ドル、出力100万トークンあたり12米ドルを料金表に追加しています。既存と同様、対応しないモデルや使用量は推定できない要求として扱います。単価は2026年10月3日に確認しました。[Google料金表 (2026/10), Gemini 3.5 Transcribe](https://ai.google.dev/gemini-api/docs/pricing)
+
+## サーバーの記録と二重投稿
+
+D1の `contact_submissions` には、認証済み利用者の識別子、問い合わせの識別子、本文を照合するHMAC（秘密鍵を用いた照合値）、処理状態、分類、Issue番号、時刻だけを保存します。本文・音声・AIの回答は保存しません。既存の `ai_receipt_flows` は文字起こしと問い合わせの利用枠にも使います。AI利用量と料金は既存のテーブルに記録します。
+
+同じ識別子の再送は処理状態を確認します。登録成功後は同じIssueのURLを返し、再投稿しません。同じ識別子で本文を変える要求は拒否します。別の利用者の要求は同じ識別子でも別に扱います。
+
+GitHubが4xxで登録を拒否した場合は、同じ内容で再試行できます。タイムアウト、5xx、不正な成功応答、登録直後の記録失敗は「登録結果不明」として再投稿を止めます。GitHubに登録済みの可能性があるためです。運用者がIssue一覧と本文中の `kakeimatch-contact:` マーカーを照合します。結果不明を自動解除する機能はありません。ページ再読み込み後や、利用者が別の問い合わせとして送る場合の重複検出は対象外です。
+
+## 導入
+
+WorkerとPWAを更新する前に `workers/ai-gateway/migrations/0006_contact_submissions.sql` を既存のaccount用D1へ適用します。移行操作は[デプロイ手順](DEPLOYMENT.md)に従います。秘密値 `GITHUB_ISSUES_TOKEN` をCloudflareのSecret bindingとして登録します。既存の `GEMINI_API_KEY` を文字起こしと分類に使います。GitHubのトークンをブラウザーへ渡しません。
+
+`GITHUB_ISSUES_REPOSITORY` はサーバーの設定で `RyoyaYahagi/KakeiMatch` に固定しています。クライアントからリポジトリ・認可対象の利用者・ラベル・担当者などを受け付けません。トークンは対象リポジトリに限定し、Issuesの書き込み権限を付与します。[GitHub REST資料 (2026/10), Create an issue](https://docs.github.com/en/rest/issues/issues#create-an-issue)
+
+本番のSecret登録と移行適用、実際のGoogle APIとGitHubへの投稿、iPhoneの実機録音・速度は別途確認が必要です。テストは合成音声と合成問い合わせを使い、実際の家計情報を使いません。
+
+## 外部資料
+
+[Google文字起こし資料, 2026/10] Google. “Audio transcription.” Google AI for Developers. https://ai.google.dev/gemini-api/docs/transcribe
+
+[Google音声資料, 2026/10] Google. “Audio understanding.” Google AI for Developers. https://ai.google.dev/gemini-api/docs/audio
+
+[Google料金表, 2026/10] Google. “Gemini Developer API pricing.” Google AI for Developers. https://ai.google.dev/gemini-api/docs/pricing
+
+[GitHub REST資料, 2026/10] GitHub. “REST API endpoints for issues.” GitHub Docs. https://docs.github.com/en/rest/issues/issues#create-an-issue

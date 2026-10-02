@@ -1,3 +1,4 @@
+import { parseContactInput, parseClassification, classificationPayload, transcriptionPayload, submitContact, type ContactEnv } from './contact';
 import { guardrailConfig, costAdmission, refreshCircuit, type CostAdmission } from "./ai-global-guardrails";
 import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
 import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatched } from "./receipt-ai-usage";
@@ -29,7 +30,7 @@ const CATEGORY_CRITERIA: Record<(typeof CATEGORY_IDS)[number], string> = {
 
 export interface RateLimitBinding { limit(input: { key: string }): Promise<{ success: boolean }> }
 export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
-export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB"> {
+export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
   TYPESAFE_API_KEY?: string; TYPESAFE_API_URL?: string; JEV_MODEL?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
@@ -100,10 +101,10 @@ async function readLimited(stream: ReadableStream<Uint8Array> | null, maxBytes: 
   for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
   return body;
 }
-async function readRequestBody(request: Request): Promise<Uint8Array | null> {
+async function readRequestBody(request: Request, maxBytes = MAX_JSON_BYTES): Promise<Uint8Array | null> {
   const length = request.headers.get("content-length");
-  if (length !== null && /^\d+$/.test(length) && Number(length) > MAX_JSON_BYTES) return null;
-  return readLimited(request.body, MAX_JSON_BYTES);
+  if (length !== null && /^\d+$/.test(length) && Number(length) > maxBytes) return null;
+  return readLimited(request.body, maxBytes);
 }
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function nullableText(value: unknown, max = 500): boolean { return value === null || (typeof value === "string" && value.trim().length > 0 && value.length <= max); }
@@ -281,22 +282,68 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
       return json(200, { plan: ent.plan, month, used, limit: ent.limit, remaining: ent.limit === null ? null : Math.max(0, ent.limit - used) });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
   }
-  if (url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/jev") return json(404, { error: "not_found" });
+  const contact = url.pathname === "/api/contact" || url.pathname === "/api/contact/transcribe";
+  if (!contact && url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/jev") return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
   const identity = await authenticate(request, env.AI_GATEWAY_AUTH_SECRET, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
   if (!identity) return json(env.AI_GATEWAY_AUTH_SECRET ? 401 : 503, { error: env.AI_GATEWAY_AUTH_SECRET ? "unauthorized" : "not_configured" });
   if (!env.AI_USER_RATE_LIMIT) return json(503, { error: "not_configured" });
-  const provider = url.pathname.endsWith("/gemini") ? "gemini" : "jev";
+  const provider = contact || url.pathname.endsWith("/gemini") ? "gemini" : "jev";
   let limit: { success: boolean };
   try { limit = await env.AI_USER_RATE_LIMIT.limit({ key: `${identity}:${provider}` }); } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!limit.success) return json(429, { error: "rate_limited" });
   if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { error: "unsupported_media_type" });
   let bytes: Uint8Array | null;
-  try { bytes = await readRequestBody(request); } catch { return json(400, { error: "invalid_request" }); }
+  try { bytes = await readRequestBody(request, contact ? (url.pathname.endsWith('/transcribe') ? 3 * 1024 * 1024 : 20 * 1024) : MAX_JSON_BYTES); } catch { return json(400, { error: "invalid_request" }); }
   if (!bytes) return json(413, { error: "request_too_large" });
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return json(400, { error: "invalid_request" }); }
+  if (contact) {
+    const transcribe = url.pathname.endsWith('/transcribe');
+    const input = parseContactInput(body, transcribe);
+    if (!input) return json(400, { error: 'invalid_request' });
+    if (!env.GEMINI_API_KEY || !env.ACCOUNT_DB) return json(503, { error: 'not_configured' });
+    const clock = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
+    const now = clock();
+    const fetchImpl = options.fetchImpl ?? fetch;
+    const payload = transcribe ? transcriptionPayload(input.input, input.contentType!)
+      : classificationPayload(input.input, env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite');
+    const callGemini = async (): Promise<string> => {
+      const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
+      const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, transcribe ? 'contact-transcribe' : 'contact-classify', input);
+      if (!await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env))) throw new Error('ai_quota_exceeded');
+      if (!await attemptFlow(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', mac, now)) throw new Error('invalid_flow');
+      const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
+        'https://generativelanguage.googleapis.com/v1beta/interactions',
+        { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
+        30_000, fetchImpl, clock, admission, env);
+      if (!response.ok) throw new Error(response.status === 429 ? 'rate_limited' : 'provider_unavailable');
+      const text = geminiOutputText(decoded);
+      if (!text || text.trim().length === 0 || text.length > (transcribe ? 4000 : 8000)) {
+        await invalidProviderResponse(env, eventId, 'gemini', clock());
+        throw new Error('invalid_provider_response');
+      }
+      if (!transcribe) {
+        try { parseClassification(text); } catch {
+          await invalidProviderResponse(env, eventId, 'gemini', clock());
+          throw new Error('invalid_provider_response');
+        }
+      }
+      return text;
+    };
+    try {
+      if (transcribe) return json(200, { text: await callGemini() });
+      return json(200, await submitContact({ db: env.ACCOUNT_DB, user: identity, secret: env.AI_GATEWAY_AUTH_SECRET!, env,
+        flowId: input.flowId, message: input.input, now, classify: callGemini, fetchImpl }));
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
+        invalid_flow: 409, provider_timeout: 504, rate_limited: 429, provider_unavailable: 503,
+        invalid_provider_response: 502, issue_submission_failed: 502, issue_submission_unknown: 409 };
+      return json(statuses[code] ?? 503, { error: Object.hasOwn(statuses, code) ? code : 'temporarily_unavailable' });
+    }
+  }
   if (!isRecord(body) || typeof body.flowId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.flowId)) return json(400, { error: "invalid_flow" });
   const flowId = body.flowId;
   const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
