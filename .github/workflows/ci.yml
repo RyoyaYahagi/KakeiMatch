@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # No Docker service, Actual Server, household SQLite, or legacy secret is provisioned.
 # Legacy integration tests create temporary synthetic fixtures only.
 jobs:
@@ -26,6 +30,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm eval:reconciliation
+      - run: pnpm --dir apps/pwa test
       - run: pnpm build
 
   browser-spike:
@@ -42,6 +48,20 @@ jobs:
 
   local-first:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Shards are balanced by measured duration. Each shard runs two scripts at a time.
+        include:
+          - shard: 1
+            scripts: test:backup-e2e test:receipt-edits-e2e test:account-types-e2e test:ai-costs-e2e test:smbc-statements-e2e test:rakuten-statements-e2e
+          - shard: 2
+            scripts: test:e2e test:masters-e2e test:deletions-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e
+          - shard: 3
+            scripts: test:manual-e2e test:transfers-e2e test:monthly-budgets-e2e test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e
+          - shard: 4
+            scripts: test:receipt-items-e2e test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e test:provider-only-reconciliation-e2e
+    name: local-first (${{ matrix.shard }}/4)
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -52,11 +72,16 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm eval:reconciliation
-      - run: pnpm --dir apps/pwa test
       - run: pnpm --dir apps/pwa build
-      - run: pnpm --dir apps/pwa exec playwright-core install --with-deps chromium
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      # The runner image already provides Chromium's system libraries, so skip the slow apt step.
+      - run: pnpm --dir apps/pwa exec playwright-core install chromium
       - name: Synthetic local-first flows without legacy runtime
+        env:
+          SCRIPTS: ${{ matrix.scripts }}
         run: |
           unset ACTUAL_SERVER_URL ACTUAL_SERVER_PASSWORD ACTUAL_CLI_DATA_DIR
           unset RECEIPT_STORAGE_DIR STATEMENT_STORAGE_DIR DATABASE_PATH
@@ -68,40 +93,7 @@ jobs:
             sleep 1
           done
           export PWA_E2E_URL=http://127.0.0.1:5173
-          run_e2e_group() {
-            for script in "$@"; do pnpm --dir apps/pwa "$script"; done
-          }
-          run_e2e_group \
-            test:e2e \
-            test:receipt-items-e2e \
-            test:manual-e2e \
-            test:receipt-edits-e2e \
-            test:deletions-e2e \
-            test:monthly-budgets-e2e \
-            test:category-learning-e2e \
-            test:record-navigation-e2e \
-            test:smbc-statements-e2e \
-            test:rakuten-statements-e2e \
-            test:reconciliation-e2e &
-          first_group=$!
-          run_e2e_group \
-            test:backup-e2e \
-            test:masters-e2e \
-            test:transfers-e2e \
-            test:monthly-dashboard-e2e \
-            test:account-balances-e2e \
-            test:account-types-e2e \
-            test:ai-costs-e2e \
-            test:ai-paused-e2e \
-            test:recurring-e2e \
-            test:transaction-search-e2e \
-            test:entry-masters-e2e \
-            test:provider-only-reconciliation-e2e &
-          second_group=$!
-          result=0
-          wait "$first_group" || result=1
-          wait "$second_group" || result=1
-          exit "$result"
+          printf '%s\n' $SCRIPTS | xargs -P 2 -n 1 pnpm --dir apps/pwa
 
   ai-gateway:
     runs-on: ubuntu-latest
