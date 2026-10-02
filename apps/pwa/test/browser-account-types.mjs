@@ -31,8 +31,10 @@ try {
   await page.locator('[data-account-type="credit_card"]').getByText('差引預り額 ¥0', { exact: true }).waitFor();
   await noOverflow();
   if (process.env.PWA_ACCOUNT_TYPES_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_ACCOUNT_TYPES_SCREENSHOT_PATH, fullPage: true });
-  await detail('Synthetic Card'); await click('利用終了'); await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
-  await click('利用を再開する'); await click('編集する');
+  await detail('Synthetic Card'); await click('利用終了'); await page.getByText('状態：利用終了', { exact: true }).waitFor();
+  await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
+  await click('利用を再開する'); await page.getByText('状態：利用中', { exact: true }).waitFor();
+  await click('編集する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Renamed Card'); await click('変更を保存');
   await page.getByText('種類：クレジットカード', { exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('＋記録'); await click('支出'); await click('手入力');
