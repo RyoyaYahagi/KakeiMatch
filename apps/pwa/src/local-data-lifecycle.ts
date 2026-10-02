@@ -29,6 +29,7 @@ type StatementImportMetadata = {
   totalRows: number;
   excludedRows: number;
   duplicateRowsInFile: number;
+  needsReviewRows?: Array<{ rowNumber: number; reason: string }>;
   createdAt: string;
 };
 
@@ -99,7 +100,7 @@ async function eligibleCandidates(repo: LocalDataRepository): Promise<Candidate[
     // The raw CSV is removable only while import metadata and canonical rows
     // remain available for duplicate detection and reconciliation.
     if (!isStatementImportMetadata(metadata) || !rows?.length ||
-      rows.length !== metadata.totalRows - metadata.excludedRows - metadata.duplicateRowsInFile ||
+      rows.length !== metadata.totalRows - metadata.excludedRows - metadata.duplicateRowsInFile - (metadata.needsReviewRows?.length ?? 0) ||
       !rows.every((row) => isCanonicalStatement(row, importId))) continue;
     const blob = await repo.getBlob(`statement-source:${importId}`);
     if (blob?.ownerKind === "statement-import" && blob.ownerId === importId) {

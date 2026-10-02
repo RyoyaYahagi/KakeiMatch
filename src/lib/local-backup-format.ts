@@ -68,7 +68,9 @@ const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAud
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
-  duplicateRowsInFile: z.number().int().safe().nonnegative(), createdAt: isoDateTime,
+  duplicateRowsInFile: z.number().int().safe().nonnegative(),
+  needsReviewRows: z.array(z.object({ rowNumber: z.number().int().positive(), reason: z.string().min(1).max(100) }).strict()).optional(),
+  createdAt: isoDateTime,
 }).strict();
 const statement = z.object({
   id: z.string().min(1), importId: z.string().min(1), provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]),

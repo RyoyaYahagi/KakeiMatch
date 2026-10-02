@@ -22,6 +22,7 @@ export type StatementFatalErrorCode =
   | "empty_file"
   | "header_only"
   | "unsupported_provider"
+  | "unsupported_layout"
   | "header_mismatch"
   | "malformed_csv"
   | "invalid_row"
@@ -31,6 +32,8 @@ export type StatementFatalErrorCode =
 export type StatementParseResult = {
   transactions: CanonicalStatementTransaction[];
   excludedRows: Array<{ rowNumber: number; reason: "non_expense" }>;
+  /** SMBC rows that were kept out of canonical transactions for human review. */
+  needsReviewRows?: Array<{ rowNumber: number; reason: string }>;
   duplicateRowsInFile: number;
   totalRows: number;
   encoding: "utf-8" | "utf-8-bom" | "cp932";
@@ -69,6 +72,8 @@ const RAKUTEN_2026_09_HEADERS = [
   "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
 ] as const;
 
+const SMBC_HEADER_SIGNATURE = "smbc-vpass-cp932-v1";
+
 const EMPTY_RESULT = (
   code: StatementFatalErrorCode,
   encoding: StatementParseResult["encoding"] = "utf-8",
@@ -94,6 +99,12 @@ function parseYen(value: string): number | null {
   return Number.isSafeInteger(amount) ? amount : null;
 }
 
+function parseStrictSmbcYen(value: string): number | null {
+  if (!/^[1-9]\d*$/.test(value)) return null;
+  const amount = Number(value);
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
 function parsePaypayDate(value: string): { date: string; time: string } | null {
   const match = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(value.trim());
   if (!match) return null;
@@ -109,6 +120,79 @@ function parsePaypayDate(value: string): { date: string; time: string } | null {
     parsed.getUTCMinutes() !== Number(minute)
   ) return null;
   return { date, time: `${hour}:${minute}` };
+}
+
+function parseSmbcDate(value: string): string | null {
+  const match = /^(\d{4})\/(\d{2})\/(\d{2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = `${year}-${month}-${day}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  return date;
+}
+
+function makeSmbcParseResult(rows: string[][], encoding: StatementParseResult["encoding"]): StatementParseResult {
+  // Vpass exports have no header. Treat the first row as private, opaque metadata:
+  // its values must never become a signature or appear in any result or error.
+  const metadata = rows[0];
+  const detailRows = rows.slice(1, -1);
+  const summary = rows.at(-1);
+  const invalidLayout = () => ({ ...EMPTY_RESULT("unsupported_layout", encoding), totalRows: Math.max(rows.length - 2, 0) });
+  if (!metadata || metadata.length !== 3 || !summary || summary.length !== 7 || detailRows.length === 0) return invalidLayout();
+  if (detailRows.some((row) => row.length !== 7)) return invalidLayout();
+
+  const summaryAmount = parseStrictSmbcYen(summary[5] ?? "");
+  if (summary.slice(0, 5).some((field) => field !== "") || summary[6] !== "" || summaryAmount === null || summaryAmount <= 0) return invalidLayout();
+
+  const transactions: CanonicalStatementTransaction[] = [];
+  const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
+  const fingerprintOrdinals = new Map<string, number>();
+  let purchaseAmountTotal = 0;
+  let unsafeTotal = false;
+
+  detailRows.forEach((row, index) => {
+    const rowNumber = index + 2;
+    if (row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) {
+      needsReviewRows.push({ rowNumber, reason: "明細の項目が長すぎます" });
+      return;
+    }
+    const [rawDate, rawMerchant, rawAmount, paymentA, paymentB, rawStatementAmount, finalField] = row;
+    const date = parseSmbcDate(rawDate);
+    const amount = parseStrictSmbcYen(rawAmount);
+    const statementAmount = parseStrictSmbcYen(rawStatementAmount);
+    let reason: string | null = null;
+    if (!date) reason = "利用日を確認できません";
+    else if (rawMerchant.trim() === "") reason = "利用先を確認できません";
+    else if (/年会費|手数料|キャッシング|利息|遅延損害金|取消|キャンセル|返金|返品|ボーナス|海外利用/.test(rawMerchant)) reason = "特殊な利用の可能性があります";
+    else if (amount === null || amount <= 0) reason = "利用金額を確認できません";
+    else if (paymentA !== "１" || paymentB !== "１") reason = "1回払い以外の可能性があります";
+    else if (statementAmount === null || statementAmount <= 0 || amount !== statementAmount) reason = "利用金額と支払金額が一致しません";
+    else if (finalField !== "") reason = "通常購入の形式ではありません";
+    if (reason) {
+      needsReviewRows.push({ rowNumber, reason });
+      return;
+    }
+
+    const sourceFingerprint = fingerprint(["smbc_card", "purchase", date!, rawMerchant, String(amount), "１回払い"]);
+    const duplicateOrdinal = (fingerprintOrdinals.get(sourceFingerprint) ?? 0) + 1;
+    fingerprintOrdinals.set(sourceFingerprint, duplicateOrdinal);
+    transactions.push({
+      provider: "smbc_card", externalId: null, kind: "purchase", usedDate: date!, usedTime: null, postedDate: null,
+      merchant: rawMerchant, amountYen: amount!, paymentMethod: "1回払い", sourceFingerprint, duplicateOrdinal,
+    });
+    purchaseAmountTotal += statementAmount!;
+    if (!Number.isSafeInteger(purchaseAmountTotal)) unsafeTotal = true;
+  });
+
+  // The footer can validate the file only when every detail row is a strict
+  // one-time purchase. Unsupported rows may contribute to its total.
+  if (unsafeTotal || (needsReviewRows.length === 0 && purchaseAmountTotal !== summaryAmount)) return invalidLayout();
+
+  return {
+    transactions, excludedRows: [], needsReviewRows, duplicateRowsInFile: 0, totalRows: detailRows.length,
+    encoding, fatalErrors: [], headerSignature: SMBC_HEADER_SIGNATURE,
+  };
 }
 
 function makePaypayParseResult(rows: string[][], encoding: StatementParseResult["encoding"]): StatementParseResult {
@@ -237,7 +321,7 @@ const rakutenParser: StatementParser = {
 };
 
 const adapters: Record<StatementProvider, StatementParser> = {
-  smbc_card: unsupportedParser("smbc_card"),
+  smbc_card: { provider: "smbc_card", parse: makeSmbcParseResult },
   rakuten_card: rakutenParser,
   aeon_card: unsupportedParser("aeon_card"),
   paypay: { provider: "paypay", parse: makePaypayParseResult },

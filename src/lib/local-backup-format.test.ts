@@ -85,6 +85,16 @@ async function rewriteEntry(file: Blob, path: string, replacement: Uint8Array): 
 }
 
 describe("portable local backup format", () => {
+  it("preserves SMBC row review numbers and reasons through a portable backup", async () => {
+    const data = fixture();
+    const value = data.records.find((record) => record.id === "statement-import-synthetic")!.value as Record<string, unknown>;
+    value.needsReviewRows = [{ rowNumber: 4, reason: "1回払い以外の可能性があります" }];
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.find((record) => record.id === "statement-import-synthetic")?.value).toMatchObject({
+      needsReviewRows: [{ rowNumber: 4, reason: "1回払い以外の可能性があります" }],
+    });
+  });
+
   it("preserves custom-category learning observations and learned suggestions", async () => {
     const data = fixture();
     const observation = { targetType: "category-learning", receiptId: "receipt:synthetic-1", normalizedMerchant: "synthetic cafe", merchantCategoryId: "custom-category",

@@ -68,7 +68,7 @@ KakeiMatchの主要利用者には、ITに詳しくない家族を想定しま�
 
 ### ログイン
 
-PWAの家計簿、レシート手入力、PayPay明細import、照合はCloud accountへログインせずに利用できます。AI抽出とカテゴリ提案にはCloud accountのPasskey sessionが必要です。移行前Next.jsアプリのログイン画面はlegacy機能です。
+PWAの家計簿、レシート手入力、PayPay / 三井住友カードVpass明細import、照合はCloud accountへログインせずに利用できます。AI抽出とカテゴリ提案にはCloud accountのPasskey sessionが必要です。移行前Next.jsアプリのログイン画面はlegacy機能です。
 
 AI利用からログアウトしても、端末内の家計データは削除しません。
 
@@ -173,9 +173,11 @@ Actual Budgetへ登録
 
 読み込み後は「照合」画面で結果を更新できます。
 
-現在のPWAはPayPayの限定された公式CSV形式を受け付けます。三井住友カード、楽天カード、イオンカードは明細行の意味を安全に確定できていないため、選択・推測して取り込まず、拒否します。
+現在のPWAはPayPayの限定された公式CSV形式と、三井住友カードVpassの通常1回払い購入を受け付けます。Vpassで通常購入として確定できない行は購入にせず、行番号と理由を要確認として表示します。楽天カードとイオンカードは明細行の意味を安全に確定できていないため、拒否します。
 
 CSVの解析、原本保存、canonical行の保存は端末内で完了し、CloudflareやAI providerへファイルを送信しません。
+
+375px幅で合成Vpass CSVを取り込み、通常購入と要確認行を表示した画面を[確認画像](screenshots/issue-109-smbc-import-375.png)に記録します。
 
 ### 照合結果
 
