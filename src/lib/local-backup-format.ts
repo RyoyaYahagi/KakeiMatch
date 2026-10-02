@@ -67,7 +67,7 @@ const deletionAudit = z.object({
 }).strict();
 const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
-  provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
+  provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   accountId: z.string().min(1).max(128).optional(),
   headerSignature: z.string(), totalRows: z.number().int().safe().nonnegative(), excludedRows: z.number().int().safe().nonnegative(),
   duplicateRowsInFile: z.number().int().safe().nonnegative(),
@@ -75,7 +75,7 @@ const statementImport = z.object({
   createdAt: isoDateTime,
 }).strict();
 const statement = z.object({
-  id: z.string().min(1), importId: z.string().min(1), provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]),
+  id: z.string().min(1), importId: z.string().min(1), provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]),
   externalId: nullableString, kind: z.enum(["purchase", "refund"]), usedDate: date, usedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/).nullable(),
   postedDate: date.nullable(), merchant: z.string(), amountYen: safeYen, paymentMethod: nullableString, sourceFingerprint: z.string().min(1), duplicateOrdinal: z.number().int().safe().nonnegative(),
 }).strict();
@@ -135,7 +135,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "account-metadata": return z.object({
       budgetId: z.string().min(1).max(128), accountId: z.string().min(1).max(128),
       accountType: z.enum(["bank", "credit_card", "cash", "other"]),
-      statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]).optional(),
+      statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]).optional(),
     }).strict();
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();

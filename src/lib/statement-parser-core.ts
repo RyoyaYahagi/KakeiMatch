@@ -1,7 +1,7 @@
 /** Browser-safe parser core shared by the Node API and the PWA. */
 import { parse } from "csv-parse/browser/esm/sync";
 
-export type StatementProvider = "smbc_card" | "rakuten_card" | "aeon_card" | "paypay";
+export type StatementProvider = "smbc_card" | "rakuten_card" | "aeon_card" | "paypay" | "paypay_card";
 
 export type CanonicalStatementTransaction = {
   provider: StatementProvider;
@@ -50,20 +50,19 @@ export const MAX_STATEMENT_FILE_BYTES = 5 * 1024 * 1024;
 export const MAX_STATEMENT_ROWS = 20_000;
 export const MAX_STATEMENT_FIELD_LENGTH = 2_000;
 
-const PAYPAY_HEADERS = [
-  "取引日",
-  "出金金額（円）",
-  "入金金額（円）",
-  "海外出金金額",
-  "通貨",
-  "変換レート（円）",
-  "利用国",
-  "取引内容",
-  "取引先",
-  "取引方法",
-  "支払い区分",
+const PAYPAY_CARD_HEADERS = [
+  "利用日/キャンセル日",
+  "利用店名・商品名",
   "利用者",
-  "取引番号",
+  "決済方法",
+  "支払区分",
+  "利用金額",
+  "手数料",
+  "支払総額",
+  "当月支払金額",
+  "翌月以降繰越金額",
+  "調整額",
+  "当月お支払日",
 ] as const;
 
 const RAKUTEN_HEADER_TEMPLATE = [
@@ -98,27 +97,18 @@ function parseYen(value: string): number | null {
   return Number.isSafeInteger(amount) ? amount : null;
 }
 
+function parseSignedYen(value: string): number | null {
+  const normalized = value.trim();
+  if (normalized === "") return 0;
+  if (!/^-?(?:0|[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)$/.test(normalized)) return null;
+  const amount = Number(normalized.replaceAll(",", ""));
+  return Number.isSafeInteger(amount) ? amount : null;
+}
+
 function parseStrictSmbcYen(value: string): number | null {
   if (!/^[1-9]\d*$/.test(value)) return null;
   const amount = Number(value);
   return Number.isSafeInteger(amount) ? amount : null;
-}
-
-function parsePaypayDate(value: string): { date: string; time: string } | null {
-  const match = /^(\d{4})\/(\d{2})\/(\d{2}) (\d{2}):(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const [, year, month, day, hour, minute] = match;
-  const date = `${year}-${month}-${day}`;
-  const parsed = new Date(`${date}T${hour}:${minute}:00Z`);
-  if (
-    Number.isNaN(parsed.getTime()) ||
-    parsed.getUTCFullYear() !== Number(year) ||
-    parsed.getUTCMonth() + 1 !== Number(month) ||
-    parsed.getUTCDate() !== Number(day) ||
-    parsed.getUTCHours() !== Number(hour) ||
-    parsed.getUTCMinutes() !== Number(minute)
-  ) return null;
-  return { date, time: `${hour}:${minute}` };
 }
 
 function parseSlashDate(value: string): string | null {
@@ -126,6 +116,16 @@ function parseSlashDate(value: string): string | null {
   if (!match) return null;
   const [, year, month, day] = match;
   const date = `${year}-${month}-${day}`;
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
+  return date;
+}
+
+function parseFlexibleSlashDate(value: string): string | null {
+  const match = /^(\d{4})\/(\d{1,2})\/(\d{1,2})$/.exec(value);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  const date = `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
   const parsed = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) return null;
   return date;
@@ -194,107 +194,106 @@ function makeSmbcParseResult(rows: string[][], encoding: StatementParseResult["e
   };
 }
 
-function makePaypayParseResult(rows: string[][], encoding: StatementParseResult["encoding"]): StatementParseResult {
+const PAYPAY_CARD_HEADER_SIGNATURE = "paypay-card-statement-v1";
+
+function makePaypayCardParseResult(rows: string[][], encoding: StatementParseResult["encoding"]): StatementParseResult {
   const [headers, ...bodyRows] = rows;
-  const headerSignature = JSON.stringify(headers);
-  if (headers.length !== PAYPAY_HEADERS.length || PAYPAY_HEADERS.some((header, index) => headers[index] !== header)) {
+  if (headers.length !== PAYPAY_CARD_HEADERS.length || PAYPAY_CARD_HEADERS.some((header, index) => headers[index] !== header)) {
     return {
       ...EMPTY_RESULT("header_mismatch", encoding),
       totalRows: bodyRows.length,
-      headerSignature,
+      headerSignature: null,
     };
   }
   if (bodyRows.length === 0) {
     return {
       ...EMPTY_RESULT("header_only", encoding),
-      headerSignature,
+      headerSignature: PAYPAY_CARD_HEADER_SIGNATURE,
     };
   }
 
   const transactions: CanonicalStatementTransaction[] = [];
-  const excludedRows: StatementParseResult["excludedRows"] = [];
+  const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
   let duplicateRowsInFile = 0;
   const fatalErrors: StatementParseResult["fatalErrors"] = [];
   const fingerprintOrdinals = new Map<string, number>();
-  const externalIdRows = new Map<string, { rowHash: string; rowNumber: number }>();
+
+  const possibleCancellationKeys = new Set<string>();
+  for (const row of bodyRows) {
+    if (row.length !== PAYPAY_CARD_HEADERS.length) continue;
+    const merchant = row[1]?.trim() ?? "";
+    for (const value of row.slice(5, 11)) {
+      const amount = parseSignedYen(value);
+      if (amount !== null && amount < 0) possibleCancellationKeys.add(JSON.stringify([merchant, Math.abs(amount)]));
+    }
+  }
 
   bodyRows.forEach((row, index) => {
     const rowNumber = index + 2;
-    if (row.length !== PAYPAY_HEADERS.length || row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) {
+    if (row.length !== PAYPAY_CARD_HEADERS.length || row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) {
       fatalErrors.push({ rowNumber, code: row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH) ? "limit_exceeded" : "invalid_row" });
       return;
     }
 
-    const [rawDate, rawOutflow, rawInflow, , , , , rawKind, rawMerchant, rawMethod, , , rawExternalId] = row;
-    const kind = rawKind.trim();
-    const externalId = rawExternalId.trim();
+    const [rawDate, rawMerchant, , rawPaymentMethod, rawPaymentType, rawPurchaseAmount, rawFee,
+      rawTotalAmount, rawCurrentPayment, rawCarryover, rawAdjustment, rawPaymentDate] = row;
+    const date = parseFlexibleSlashDate(rawDate.trim());
+    const paymentDate = parseFlexibleSlashDate(rawPaymentDate.trim());
     const merchant = rawMerchant.trim();
-    const outflow = parseYen(rawOutflow);
-    const inflow = parseYen(rawInflow);
-    const date = parsePaypayDate(rawDate);
+    const amounts = [rawPurchaseAmount, rawFee, rawTotalAmount, rawCurrentPayment, rawCarryover, rawAdjustment]
+      .map(parseSignedYen);
 
-    if (outflow === null || inflow === null || !date) {
-      fatalErrors.push({ rowNumber, code: "invalid_row" });
-      return;
-    }
-
-    const isLimitedPointGrant = externalId.startsWith("lp-");
-    const isPurchase = !isLimitedPointGrant && kind === "支払い" && outflow > 0 && inflow === 0;
-    const isRefund = !isLimitedPointGrant && kind === "返金" && inflow > 0 && outflow === 0;
-    const knownNonExpenseKinds = ["チャージ", "ポイント", "ポイント付与", "ポイント獲得", "PayPayポイント", "入金", "受け取り", "給与"];
-    if (!isPurchase && !isRefund && (knownNonExpenseKinds.includes(kind) || isLimitedPointGrant)) {
-      // Non-expense rows are excluded only when the incoming/outgoing columns agree with a credit.
-      if ((knownNonExpenseKinds.includes(kind) || isLimitedPointGrant) && outflow === 0 && inflow > 0) {
-        excludedRows.push({ rowNumber, reason: "non_expense" });
-      } else {
-        fatalErrors.push({ rowNumber, code: "invalid_row" });
+    let reviewReason: string | null = null;
+    if (!date) reviewReason = "利用日を確認できません";
+    else if (!paymentDate) reviewReason = "当月お支払日を確認できません";
+    else if (!merchant) reviewReason = "利用先を確認できません";
+    else if (amounts.some((amount) => amount === null)) reviewReason = "金額欄を確認できません";
+    else if (rawPaymentMethod.trim() !== "PayPayクレジット") reviewReason = "PayPayクレジット以外の決済方法です";
+    else if (rawPaymentType.trim() !== "1回") reviewReason = "1回払い以外の可能性があります";
+    else if (/キャンセル|取消|返金|返品/.test(merchant)) reviewReason = "返金・取消の可能性があります";
+    if (!reviewReason && amounts.every((amount): amount is number => amount !== null)) {
+      const [purchaseAmount, fee, totalAmount, currentPayment, carryover, adjustment] = amounts;
+      if (purchaseAmount < 0) reviewReason = "返金・取消の可能性があります";
+      else if (possibleCancellationKeys.has(JSON.stringify([merchant, purchaseAmount]))) reviewReason = "同じCSVにキャンセル明細があるため確認してください";
+      else if (purchaseAmount <= 0) reviewReason = "利用金額を確認できません";
+      else if (fee !== 0 || totalAmount !== purchaseAmount || currentPayment !== purchaseAmount || carryover !== 0 || adjustment !== 0) {
+        reviewReason = "支払額に手数料・繰越・調整が含まれる可能性があります";
       }
-      return;
     }
-    if (!isPurchase && !isRefund) {
-      fatalErrors.push({ rowNumber, code: "invalid_row" });
-      return;
-    }
-    if (!externalId || !merchant) {
-      fatalErrors.push({ rowNumber, code: "invalid_row" });
+    if (reviewReason) {
+      needsReviewRows.push({ rowNumber, reason: reviewReason });
       return;
     }
 
-    const rowHash = fingerprint(row);
-    const priorExternal = externalIdRows.get(externalId);
-    if (priorExternal) {
-      if (priorExternal.rowHash !== rowHash) {
-        fatalErrors.push({ rowNumber, code: "duplicate_external_id_conflict" });
-      } else {
-        duplicateRowsInFile += 1;
-      }
-      return;
-    }
-    externalIdRows.set(externalId, { rowHash, rowNumber });
+    const [purchaseAmount] = amounts as number[];
 
-    const canonicalFields = ["paypay", isPurchase ? "purchase" : "refund", date.date, date.time, merchant, String(isPurchase ? outflow : inflow), rawMethod.trim()];
+    const canonicalFields = ["paypay_card", "purchase", date!, merchant, String(purchaseAmount), rawPaymentMethod.trim(), rawPaymentType.trim()];
     const sourceFingerprint = fingerprint(canonicalFields);
     const duplicateOrdinal = (fingerprintOrdinals.get(sourceFingerprint) ?? 0) + 1;
     fingerprintOrdinals.set(sourceFingerprint, duplicateOrdinal);
     transactions.push({
-      provider: "paypay",
-      externalId,
-      kind: isPurchase ? "purchase" : "refund",
-      usedDate: date.date,
-      usedTime: `${date.time}:00`,
+      provider: "paypay_card",
+      externalId: null,
+      kind: "purchase",
+      usedDate: date!,
+      usedTime: null,
       postedDate: null,
       merchant,
-      amountYen: isPurchase ? outflow : inflow,
-      paymentMethod: rawMethod.trim() || null,
+      amountYen: purchaseAmount,
+      paymentMethod: `${rawPaymentMethod.trim()}（${rawPaymentType.trim()}）`,
       sourceFingerprint,
       duplicateOrdinal,
     });
   });
 
-  return { transactions: fatalErrors.length ? [] : transactions, excludedRows, duplicateRowsInFile, totalRows: bodyRows.length, encoding, fatalErrors, headerSignature };
+  return {
+    transactions: fatalErrors.length ? [] : transactions,
+    excludedRows: [], needsReviewRows, duplicateRowsInFile, totalRows: bodyRows.length,
+    encoding, fatalErrors, headerSignature: PAYPAY_CARD_HEADER_SIGNATURE,
+  };
 }
 
-function unsupportedParser(provider: "smbc_card" | "aeon_card"): StatementParser {
+function unsupportedParser(provider: "smbc_card" | "aeon_card" | "paypay"): StatementParser {
   return {
     provider,
     parse(rows, encoding) {
@@ -398,7 +397,8 @@ const adapters: Record<StatementProvider, StatementParser> = {
   smbc_card: { provider: "smbc_card", parse: makeSmbcParseResult },
   rakuten_card: rakutenParser,
   aeon_card: unsupportedParser("aeon_card"),
-  paypay: { provider: "paypay", parse: makePaypayParseResult },
+  paypay: unsupportedParser("paypay"),
+  paypay_card: { provider: "paypay_card", parse: makePaypayCardParseResult },
 };
 
 const SHA256_K = [

@@ -6,7 +6,7 @@ const providers = [
   { value: "smbc_card", label: "三井住友カード" },
   { value: "rakuten_card", label: "楽天カード" },
   { value: "aeon_card", label: "イオンカード" },
-  { value: "paypay", label: "PayPay" },
+  { value: "paypay_card", label: "PayPayカード" },
 ] as const;
 
 type ImportIssue = { rowNumber: number | null; code: string };

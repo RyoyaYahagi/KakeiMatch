@@ -16,7 +16,7 @@ export const accountMetadataSchema = z.object({
   budgetId: z.string().min(1).max(128),
   accountId: z.string().min(1).max(128),
   accountType: z.enum(["bank", "credit_card", "cash", "other"]),
-  statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay"]).optional(),
+  statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]).optional(),
 }).strict();
 
 const fallbackMetadataLocks = new Map<string, Promise<void>>();

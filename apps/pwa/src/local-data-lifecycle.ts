@@ -23,7 +23,7 @@ export type CleanupResult = {
 
 type Candidate = { id: string; bytes: number; kind: RawArtifactKind };
 
-const STATEMENT_PROVIDERS: readonly StatementProvider[] = ["smbc_card", "rakuten_card", "aeon_card", "paypay"];
+const STATEMENT_PROVIDERS: readonly StatementProvider[] = ["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"];
 
 function isStatementImportMetadata(value: unknown): value is StatementImportMetadata {
   if (!value || typeof value !== "object") return false;
