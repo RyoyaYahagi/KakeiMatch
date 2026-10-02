@@ -71,3 +71,9 @@ npx wrangler@4.144.0 preview secret bulk /private/path/preview-secrets.json \
 計測には現行Gemini Interactions APIの `usage` と、GenerateContent形式の `usageMetadata` に対応します。思考トークンは出力料金に1回だけ加えます。Jevは応答の版付きモデルIDと `usage.input_tokens` / `output_tokens` を使います。キャッシュやツール等の未対応の料金要素、矛盾する使用量、未知のモデルは推測で0ドルにせず不明として扱います。[Google Interactions (2026/10), Usage](https://ai.google.dev/api/interactions-api)、[Google GenerateContent (2026/10), UsageMetadata](https://ai.google.dev/api/generate-content)、[TypeSafe API (2026/10), Response](https://docs.typesafe.ai/api)、[実装](../workers/ai-gateway/src/ai-provider-costs.ts)
 
 通常の設定画面には製品利用回数だけを表示します。「アプリ情報」の開発者向け機能を有効にすると、AIアカウント内に自分の月次推定料金と月切替を表示します。不明な要求は既知の料金合計に含められないため、件数を明示します。開発者設定は既定値OFFで、ブラウザー内の表示だけを制御します。家計バックアップやCloud account権限には使いません。無効にしても計測は続きます。[実装: PWA](../apps/pwa/src/main.ts)
+
+## サービス全体の費用制限（Issue #56）
+
+利用者の製品利用枠と別に、全利用者合計の費用予算とprovider別の要求件数・費用上限を適用します。Familyも対象です。処理中・コスト不明の要求には予約額を残し、同時要求にも上限を適用します。障害・不明要求の増加ではprovider単位で停止します。停止は `503 ai_temporarily_paused` を返します。停止判定は製品利用回数の予約前に行います。並行要求が最終送信予約で競合した場合も、未送信のフロー予約を解放します。中断された未送信予約は120秒後に回収します。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)
+
+AI停止中も画像と確認値は端末に残り、手入力、カテゴリ選択、家計簿への登録を続けられます。停止設定と全利用者の費用は通常ユーザーへ公開しません。開発者表示を有効にしても自分の料金だけを取得できます。運用者向けの設定・停止・再開は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。

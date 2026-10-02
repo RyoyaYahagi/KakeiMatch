@@ -194,7 +194,7 @@ export class LocalReceiptService {
         method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ flowId, contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
       });
-      if (!response.ok) throw gatewayError(await readGatewayCode(response));
+      if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
       const extraction = validateReceiptExtraction(await response.json());
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
@@ -305,7 +305,7 @@ export class LocalReceiptService {
             receipt: { merchant: extraction.merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: extraction.totalAmountYen, items } };
           if (!bodyState.receipt.merchant && items.length === 0) return itemCategories[0] ?? null;
           const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(bodyState) });
-          if (!response.ok) throw gatewayError(await readGatewayCode(response));
+          if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
           const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
           if (typeof body.model !== "string" || !body.model.trim() || !body.answers) throw new LocalReceiptServiceError("invalid_ai_response", "品目のカテゴリ候補を確認できませんでした。手動で選んでください。");
           const expectedKeys = new Set(unresolvedForJev.map(index => `item_${index}`));
@@ -343,7 +343,7 @@ export class LocalReceiptService {
         const bodyState = { flowId: receipt.aiFlowId, categories: categories.map(({ id: categoryId, name }) => ({ id: categoryId, name })),
           receipt: { merchant: extraction.merchant?.trim().slice(0, MAX_TEXT_FOR_JEV) || null, totalAmountYen: extraction.totalAmountYen, items: [] } };
         const response = await this.fetchImpl(this.options.jevUrl ?? "/api/ai/jev", { method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(bodyState) });
-        if (!response.ok) throw gatewayError(await readGatewayCode(response));
+        if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
         const body = await response.json() as { model?: unknown; answers?: Record<string, unknown> };
         if (!body.answers || Object.keys(body.answers).length !== 1 || !Object.hasOwn(body.answers, "category")) {
           throw new LocalReceiptServiceError("invalid_ai_response", "カテゴリ候補を確認できませんでした。手動で選んでください。");
@@ -566,12 +566,13 @@ async function readGatewayCode(response: Response): Promise<string> {
   try { const body = await response.json() as { error?: unknown }; return typeof body.error === "string" ? body.error : "request_failed"; }
   catch { return "request_failed"; }
 }
-function gatewayError(code: string): LocalReceiptServiceError {
+function gatewayError(code: string, status?: number): LocalReceiptServiceError {
   if (code === "invalid_flow") return new LocalReceiptServiceError("invalid_flow", "この読み取りのカテゴリ提案は終了しました。手動で選ぶか、AIで読み取り直してください。");
   if (code === "unauthorized") return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。");
   if (code === "ai_quota_exceeded") return new LocalReceiptServiceError("quota", "AI利用上限に達しました。手動で入力できます。");
   if (code === "rate_limited") return new LocalReceiptServiceError("rate_limited", "AIへの要求が集中しています。しばらく待つか、手動で入力してください。");
   if (code === "invalid_provider_response") return new LocalReceiptServiceError("invalid_ai_response", "AIの応答を確認できませんでした。もう一度お試しください。");
   if (code === "not_configured") return new LocalReceiptServiceError("not_configured", "AI機能を現在利用できません。後でもう一度お試しください。");
+  if (code === "ai_temporarily_paused" || status === 503) return new LocalReceiptServiceError("offline_or_unavailable", "AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。");
   return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
 }
