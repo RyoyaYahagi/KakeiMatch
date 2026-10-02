@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { monthKey } from "./receipt-ai-usage";
+import { flowUsage, monthKey, reserveFlow } from "./receipt-ai-usage";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
 
 const accountState = vi.hoisted(() => ({ session: true, userId: "synthetic-user" }));
@@ -25,7 +25,7 @@ function request(stage: string, body: unknown, token = bearer(), headers = {}) {
   return new Request(`${origin}/api/ai/${stage}`, { method: "POST", headers: { origin, authorization: token, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
 const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async () => Response.json(value, { status })) as typeof fetch;
-const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
+const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
@@ -51,6 +51,34 @@ it("uses Tokyo month buckets across year and leap-year boundaries", () => {
   expect(monthKey(Date.parse("2028-02-29T15:00:00Z") / 1000)).toBe("2028-03");
 });
 
+describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s", mode => {
+  let db: AccountD1Binding;
+  let dispose: () => Promise<void>;
+  beforeEach(async () => {
+    if (mode === "D1") {
+      const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-09-30", d1Databases: { ACCOUNT_DB: "flow-reservation-test" } });
+      dispose = () => instance.dispose();
+      const d1 = await instance.getD1Database("ACCOUNT_DB");
+      db = d1;
+      for (const migration of migrations) await d1.exec(migration.replace(/^--.*$/gm, "").replace(/\s+/g, " "));
+    } else { ({ db, dispose } = sqliteDb()); }
+    await db.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Test','test@example.invalid',0,0)").bind().run();
+  });
+  afterEach(async () => { await dispose(); });
+
+  it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
+    const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
+    const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, 2)));
+    expect(reservations.filter(Boolean)).toHaveLength(2);
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE user_id='synthetic-user' AND dispatched=0").bind().first<{ count: number }>())
+      .toEqual({ count: 2 });
+    expect(await flowUsage(db, "synthetic-user", "2026-09")).toBe(0);
+    const admittedFlow = candidates[reservations.findIndex(Boolean)]!;
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe(true);
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe(false);
+  });
+});
+
 describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   let db: AccountD1Binding;
   let dispose: () => Promise<void>;
@@ -73,6 +101,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   const gemini = (flowId = crypto.randomUUID(), at = now, provider?: typeof fetch) => handleRequest(request("gemini", { ...image, flowId }, bearer("synthetic-user", at)), env, options(provider, at));
   const usage = async (at = now) => (await handleRequest(new Request(`${origin}/api/ai/usage`), env, options(undefined, at))).json();
   const costs = async (month: string, at = now) => (await handleRequest(new Request(`${origin}/api/ai/costs?month=${month}`), env, options(undefined, at))).json();
+  const eventCount = async () => (await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events").bind().first<{ count: number }>())?.count ?? 0;
 
   it("counts Gemini and its validated Jev continuation once, including retries at quota", async () => {
     env.AI_FREE_MONTHLY_LIMIT = "1";
@@ -250,7 +279,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(JSON.stringify(persisted)).not.toContain("private receipt");
     expect(JSON.stringify(persisted)).not.toContain("should not persist");
     expect(Object.keys(persisted ?? {}).sort()).toEqual([
-      "billing_mode", "cached_input_tokens", "completed_at", "dispatched_at", "estimated_cost_usd_micros", "flow_id", "id", "input_tokens", "input_usd_per_million_micros", "metering_status", "model", "output_tokens", "output_usd_per_million_micros", "pricing_version", "provider", "requested_model", "safe_error_code", "thinking_tokens", "total_tokens", "user_id",
+      "reserved_cost_usd_micros", "billing_mode", "cached_input_tokens", "completed_at", "dispatched_at", "estimated_cost_usd_micros", "flow_id", "id", "input_tokens", "input_usd_per_million_micros", "metering_status", "model", "output_tokens", "output_usd_per_million_micros", "pricing_version", "provider", "requested_model", "safe_error_code", "thinking_tokens", "total_tokens", "user_id",
     ].sort());
   });
   it("isolates monthly costs by authenticated user and Tokyo dispatch month", async () => {
@@ -271,10 +300,223 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   });
   it("rejects unsafe monthly sums rather than returning rounded token counts", async () => {
     for (let i = 0; i < 2; i++) {
-      const provider = fetchOk({ model: "gemini-3.5-flash-lite", output_text: JSON.stringify(receipt), usageMetadata: { promptTokenCount: Number.MAX_SAFE_INTEGER, candidatesTokenCount: 0, totalTokenCount: Number.MAX_SAFE_INTEGER } });
-      expect((await gemini(crypto.randomUUID(), now, provider)).status).toBe(200);
+      await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,provider,requested_model,model,metering_status,dispatched_at,input_tokens,output_tokens,total_tokens)
+        VALUES (?,?,'gemini','gemini-3.5-flash-lite','gemini-3.5-flash-lite','unknown',?,?,0,?)`)
+        .bind(crypto.randomUUID(), "synthetic-user", now, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER).run();
     }
     expect((await handleRequest(new Request(`${origin}/api/ai/costs?month=2026-09`), env, options())).status).toBe(503);
+  });
+  it("applies the Family global ceiling across users and counts in-flight reservations", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({
+      dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000,
+      gemini: { requestReserveUsdMicros: 50_000, dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000 },
+    });
+    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES (?, 'family', NULL)").bind("synthetic-user").run();
+
+    let notifyStarted!: () => void;
+    const started = new Promise<void>(resolve => { notifyStarted = resolve; });
+    let releaseProvider!: () => void;
+    const pending = new Promise<void>(resolve => { releaseProvider = resolve; });
+    const provider = vi.fn(async () => {
+      notifyStarted();
+      await pending;
+      return Response.json({ output_text: JSON.stringify(receipt) });
+    }) as typeof fetch;
+    const firstFlow = crypto.randomUUID();
+    const first = gemini(firstFlow, now, provider);
+    await started;
+    const waitingRow = await db.prepare("SELECT reserved_cost_usd_micros, metering_status FROM ai_provider_cost_events WHERE flow_id=?")
+      .bind(firstFlow).first<{ reserved_cost_usd_micros: number; metering_status: string }>();
+    expect(waitingRow).toEqual({ reserved_cost_usd_micros: 50_000, metering_status: "unknown" });
+
+    const secondFlow = crypto.randomUUID();
+    const second = await handleRequest(request("gemini", { ...image, flowId: secondFlow }, bearer("other-user")), env, options(provider));
+    expect(second.status).toBe(503);
+    expect(await second.json()).toEqual({ error: "ai_temporarily_paused" });
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(await eventCount()).toBe(1);
+    expect(await usage()).toMatchObject({ used: 1 });
+    accountState.userId = "other-user";
+    expect(await usage()).toMatchObject({ used: 0 });
+    accountState.userId = "synthetic-user";
+    releaseProvider();
+    expect((await first).status).toBe(200);
+  });
+  it("admits concurrent provider dispatches atomically without charging paused attempts to product quota", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({
+      dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000,
+      gemini: { requestReserveUsdMicros: 50_000, dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000 },
+    });
+    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES (?, 'family', NULL)").bind("synthetic-user").run();
+    const provider = fetchOk({
+      modelVersion: "gemini-3.5-flash-lite",
+      usage: { total_input_tokens: 1, total_output_tokens: 0, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 1 },
+      output_text: JSON.stringify(receipt),
+    });
+    const results = await Promise.all(Array.from({ length: 8 }, () => gemini(crypto.randomUUID(), now, provider)));
+    expect(results.filter(result => result.status === 200)).toHaveLength(1);
+    expect(results.filter(result => result.status === 503)).toHaveLength(7);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(await eventCount()).toBe(1);
+    expect(await usage()).toMatchObject({ used: 1 });
+  });
+  it("keeps a dispatched flow when a concurrent sibling retry loses cost admission", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({
+      dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000,
+      gemini: { requestReserveUsdMicros: 50_000, dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000 },
+    });
+    const provider = fetchOk({
+      modelVersion: "gemini-3.5-flash-lite",
+      usage: { total_input_tokens: 1, total_output_tokens: 0, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 1 },
+      output_text: JSON.stringify(receipt),
+    });
+    const flowId = crypto.randomUUID();
+    const siblings = await Promise.all([gemini(flowId, now, provider), gemini(flowId, now, provider)]);
+    expect(siblings.filter(result => result.status === 200)).toHaveLength(1);
+    expect(siblings.filter(result => result.status === 503)).toHaveLength(1);
+    expect(provider).toHaveBeenCalledTimes(1);
+    const flow = await db.prepare("SELECT dispatched FROM ai_receipt_flows WHERE user_id='synthetic-user' AND flow_id=?").bind(flowId).first<{ dispatched: number }>();
+    expect(flow).toEqual({ dispatched: 1 });
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ dailyCostUsdMicros: 100_000, monthlyCostUsdMicros: 100_000 });
+    expect((await gemini(flowId, now, provider)).status).toBe(200);
+    expect(await eventCount()).toBe(2);
+    expect(await usage()).toMatchObject({ used: 1 });
+  });
+  it("reclaims an interrupted undispatched reservation after the stale window", async () => {
+    const flowId = crypto.randomUUID();
+    await db.prepare("INSERT INTO ai_receipt_flows(user_id,flow_id,month,created_at,image_mac,dispatched) VALUES (? ,?,'2026-09',?, ?,0)")
+      .bind("synthetic-user", flowId, now - 121, "stale-old-mac").run();
+    expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify(receipt) }))).status).toBe(200);
+    const flow = await db.prepare("SELECT created_at,dispatched FROM ai_receipt_flows WHERE user_id='synthetic-user' AND flow_id=?").bind(flowId).first<{ created_at: number; dispatched: number }>();
+    expect(flow).toEqual({ created_at: now, dispatched: 1 });
+  });
+  it("does not trip the unknown circuit for active in-flight rows but trips after they become stale", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ gemini: { unknownThreshold: 1 } });
+    await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,provider,requested_model,model,metering_status,dispatched_at)
+      VALUES ('active-unknown','synthetic-user','gemini','gemini-3.5-flash-lite','gemini-3.5-flash-lite','unknown',?)`).bind(now).run();
+    const metered = { modelVersion: "gemini-3.5-flash-lite", usage: { total_input_tokens: 1, total_output_tokens: 0, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 1 }, output_text: JSON.stringify(receipt) };
+    expect((await gemini(crypto.randomUUID(), now, fetchOk(metered))).status).toBe(200);
+    expect(await db.prepare("SELECT provider FROM ai_provider_circuits WHERE provider='gemini'").bind().first()).toBeNull();
+    const staleAt = now + 121;
+    const paused = await gemini(crypto.randomUUID(), staleAt);
+    expect(paused.status).toBe(503);
+    const circuit = await db.prepare("SELECT opened_at,reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ opened_at: number; reason: string }>();
+    expect(circuit).toEqual({ opened_at: staleAt, reason: "unknown_metering" });
+  });
+  it("enforces minute, Tokyo daily, and monthly provider request ceilings while isolating Jev", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({
+      dailyCostUsdMicros: 1_000_000, monthlyCostUsdMicros: 2_000_000,
+      gemini: { dailyRequests: 1, monthlyRequests: 2, minuteRequests: 1, dailyCostUsdMicros: 1_000_000, monthlyCostUsdMicros: 2_000_000 },
+    });
+    const firstFlow = crypto.randomUUID();
+    expect((await gemini(firstFlow)).status).toBe(200);
+    const blockedMinute = await gemini(crypto.randomUUID(), now + 30);
+    expect(blockedMinute.status).toBe(503);
+    expect(await blockedMinute.json()).toEqual({ error: "ai_temporarily_paused" });
+    const tokyoMidnight = now + 61;
+    expect((await gemini(crypto.randomUUID(), tokyoMidnight)).status).toBe(200);
+    const blockedDaily = await gemini(crypto.randomUUID(), now + 122);
+    expect(blockedDaily.status).toBe(503);
+    const octoberSecond = Date.parse("2026-10-01T15:00:01Z") / 1000;
+    expect((await gemini(crypto.randomUUID(), octoberSecond)).status).toBe(200);
+    const octoberThird = Date.parse("2026-10-02T15:00:01Z") / 1000;
+    const blockedMonthly = await gemini(crypto.randomUUID(), octoberThird);
+    expect(blockedMonthly.status).toBe(503);
+    const november = Date.parse("2026-10-31T15:00:00Z") / 1000;
+    expect((await gemini(crypto.randomUUID(), november)).status).toBe(200);
+    const jevResult = await handleRequest(request("jev", { ...category, flowId: firstFlow }), env, options(fetchOk(jev)));
+    expect(jevResult.status).toBe(200);
+    const counts = await db.prepare("SELECT (SELECT COUNT(*) FROM ai_provider_cost_events WHERE provider='gemini') AS gemini, (SELECT COUNT(*) FROM ai_provider_cost_events WHERE provider='jev') AS jev").bind().first<{ gemini: number; jev: number }>();
+    expect(counts).toEqual({ gemini: 4, jev: 1 });
+  });
+  it("enforces settled provider cost and shared cost budgets", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({
+      dailyCostUsdMicros: 500_000_000, monthlyCostUsdMicros: 500_000_000,
+      gemini: { requestReserveUsdMicros: 50_000, dailyCostUsdMicros: 100_000_000, monthlyCostUsdMicros: 500_000_000 },
+    });
+    const flowId = crypto.randomUUID();
+    const usageHeavy = {
+      model: "gemini-3.5-flash-lite", output_text: JSON.stringify(receipt),
+      usageMetadata: { promptTokenCount: 1_000_000_000, candidatesTokenCount: 0, totalTokenCount: 1_000_000_000 },
+    };
+    expect((await gemini(flowId, now, fetchOk(usageHeavy))).status).toBe(200);
+    const row = await db.prepare("SELECT estimated_cost_usd_micros, reserved_cost_usd_micros, metering_status FROM ai_provider_cost_events WHERE provider='gemini'")
+      .bind().first<{ estimated_cost_usd_micros: number; reserved_cost_usd_micros: number; metering_status: string }>();
+    expect(row).toEqual({ estimated_cost_usd_micros: 300_000_000, reserved_cost_usd_micros: 50_000, metering_status: "metered" });
+    // The Gemini-specific ceiling rejects a second Gemini dispatch while the global budget still has room.
+    expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(receipt) }))).status).toBe(503);
+    const jevFlow = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-1.13.0", answers: { item_0: choice }, usage: { input_tokens: 1, output_tokens: 1 } })));
+    expect(jevFlow.status).toBe(200);
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ dailyCostUsdMicros: 250_000_000, monthlyCostUsdMicros: 250_000_000 });
+    const sharedBlocked = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk(jev)));
+    expect(sharedBlocked.status).toBe(503);
+    expect(await eventCount()).toBe(2);
+  });
+  it("opens a persistent provider circuit for failures or unknown usage until operator resume", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ gemini: { failureThreshold: 1, unknownThreshold: 1 } });
+    const siblingFlow = crypto.randomUUID();
+    const metered = { modelVersion: "gemini-3.5-flash-lite", usage: { total_input_tokens: 1, total_output_tokens: 0, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 1 }, output_text: JSON.stringify(receipt) };
+    expect((await gemini(siblingFlow, now - 1, fetchOk(metered))).status).toBe(200);
+    const failedFlow = crypto.randomUUID();
+    expect((await gemini(failedFlow, now, fetchOk({ private: "provider details" }, 500))).status).toBe(503);
+    const circuit = await db.prepare("SELECT opened_at, reason, resumed_at FROM ai_provider_circuits WHERE provider='gemini'")
+      .bind().first<{ opened_at: number; reason: string; resumed_at: number }>();
+    expect(circuit).toEqual({ opened_at: now, reason: "provider_failures", resumed_at: 0 });
+    expect((await handleRequest(request("jev", { ...category, flowId: siblingFlow }), env, options(fetchOk({ ...jev, model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 } })))).status).toBe(200);
+    const paused = await gemini(crypto.randomUUID());
+    expect(paused.status).toBe(503);
+    expect(await eventCount()).toBe(3);
+    expect(await usage()).toMatchObject({ used: 2 });
+
+    await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='gemini') WHERE provider='gemini'").bind(now + 1).run();
+    // A new failure at the same second as operator resume must be counted by rowid watermark.
+    expect((await gemini(crypto.randomUUID(), now + 1, fetchOk({ private: "new failure" }, 500))).status).toBe(503);
+    const reopened = await db.prepare("SELECT opened_at, reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ opened_at: number; reason: string }>();
+    expect(reopened).toEqual({ opened_at: now + 1, reason: "provider_failures" });
+    await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='gemini') WHERE provider='gemini'").bind(now + 2).run();
+    const recoveredFlow = crypto.randomUUID();
+    expect((await gemini(recoveredFlow, now + 3, fetchOk(metered))).status).toBe(200);
+
+    // A Jev circuit opens independently; a Gemini circuit never pauses its sibling provider.
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ jev: { unknownThreshold: 1 } });
+    const unknownJev = await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(fetchOk(jev), now + 3));
+    expect(unknownJev.status, await unknownJev.clone().text()).toBe(200);
+    const jevCircuit = await db.prepare("SELECT opened_at, reason FROM ai_provider_circuits WHERE provider='jev'").bind().first<{ opened_at: number; reason: string }>();
+    expect(jevCircuit).toEqual({ opened_at: now + 3, reason: "unknown_metering" });
+    const geminiWhileJevPaused = await gemini(crypto.randomUUID(), now + 4);
+    expect(geminiWhileJevPaused.status).toBe(200);
+    const jevPaused = await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(fetchOk(jev), now + 5));
+    expect(jevPaused.status).toBe(503);
+    await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='jev') WHERE provider='jev'").bind(now + 6).run();
+    expect((await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(fetchOk(jev), now + 7))).status).toBe(200);
+  });
+  it("counts a schema-invalid response as a circuit failure while retaining measured cost", async () => {
+    env.AI_GUARDRAILS_JSON = JSON.stringify({ gemini: { failureThreshold: 1 } });
+    const flowId = crypto.randomUUID();
+    const malformed = {
+      modelVersion: "gemini-3.5-flash-lite",
+      usage: { total_input_tokens: 10, total_output_tokens: 5, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 15 },
+      output_text: JSON.stringify({ ...receipt, totalAmountYen: 1.5 }),
+    };
+    expect((await gemini(flowId, now, fetchOk(malformed))).status).toBe(502);
+    const event = await db.prepare("SELECT metering_status, estimated_cost_usd_micros, safe_error_code FROM ai_provider_cost_events WHERE flow_id=?")
+      .bind(flowId).first<{ metering_status: string; estimated_cost_usd_micros: number; safe_error_code: string }>();
+    expect(event).toEqual({ metering_status: "metered", estimated_cost_usd_micros: 16, safe_error_code: "invalid_provider_response" });
+    const circuit = await db.prepare("SELECT reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ reason: string }>();
+    expect(circuit).toEqual({ reason: "provider_failures" });
+  });
+  it("fails closed on emergency stop and invalid guard settings before quota or event writes", async () => {
+    env.AI_EMERGENCY_STOP = "true";
+    const stopped = await gemini();
+    expect(stopped.status).toBe(503);
+    expect(await stopped.json()).toEqual({ error: "ai_temporarily_paused" });
+    env.AI_EMERGENCY_STOP = "yes";
+    expect((await gemini()).status).toBe(503);
+    env.AI_EMERGENCY_STOP = undefined;
+    env.AI_GUARDRAILS_JSON = "{\"gemini\":{\"dailyRequests\":-1}}";
+    expect((await gemini()).status).toBe(503);
+    expect(await eventCount()).toBe(0);
+    expect(await usage()).toMatchObject({ used: 0 });
   });
   it("does not count malformed, missing-flow, unauthorized or unconfigured requests", async () => {
     expect((await handleRequest(request("gemini", image), env, options())).status).toBe(400);

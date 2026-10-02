@@ -1,5 +1,6 @@
+import { guardrailConfig, costAdmission, refreshCircuit, type CostAdmission } from "./ai-global-guardrails";
 import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
-import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory } from "./receipt-ai-usage";
+import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatched } from "./receipt-ai-usage";
 import { getAccountSession, type AccountEnv } from "./account-auth";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
@@ -31,7 +32,7 @@ export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
 export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB"> {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
   TYPESAFE_API_KEY?: string; TYPESAFE_API_URL?: string; JEV_MODEL?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
-  ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string;
+  ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
 }
 type HandlerOptions = { fetchImpl?: typeof fetch; nowSeconds?: () => number };
 
@@ -86,12 +87,15 @@ async function authenticate(request: Request, secret: string | undefined, now: n
   if (payload.iat !== undefined && (!Number.isInteger(payload.iat) || (payload.iat as number) > now + 30 || (payload.exp as number) <= (payload.iat as number))) return null;
   return payload.sub;
 }
-async function readLimited(stream: ReadableStream<Uint8Array> | null, maxBytes: number): Promise<Uint8Array | null> {
+async function readLimited(stream: ReadableStream<Uint8Array> | null, maxBytes: number, signal?: AbortSignal): Promise<Uint8Array | null> {
   if (!stream) return new Uint8Array();
   const reader = stream.getReader(); const chunks: Uint8Array[] = []; let size = 0;
+  const cancel = () => { void reader.cancel().catch(() => undefined); };
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   try {
     for (;;) { const { done, value } = await reader.read(); if (done) break; size += value.byteLength; if (size > maxBytes) { await reader.cancel(); return null; } chunks.push(value); }
-  } finally { reader.releaseLock(); }
+  } finally { signal?.removeEventListener("abort", cancel); reader.releaseLock(); }
   const body = new Uint8Array(size); let offset = 0;
   for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
   return body;
@@ -185,29 +189,58 @@ function providerError(status: number): Response {
   if (status >= 500) return json(503, { error: "provider_unavailable" });
   return json(502, { error: "provider_rejected_request" });
 }
-async function callProvider(url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch): Promise<Response> {
+async function callProvider(url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch): Promise<{ response: Response; decoded: unknown }> {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try { return await fetchImpl(url, { ...init, signal: controller.signal }); } catch { throw new Error("provider_timeout"); } finally { clearTimeout(timer); }
+  try {
+    const response = await fetchImpl(url, { ...init, signal: controller.signal });
+    let decoded: unknown = null;
+    try { decoded = await readProviderJson(response, controller.signal); } catch { /* Invalid bodies remain unknown and get a safe status below. */ }
+    if (controller.signal.aborted) throw new Error("provider_timeout");
+    return { response, decoded };
+  } catch { throw new Error("provider_timeout"); } finally { clearTimeout(timer); }
 }
-async function readProviderJson(response: Response): Promise<unknown | null> {
-  const bytes = await readLimited(response.body, MAX_PROVIDER_RESPONSE_BYTES);
+async function readProviderJson(response: Response, signal?: AbortSignal): Promise<unknown | null> {
+  const bytes = await readLimited(response.body, MAX_PROVIDER_RESPONSE_BYTES, signal);
   if (!bytes) return null;
   try { return JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return null; }
 }
-async function dispatchProvider(db: AccountD1Binding, user: string, flow: string, provider: "gemini" | "jev", model: string, now: number, url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch, clock: () => number): Promise<{ response: Response; decoded: unknown }> {
+function dispatchError(error: unknown): Response {
+  const code = error instanceof Error ? error.message : "";
+  if (code === "ai_temporarily_paused") return json(503, { error: code });
+  return code === "provider_timeout" ? json(504, { error: code }) : json(503, { error: "temporarily_unavailable" });
+}
+async function prepareDispatch(env: GatewayEnv, provider: "gemini" | "jev", model: string, payload: unknown, now: number): Promise<CostAdmission> {
+  const admission = await costAdmission(env.ACCOUNT_DB!, provider, model, JSON.stringify(payload), now, guardrailConfig(env.AI_GUARDRAILS_JSON), env.AI_EMERGENCY_STOP);
+  // Check before product-flow reservation for ordinary paused requests. The
+  // INSERT repeats these predicates atomically against concurrent admissions.
+  const check = await env.ACCOUNT_DB!.prepare(`SELECT CASE WHEN ${admission.predicate} THEN 1 ELSE 0 END AS allowed`).bind(...admission.parameters).first<{allowed:number}>();
+  if (check?.allowed !== 1) throw new Error("ai_temporarily_paused");
+  return admission;
+}
+async function invalidProviderResponse(env: GatewayEnv, eventId: string, provider: "gemini" | "jev", now: number): Promise<Response> {
+  try {
+    const saved = await env.ACCOUNT_DB!.prepare("UPDATE ai_provider_cost_events SET safe_error_code='invalid_provider_response' WHERE id=?").bind(eventId).run();
+    if (!saved.success || saved.meta?.changes !== 1) throw new Error("metering_unavailable");
+    await refreshCircuit(env.ACCOUNT_DB!, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], now);
+    return json(502, { error: "invalid_provider_response" });
+  } catch { return json(503, { error: "temporarily_unavailable" }); }
+}
+async function dispatchProvider(db: AccountD1Binding, user: string, flow: string, provider: "gemini" | "jev", model: string, now: number, url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch, clock: () => number, admission: CostAdmission, env: GatewayEnv): Promise<{ response: Response; decoded: unknown; eventId: string }> {
   // Persist before dispatch: interrupted/failed completion stays visibly unknown.
-  const id = await beginCostEvent(db, user, flow, provider, model, now);
-  let response: Response;
-  try { response = await callProvider(url, init, timeoutMs, fetchImpl); }
+  let id: string;
+  try { id = await beginCostEvent(db, user, flow, provider, model, now, admission); }
+  catch (error) { await releaseUndispatchedFlow(db, user, flow); throw error; }
+  await markFlowDispatched(db, user, flow);
+  let response: Response, decoded: unknown;
+  try { ({ response, decoded } = await callProvider(url, init, timeoutMs, fetchImpl)); }
   catch {
     await completeCostEvent(db, id, provider, null, now, clock(), "provider_timeout");
+    await refreshCircuit(db, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], clock());
     throw new Error("provider_timeout");
   }
-  let decoded: unknown = null;
-  try { decoded = await readProviderJson(response); }
-  catch { /* Persist only a safe code; never provider bodies or exceptions. */ }
   await completeCostEvent(db, id, provider, decoded, now, clock(), response.ok ? (decoded === null ? "invalid_provider_response" : null) : `provider_http_${response.status}`);
-  return { response, decoded };
+  await refreshCircuit(db, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], clock());
+  return { response, decoded, eventId: id };
 }
 function geminiOutputText(value: unknown): string | null {
   if (!isRecord(value)) return null;
@@ -275,21 +308,25 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!image) return json(400, { error: "invalid_request" });
     if (!env.GEMINI_API_KEY) return json(503, { error: "not_configured" });
     if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
+    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, service_tier: "standard", generation_config: { max_output_tokens: 8192 }, store: false };
+    let admission: CostAdmission;
+    try { admission = await prepareDispatch(env, provider, payload.model, payload, now); }
+    catch (error) { return dispatchError(error); }
     try {
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", image);
       if (!await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, freeLimit(env))) return json(429, { error: "ai_quota_exceeded" });
       if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "gemini", mac, now)) return json(409, { error: "invalid_flow" });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
-    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, service_tier: "standard", store: false };
-    let response: Response, decoded: unknown;
-    try { ({ response, decoded } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, "https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl, clock)); }
-    catch (error) { return error instanceof Error && error.message === "provider_timeout" ? json(504, { error: "provider_timeout" }) : json(503, { error: "temporarily_unavailable" }); }
+
+    let response: Response, decoded: unknown, eventId: string;
+    try { ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, "https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl, clock, admission, env)); }
+    catch (error) { return dispatchError(error); }
     if (!response.ok) return providerError(response.status);
     const outputText = geminiOutputText(decoded);
-    if (!outputText) return json(502, { error: "invalid_provider_response" });
+    if (!outputText) return invalidProviderResponse(env, eventId, provider, clock());
     let extraction: unknown;
-    try { extraction = JSON.parse(outputText) as unknown; } catch { return json(502, { error: "invalid_provider_response" }); }
-    if (!isReceiptResult(extraction) || !isRecord(extraction)) return json(502, { error: "invalid_provider_response" });
+    try { extraction = JSON.parse(outputText) as unknown; } catch { return invalidProviderResponse(env, eventId, provider, clock()); }
+    if (!isReceiptResult(extraction) || !isRecord(extraction)) return invalidProviderResponse(env, eventId, provider, clock());
     const items = (extraction.items as Array<{ name: string; amountYen: number | null }>).slice(0, 30).map(item => ({ name: item.name.trim().slice(0, 200), amountYen: item.amountYen }));
     const categoryInput = parseCategoryInput({ receipt: { merchant: typeof extraction.merchant === "string" ? extraction.merchant.trim().slice(0, 200) || null : null, totalAmountYen: extraction.totalAmountYen, items } });
     if (categoryInput) {
@@ -306,10 +343,6 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   if (!itemIndexes || (body.categories !== undefined && !categories)) return json(400, { error: "invalid_request" });
   if (!env.TYPESAFE_API_KEY) return json(503, { error: "not_configured" });
   if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
-  try {
-    const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "jev", normalized);
-    if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "jev", mac, now)) return json(409, { error: "invalid_flow" });
-  } catch { return json(503, { error: "temporarily_unavailable" }); }
   const selectedItems = itemIndexes.map(index => normalized.receipt.items[index]);
   const questionKeys = selectedItems.length > 0 ? itemIndexes.map(index => `item_${index}`) : ["category"];
   const categoryIds = categories?.map(category => category.id) ?? [...CATEGORY_IDS];
@@ -322,12 +355,19 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   const selectedReceipt = { ...normalized.receipt, items: selectedItems };
   const question = { type: "choice", instructions: "この商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。", criteria };
   const payload = { model: env.JEV_MODEL?.trim() || "jev-latest", state: { receipt: selectedReceipt }, questions: Object.fromEntries(questionKeys.map((key, index) => [key, { ...question, instructions: selectedItems.length > 0 ? `state.receipt.items[${index}]の商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。${fallbackInstruction}` : `このレシートの店名と合計金額から、該当する家計簿カテゴリを1つ選んでください。${fallbackInstruction}`, criteria }])) };
-  let response: Response, decoded: unknown;
-  try { ({ response, decoded } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl, clock)); }
-  catch (error) { return error instanceof Error && error.message === "provider_timeout" ? json(504, { error: "provider_timeout" }) : json(503, { error: "temporarily_unavailable" }); }
+  let admission: CostAdmission;
+  try { admission = await prepareDispatch(env, provider, payload.model, payload, now); }
+  catch (error) { return dispatchError(error); }
+  try {
+    const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "jev", normalized);
+    if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "jev", mac, now)) return json(409, { error: "invalid_flow" });
+  } catch { return json(503, { error: "temporarily_unavailable" }); }
+  let response: Response, decoded: unknown, eventId: string;
+  try { ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, env.TYPESAFE_API_URL?.trim() || "https://api.typesafe.ai/v1/systemone", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.TYPESAFE_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl, clock, admission, env)); }
+  catch (error) { return dispatchError(error); }
   if (!response.ok) return providerError(response.status);
   const result = normalizeJevResponse(decoded, questionKeys, categoryIds);
-  return result ? json(200, result) : json(502, { error: "invalid_provider_response" });
+  return result ? json(200, result) : invalidProviderResponse(env, eventId, provider, clock());
 }
 
 const aiGatewayWorker = { fetch: (request: Request, env: GatewayEnv) => handleRequest(request, env) };

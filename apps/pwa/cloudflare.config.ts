@@ -22,6 +22,8 @@ export default defineConfig(({ mode, isPreview }) => {
         ACCOUNT_BOOTSTRAP_SECRET: bindings.secret(),
         CLOUD_ACCOUNT_ORIGIN: production ? bindings.text('https://kakeimatch.yhgry.workers.dev') : bindings.secret(),
         AI_GATEWAY_AUTH_SECRET: bindings.secret(),
+        AI_EMERGENCY_STOP: bindings.secret(),
+        AI_GUARDRAILS_JSON: bindings.secret(),
         AI_FREE_MONTHLY_LIMIT: bindings.text('30'),
         GEMINI_API_KEY: bindings.secret(),
         TYPESAFE_API_KEY: bindings.secret(),

@@ -56,7 +56,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql`、`0004_ai_provider_costs.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql`、`0004_ai_provider_costs.sql`、`0005_ai_global_guardrails.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -111,3 +111,7 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 2026年10月2日に確認したStandardの料金はGemini 3.5 Flash-Liteの入力100万トークンあたり0.30 USD、思考を含む出力100万トークンあたり2.50 USDです。Jev 1.13.0は入力100万トークンあたり0.042 USDで、出力は無料です。カタログはこの料金の推定値を使います。無料枠、請求書、為替換算との照合は行いません。[Google料金 (2026/10), Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/pricing)、[TypeSafe料金 (2026/10), Jev 1.13](https://docs.typesafe.ai/models)
 
 合成要求で、再試行ごとのコスト記録、製品利用回数が増えないこと、`GET /api/ai/costs` の利用者分離、コスト不明の件数を確認します。画面では開発者向け設定を有効にしてから当月・前月の表示を確認します。設定を無効にしても計測は続きます。更新を戻す場合は追加テーブルを残してください。旧Workerを動かした期間は計測されないため、その期間の集計は不完全になります。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)、[実装: PWA](../apps/pwa/src/main.ts)
+
+## サービス全体のAI費用制限（Issue #56）
+
+`0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Familyにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
