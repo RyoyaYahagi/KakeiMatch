@@ -26,6 +26,8 @@ export default defineConfig(({ mode, isPreview }) => {
         AI_GUARDRAILS_JSON: bindings.secret(),
         AI_FREE_MONTHLY_LIMIT: bindings.text('30'),
         GEMINI_API_KEY: bindings.secret(),
+        GITHUB_ISSUES_TOKEN: bindings.secret(),
+        GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
         TYPESAFE_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),

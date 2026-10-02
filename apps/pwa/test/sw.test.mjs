@@ -54,12 +54,14 @@ test('install caches the app shell and offline navigation keeps isolation header
   assert.equal(cached.headers.get('Cross-Origin-Embedder-Policy'), 'require-corp');
 });
 
-test('AI API requests are never cached or intercepted', () => {
+test('AI and contact API requests are never cached or intercepted', () => {
   const context = worker();
   let intercepted = false;
-  context.handlers.get('fetch')({
-    request: { method: 'GET', url: 'https://example.test/api/ai/gemini', mode: 'cors' },
-    respondWith: () => { intercepted = true; },
-  });
+  for (const path of ['/api/ai/gemini', '/api/contact', '/api/contact/transcribe']) {
+    context.handlers.get('fetch')({
+      request: { method: 'POST', url: `https://example.test${path}`, mode: 'cors' },
+      respondWith: () => { intercepted = true; },
+    });
+  }
   assert.equal(intercepted, false);
 });

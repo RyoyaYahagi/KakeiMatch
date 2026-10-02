@@ -1,0 +1,386 @@
+import { getAiAccessToken } from './ai-auth';
+
+type ContactResult = { kind: 'bug' | 'improvement' | 'question'; reply: string; issueUrl: string | null };
+type ContactOptions = { onBackToSettings: (focusLogin?: boolean) => void };
+
+const MAX_MESSAGE_LENGTH = 4000;
+const MAX_AUDIO_BYTES = 2 * 1024 * 1024;
+const MAX_RECORDING_MS = 60_000;
+
+export function initializeContactUi(container: HTMLElement, options: ContactOptions) {
+  container.innerHTML = `
+    <div class="page-header contact-header">
+      <button class="text-button contact-back" type="button">‹ 設定へ戻る</button>
+      <h2>お問い合わせ</h2>
+    </div>
+    <section class="surface-section contact-panel">
+      <p class="contact-consent">音声と文章はGoogleに送信されます。不具合や改善のご要望は、送信した文章がGitHubで公開される場合があります。氏名や家計情報は入力しないでください。</p>
+      <label for="contact-message">お問い合わせ内容</label>
+      <textarea id="contact-message" maxlength="4000" aria-describedby="contact-count contact-status" placeholder="お困りのことや改善のご希望を入力してください"></textarea>
+      <div class="contact-meta"><span id="contact-count">0 / 4000文字</span><span id="contact-recording-time" aria-live="polite"></span></div>
+      <div class="contact-actions">
+        <button id="contact-record" class="secondary" type="button">音声を録音</button>
+        <button id="contact-transcribe" class="secondary" type="button" hidden>音声を文字にする</button>
+        <button id="contact-discard-audio" class="secondary" type="button" hidden>録音を破棄して録り直す</button>
+      </div>
+      <p id="contact-audio-status" class="muted" role="status"></p>
+      <p id="contact-status" class="status" role="status" aria-live="polite"></p>
+      <a id="contact-issues-link" class="contact-issues-link" href="https://github.com/RyoyaYahagi/KakeiMatch/issues" target="_blank" rel="noreferrer" hidden>GitHubの課題一覧を確認する</a>
+      <div class="form-actions contact-send-bar"><button id="contact-send" type="button" disabled>送信する</button></div>
+      <button id="contact-login-path" class="text-button" type="button" hidden>設定でログインする</button>
+      <section id="contact-result" class="contact-result" aria-live="polite" hidden>
+        <h3 id="contact-result-title"></h3>
+        <p id="contact-result-reply"></p>
+        <a id="contact-issue-link" target="_blank" rel="noreferrer" hidden>GitHubで内容を見る</a>
+        <button id="contact-edit-result" class="secondary" type="button">内容を編集する</button>
+      </section>
+    </section>`;
+
+  const message = container.querySelector<HTMLTextAreaElement>('#contact-message')!;
+  const count = container.querySelector<HTMLElement>('#contact-count')!;
+  const recordButton = container.querySelector<HTMLButtonElement>('#contact-record')!;
+  const transcribeButton = container.querySelector<HTMLButtonElement>('#contact-transcribe')!;
+  const discardAudioButton = container.querySelector<HTMLButtonElement>('#contact-discard-audio')!;
+  const sendButton = container.querySelector<HTMLButtonElement>('#contact-send')!;
+  const status = container.querySelector<HTMLElement>('#contact-status')!;
+  const audioStatus = container.querySelector<HTMLElement>('#contact-audio-status')!;
+  const recordingTime = container.querySelector<HTMLElement>('#contact-recording-time')!;
+  const result = container.querySelector<HTMLElement>('#contact-result')!;
+  const loginPathButton = container.querySelector<HTMLButtonElement>('#contact-login-path')!;
+
+  let active = false;
+  let flowId: string | null = null;
+  let audioFlowId: string | null = null;
+  let flowMessage = '';
+  let unknownFlowId: string | null = null;
+  let audioBlob: Blob | null = null;
+  let mediaStream: MediaStream | null = null;
+  let recorder: MediaRecorder | null = null;
+  let chunks: BlobPart[] = [];
+  let recordingBytes = 0;
+  let recordingTooLarge = false;
+  let timer: number | null = null;
+  let startedAt = 0;
+  let requestingPermission = false;
+  let stoppingRecording = false;
+  let permissionGeneration = 0;
+  let requestController: AbortController | null = null;
+  let busy = false;
+
+  const uuid = () => crypto.randomUUID();
+  const cleanRecordingResources = (stopRecorder: boolean) => {
+    if (timer !== null) window.clearInterval(timer);
+    timer = null;
+    recordingTime.textContent = '';
+    if (stopRecorder && recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      if (recorder.state !== 'inactive') recorder.stop();
+    }
+    recorder = null;
+    recordButton.textContent = '音声を録音';
+    chunks = [];
+    recordingBytes = 0;
+    mediaStream?.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+  };
+  const update = () => {
+    count.textContent = `${message.value.length} / ${MAX_MESSAGE_LENGTH}文字`;
+    message.disabled = busy;
+    sendButton.disabled = busy || requestingPermission || stoppingRecording || recorder?.state === 'recording' || !message.value.trim() || message.value.length > MAX_MESSAGE_LENGTH || (unknownFlowId !== null && unknownFlowId === flowId && flowMessage === message.value);
+    recordButton.disabled = busy || requestingPermission || stoppingRecording || audioBlob !== null;
+    transcribeButton.hidden = audioBlob === null;
+    transcribeButton.disabled = busy;
+    discardAudioButton.hidden = audioBlob === null;
+    discardAudioButton.disabled = busy;
+  };
+  const startFlowForEditedMessage = () => {
+    if (unknownFlowId && message.value !== flowMessage) {
+      unknownFlowId = null;
+      container.querySelector<HTMLAnchorElement>('#contact-issues-link')!.hidden = true;
+    }
+    if (flowId && flowMessage !== message.value) {
+      flowId = null;
+      flowMessage = message.value;
+    }
+    result.hidden = true;
+    loginPathButton.hidden = true;
+    update();
+  };
+  const setBusy = (value: boolean) => { busy = value; update(); };
+  const bearerHeaders = async () => ({ authorization: `Bearer ${await getAiAccessToken()}` });
+  const errorMessage = (code: string, transcribing: boolean) => {
+    if (code === 'account_session_required' || code === 'unauthorized') return '送信にはログインが必要です。設定からログインしてください。';
+    if (code === 'invalid_flow' || code === 'invalid_request') return '送信内容を確認できませんでした。文章を編集して再度お試しください。';
+    if (code === 'issue_submission_unknown') return '登録結果を確認できませんでした。重複を避けるため再登録を止めています。GitHubの課題一覧をご確認ください。';
+    if (code === 'issue_submission_failed') return 'お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
+    if (code === 'invalid_provider_response') return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。もう一度お試しください。' : '回答を確認できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
+    if (code === 'offline' || !navigator.onLine) return 'オフラインです。文章と録音はこの画面内に残っています。接続後に再度お試しください。';
+    if (code === 'ai_quota_exceeded') return '今月のAI利用上限に達しました。文章と録音はこの画面内に残っています。利用枠の更新後に再度お試しください。';
+    if (code === 'rate_limited') return '短時間に利用が続いています。文章はこの画面内に残っています。少し待ってから再度お試しください。';
+    if (code === 'ai_temporarily_paused' || code === 'provider_timeout' || code === 'provider_unavailable' || code === 'temporarily_unavailable') return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。時間をおいて再度お試しください。' : '現在送信できません。文章はこの画面内に残っています。時間をおいて再度お試しください。';
+    if (code === 'not_configured') return 'お問い合わせを現在利用できません。文章はこの画面内に下書きとして残っています。';
+    return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。接続を確認して再度お試しください。' : '送信できませんでした。文章はこの画面内に残っています。接続を確認して再度お試しください。';
+  };
+  const requestJson = async <T>(path: string, body: unknown, signal: AbortSignal): Promise<T> => {
+    const headers = await bearerHeaders();
+    const response = await fetch(path, {
+      method: 'POST', credentials: 'same-origin', signal,
+      headers: { ...headers, 'content-type': 'application/json', accept: 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const payload = await response.json() as T | { error?: string };
+    if (!response.ok) throw new Error(typeof payload === 'object' && payload && 'error' in payload && typeof payload.error === 'string' ? payload.error : `http_${response.status}`);
+    return payload as T;
+  };
+
+  const beginRecording = async () => {
+    if (busy || audioBlob || requestingPermission) return;
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      audioStatus.textContent = 'このブラウザーでは音声を録音できません。文章を入力してください。';
+      return;
+    }
+    const generation = ++permissionGeneration;
+    requestingPermission = true;
+    update();
+    audioStatus.textContent = 'マイクの使用を確認しています…';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (!active || generation !== permissionGeneration) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      requestingPermission = false;
+      mediaStream = stream;
+      const candidates = /Safari/.test(navigator.userAgent) && !/Chrome|Chromium|CriOS/.test(navigator.userAgent)
+        ? ['audio/mp4', 'audio/webm']
+        : ['audio/webm', 'audio/mp4'];
+      const mimeType = candidates.find(type => MediaRecorder.isTypeSupported(type));
+      if (!mimeType) {
+        cleanRecordingResources(false);
+        audioStatus.textContent = 'このブラウザーでは対応する音声形式で録音できません。文章を入力してください。';
+        update();
+        return;
+      }
+      const activeRecorder = new MediaRecorder(stream, { mimeType });
+      recorder = activeRecorder;
+      chunks = [];
+      recordingBytes = 0;
+      recordingTooLarge = false;
+      audioFlowId = uuid();
+      activeRecorder.ondataavailable = event => {
+        if (!event.data.size || recordingTooLarge) return;
+        if (recordingBytes + event.data.size > MAX_AUDIO_BYTES) {
+          recordingTooLarge = true;
+          chunks = [];
+          stoppingRecording = true;
+          update();
+          activeRecorder.stop();
+          return;
+        }
+        chunks.push(event.data);
+        recordingBytes += event.data.size;
+      };
+      activeRecorder.onerror = () => {
+        stoppingRecording = false;
+        cleanRecordingResources(true);
+        chunks = [];
+        audioStatus.textContent = '録音を完了できませんでした。入力した文章はこの画面内に残っています。';
+        update();
+      };
+      activeRecorder.onstop = () => {
+        stoppingRecording = false;
+        const type = activeRecorder.mimeType.split(';', 1)[0].trim().toLowerCase();
+        const blob = new Blob(chunks, { type });
+        chunks = [];
+        recordingBytes = 0;
+        if (recordingTooLarge || blob.size > MAX_AUDIO_BYTES) {
+          audioBlob = null;
+          audioStatus.textContent = '録音が2 MiBを超えました。短く録音し直してください。入力した文章はこの画面内に残っています。';
+        } else if (blob.size === 0) {
+          audioBlob = null;
+          audioStatus.textContent = '録音データがありません。もう一度お試しください。入力した文章はこの画面内に残っています。';
+        } else {
+          audioBlob = blob;
+          audioStatus.textContent = '録音しました。内容を確認してから文字にしてください。';
+        }
+        recordButton.textContent = '音声を録音';
+        cleanRecordingResources(false);
+        update();
+      };
+      activeRecorder.start(1000);
+      startedAt = Date.now();
+      audioStatus.textContent = '録音中です。最大60秒で自動停止します。';
+      timer = window.setInterval(() => {
+        const seconds = Math.min(MAX_RECORDING_MS / 1000, Math.floor((Date.now() - startedAt) / 1000));
+        recordingTime.textContent = `${seconds} / 60秒`;
+        if (seconds * 1000 >= MAX_RECORDING_MS && recorder?.state === 'recording') {
+          stoppingRecording = true;
+          update();
+          recorder.stop();
+        }
+      }, 250);
+      recordButton.textContent = '録音を終了';
+      recordButton.disabled = false;
+      update();
+    } catch {
+      if (generation !== permissionGeneration || !active) return;
+      requestingPermission = false;
+      cleanRecordingResources(true);
+      audioStatus.textContent = 'マイクを使えませんでした。許可を確認するか、文章を入力してください。';
+      update();
+    }
+  };
+
+  const transcribe = async () => {
+    if (!audioBlob || busy) return;
+    const blob = audioBlob;
+    const contentType = (blob.type || '').split(';', 1)[0].trim().toLowerCase();
+    const activeFlow = audioFlowId ?? (audioFlowId = uuid());
+    setBusy(true);
+    audioStatus.textContent = '音声を文字にしています…';
+    requestController = new AbortController();
+    try {
+      const audioBase64 = await blobToBase64(blob);
+      const response = await requestJson<{ text: string }>('/api/contact/transcribe', { flowId: activeFlow, audioBase64, contentType }, requestController.signal);
+      if (typeof response.text !== 'string' || !response.text.trim()) throw new Error('invalid_provider_response');
+      const next = [message.value.trim(), response.text.trim()].filter(Boolean).join('\n');
+      if (next.length > MAX_MESSAGE_LENGTH) {
+        audioStatus.textContent = '文字起こし結果を加えると4,000文字を超えます。文章を短くしてから再度お試しください。録音はこの画面内に残っています。';
+      } else {
+        message.value = next;
+        audioBlob = null;
+        audioFlowId = null;
+        audioStatus.textContent = '音声を文字にしました。送信前に内容を確認してください。';
+        startFlowForEditedMessage();
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        audioStatus.textContent = errorMessage(error instanceof Error ? error.message : '', true);
+        if (audioStatus.textContent.includes('ログインが必要')) loginPathButton.hidden = false;
+      }
+    } finally {
+      requestController = null;
+      setBusy(false);
+    }
+  };
+
+  const submit = async () => {
+    const submittedMessage = message.value;
+    if (busy || !submittedMessage.trim() || submittedMessage.length > MAX_MESSAGE_LENGTH) return;
+    if (!flowId || flowMessage !== submittedMessage) {
+      flowId = uuid();
+      flowMessage = submittedMessage;
+    }
+    setBusy(true);
+    status.textContent = 'お問い合わせを送信しています…';
+    requestController = new AbortController();
+    try {
+      const response = await requestJson<ContactResult>('/api/contact', { flowId, message: submittedMessage }, requestController.signal);
+      if (!['bug', 'improvement', 'question'].includes(response.kind) || typeof response.reply !== 'string' || !(response.issueUrl === null || typeof response.issueUrl === 'string')) throw new Error('invalid_provider_response');
+      const heading = container.querySelector<HTMLElement>('#contact-result-title')!;
+      const reply = container.querySelector<HTMLElement>('#contact-result-reply')!;
+      const link = container.querySelector<HTMLAnchorElement>('#contact-issue-link')!;
+      heading.textContent = response.kind === 'bug' ? '不具合のご連絡' : response.kind === 'improvement' ? '改善のご要望' : 'お問い合わせ';
+      reply.textContent = response.reply;
+      if (response.issueUrl && (response.kind === 'bug' || response.kind === 'improvement')) {
+        const url = new URL(response.issueUrl);
+        if (url.protocol === 'https:' && url.hostname === 'github.com') {
+          link.href = url.toString();
+          link.hidden = false;
+        } else link.hidden = true;
+      } else link.hidden = true;
+      result.hidden = false;
+      status.textContent = '送信しました。送信した文章はこの画面内に残しています。';
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        const code = error instanceof Error ? error.message : '';
+        status.textContent = errorMessage(code, false);
+        if (code === 'issue_submission_unknown') {
+          unknownFlowId = flowId;
+          container.querySelector<HTMLAnchorElement>('#contact-issues-link')!.hidden = false;
+        }
+        if (status.textContent.includes('ログインが必要')) loginPathButton.hidden = false;
+      }
+    } finally {
+      requestController = null;
+      setBusy(false);
+    }
+  };
+
+  const back = () => {
+    close();
+    options.onBackToSettings();
+  };
+  container.querySelector<HTMLButtonElement>('.contact-back')!.addEventListener('click', back);
+  recordButton.addEventListener('click', () => {
+    if (recorder?.state === 'recording') {
+      stoppingRecording = true;
+      update();
+      recordButton.textContent = '録音を終了';
+      recorder.stop();
+    } else void beginRecording();
+  });
+  transcribeButton.addEventListener('click', () => { void transcribe(); });
+  discardAudioButton.addEventListener('click', () => {
+    audioBlob = null;
+    audioFlowId = null;
+    audioStatus.textContent = '録音を破棄しました。必要であれば録り直せます。';
+    update();
+  });
+  sendButton.addEventListener('click', () => { void submit(); });
+  message.addEventListener('input', startFlowForEditedMessage);
+  loginPathButton.addEventListener('click', () => {
+    close();
+    options.onBackToSettings(true);
+  });
+  container.querySelector<HTMLButtonElement>('#contact-edit-result')!.addEventListener('click', () => {
+    result.hidden = true;
+    message.focus();
+  });
+
+  function open() {
+    active = true;
+    container.hidden = false;
+    message.focus();
+  }
+  function close() {
+    active = false;
+    permissionGeneration++;
+    requestingPermission = false;
+    stoppingRecording = false;
+    requestController?.abort();
+    requestController = null;
+    cleanRecordingResources(true);
+    recordButton.textContent = '音声を録音';
+    update();
+    container.hidden = true;
+  }
+  window.addEventListener('pagehide', () => {
+    if (!active) return;
+    permissionGeneration++;
+    requestController?.abort();
+    requestController = null;
+    requestingPermission = false;
+    stoppingRecording = false;
+    cleanRecordingResources(true);
+    recordButton.textContent = '音声を録音';
+    audioStatus.textContent = 'ページを閉じるため録音を終了しました。録音データはこの画面内に保存していません。';
+    update();
+  });
+  function isOpen() { return active; }
+
+  update();
+  return { open, close, isOpen };
+}
+
+async function blobToBase64(blob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('audio_read_failed'));
+    reader.onload = () => typeof reader.result === 'string' ? resolve(reader.result) : reject(new Error('audio_read_failed'));
+    reader.readAsDataURL(blob);
+  });
+  return dataUrl.slice(dataUrl.indexOf(',') + 1);
+}

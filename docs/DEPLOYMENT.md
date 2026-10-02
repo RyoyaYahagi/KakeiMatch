@@ -56,7 +56,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql`、`0004_ai_provider_costs.sql`、`0005_ai_global_guardrails.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql`、`0002_entitlements_usage.sql`、`0003_receipt_ai_flows.sql`、`0004_ai_provider_costs.sql`、`0005_ai_global_guardrails.sql`、`0006_contact_submissions.sql` が必要です。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -115,3 +115,7 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 ## サービス全体のAI費用制限（Issue #56）
 
 `0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Familyにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
+
+## お問い合わせの導入
+
+Worker更新前に `0006_contact_submissions.sql` を適用し、`GITHUB_ISSUES_TOKEN` をSecret bindingへ登録します。対象リポジトリへのIssues書き込み権限が必要です。`GITHUB_ISSUES_REPOSITORY` はサーバー設定で固定します。秘密値の登録は既存の本人による手順に従います。実際の投稿・文字起こし・iPhone録音は合成内容で確認してください。詳細は[お問い合わせ](CONTACT.md)を参照してください。
