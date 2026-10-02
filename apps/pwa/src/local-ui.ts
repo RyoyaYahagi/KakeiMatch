@@ -443,8 +443,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const account = document.createElement('select'); account.id = inputId('account'); account.required = true;
     account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts));
     account.value = initial.accountId;
-    if (initial.accountId && !account.value) view.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
-    if (base?.categoryId && !category.value) view.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
+    if (initial.accountId && !account.value) overviewExtras.append(text('p', '以前の支払元は利用できません。支払元を選び直してください。'));
+    if (base?.categoryId && !category.value) overviewExtras.append(text('p', '以前のカテゴリは利用できません。カテゴリを選び直してください。'));
     const itemsHeading = text('h3', '購入内容');
     const itemsList = document.createElement('ul'); itemsList.className = 'receipt-item-list';
     const adjustmentsHeading = text('h3', '値引き・調整');
