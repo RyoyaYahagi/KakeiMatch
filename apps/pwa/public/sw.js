@@ -1,6 +1,6 @@
 /* The app shell is cached after an online visit. Local budget data stays in Actual's IndexedDB. */
-const CACHE_NAME = 'kakeimatch-shell-v35';
-const SHELL = ['/', '/manifest.webmanifest', '/icon.svg'];
+const CACHE_NAME = 'kakeimatch-shell-v36';
+const SHELL = ['/', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png'];
 
 self.addEventListener('install', event => {
   event.waitUntil((async () => {
