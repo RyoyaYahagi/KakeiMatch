@@ -207,8 +207,9 @@ font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku 
 
 「カードとレシート」の案Bを採用します。クリーム色（`#FFF3DD`）の地に、緑のカードと白いレシートを重ね、レシートに緑のチェックを描きます。
 
-- iOS用に180×180 pxのPNG（`apple-touch-icon`）を用意する。iOSはSVGのアイコンを安定して表示しないため
-- manifestには192 px、512 px、`purpose: "maskable"` の512 pxを用意する。maskable版は、絵柄を中央80%の安全域に収める
+- iOS用に180×180 pxのPNG（`apple-touch-icon.png`）を用意する。iOSはSVGのアイコンを安定して表示しないため。iOSが角を丸めるので、角丸と透明部分を付けない
+- manifestには192 px、512 px（角丸・角は透明）と、`purpose: "maskable"` の512 px（角丸なし）を用意する。maskable版は、絵柄を縮めて中央80%の円（安全域）に収める
+- アイコンは `apps/pwa/scripts/render-icons.mjs` で `apps/pwa/public/` に生成する（`corepack pnpm --dir apps/pwa icons`）。絵柄を変える時はこのスクリプトを直して作り直し、PNGを手で編集しない
 - `theme-color` は、ライトとダークでそれぞれの `--bg` に合わせる
 
 ## ダークモード
