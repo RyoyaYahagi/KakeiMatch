@@ -43,7 +43,6 @@ root.innerHTML = `
     <section id="settings-view" hidden>
       <p>家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       <section id="local-settings"></section>
-      <button id="statement-tab" class="master-entry" type="button">明細を取り込む</button>
       <h2>AI利用</h2>
       <p class="muted">レシートの読み取りからカテゴリ提案までで1回です。読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
@@ -121,7 +120,7 @@ const developerCostsUi = initializeDeveloperCostsUi({
 
 function showTab(tab: 'home' | 'settings') {
   document.getElementById('local-view')!.hidden = true;
-  for (const id of ['receipt-tab', 'statement-tab', 'reconciliation-tab']) {
+  for (const id of ['receipt-tab', 'reconciliation-tab']) {
     const button = element<HTMLButtonElement>(id);
     button.classList.remove('active');
     button.setAttribute('aria-pressed', 'false');

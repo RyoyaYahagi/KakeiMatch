@@ -148,6 +148,9 @@ export function runReconciliationEngine(input: {
   excludedStatementIds?: ReadonlySet<string>;
   excludedReceiptIds?: ReadonlySet<string>;
   rejectedPairs?: ReadonlySet<string>;
+  accountScopeByStatement?: ReadonlyMap<string, string>;
+  autoMatchEligibleStatementIds?: ReadonlySet<string>;
+  candidateEligibleStatementIds?: ReadonlySet<string>;
 }): ReconciliationEngineResult {
   const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
   const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
@@ -166,12 +169,15 @@ export function runReconciliationEngine(input: {
   const allByReceipt = new Map<string, InternalCandidate[]>();
   for (const statement of statements) {
     if (statement.kind !== "purchase") continue;
+    if (input.candidateEligibleStatementIds && !input.candidateEligibleStatementIds.has(statement.statementTransactionId)) continue;
     const statementDay = utcDay(statement.usedDate);
     if (statementDay === null || !safeAmount(statement.amountYen)) continue;
     for (let offset = -RECONCILIATION_RULES.candidateDateWindowDays; offset <= RECONCILIATION_RULES.candidateDateWindowDays; offset += 1) {
       const dayReceipts = receiptBuckets.get(statementDay + offset);
       if (!dayReceipts) continue;
       for (const receipt of dayReceipts) {
+        const scopedAccountId = input.accountScopeByStatement?.get(statement.statementTransactionId);
+        if (scopedAccountId && receipt.actualAccountId !== scopedAccountId) continue;
         if (input.rejectedPairs?.has(`${statement.statementTransactionId}\0${receipt.receiptId}`)) continue;
         if (!safeAmount(receipt.amountYen)) continue;
         const receiptDay = utcDay(receipt.purchasedDate);
@@ -231,7 +237,8 @@ export function runReconciliationEngine(input: {
       && top.dateDistanceDays <= RECONCILIATION_RULES.autoMatchDateWindowDays
       && (top.merchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
       && top.score >= RECONCILIATION_RULES.autoMatchScore;
-    if (isMutualBest && statementHasMargin && receiptHasMargin && isExactAndStrong) {
+    const accountMappingConfirmed = !input.autoMatchEligibleStatementIds || input.autoMatchEligibleStatementIds.has(statement.statementTransactionId);
+    if (accountMappingConfirmed && isMutualBest && statementHasMargin && receiptHasMargin && isExactAndStrong) {
       matchedStatements.set(statement.statementTransactionId, top.receiptId);
       matchedReceipts.set(top.receiptId, statement.statementTransactionId);
     }
@@ -271,7 +278,9 @@ export function runReconciliationEngine(input: {
     if (receiptId) return { statementTransactionId: statement.statementTransactionId, status: "matched", matchedReceiptId: receiptId, reasonCodes: ["automatic_high_confidence_match"] };
     const hasCandidate = (allByStatement.get(statement.statementTransactionId)?.length ?? 0) > 0;
     const hasAmbiguity = (allByStatement.get(statement.statementTransactionId) ?? []).some(ambiguous);
-    return { statementTransactionId: statement.statementTransactionId, status: hasCandidate ? "needs_review" : "unmatched_statement", matchedReceiptId: null, reasonCodes: hasCandidate ? ["candidate_requires_review", ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
+    const accountMappingRequired = input.autoMatchEligibleStatementIds !== undefined && !input.autoMatchEligibleStatementIds.has(statement.statementTransactionId);
+    return { statementTransactionId: statement.statementTransactionId, status: hasCandidate ? "needs_review" : "unmatched_statement", matchedReceiptId: null,
+      reasonCodes: hasCandidate ? ["candidate_requires_review", ...(hasAmbiguity ? ["ambiguous_candidates"] : []), ...(accountMappingRequired ? ["provider_account_unmapped"] : [])] : ["no_candidate", ...(accountMappingRequired ? ["provider_account_unmapped"] : [])] };
   });
   const receiptResults: ReconciliationReceiptResult[] = receipts.map((receipt) => {
     const statementTransactionId = matchedReceipts.get(receipt.receiptId);

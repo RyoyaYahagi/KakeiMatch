@@ -1,7 +1,7 @@
 import type { LocalDataRepository } from "../../../src/lib/local-data";
 import type { LocalReceipt } from "./local-receipts";
 import type { StatementProvider } from "./statement-parser";
-import type { LocalStatement } from "./local-statements";
+import type { LocalStatement, StatementImportMetadata } from "./local-statements";
 
 type RawArtifactKind = "receipts" | "statements";
 
@@ -21,18 +21,6 @@ export type CleanupResult = {
   deletedBytes: number;
 };
 
-type StatementImportMetadata = {
-  provider: StatementProvider;
-  fileHash: string;
-  encoding: string;
-  headerSignature: string;
-  totalRows: number;
-  excludedRows: number;
-  duplicateRowsInFile: number;
-  needsReviewRows?: Array<{ rowNumber: number; reason: string }>;
-  createdAt: string;
-};
-
 type Candidate = { id: string; bytes: number; kind: RawArtifactKind };
 
 const STATEMENT_PROVIDERS: readonly StatementProvider[] = ["smbc_card", "rakuten_card", "aeon_card", "paypay"];
@@ -42,6 +30,7 @@ function isStatementImportMetadata(value: unknown): value is StatementImportMeta
   const metadata = value as Partial<StatementImportMetadata>;
   return STATEMENT_PROVIDERS.includes(metadata.provider as StatementProvider) &&
     typeof metadata.fileHash === "string" && /^[0-9a-f]{64}$/i.test(metadata.fileHash) &&
+    (metadata.accountId === undefined || (typeof metadata.accountId === "string" && metadata.accountId.length > 0)) &&
     typeof metadata.encoding === "string" && metadata.encoding.length > 0 &&
     typeof metadata.headerSignature === "string" && metadata.headerSignature.length > 0 &&
     Number.isSafeInteger(metadata.totalRows) && (metadata.totalRows ?? -1) >= 0 &&

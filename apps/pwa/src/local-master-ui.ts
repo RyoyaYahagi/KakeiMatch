@@ -2,6 +2,7 @@ import { accountTypeField, accountTypeLabels, accountBalanceLabel, type AccountT
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { CATEGORY_LABELS } from '../../../src/lib/category';
+import type { StatementProvider } from './statement-parser';
 
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 type Category = Awaited<ReturnType<Ledger['listCategories']>>[number];
@@ -108,7 +109,14 @@ export function createMasterShortcut(options: {
 export function initializeMasterUi(
   container: HTMLElement,
   ledger: ReturnType<typeof createActualBrowserLedger>,
-  options: { onBack: () => void; onTransaction?: (transaction: ActualTransaction) => Promise<void>; beforeDeleteAccount?: (id: string) => Promise<void>; beforeDeleteCategory?: (id: string) => Promise<void> },
+  options: {
+    onBack: () => void;
+    onTransaction?: (transaction: ActualTransaction) => Promise<void>;
+    beforeDeleteAccount?: (id: string) => Promise<void>;
+    beforeDeleteCategory?: (id: string) => Promise<void>;
+    getStatementProvider?: (id: string) => Promise<StatementProvider | null>;
+    setStatementProvider?: (id: string, provider: StatementProvider | null, accountType: AccountType) => Promise<void>;
+  },
 ): (() => void) & { openAccounts: () => Promise<void> } {
   const section = element('section');
   section.className = 'master-settings';
@@ -286,8 +294,11 @@ export function initializeMasterUi(
   async function accountDetailPage(account: Account) {
     showPage('支払元の詳細', accountsPage);
     const usage = await ledger.getAccountUsage(account.id);
+    const statementProvider = await options.getStatementProvider?.(account.id) ?? null;
     const balance = usage.balanceYen === 0 ? yen(0) : `${usage.balanceYen < 0 ? '−' : '+'}${yen(usage.balanceYen)}`;
-    section.append(element('p', `支払元：${account.name}`), element('p', `種類：${accountTypeLabels[account.accountType]}`), element('p', `状態：${account.closed ? '利用終了' : '利用中'}`), element('p', `記録：${usage.transactionCount}件`), element('p', account.accountType === 'credit_card' ? accountBalanceLabel(account.accountType, usage.balanceYen) : `残高：${balance}`));
+    section.append(element('p', `支払元：${account.name}`), element('p', `種類：${accountTypeLabels[account.accountType]}`),
+      element('p', `明細サービス：${statementProvider ? statementProviderLabels[statementProvider] : '未設定'}`),
+      element('p', `状態：${account.closed ? '利用終了' : '利用中'}`), element('p', `記録：${usage.transactionCount}件`), element('p', account.accountType === 'credit_card' ? accountBalanceLabel(account.accountType, usage.balanceYen) : `残高：${balance}`));
     section.append(button('口座の記録を見る', () => accountTransactionsPage(account)));
     section.append(button('編集する', () => accountEditPage(account), true));
     if (account.closed) section.append(button('利用を再開する', async () => {
@@ -316,17 +327,30 @@ export function initializeMasterUi(
     } else section.append(element('p', '記録または残高があります。履歴を残すため完全には削除できません。利用終了にすると、今後の支払元として選ばれなくなります。'));
   }
 
-  function accountEditPage(account: Account) {
+  const statementProviderLabels: Record<StatementProvider, string> = {
+    smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード', paypay: 'PayPay',
+  };
+
+  async function accountEditPage(account: Account) {
     showPage('支払元を編集', () => accountDetailPage(account));
     const typeField = accountTypeField(account.accountType);
+    const providerLabel = element('label', '明細サービス');
+    const provider = element('select'); provider.name = 'statementProvider'; provider.id = `account-provider-${crypto.randomUUID()}`; providerLabel.htmlFor = provider.id;
+    provider.append(new Option('設定しない', ''), ...(['smbc_card', 'rakuten_card', 'paypay'] as const).map(value => new Option(statementProviderLabels[value], value)));
+    provider.value = await options.getStatementProvider?.(account.id) ?? '';
+    const providerField = element('div'); providerField.append(providerLabel, provider);
+    const updateProviderVisibility = () => { providerField.hidden = typeField.select.value === 'cash'; if (providerField.hidden) provider.value = ''; };
+    typeField.select.addEventListener('change', updateProviderVisibility);
     const form = nameForm('支払元の名前', account.name, '変更を保存', async name => {
       if (!name) throw new Error('支払元の名前を入力してください。');
       await ledger.renameAccount(account.id, name);
       const accountType = typeField.select.value as AccountType;
       await ledger.setAccountType(account.id, accountType);
+      await options.setStatementProvider?.(account.id, accountType === 'cash' || !provider.value ? null : provider.value as StatementProvider, accountType);
       await accountDetailPage({ ...account, name, accountType });
     }, showFormError);
-    form.querySelector('button')!.before(typeField.label, typeField.select);
+    form.querySelector('button')!.before(typeField.label, typeField.select, providerField);
+    updateProviderVisibility();
     section.append(form);
   }
 
