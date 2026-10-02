@@ -39,6 +39,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [明細形式](docs/STATEMENT_FORMATS.md): 確認済みのCSV形式
 - [端末内の明細照合](docs/LOCAL_RECONCILIATION.md): 明細サービスとCSVだけで取り込む照合と、登録時の支払元選択
 - [UX](docs/UX.md)と[デザイン](docs/DESIGN.md): 画面設計の方針
+- [オープンソースライセンス](THIRD_PARTY_NOTICES.md): Actual Budgetの著作権表示とライセンス全文
 - [コントリビューション](CONTRIBUTING.md): branchとPull Requestの運用
 
 以前のサーバー中心構成の記録とlegacy runtimeの分類は[legacy文書index](docs/legacy/README.md)と[legacy runtime inventory](docs/LEGACY_RUNTIME_INVENTORY.md)を参照してください。legacyコードは本番アプリではありません。

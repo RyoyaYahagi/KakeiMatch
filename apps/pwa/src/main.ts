@@ -7,6 +7,7 @@ import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
 import { iconMarkup } from './ui-icons';
+import { renderOssLicenses } from './oss-licenses';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -104,6 +105,9 @@ root.innerHTML = `
       <section class="surface-section settings-list" aria-label="サポート">
         <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
       </section>
+      <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
+        <h3 id="oss-licenses-title">オープンソースライセンス</h3>
+      </section>
       <p class="muted settings-footnote">家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       </div>
       <section id="contact-view" hidden></section>
@@ -111,6 +115,7 @@ root.innerHTML = `
   </main>`;
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+renderOssLicenses(element<HTMLElement>('oss-licenses'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');

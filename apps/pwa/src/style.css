@@ -276,6 +276,12 @@ form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-rad
 .settings-inner-disclosure { margin-top: var(--space-3); border-top: 1px solid var(--border); }
 .danger-zone > summary { color: var(--danger); }
 .danger-zone button { color: var(--danger); border-color: var(--danger); }
+.oss-licenses { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.oss-licenses h3 { margin: 0 0 var(--space-3); }
+.oss-licenses h4 { margin: 0; font-size: 1rem; }
+.oss-licenses p { margin: var(--space-2) 0; }
+.oss-project-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); overflow-wrap: anywhere; }
+.oss-license-text { margin: var(--space-2) 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .settings-footnote { margin: var(--space-5) var(--space-1) 0; }
 
 /* Follow-ups: bottom sheet, category buttons, receipt detail (docs/UX.md) */
