@@ -1,3 +1,4 @@
+import { accountTypeField, accountTypeLabels, accountBalanceLabel, type AccountType } from './local-account-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { CATEGORY_LABELS } from '../../../src/lib/category';
@@ -36,8 +37,8 @@ function nameForm(labelText: string, initialValue: string, submitText: string, s
   form.append(label, input, submit);
   form.addEventListener('submit', event => {
     event.preventDefault();
-    submit.disabled = true; input.disabled = true; form.dataset.saving = 'true';
-    void save(input.value.trim()).catch(onError).finally(() => { submit.disabled = false; input.disabled = false; delete form.dataset.saving; });
+    submit.disabled = true; input.disabled = true; form.querySelectorAll('select').forEach(select => { select.disabled = true; }); form.dataset.saving = 'true';
+    void save(input.value.trim()).catch(onError).finally(() => { submit.disabled = false; input.disabled = false; form.querySelectorAll('select').forEach(select => { select.disabled = false; }); delete form.dataset.saving; });
   });
   return form;
 }
@@ -47,15 +48,18 @@ type MasterCreation = { kind: 'category'; isIncome: boolean } | { kind: 'account
 // The settings screen and in-entry shortcuts share validation and creation.
 function masterCreationForm(ledger: Ledger, request: MasterCreation, onCreated: (id: string) => Promise<void>, onError: (error: unknown) => void) {
   let createdId: string | null = null;
+  const typeField = request.kind === 'account' ? accountTypeField() : null;
   const form = nameForm(request.kind === 'category' ? 'カテゴリ名' : '支払元の名前', '', '追加する', async name => {
     if (!name) throw new Error(request.kind === 'category' ? 'カテゴリ名を入力してください。' : '支払元の名前を入力してください。');
     if (createdId === null) {
-      createdId = request.kind === 'category' ? await ledger.addCategory(name, request.isIncome) : await ledger.addAccount(name);
+      createdId = request.kind === 'category' ? await ledger.addCategory(name, request.isIncome) : await ledger.addAccount(name, typeField!.select.value as AccountType);
       form.querySelector('input')!.readOnly = true;
+      if (typeField) typeField.select.disabled = true;
     }
     // A failed refresh can be retried without creating a second master entry.
     await onCreated(createdId);
   }, onError);
+  if (typeField) form.querySelector('button')!.before(typeField.label, typeField.select);
   return form;
 }
 
@@ -90,7 +94,7 @@ export function createMasterShortcut(options: {
       dialog.addEventListener('cancel', event => { event.preventDefault(); if (form.dataset.saving !== 'true') close(); });
       dialog.append(heading, form, status, back);
       document.body.append(dialog); dialog.showModal();
-      const controls = form.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input,button');
+      const controls = form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select');
       controls.forEach(control => { control.disabled = true; });
       try {
         await options.origin.beforeOpen();
@@ -243,16 +247,21 @@ export function initializeMasterUi(
     showPage('支払元・口座残高');
     section.append(button('支払元を追加する', accountCreatePage, true));
     const accounts = await ledger.getAccountBalances();
-    const list = element('ul', undefined, 'master-list account-balances');
     const closed = element('details'); closed.className = 'closed-accounts';
     closed.append(element('summary', `利用終了の口座 ${accounts.filter(account => account.closed).length}件`));
     const closedList = element('ul', undefined, 'master-list account-balances'); closed.append(closedList);
-    section.append(list);
-    if (!accounts.some(account => !account.closed)) list.append(element('li', '利用中の支払元がありません。'));
-    for (const account of accounts) {
-      const row = element('li', undefined, 'master-row account-balance-row'); row.dataset.accountId = account.id;
-      row.append(button(`${account.name} · ${account.closed ? '利用終了' : '利用中'}`, () => accountDetailPage(account)), element('span', `${account.balanceYen < 0 ? '−' : ''}${yen(account.balanceYen)}`, 'account-balance'));
-      (account.closed ? closedList : list).append(row);
+    for (const type of Object.keys(accountTypeLabels) as AccountType[]) {
+      const group = element('section'); group.dataset.accountType = type;
+      const list = element('ul', undefined, 'master-list account-balances');
+      group.append(element('h3', accountTypeLabels[type]), list); section.append(group);
+      if (type === 'credit_card') group.append(element('p', '差引額は登録した利用と支払いの差です。確定した請求額ではありません。'));
+      const open = accounts.filter(account => !account.closed && account.accountType === type);
+      if (!open.length) list.append(element('li', '利用中の支払元がありません。'));
+      for (const account of accounts.filter(account => account.accountType === type)) {
+        const row = element('li', undefined, 'master-row account-balance-row'); row.dataset.accountId = account.id;
+        row.append(button(`${account.name} · ${account.closed ? '利用終了' : '利用中'}`, () => accountDetailPage(account)), element('span', accountBalanceLabel(type, account.balanceYen), 'account-balance'));
+        (account.closed ? closedList : list).append(row);
+      }
     }
     if (accounts.some(account => account.closed)) section.append(closed);
   }
@@ -278,7 +287,7 @@ export function initializeMasterUi(
     showPage('支払元の詳細', accountsPage);
     const usage = await ledger.getAccountUsage(account.id);
     const balance = usage.balanceYen === 0 ? yen(0) : `${usage.balanceYen < 0 ? '−' : '+'}${yen(usage.balanceYen)}`;
-    section.append(element('p', `支払元：${account.name}`), element('p', `状態：${account.closed ? '利用終了' : '利用中'}`), element('p', `記録：${usage.transactionCount}件`), element('p', `残高：${balance}`));
+    section.append(element('p', `支払元：${account.name}`), element('p', `種類：${accountTypeLabels[account.accountType]}`), element('p', `状態：${account.closed ? '利用終了' : '利用中'}`), element('p', `記録：${usage.transactionCount}件`), element('p', account.accountType === 'credit_card' ? accountBalanceLabel(account.accountType, usage.balanceYen) : `残高：${balance}`));
     section.append(button('口座の記録を見る', () => accountTransactionsPage(account)));
     section.append(button('編集する', () => accountEditPage(account), true));
     if (account.closed) section.append(button('利用を再開する', async () => {
@@ -309,11 +318,16 @@ export function initializeMasterUi(
 
   function accountEditPage(account: Account) {
     showPage('支払元を編集', () => accountDetailPage(account));
-    section.append(nameForm('支払元の名前', account.name, '変更を保存', async name => {
+    const typeField = accountTypeField(account.accountType);
+    const form = nameForm('支払元の名前', account.name, '変更を保存', async name => {
       if (!name) throw new Error('支払元の名前を入力してください。');
       await ledger.renameAccount(account.id, name);
-      await accountDetailPage({ ...account, name });
-    }, showFormError));
+      const accountType = typeField.select.value as AccountType;
+      await ledger.setAccountType(account.id, accountType);
+      await accountDetailPage({ ...account, name, accountType });
+    }, showFormError);
+    form.querySelector('button')!.before(typeField.label, typeField.select);
+    section.append(form);
   }
 
   return Object.assign(() => leaveManagement(), { openAccounts: accountsPage });
