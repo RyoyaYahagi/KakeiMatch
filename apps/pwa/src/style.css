@@ -231,6 +231,57 @@ form .date-shortcuts button, .chip { min-height: 40px; margin: 0; padding: 0 var
 .form-actions { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 5; margin: var(--space-5) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); background: var(--surface); border-top: 1px solid var(--border); }
 form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-radius: var(--radius-lg); font-size: 1.0625rem; }
 
+/* Settings: docs/UX.md 設定 */
+.settings-group-title { margin: var(--space-5) var(--space-1) var(--space-2); font-size: .8125rem; font-weight: 700; color: var(--muted); }
+.settings-list { padding: 0 var(--space-4); }
+.settings-list > .master-entry { display: flex; align-items: center; min-height: 52px; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); font-size: 1rem; }
+.settings-list > .master-entry:last-child { border-bottom: 0; }
+.settings-list > .master-entry::after { content: "›"; float: none; margin-left: auto; font-size: 1.25rem; }
+.settings-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.settings-panel { padding: var(--space-4); }
+.settings-panel h2, .settings-panel h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.settings-panel h3 { font-size: .9375rem; }
+.settings-panel h5 { margin: var(--space-4) 0 var(--space-2); font-size: .9375rem; }
+.settings-panel > p { margin: var(--space-2) 0; }
+.settings-panel button { margin: var(--space-2) var(--space-2) 0 0; }
+#backup-export { width: 100%; min-height: 48px; margin: var(--space-3) 0 var(--space-1); border-radius: var(--radius-lg); }
+#backup-reminder:not(:empty) { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-weight: 500; }
+#backup-settings p:empty { display: none; }
+.settings-disclosure { padding: 0 var(--space-4); }
+.settings-disclosure > summary, .settings-inner-disclosure > summary { color: var(--primary); font-weight: 500; }
+.settings-disclosure[open] { padding-bottom: var(--space-4); }
+.settings-inner-disclosure { margin-top: var(--space-3); border-top: 1px solid var(--border); }
+.danger-zone > summary { color: var(--danger); }
+.danger-zone button { color: var(--danger); border-color: var(--danger); }
+.settings-footnote { margin: var(--space-5) var(--space-1) 0; }
+
+/* Follow-ups: bottom sheet, category buttons, receipt detail (docs/UX.md) */
+.record-sheet { position: fixed; inset: auto 0 0; width: 100%; max-width: 640px; max-height: calc(100dvh - 48px); margin: 0 auto; padding: 0; border: 0; border-radius: var(--radius-sheet) var(--radius-sheet) 0 0; background: var(--bg); color: var(--text); overflow-y: auto; transform: translateY(var(--sheet-drag, 0)); }
+.record-sheet::backdrop { background: var(--scrim); }
+.record-sheet[open] { animation: sheet-in .2s ease-out; }
+@keyframes sheet-in { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sheet-body { padding: var(--space-2) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); }
+.sheet-grabber { width: 40px; height: 5px; margin: 0 auto var(--space-2); border-radius: var(--radius-full); background: var(--border-strong); touch-action: none; }
+.record-sheet .page-header { margin-top: 0; touch-action: none; }
+.record-sheet .page-header h2 { font-size: 1.25rem; }
+.category-picker { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-2); }
+form .category-picker button { margin: 0; }
+.category-choice { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-1); min-height: 68px; padding: var(--space-1); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text); font-size: .8125rem; font-weight: 500; }
+.category-choice[aria-checked="true"] { border: 2px solid var(--primary); background: var(--primary-soft); font-weight: 700; }
+.category-choice-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: var(--radius-full); background: var(--tone-soft); color: var(--tone); }
+.category-choice-icon .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.category-choice-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-width: 100%; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; text-align: center; }
+.category-more { border-style: dashed; color: var(--primary); }
+.receipt-summary { margin-bottom: var(--space-3); }
+.receipt-summary p { margin: var(--space-1) 0; overflow-wrap: anywhere; }
+.receipt-summary-amount { font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.registered-note { display: flex; align-items: center; gap: var(--space-1); color: var(--success); font-weight: 500; }
+.registered-note .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+.detail-disclosure { margin-bottom: var(--space-3); padding: 0 var(--space-4); }
+.detail-disclosure > summary { color: var(--primary); font-weight: 500; }
+.detail-disclosure[open] { padding-bottom: var(--space-4); }
+.notice-warning { background: var(--warning-soft); color: var(--warning); }
+
 /* Receipts */
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }

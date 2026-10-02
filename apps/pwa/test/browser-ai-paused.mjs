@@ -38,7 +38,7 @@ async function chooseReceiptEntry() {
 }
 
 async function uploadReceipt(name = syntheticPng.name) {
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ ...syntheticPng, name });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ ...syntheticPng, name });
   await page.locator('#receipt-merchant').waitFor();
   await page.locator('img.receipt-preview').waitFor();
 }

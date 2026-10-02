@@ -124,7 +124,7 @@ async function setupLedger() {
 async function addReceipt(merchant, amount) {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  const fileInputs = page.locator('#local-view input[type=file]');
+  const fileInputs = page.locator('#record-sheet input[type=file]');
   await fileInputs.first().setInputFiles({ name: `${merchant}.png`, mimeType: 'image/png', buffer: syntheticPng });
   await page.locator('#receipt-merchant').waitFor();
   await page.waitForFunction(() => document.querySelector('#receipt-category')?.options.length > 1 && document.querySelector('#receipt-account')?.options.length > 1);
@@ -260,7 +260,7 @@ async function wipeLocalData() {
     assert.match(prompt.message(), /すべて削除/);
     await prompt.accept('すべて削除');
   });
-  await page.locator('#local-wipe').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#local-wipe').click();
   await navigation;
 }
 
@@ -326,10 +326,10 @@ try {
   // Cleanup removes only image/CSV blobs; canonical rows and decisions remain.
   await page.locator('#settings-tab').click();
   page.once('dialog', dialog => dialog.accept());
-  await page.locator('#receipt-image-cleanup').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-image-cleanup').click();
   await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '2件のレシート画像を削除しました。');
   page.once('dialog', dialog => dialog.accept());
-  await page.locator('#statement-csv-cleanup').click();
+  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#statement-csv-cleanup').click();
   await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '1件のCSV原本を削除しました。');
   await page.locator('#home-tab').click();
   await waitForReady();
@@ -351,7 +351,7 @@ try {
 
   // The profile is deliberately signed out in this fresh browser context.
   await page.locator('#settings-tab').click();
-  await page.getByText(/未ログイン|Cloud accountへ接続できません/).waitFor();
+  await page.getByText(/未ログイン|AIアカウントへ接続できません/).waitFor();
   if (process.env.PWA_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREENSHOT_PATH, fullPage: true });
   await wipeLocalData();
   await waitForReady();
