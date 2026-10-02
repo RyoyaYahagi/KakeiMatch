@@ -59,9 +59,15 @@ try {
   await createMappedCardAccount('Synthetic Rakuten Card');
   await addNativeExpense('Synthetic Rakuten Card');
   const upload = async () => {
-    await page.locator('#reconciliation-tab').click();
+    const reconciliationTab = page.locator('#reconciliation-tab');
+    if (await reconciliationTab.getAttribute('aria-pressed') !== 'true') {
+      await reconciliationTab.click();
+      await page.waitForFunction(() => document.querySelector('#reconciliation-tab')?.getAttribute('aria-pressed') === 'true');
+    }
+    await page.locator('#statement-provider').waitFor({ state: 'attached' });
     const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
-    if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
+    if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
+    await page.locator('#statement-provider').waitFor({ state: 'visible' });
     await page.locator('#statement-provider').selectOption('rakuten_card');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Rakuten Card');
     await page.locator('#statement-account').selectOption({ label: 'Synthetic Rakuten Card' });
@@ -73,7 +79,11 @@ try {
   await page.getByText(/1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 3件。/).waitFor();
   await page.getByText(/自動確認済み 1件/).waitFor();
   await page.getByText(/記録なし 0件/).waitFor();
-  await page.getByText('楽天カード: 要確認 3件', { exact: true }).waitFor();
+  const importerDisclosure = page.locator('details.statement-import-disclosure');
+  if (await importerDisclosure.count()) await importerDisclosure.evaluate(node => { node.open = true; });
+  const reviewSummary = page.locator('summary').filter({ hasText: '楽天カード CSVの要確認 3件' });
+  await reviewSummary.waitFor();
+  await reviewSummary.click();
   await page.getByText('4行目: 複数行明細の可能性があるため確認してください', { exact: true }).waitFor();
   await page.getByText('5行目: 継続行または部分行の可能性があります', { exact: true }).waitFor();
   assert.equal(await page.getByText('Synthetic Pair Parent', { exact: false }).count(), 0);
@@ -82,7 +92,10 @@ try {
 
   await upload();
   await page.getByText(/0件を取り込み、照合しました。重複 1件。対象外 0件、要確認 3件。/).waitFor();
-  await page.getByText(/記録なし 1件/).waitFor();
+  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/記録なし 0件/).waitFor();
+  const automaticSummary = page.locator('summary').filter({ hasText: '自動確認済みの内容を見る（1件）' });
+  if (await automaticSummary.count()) await automaticSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Market' }).waitFor();
   assert.deepEqual(errors, []);
   console.log('PASS: Rakuten UTF-8 BOM import, strict one-time purchase, review rows, continuation safety, duplicate reimport, and reconciliation at 375px.');

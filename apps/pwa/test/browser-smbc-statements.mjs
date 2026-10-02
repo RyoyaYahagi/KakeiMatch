@@ -57,9 +57,15 @@ try {
   await createMappedCardAccount('Synthetic SMBC Card');
   await addNativeExpense('Synthetic SMBC Card');
   const upload = async () => {
-    await page.locator('#reconciliation-tab').click();
+    const reconciliationTab = page.locator('#reconciliation-tab');
+    if (await reconciliationTab.getAttribute('aria-pressed') !== 'true') {
+      await reconciliationTab.click();
+      await page.waitForFunction(() => document.querySelector('#reconciliation-tab')?.getAttribute('aria-pressed') === 'true');
+    }
+    await page.locator('#statement-provider').waitFor({ state: 'attached' });
     const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
-    if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
+    if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
+    await page.locator('#statement-provider').waitFor({ state: 'visible' });
     await page.locator('#statement-provider').selectOption('smbc_card');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic SMBC Card');
     await page.locator('#statement-account').selectOption({ label: 'Synthetic SMBC Card' });
@@ -70,7 +76,11 @@ try {
   await page.getByText('1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
   await page.getByText(/自動確認済み 1件/).waitFor();
   await page.getByText(/記録なし 0件/).waitFor();
-  await page.getByText('三井住友カード: 要確認 1件', { exact: true }).waitFor();
+  const importerDisclosure = page.locator('details.statement-import-disclosure');
+  if (await importerDisclosure.count()) await importerDisclosure.evaluate(node => { node.open = true; });
+  const reviewSummary = page.locator('summary').filter({ hasText: '三井住友カード CSVの要確認 1件' });
+  await reviewSummary.waitFor();
+  await reviewSummary.click();
   await page.getByText('3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
   assert.equal(await page.getByText('SYNTHETIC MEMBER', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -78,7 +88,10 @@ try {
 
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 1件。対象外 0件、要確認 1件。3行目: 1回払い以外の可能性があります', { exact: true }).waitFor();
-  await page.getByText(/記録なし 1件/).waitFor();
+  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/記録なし 0件/).waitFor();
+  const automaticSummary = page.locator('summary').filter({ hasText: '自動確認済みの内容を見る（1件）' });
+  if (await automaticSummary.count()) await automaticSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Market' }).waitFor();
   assert.deepEqual(errors, []);
   console.log('PASS: SMBC Vpass CP932 import, unsupported row review persistence, duplicate reimport, and reconciliation at 375px.');

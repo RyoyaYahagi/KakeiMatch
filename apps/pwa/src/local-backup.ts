@@ -34,13 +34,9 @@ export async function exportLocalBackup(repository: LocalDataRepository, ledger:
   const localData = await repository.serialize();
   const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
-  const activeBudgetId = budgetId ?? (localData.records.find(record => record.id === 'settings:budget')?.value as LocalBudgetSettings | undefined)?.budgetId;
-  localData.records = localData.records.filter(record => {
-    if (record.id === 'settings:budget') return false;
-    if (record.id.startsWith('settings:monthly-budgets:') && record.id !== (activeBudgetId ? monthlyBudgetSettingsRecordId(activeBudgetId) : '')) return false;
-    if (record.kind !== 'account-metadata') return true;
-    return Boolean(activeBudgetId) && (record.value as { budgetId?: unknown }).budgetId === activeBudgetId;
-  });
+  localData.records = localData.records.filter(record => record.id !== 'settings:budget'
+    && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
+    && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
   const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
   await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
   return result;

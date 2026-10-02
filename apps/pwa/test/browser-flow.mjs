@@ -139,9 +139,15 @@ try {
   const headers = '取引日,出金金額（円）,入金金額（円）,海外出金金額,通貨,変換レート（円）,利用国,取引内容,取引先,取引方法,支払い区分,利用者,取引番号';
   const csv = `${headers}\n2026/09/30 12:00,1280,0,,,,,支払い,Diagnostic Store corrected,PayPay,,,synthetic-match\n2026/09/30 13:00,500,0,,,,,支払い,Synthetic New Store,PayPay,,,synthetic-unmatched\n`;
   const upload = async () => {
-    await page.locator('#reconciliation-tab').click();
+    const reconciliationTab = page.locator('#reconciliation-tab');
+    if (await reconciliationTab.getAttribute('aria-pressed') !== 'true') {
+      await reconciliationTab.click();
+      await page.waitForFunction(() => document.querySelector('#reconciliation-tab')?.getAttribute('aria-pressed') === 'true');
+    }
+    await page.locator('#statement-provider').waitFor({ state: 'attached' });
     const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
-    if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
+    if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
+    await page.locator('#statement-provider').waitFor({ state: 'visible' });
     await page.locator('#statement-provider').selectOption('paypay');
     await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Wallet');
     await page.locator('#statement-account').selectOption({ label: 'Synthetic Wallet' });
@@ -173,9 +179,10 @@ try {
   await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
   await openAutomaticMatch();
-  await page.locator('summary').filter({ hasText: 'Synthetic New Store' }).click();
-  await page.locator('details select').last().selectOption({ label: '日用品' });
-  await page.getByRole('button', { name: '支出として登録', exact: true }).click();
+  const unmatchedStatement = page.locator('#local-view details').filter({ hasText: 'Synthetic New Store' });
+  await unmatchedStatement.locator('summary').click();
+  await unmatchedStatement.locator('select').selectOption({ label: '日用品' });
+  await unmatchedStatement.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/記録なし 0件/).waitFor();
   await page.locator('#home-tab').click();
   await page.getByText('今月の支出 ¥1,780', { exact: false }).waitFor();
@@ -200,7 +207,7 @@ try {
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
   await openAutomaticMatch();
   await upload();
-  await page.getByText('0件を取り込みました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
+  await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '＋記録', exact: true }).click();
   await page.getByRole('button', { name: '支出', exact: true }).click();

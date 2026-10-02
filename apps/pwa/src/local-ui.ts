@@ -687,7 +687,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   async function reviewPage() {
     await open('reconciliation'); view.append(text('h2', '明細の確認'));
-    view.append(button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }, false));
+    view.append(button('照合を更新する', async () => { await reconciliation.run(); await reviewPage(); }));
     const run = await reconciliation.latest(); const decisions = await reconciliation.resolutions();
     for (const decision of decisions.filter(d => d.status !== 'applied')) view.append(text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await reconciliation.run(); await reviewPage(); }));
     if (!run) { view.append(await renderStatementImporter(false), text('p', '明細を取り込んでから照合してください。')); return; }
@@ -716,6 +716,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (statement.kind === 'refund') detail.append(text('p', '返金の記録です。現在は自動処理できません。'));
       else if (!await validMappedAccount(statement)) detail.append(text('p', 'この明細には照合できる支払元がありません。CSVの取込時に選んだ口座と「明細サービス」の設定を確認してください。過去の未割当明細は上の欄から支払元を選べます。'));
       else {
+        const statementAccount = accountsById.get(importsById.get(statement.importId)?.accountId ?? '')?.name ?? '選択した支払元';
+        detail.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${statementAccount}`));
         const candidates = run.candidates.filter(c => c.statementTransactionId === statement.id);
         for (const candidate of candidates) {
           const receipt = allReceipts.find(r => r.id === candidate.receiptId);
@@ -726,7 +728,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           detail.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
           const differences = [
             ...(actual.date !== statement.usedDate ? [`日付差 ${statement.usedDate} / ${actual.date}`] : []),
-            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(Math.abs(statement.amountYen))} / ${yen(Math.abs(actual.amountYen))}`] : []),
+            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(Math.abs(statement.amountYen - Math.abs(actual.amountYen)))}（明細 ${yen(Math.abs(statement.amountYen))} / 家計簿 ${yen(Math.abs(actual.amountYen))}）`] : []),
             ...(actual.accountId !== importsById.get(statement.importId)?.accountId ? [`支払元差 ${accountsById.get(importsById.get(statement.importId)?.accountId ?? '')?.name ?? '明細の支払元'} / ${actualAccount}`] : []),
           ];
           if (differences.length) detail.append(text('p', `差分：${differences.join(' · ')}`));

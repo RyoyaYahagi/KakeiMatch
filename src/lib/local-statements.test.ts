@@ -92,7 +92,8 @@ describe("LocalStatementService", () => {
     const input = csv([headers, base]);
     const imported = await service.importFile(input, "paypay", "account-1");
     const metadata = (await repository.get<Record<string, unknown>>(imported.id))!.value;
-    const { accountId: _removed, ...legacyMetadata } = metadata as Record<string, unknown> & { accountId: string };
+    const legacyMetadata = { ...metadata };
+    delete legacyMetadata.accountId;
     await repository.put({ id: imported.id, kind: "statement-import", value: legacyMetadata, updatedAt: new Date().toISOString() });
     const row = (await service.list())[0]!;
     await repository.delete(row.id);

@@ -148,16 +148,22 @@ async function addReceipt(merchant, amount) {
 }
 
 async function importStatementCsv() {
-  await page.locator('#reconciliation-tab').click();
+  const reconciliationTab = page.locator('#reconciliation-tab');
+  if (await reconciliationTab.getAttribute('aria-pressed') !== 'true') {
+    await reconciliationTab.click();
+    await page.waitForFunction(() => document.querySelector('#reconciliation-tab')?.getAttribute('aria-pressed') === 'true');
+  }
+  await page.locator('#statement-provider').waitFor({ state: 'attached' });
   const importerSummary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
-  if (await importerSummary.count() && !(await importerSummary.evaluate(node => node.parentElement.open))) await importerSummary.click();
+  if (await importerSummary.count()) await importerSummary.evaluate(node => { const disclosure = node.closest('details'); if (disclosure) disclosure.open = true; });
+  await page.locator('#statement-provider').waitFor({ state: 'visible' });
   await page.locator('#statement-provider').selectOption('paypay');
   await page.waitForFunction(name => Array.from(document.querySelectorAll('#statement-account option')).some(option => option.textContent === name), 'Synthetic Backup Wallet');
   await page.locator('#statement-account').selectOption({ label: 'Synthetic Backup Wallet' });
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動確認済み 1件/).waitFor();
+  await page.getByText(/自動確認済み 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
 }
 
 async function seedAuditAndPreferences() {

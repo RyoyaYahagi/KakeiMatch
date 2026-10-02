@@ -65,17 +65,6 @@ const rows = [
 ].map(([date, out, kind, merchant, method, id]) => `${date},${out},0,,,,,${kind},${merchant},${method},,,${id}`);
 const csv = `${headers}\n${rows.join('\n')}\n`;
 
-async function uploadPayPay() {
-  await page.locator('#reconciliation-tab').click();
-  const summary = page.locator('summary').filter({ hasText: '明細CSVを取り込む' });
-  if (await summary.count() && !(await summary.evaluate(node => node.parentElement.open))) await summary.click();
-  await page.locator('#statement-provider').selectOption('paypay');
-  await page.waitForFunction(name => [...document.querySelectorAll('#statement-account option')].some(option => option.textContent === name), 'Synthetic PayPay Wallet');
-  await page.locator('#statement-account').selectOption({ label: 'Synthetic PayPay Wallet' });
-  await page.locator('#statement-file').setInputFiles({ name: 'synthetic-reconciliation-paypay.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
-  await click('取り込んで照合');
-}
-
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   await createAccount('Synthetic PayPay Wallet', 'other', 'paypay');
@@ -92,7 +81,7 @@ try {
   await addExpense('Synthetic Cash Store', 300, '食費', 'Synthetic Cash Wallet');
 
   await page.locator('#reconciliation-tab').click();
-  const importer = page.locator('summary').filter({ hasText: '明細CSVを取り込む' }); await importer.click();
+  const importer = page.locator('summary').filter({ hasText: '明細CSVを取り込む' }); if (await importer.count()) await importer.click();
   await page.locator('#statement-provider').selectOption('smbc_card');
   await page.waitForFunction(() => [...document.querySelectorAll('#statement-account option')].map(option => option.textContent).join('|') === '支払元を選択してください|Synthetic SMBC Card');
   assert.deepEqual(await page.locator('#statement-account option').allTextContents(), ['支払元を選択してください', 'Synthetic SMBC Card']);
@@ -107,14 +96,15 @@ try {
   await click('取り込んで照合');
   await page.getByText('5件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.getByText(/自動確認済み 1件/).waitFor();
-  await page.getByText(/記録なし 4件/).waitFor();
-  await page.getByText(/明細待ち 1件/).waitFor();
+  await page.getByText(/要確認 1件 · 記録なし 3件/).waitFor();
+  await page.getByText(/明細待ち 0件/).waitFor();
 
   const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });
   await difference.locator('summary').click();
   await difference.getByText('家計簿：2026-09-30 · Synthetic Difference Shop · ¥550 · Synthetic PayPay Wallet', { exact: true }).waitFor();
-  await difference.getByText('差分：金額差 ¥500 / ¥550', { exact: true }).waitFor();
+  await difference.getByText('差分：金額差 ¥50（明細 ¥500 / 家計簿 ¥550）', { exact: true }).waitFor();
   await difference.getByRole('button', { name: '別の支出', exact: true }).click();
+  await page.getByText(/要確認 0件 · 記録なし 4件/).waitFor();
   const learned = page.locator('#local-view details').filter({ hasText: 'Synthetic Learned Market' }); await learned.locator('summary').click();
   const learnedCategory = learned.locator('select');
   const foodId = await learnedCategory.locator('option').evaluateAll(options => options.find(option => option.textContent === '食費')?.value ?? '');
@@ -132,10 +122,13 @@ try {
   assert.equal(await newMerchant.locator('select').locator('option:checked').textContent(), 'Synthetic Reconciliation Category');
   await context.setOffline(true);
   await newMerchant.getByRole('button', { name: '支出として登録', exact: true }).click();
-  await page.getByText(/記録なし 2件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
   await context.setOffline(false);
   await page.reload(); await page.locator('#reconciliation-tab').click();
-  await page.getByText(/記録なし 2件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
+  await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
+  await page.getByText('自動確認済みの内容を見る（1件）', { exact: true }).waitFor();
+  assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
