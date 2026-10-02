@@ -42,7 +42,7 @@ async function transfer(amount, source, destination) {
 }
 async function splitReceipt() {
   await page.locator('#home-tab').click(); await click('記録を追加');
-  await page.locator('#local-view input[type=file]').first().setInputFiles({
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({
     name: 'synthetic.png', mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64'),
   });

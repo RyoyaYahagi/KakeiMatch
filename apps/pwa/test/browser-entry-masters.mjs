@@ -61,7 +61,7 @@ try {
   await create('manual-transaction-destination', 'Synthetic New Destination'); assert.equal(await page.locator('#manual-transaction-account').inputValue(), source);
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1500'); assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic transfer memo');
   await click('キャンセル');
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').fill('Synthetic Entry Receipt'); await page.locator('#receipt-amount').fill('900'); await page.locator('#receipt-date').fill('2026-09-27'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('13:15');
   await create('receipt-category', 'Synthetic Receipt Food', true); await create('receipt-account', 'Synthetic Receipt Wallet');
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Entry Receipt'); assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-27'); assert.equal(await page.locator('#receipt-time').inputValue(), '13:15');

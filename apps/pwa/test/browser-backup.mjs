@@ -124,7 +124,7 @@ async function setupLedger() {
 async function addReceipt(merchant, amount) {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  const fileInputs = page.locator('#local-view input[type=file]');
+  const fileInputs = page.locator('#record-sheet input[type=file]');
   await fileInputs.first().setInputFiles({ name: `${merchant}.png`, mimeType: 'image/png', buffer: syntheticPng });
   await page.locator('#receipt-merchant').waitFor();
   await page.waitForFunction(() => document.querySelector('#receipt-category')?.options.length > 1 && document.querySelector('#receipt-account')?.options.length > 1);
@@ -351,7 +351,7 @@ try {
 
   // The profile is deliberately signed out in this fresh browser context.
   await page.locator('#settings-tab').click();
-  await page.getByText(/未ログイン|Cloud accountへ接続できません/).waitFor();
+  await page.getByText(/未ログイン|AIアカウントへ接続できません/).waitFor();
   if (process.env.PWA_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREENSHOT_PATH, fullPage: true });
   await wipeLocalData();
   await waitForReady();

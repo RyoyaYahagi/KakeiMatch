@@ -69,10 +69,11 @@ try {
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
   // A failed analysis can leave an empty draft behind before the next attempt.
   await page.getByText('入力内容を端末に保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
+  await page.getByRole('button', { name: '閉じる', exact: true }).click();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '未入力のレシート · 確認する', exact: true }).click();
   await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
@@ -82,6 +83,7 @@ try {
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1280');
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Wallet');
   // Reopening must recover the stored extraction without spending another AI flow.
+  // A receipt opened from the records list returns to the list on cancel.
   await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /Diagnostic Store/ }).click();
@@ -207,7 +209,7 @@ try {
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-offline.png', mimeType: 'image/png', buffer: png });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic-offline.png', mimeType: 'image/png', buffer: png });
   await page.locator('#receipt-merchant').fill('Synthetic Offline Store');
   await page.locator('#receipt-amount').fill('200');
   await page.locator('#receipt-category').selectOption({ label: '食費' });
