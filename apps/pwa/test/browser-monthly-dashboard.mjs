@@ -24,7 +24,7 @@ async function category(name, income = false) {
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
 async function manual(kind, name, amount, categoryName, accountName) {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   await page.getByLabel(kind === '支出' ? '店名・支払先' : '入金元・内容', { exact: true }).fill(name);
   await page.getByLabel('金額（円）', { exact: true }).fill(String(amount));
@@ -33,7 +33,7 @@ async function manual(kind, name, amount, categoryName, accountName) {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function transfer(amount, source, destination) {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
   await page.getByLabel('振替先口座', { exact: true }).waitFor();
   await page.getByLabel('金額（円）', { exact: true }).fill(String(amount));
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: source });
@@ -41,7 +41,7 @@ async function transfer(amount, source, destination) {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function splitReceipt() {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('支出'); await click('レシートから入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
   await page.locator('#local-view input[type=file]').first().setInputFiles({
     name: 'synthetic.png', mimeType: 'image/png',
     buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64'),

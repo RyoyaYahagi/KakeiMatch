@@ -46,7 +46,7 @@ async function addCategory(name) {
 }
 async function startReceipt() {
   await page.clock.setFixedTime(new Date(Date.parse('2026-10-01T03:00:00Z') + receiptClockTick++ * 60_000));
-  await page.locator('#receipt-tab').click(); await click('＋記録'); await click('支出'); await click('レシートから入力');
+  await page.locator('#receipt-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-learning.png', mimeType: 'image/png', buffer: syntheticImage });
   await page.waitForFunction(() => ['Synthetic Learning Food', 'Synthetic Learning Home', 'Synthetic Learning Electronic'].every(name => [...(document.querySelector('#receipt-category')?.options ?? [])].some(option => option.textContent?.includes(name))));
 }

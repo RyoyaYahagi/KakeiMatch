@@ -34,7 +34,7 @@ const syntheticPng = {
 
 async function chooseReceiptEntry() {
   await page.locator('#home-tab').click();
-  await click('＋記録');
+  await click('記録を追加');
   await click('支出');
   await click('レシートから入力');
 }

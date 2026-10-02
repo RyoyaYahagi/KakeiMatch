@@ -17,7 +17,7 @@ async function create(field, name, category = false) {
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
 }
-async function chooser(kind) { await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-amount').waitFor(); }
+async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力'); await page.locator('#manual-transaction-amount').waitFor(); }
 async function fill(name, amount) {
   await page.locator('#manual-transaction-payee').fill(name); await page.locator('#manual-transaction-amount').fill(amount);
   await page.locator('#manual-transaction-date').fill('2026-09-28'); await page.locator('#manual-transaction-memo').fill('Synthetic preserved memo');
@@ -51,7 +51,7 @@ try {
   assert.equal(await page.locator('#manual-transaction-category option').filter({ hasText: 'Synthetic Entry Food' }).count(), 0);
   await create('manual-transaction-account', 'Synthetic Entry Bank'); await assertDraft('Synthetic entry income', '250000');
   await shortcut('manual-transaction-category');
-  const other = await context.newPage(); await other.goto(process.env.PWA_E2E_URL); await other.getByRole('button', { name: '＋記録', exact: true }).click(); await other.getByRole('button', { name: '収入', exact: true }).click();
+  const other = await context.newPage(); await other.goto(process.env.PWA_E2E_URL); await other.getByRole('button', { name: '記録を追加', exact: true }).click(); await other.getByRole('button', { name: '収入', exact: true }).click();
   await other.getByText('別の画面でこの記録を編集中です。閉じてから開き直してください。', { exact: true }).waitFor(); await other.close();
   await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click();
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();

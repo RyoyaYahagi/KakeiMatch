@@ -23,7 +23,7 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await click('設定へ戻る'); await click('カテゴリ'); await click('基本カテゴリを用意する');
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('支出'); await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   // This assertion fails on #98: manual expense entry has no purchase-content editor.
   assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);

@@ -16,7 +16,7 @@ async function account(name) {
   await page.getByRole('button', { name: `${name} · 利用中`, exact: true }).waitFor();
 }
 async function openTransfer() {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
   await page.getByLabel('振替先口座', { exact: true }).waitFor();
 }
 async function fill(amount, source, destination, memo) {

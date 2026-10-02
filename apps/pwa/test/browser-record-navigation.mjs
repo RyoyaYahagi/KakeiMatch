@@ -20,7 +20,7 @@ async function category(name, income = false) {
   await page.getByLabel('カテゴリ名', { exact: true }).fill(name); await click('追加する');
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
-async function openChooser() { await page.locator('#home-tab').click(); await click('＋記録'); }
+async function openChooser() { await page.locator('#home-tab').click(); await click('記録を追加'); }
 async function save() { await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor(); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();

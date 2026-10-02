@@ -66,7 +66,7 @@ try {
   await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
   await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.getByRole('button', { name: '支出', exact: true }).click();
   await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
@@ -208,7 +208,7 @@ try {
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: '＋記録', exact: true }).click();
+  await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.getByRole('button', { name: '支出', exact: true }).click();
   await page.getByRole('button', { name: 'レシートから入力', exact: true }).click();
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic-offline.png', mimeType: 'image/png', buffer: png });

@@ -30,7 +30,7 @@ async function hideCategory(name) {
   await click('カテゴリを非表示にする'); await page.getByText('状態：非表示', { exact: true }).waitFor();
 }
 async function manual(kind, name, amount, category, account, memo, date) {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click(kind); if (kind === '支出') await click('手入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind); if (kind === '支出') await click('手入力');
   await page.locator('#manual-transaction-payee').fill(name);
   await page.locator('#manual-transaction-amount').fill(String(amount));
   await page.locator('#manual-transaction-date').fill(date);
@@ -40,7 +40,7 @@ async function manual(kind, name, amount, category, account, memo, date) {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function splitReceipt() {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('支出'); await click('レシートから入力');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出'); await click('レシートから入力');
   await page.locator('#local-view input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
   await page.locator('#receipt-merchant').fill('Synthetic Search Market');
   await page.locator('#receipt-date').fill('2026-10-04');
@@ -58,7 +58,7 @@ async function splitReceipt() {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function transfer() {
-  await page.locator('#home-tab').click(); await click('＋記録'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
   await page.getByLabel('金額（円）', { exact: true }).fill('8000');
   await page.getByLabel('日付', { exact: true }).fill('2026-10-03');
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: 'Synthetic Search Bank' });
