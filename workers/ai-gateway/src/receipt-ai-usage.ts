@@ -19,14 +19,18 @@ export async function flowMac(secret: string, user: string, flow: string, stage:
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 export async function flowUsage(db: Db, user: string, month: string): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ?").bind(user, month).first<{ used: number }>();
+  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND dispatched = 1").bind(user, month).first<{ used: number }>();
   return row?.used ?? 0;
 }
 export async function reserveFlow(db: Db, user: string, flow: string, imageMac: string, now: number, defaultLimit: number): Promise<boolean> {
+  // Reclaim interrupted reservations only when no provider event was admitted.
+  // An old in-flight request cannot dispatch after deletion: event admission
+  // checks that its flow still exists in the same conditional INSERT.
+  await releaseUndispatchedFlow(db, user, null, now - 120);
   // One INSERT is both the quota check and reservation. The unique key makes
   // concurrent retries idempotent; existing flows remain usable at quota.
-  await db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, created_at, image_mac)
-    SELECT ?, ?, ?, ?, ? FROM (
+  await db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, created_at, image_mac, dispatched)
+    SELECT ?, ?, ?, ?, ?, 0 FROM (
       SELECT CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
         THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
         ELSE ? END AS monthly_limit
@@ -48,4 +52,15 @@ export async function attemptFlow(db: Db, user: string, flow: string, stage: "ge
 export async function allowCategory(db: Db, user: string, flow: string, mac: string): Promise<void> {
   await db.prepare("UPDATE ai_receipt_flows SET category_mac = ? WHERE user_id = ? AND flow_id = ?")
     .bind(mac, user, flow).run();
+}
+
+export async function releaseUndispatchedFlow(db: Db, user: string, flow: string | null, before?: number): Promise<void> {
+  const result = await db.prepare(`DELETE FROM ai_receipt_flows WHERE user_id=? AND dispatched=0 ${flow === null ? "AND created_at<=?" : "AND flow_id=?"}
+    AND NOT EXISTS(SELECT 1 FROM ai_provider_cost_events WHERE user_id=ai_receipt_flows.user_id AND flow_id=ai_receipt_flows.flow_id)`)
+    .bind(user, flow ?? before).run();
+  if (!result.success) throw new Error("flow_reservation_unavailable");
+}
+export async function markFlowDispatched(db: Db, user: string, flow: string): Promise<void> {
+  const result = await db.prepare("UPDATE ai_receipt_flows SET dispatched=1 WHERE user_id=? AND flow_id=?").bind(user,flow).run();
+  if (!result.success || result.meta?.changes !== 1) throw new Error("flow_reservation_unavailable");
 }

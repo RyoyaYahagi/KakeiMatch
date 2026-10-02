@@ -1,3 +1,4 @@
+import type { CostAdmission } from "./ai-global-guardrails";
 import type { AccountEnv } from "./account-auth";
 
 type Db = AccountEnv["ACCOUNT_DB"];
@@ -49,13 +50,14 @@ export function costUsdMicros(usage: TokenUsage, price: Pricing): number | null 
   const rounded = (numerator + BigInt(999_999)) / BigInt(1_000_000);
   return rounded <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(rounded) : null;
 }
-export async function beginCostEvent(db: Db, user: string, flow: string, provider: Provider, requestedModel: string, now: number): Promise<string> {
+export async function beginCostEvent(db: Db, user: string, flow: string, provider: Provider, requestedModel: string, now: number, admission?: CostAdmission): Promise<string> {
   const id = crypto.randomUUID();
   const model = safeModel(requestedModel) ?? "unknown";
   const p = pricingFor(provider, model, now);
-  const result = await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,flow_id,provider,requested_model,model,pricing_version,billing_mode,input_usd_per_million_micros,output_usd_per_million_micros,metering_status,dispatched_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,'unknown',?)`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now).run();
+  const result = await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,flow_id,provider,requested_model,model,pricing_version,billing_mode,input_usd_per_million_micros,output_usd_per_million_micros,metering_status,dispatched_at${admission ? ",reserved_cost_usd_micros" : ""})
+    SELECT ?,?,?,?,?,?,?,?,?,?,'unknown',?${admission ? ",? WHERE " + admission.predicate + " AND EXISTS(SELECT 1 FROM ai_receipt_flows WHERE user_id=? AND flow_id=?)" : ""}`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now,...(admission ? [admission.reservation,...admission.parameters,user,flow] : [])).run();
   if (!result.success) throw new Error("metering_unavailable");
+  if (result.meta?.changes !== 1) throw new Error("ai_temporarily_paused");
   return id;
 }
 export async function completeCostEvent(db: Db, id: string, provider: Provider, decoded: unknown, dispatchedAt: number, completedAt: number, error: string | null): Promise<void> {
