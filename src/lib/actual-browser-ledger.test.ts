@@ -9,7 +9,7 @@ import {
   type ActualBrowserLedgerOptions,
 } from "@/lib/actual-browser-ledger";
 
-function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
+function fixture(initialBudgets: Array<{ id: string; name: string }> = [], accountMetadata: Pick<ActualBrowserLedgerOptions, "getAccountType" | "saveAccountType"> = {}) {
   const budgets = [...initialBudgets];
   const budgetsByDir = new Map<string, Array<{ id: string; name: string }>>([["/documents", budgets]]);
   const sendHandlers: Array<ReturnType<typeof vi.fn>> = [];
@@ -218,15 +218,16 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = []) {
   const options = {
     getBudgetId: () => selectedBudget.current,
     saveBudgetId,
+    ...accountMetadata,
     api,
   } as unknown as ActualBrowserLedgerOptions;
-  return { ledger: createActualBrowserLedger(options), api, rows, accounts, payees, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir, getActiveBudget: () => activeBudget };
+  return { ledger: createActualBrowserLedger(options), api, rows, accounts, payees, categories, budgetValues, schedules, rules, selectedBudget, saveBudgetId, sendHandlers, budgets, budgetsByDir, getActiveBudget: () => activeBudget };
 }
 
 describe("Actual browser ledger", () => {
   it("creates and remembers an empty local budget with runImport", async () => {
     const { ledger, api, selectedBudget, getActiveBudget } = fixture();
-    await expect(ledger.listOpenAccounts()).resolves.toEqual([{ id: "cash", name: "現金" }, { id: "bank", name: "銀行" }]);
+    await expect(ledger.listOpenAccounts()).resolves.toEqual([{ id: "cash", name: "現金", accountType: "other" }, { id: "bank", name: "銀行", accountType: "other" }]);
     expect(api.init).toHaveBeenCalledWith({ dataDir: "/documents" });
     expect(api.runImport).toHaveBeenCalledOnce();
     expect(selectedBudget.current).toBe("new-budget");
@@ -889,9 +890,9 @@ describe("Actual browser ledger", () => {
     const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
     api.getAccountBalance.mockImplementation(async id => id === "cash" ? -1200 : id === "bank" ? 5000 : -45);
     await expect(ledger.getAccountBalances()).resolves.toEqual([
-      { id: "cash", name: "現金", closed: false, balanceYen: -1200 },
-      { id: "bank", name: "銀行", closed: false, balanceYen: 5000 },
-      { id: "closed", name: "旧口座", closed: true, balanceYen: -45 },
+      { id: "cash", name: "現金", closed: false, accountType: "other", balanceYen: -1200 },
+      { id: "bank", name: "銀行", closed: false, accountType: "other", balanceYen: 5000 },
+      { id: "closed", name: "旧口座", closed: true, accountType: "other", balanceYen: -45 },
     ]);
     expect(api.getAccountBalance.mock.calls).toEqual([["cash"], ["bank"], ["closed"]]);
   });
@@ -904,6 +905,47 @@ describe("Actual browser ledger", () => {
     const failing = fixture([{ id: "budget", name: "Local" }]);
     failing.api.getAccountBalance.mockRejectedValueOnce(new Error("synthetic provider failure"));
     await expect(failing.ledger.getAccountBalances()).rejects.toMatchObject({ reason: "operation" });
+  });
+
+  it("reads and writes account types using Actual budget and account IDs", async () => {
+    const values = new Map<string, "bank" | "credit_card" | "cash" | "other">();
+    const getAccountType = vi.fn(async (budgetId: string, accountId: string) => values.get(`${budgetId}:${accountId}`) ?? null);
+    const saveAccountType = vi.fn(async (budgetId: string, accountId: string, type: "bank" | "credit_card" | "cash" | "other" | null) => {
+      if (type === null) values.delete(`${budgetId}:${accountId}`);
+      else values.set(`${budgetId}:${accountId}`, type);
+    });
+    const { ledger, selectedBudget, budgets } = fixture([{ id: "budget", name: "Local" }], { getAccountType, saveAccountType });
+    values.set("budget:bank", "credit_card");
+    expect((await ledger.listAccounts()).find(account => account.id === "bank")?.accountType).toBe("credit_card");
+    expect((await ledger.listAccounts()).find(account => account.id === "cash")?.accountType).toBe("other");
+    await ledger.setAccountType("cash", "cash");
+    expect(saveAccountType).toHaveBeenCalledWith("budget", "cash", "cash");
+    await ledger.deleteAccount("closed");
+    expect(saveAccountType).toHaveBeenCalledWith("budget", "closed", null);
+    budgets.push({ id: "other-budget", name: "Other" });
+    selectedBudget.current = "other-budget";
+    expect((await ledger.listAccounts()).find(account => account.id === "bank")?.accountType).toBe("other");
+  });
+
+  it("rolls back a newly created account when its type cannot be saved", async () => {
+    const metadataFailure = new Error("synthetic metadata failure");
+    const { ledger, api } = fixture([{ id: "budget", name: "Local" }], { saveAccountType: vi.fn().mockRejectedValue(metadataFailure) });
+    await expect(ledger.addAccount("新しい口座", "cash")).rejects.toMatchObject({ reason: "operation", cause: metadataFailure });
+    expect(api.createAccount).toHaveBeenCalledOnce();
+    expect(api.deleteAccount).toHaveBeenCalledWith("new-account");
+
+    const rollbackFailure = new Error("synthetic rollback failure");
+    const second = fixture([{ id: "budget", name: "Local" }], { saveAccountType: vi.fn().mockRejectedValue(metadataFailure) });
+    second.api.deleteAccount.mockRejectedValueOnce(rollbackFailure);
+    await expect(second.ledger.addAccount("新しい口座", "cash")).rejects.toMatchObject({
+      reason: "operation",
+      cause: expect.objectContaining({ errors: [metadataFailure, rollbackFailure] }),
+    });
+  });
+
+  it("requires a persistence hook before changing an account type", async () => {
+    const { ledger } = fixture([{ id: "budget", name: "Local" }]);
+    expect(() => ledger.setAccountType("cash", "cash")).toThrow("保存できません");
   });
 
   it("rejects blank names and missing or hidden receipt masters at the adapter boundary", async () => {

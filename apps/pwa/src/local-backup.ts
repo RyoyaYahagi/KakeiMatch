@@ -1,4 +1,4 @@
-import { ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
+import { accountMetadataRecordId, ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
 import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
 import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '../../../src/lib/monthly-budget-settings';
@@ -35,7 +35,8 @@ export async function exportLocalBackup(repository: LocalDataRepository, ledger:
   const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
   localData.records = localData.records.filter(record => record.id !== 'settings:budget'
-    && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : '')));
+    && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
+    && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
   const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
   await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
   return result;
@@ -74,10 +75,16 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     const localData = {
       ...backup.localData,
       records: backup.localData.records.map(record => {
-        if (!record.id.startsWith('settings:monthly-budgets:')) return record;
-        const separator = record.id.slice('settings:monthly-budgets:'.length);
-        const settings = validateMonthlyBudgetSettings(record.value, separator);
-        return { ...record, id: monthlyBudgetSettingsRecordId(budgetId), value: { ...settings, budgetId } };
+        if (record.kind === 'account-metadata') {
+          const metadata = record.value as { budgetId: string; accountId: string };
+          return { ...record, id: accountMetadataRecordId(budgetId, metadata.accountId), value: { ...metadata, budgetId } };
+        }
+        if (record.id.startsWith('settings:monthly-budgets:')) {
+          const oldBudgetId = record.id.slice('settings:monthly-budgets:'.length);
+          const settings = validateMonthlyBudgetSettings(record.value, oldBudgetId);
+          return { ...record, id: monthlyBudgetSettingsRecordId(budgetId), value: { ...settings, budgetId } };
+        }
+        return record;
       }),
     };
     await staging.restore(localData);

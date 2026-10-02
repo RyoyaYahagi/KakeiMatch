@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import "fake-indexeddb/auto";
+import { createAccountMetadataAccess } from "../../apps/pwa/src/local-account-metadata";
 import {
   LocalDataRepository,
   LOCAL_DATABASE_VERSION,
@@ -56,6 +57,22 @@ afterEach(() => {
 });
 
 describe("LocalDataRepository", () => {
+  it("stores account types by local profile, Actual budget, and Actual account", async () => {
+    const factory = new IDBFactory();
+    const first = await open("profile-a", factory);
+    const second = await open("profile-b", factory);
+    const firstAccess = createAccountMetadataAccess(first);
+    const secondAccess = createAccountMetadataAccess(second);
+    await firstAccess.saveAccountType("budget-a", "same-account-id", "credit_card");
+    await firstAccess.saveAccountType("budget-b", "same-account-id", "cash");
+    expect(await firstAccess.getAccountType("budget-a", "same-account-id")).toBe("credit_card");
+    expect(await firstAccess.getAccountType("budget-b", "same-account-id")).toBe("cash");
+    expect(await secondAccess.getAccountType("budget-a", "same-account-id")).toBeNull();
+    await firstAccess.saveAccountType("budget-a", "same-account-id", null);
+    expect(await firstAccess.getAccountType("budget-a", "same-account-id")).toBeNull();
+    expect(await firstAccess.getAccountType("budget-b", "same-account-id")).toBe("cash");
+  });
+
   it("migrates v1 serialized records and restores records plus private blobs", async () => {
     const factory = new IDBFactory();
     const source = await open("profile-a", factory);
