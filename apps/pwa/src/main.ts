@@ -51,7 +51,16 @@ root.innerHTML = `
       <h3 class="settings-group-title">家計簿</h3>
       <section id="local-settings" class="surface-section settings-list" aria-label="家計簿の設定"></section>
       <h3 class="settings-group-title">データ</h3>
-      <div id="data-settings" class="settings-stack"></div>
+      <div id="data-settings" class="settings-stack">
+        <section class="surface-section storage-location" aria-labelledby="storage-location-title">
+          <h4 id="storage-location-title">保存先</h4>
+          <p class="storage-location-device">${iconMarkup('phone')}<strong>この端末</strong></p>
+          <p>家計簿・レシート・明細・照合結果は、この端末に保存されています。</p>
+          <p class="muted">家計データはCloudflareに保存しません。AIアカウントの認証や利用枠の情報はCloudflareで管理します。AIを利用する場合だけ、処理に必要な情報をAIサービスへ送信します。</p>
+          <p class="storage-location-risk">端末の紛失やブラウザーのデータ消去で、家計データが失われることがあります。バックアップを別の場所に保存してください。</p>
+          <a class="storage-location-link" href="#backup-settings">バックアップと端末データ${iconMarkup('chevronRight')}</a>
+        </section>
+      </div>
       <h3 class="settings-group-title">写真の読み取り</h3>
       <section id="ai-settings" class="surface-section settings-panel" aria-label="AI利用">
       <div class="ai-status">
@@ -104,7 +113,6 @@ root.innerHTML = `
       <section class="surface-section settings-list" aria-label="サポート">
         <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
       </section>
-      <p class="muted settings-footnote">家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       </div>
       <section id="contact-view" hidden></section>
     </section>

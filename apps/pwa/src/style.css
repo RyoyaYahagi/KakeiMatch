@@ -241,6 +241,14 @@ form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-rad
 .settings-list > .master-entry:last-child { border-bottom: 0; }
 .settings-list > .master-entry::after { content: "›"; float: none; margin-left: auto; font-size: 1.25rem; }
 .settings-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.storage-location { padding: var(--space-4); }
+.storage-location h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.storage-location p { margin: var(--space-2) 0; }
+.storage-location-device { display: flex; align-items: center; gap: var(--space-2); font-size: 1.125rem; }
+.storage-location-device .icon { width: 24px; height: 24px; color: var(--primary); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.storage-location-risk { margin-top: var(--space-3) !important; }
+.storage-location-link { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; margin-top: var(--space-2); color: var(--primary); font-weight: 600; text-decoration: none; }
+.storage-location-link .icon { width: 18px; height: 18px; margin-left: auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .settings-panel { padding: var(--space-4); }
 .settings-panel h2, .settings-panel h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
 .settings-panel h3 { font-size: .9375rem; }
