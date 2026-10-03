@@ -164,9 +164,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
     const originRevision = screenRevision;
+    const originTab = screenTab;
     const prepared = document.createElement('div');
     await showMonthlyBudgetEditor({ view: prepared, ledger, service: monthlyBudgets, mode, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
-    if (screenTab !== 'settings' || screenRevision !== originRevision) return;
+    if (screenTab !== originTab || screenRevision !== originRevision) return;
     await open('statement', prepared);
   }
   async function recurringOverview() {
