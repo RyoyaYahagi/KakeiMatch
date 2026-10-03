@@ -71,11 +71,26 @@ export interface StorageEstimate {
 }
 
 export class LocalDataStorageError extends Error {
-  constructor(message: string, readonly cause: unknown, readonly code: 'storage_unavailable' | 'migration_failed' | 'future_schema' | 'storage_blocked' = 'storage_unavailable') {
+  constructor(message: string, readonly cause: unknown, readonly code: 'storage_unavailable' | 'migration_failed' | 'future_schema' | 'storage_blocked' | 'stale_profile' = 'storage_unavailable') {
     super(message);
     this.name = "LocalDataStorageError";
   }
 }
+
+/** Another tab switched the active household; this tab must reload before writing. */
+export class StaleHouseholdProfileError extends LocalDataStorageError {
+  constructor() {
+    super("別の画面で家計データが切り替わりました。このページを再読み込みしてから操作してください。変更内容は保存されていません。", null, 'stale_profile');
+    this.name = "StaleHouseholdProfileError";
+  }
+}
+
+/**
+ * Runs one write. `recordIds` names the records a write touches; `null` means it may touch
+ * any household data (blobs, bulk restore, cascading deletes). Used for device sync bookkeeping.
+ */
+export type LocalWriteGate = <T>(recordIds: readonly string[] | null, write: () => Promise<T>) => Promise<T>;
+const ungated: LocalWriteGate = (_recordIds, write) => write();
 
 export function getOrCreateLocalProfileId(storage: Pick<Storage, "getItem" | "setItem"> = window.localStorage): string {
   const existing = storage.getItem(LOCAL_PROFILE_KEY);
@@ -161,9 +176,9 @@ function validateDatabase(database: IDBDatabase, transaction: IDBTransaction): v
 }
 
 export class LocalDataRepository {
-  private constructor(private readonly database: IDBDatabase, readonly profileId: string) {}
+  private constructor(private readonly database: IDBDatabase, readonly profileId: string, private readonly gate: LocalWriteGate) {}
 
-  static async open(profileId = getOrCreateLocalProfileId(), factory: IDBFactory = indexedDB): Promise<LocalDataRepository> {
+  static async open(profileId = getOrCreateLocalProfileId(), factory: IDBFactory = indexedDB, options: { writeGate?: LocalWriteGate } = {}): Promise<LocalDataRepository> {
     try {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
         const request = factory.open(DATABASE_NAME, LOCAL_DATABASE_VERSION);
@@ -203,7 +218,7 @@ export class LocalDataRepository {
           }
         };
       });
-      return new LocalDataRepository(database, profileId);
+      return new LocalDataRepository(database, profileId, options.writeGate ?? ungated);
     } catch (error) {
       throw storageError(error);
     }
@@ -211,6 +226,10 @@ export class LocalDataRepository {
 
   /** Writes a receipt draft only while its receipt still exists in the same profile. */
   async putIfRecordExists<T>(record: LocalDataRecord<T>, requiredRecordId: string): Promise<boolean> {
+    return this.gate([record.id], () => this.putIfRecordExistsNow(record, requiredRecordId));
+  }
+
+  private async putIfRecordExistsNow<T>(record: LocalDataRecord<T>, requiredRecordId: string): Promise<boolean> {
     try {
       const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
       const done = transactionDone(transaction);
@@ -227,6 +246,10 @@ export class LocalDataRepository {
   }
 
   async put<T>(record: LocalDataRecord<T>): Promise<void> {
+    return this.gate([record.id], () => this.putNow(record));
+  }
+
+  private async putNow<T>(record: LocalDataRecord<T>): Promise<void> {
     try {
       const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
       transaction.objectStore(RECORDS_STORE).put({ ...record, profileId: this.profileId, key: toKey(this.profileId, record.id) });
@@ -236,6 +259,12 @@ export class LocalDataRepository {
 
   /** Atomically commits related metadata records in one IndexedDB transaction. */
   async putRecords(records: LocalDataRecord[]): Promise<void> {
+    let ids: string[];
+    try { ids = records.map((record) => record.id); } catch (error) { throw storageError(error); }
+    return this.gate(ids, () => this.putRecordsNow(records));
+  }
+
+  private async putRecordsNow(records: LocalDataRecord[]): Promise<void> {
     try {
       const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
       const done = transactionDone(transaction);
@@ -266,6 +295,11 @@ export class LocalDataRepository {
   }
 
   async delete(id: string): Promise<void> {
+    // Deleting a record also deletes the blobs it owns.
+    return this.gate(null, () => this.deleteNow(id));
+  }
+
+  private async deleteNow(id: string): Promise<void> {
     try {
       const transaction = this.database.transaction([RECORDS_STORE, BLOBS_STORE], "readwrite");
       const done = transactionDone(transaction);
@@ -283,6 +317,10 @@ export class LocalDataRepository {
   }
 
   async putBlob(blob: LocalBlob): Promise<void> {
+    return this.gate(null, () => this.putBlobNow(blob));
+  }
+
+  private async putBlobNow(blob: LocalBlob): Promise<void> {
     try {
       const transaction = this.database.transaction(BLOBS_STORE, "readwrite");
       transaction.objectStore(BLOBS_STORE).put({ ...blob, profileId: this.profileId, key: toKey(this.profileId, blob.id) });
@@ -298,6 +336,10 @@ export class LocalDataRepository {
   }
 
   async deleteBlob(id: string): Promise<void> {
+    return this.gate(null, () => this.deleteBlobNow(id));
+  }
+
+  private async deleteBlobNow(id: string): Promise<void> {
     try {
       const transaction = this.database.transaction(BLOBS_STORE, "readwrite");
       transaction.objectStore(BLOBS_STORE).delete(toKey(this.profileId, id));
@@ -307,6 +349,10 @@ export class LocalDataRepository {
 
   /** Removes one receipt and its extraction in the same transaction as its unshared image blob. */
   async deleteReceiptData(receiptId: string, extractionId: string, draftId: string): Promise<void> {
+    return this.gate(null, () => this.deleteReceiptDataNow(receiptId, extractionId, draftId));
+  }
+
+  private async deleteReceiptDataNow(receiptId: string, extractionId: string, draftId: string): Promise<void> {
     try {
       const transaction = this.database.transaction([RECORDS_STORE, BLOBS_STORE], "readwrite");
       const done = transactionDone(transaction);
@@ -369,6 +415,10 @@ export class LocalDataRepository {
   }
 
   async restore(input: LocalDataBackup): Promise<void> {
+    return this.gate(null, () => this.restoreNow(input));
+  }
+
+  private async restoreNow(input: LocalDataBackup): Promise<void> {
     const backup = migrateLocalDataBackup(input);
     if (backup.records.some((record) => !isLocalDataKind(record.kind))) throw new Error("バックアップに未対応のデータ種別があります。");
     try {
@@ -403,6 +453,23 @@ export class LocalDataRepository {
       const done = transactionDone(transaction);
       transaction.objectStore(RECORDS_STORE).clear();
       transaction.objectStore(BLOBS_STORE).clear();
+      await done;
+    } catch (error) { throw storageError(error); }
+  }
+
+  /** Removes one profile's records and blobs, for discarding a staged or superseded household. */
+  async clearProfile(profileId: string): Promise<void> {
+    if (profileId === this.profileId) throw new Error("Use restore() to replace the open profile.");
+    try {
+      const transaction = this.database.transaction([RECORDS_STORE, BLOBS_STORE], "readwrite");
+      const done = transactionDone(transaction);
+      for (const name of [RECORDS_STORE, BLOBS_STORE]) {
+        const cursorRequest = transaction.objectStore(name).index("profileId").openCursor(IDBKeyRange.only(profileId));
+        cursorRequest.onsuccess = () => {
+          const cursor = cursorRequest.result;
+          if (cursor) { cursor.delete(); cursor.continue(); }
+        };
+      }
       await done;
     } catch (error) { throw storageError(error); }
   }

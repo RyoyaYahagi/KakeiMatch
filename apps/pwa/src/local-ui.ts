@@ -19,9 +19,10 @@ import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { initializeMasterUi, createMasterShortcut } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
-import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
+import { recoverHouseholdSwitch, restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
+import { guardLedger, HouseholdWriteGuard } from './household-write-guard';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
-import { LocalDataRepository } from '../../../src/lib/local-data';
+import { getOrCreateLocalProfileId, LOCAL_PROFILE_KEY, LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
@@ -64,17 +65,33 @@ function fieldLabel<K extends keyof HTMLElementTagNameMap>(tag: K, value: string
 function parseNullableInteger(value: string): number | null { if (!value.trim()) return null; const parsed = Number(value); return Number.isSafeInteger(parsed) ? parsed : null; }
 function parseNullableNumber(value: string): number | null { if (!value.trim()) return null; const parsed = Number(value); return Number.isFinite(parsed) ? parsed : null; }
 
+/** Another tab switched the household. Ask for a reload; never reload while someone may be typing. */
+function watchHouseholdSwitch(profileId: string) {
+  window.addEventListener('storage', event => {
+    if (event.key !== LOCAL_PROFILE_KEY || event.newValue === profileId || document.getElementById('household-switch-notice')) return;
+    const notice = text('p', '別の画面で家計データが切り替わりました。最新の内容を表示するには再読み込みしてください。', 'network-status');
+    notice.id = 'household-switch-notice';
+    notice.setAttribute('role', 'status');
+    notice.append(button('再読み込み', () => { location.reload(); }));
+    el('network').after(notice);
+  });
+}
+
 export async function initializeLocalUi(options: { openAccount: () => void }) {
-  const repository = await LocalDataRepository.open();
+  // Every household write in this tab goes through one guard for device sync bookkeeping.
+  const guard = new HouseholdWriteGuard(getOrCreateLocalProfileId());
+  const repository = await LocalDataRepository.open(guard.profileId, indexedDB, { writeGate: guard.repositoryGate });
+  watchHouseholdSwitch(guard.profileId);
   const saved = await repository.get<LocalBudgetSettings>('settings:budget');
   let budgetId = saved?.value.budgetId ?? null;
   const dataDir = saved?.value.dataDir ?? '/documents';
   let monthlyBudgets: LocalMonthlyBudgetService | null = null;
   const accountMetadata = createAccountMetadataAccess(repository);
-  const ledger = createActualBrowserLedger({ ...accountMetadata, getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
+  const ledger = guardLedger(createActualBrowserLedger({ ...accountMetadata, getBudgetId: () => budgetId, getDataDir: () => dataDir, saveBudgetId: async id => {
     budgetId = id; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: id, dataDir }, updatedAt: new Date().toISOString() });
     monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, id);
-  } });
+  } }), guard);
+  await recoverHouseholdSwitch(repository, ledger);
   if (budgetId) monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, budgetId);
   const receipts = new LocalReceiptService(repository, ledger);
   const categoryLearning = new LocalCategoryLearning(repository);
