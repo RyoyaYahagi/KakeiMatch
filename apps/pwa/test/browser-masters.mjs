@@ -88,6 +88,8 @@ async function fillReceipt(merchant, account, category) {
 try {
   await page.goto(url);
   await page.waitForFunction(() => document.querySelector('#home-summary')?.textContent?.includes('今月の支出'));
+  const tapHighlight = await page.locator('#settings-tab').evaluate(node => getComputedStyle(node).getPropertyValue('-webkit-tap-highlight-color'));
+  assert.ok(tapHighlight === 'transparent' || tapHighlight === 'rgba(0, 0, 0, 0)', `unexpected tap highlight: ${tapHighlight}`);
   await assertAtomicSettingsTransition('カテゴリ', 'category');
   await assertAtomicSettingsTransition('支払元', 'account');
   await assertAtomicSettingsTransition('予算設定', 'budget');
