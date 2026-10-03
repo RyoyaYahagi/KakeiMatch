@@ -599,12 +599,31 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     function drawItems() {
       itemsList.replaceChildren();
-      itemsTab.textContent = items.length ? `品目一覧 (${items.length})` : '品目一覧';
       for (const item of items) {
         const details = document.createElement('details'); details.className = 'receipt-item';
         details.dataset.receiptItem = item.id;
-        const summary = text('summary', `${item.name.trim() || '品目を入力'} · ${item.amountYen == null ? '金額未入力' : yen(item.amountYen)} · ${categoryName(item.categoryId)}`);
+        const summary = document.createElement('summary'); summary.className = 'receipt-compact-summary';
+        const summaryTitle = text('span', '', 'receipt-compact-title');
+        const summaryAmount = text('span', '', 'receipt-compact-amount');
+        const summaryMeta = text('span', '', 'receipt-compact-meta');
+        const refreshSummary = () => {
+          summaryTitle.textContent = item.name.trim() || '品目を入力';
+          summaryAmount.textContent = item.amountYen == null ? '金額未入力' : yen(item.amountYen);
+          summaryMeta.textContent = categoryName(item.categoryId);
+        };
+        refreshSummary();
+        summary.append(summaryTitle, summaryAmount, summaryMeta);
         details.open = expandItemId === item.id;
+        details.addEventListener('toggle', () => {
+          if (!details.open) {
+            if (expandItemId === item.id) expandItemId = null;
+            return;
+          }
+          expandItemId = item.id;
+          itemsList.querySelectorAll<HTMLDetailsElement>('details.receipt-item').forEach(other => {
+            if (other !== details) other.open = false;
+          });
+        });
         const nameLabel = fieldLabel('label', '品目名', `item-name-${item.id}`);
         const name = document.createElement('input'); name.id = nameLabel.htmlFor; name.dataset.itemName = ''; name.value = item.name; name.maxLength = 200;
         const amountLabel = fieldLabel('label', '金額（円）', `item-amount-${item.id}`);
@@ -625,8 +644,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           drawItems(); drawAdjustments(); updateDifference(); scheduleDraft();
         });
         for (const input of [name, itemAmount, quantity, unit, itemCategory]) input.addEventListener('input', () => {
-          const displayedAmount = itemAmount.value ? yen(Number(itemAmount.value)) : '金額未入力';
-          summary.textContent = `${name.value.trim() || '品目を入力'} · ${displayedAmount} · ${categoryName(itemCategory.value)}`;
+          item.name = name.value;
+          item.amountYen = parseNullableInteger(itemAmount.value);
+          item.categoryId = itemCategory.value || null;
+          refreshSummary();
           if (input === name) updateAdjustmentTargets();
           updateDifference(); scheduleDraft();
         });
@@ -648,9 +669,29 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       adjustmentsList.replaceChildren();
       for (const adjustment of adjustments) {
         const row = document.createElement('li'); row.className = 'receipt-adjustment'; row.dataset.receiptAdjustment = adjustment.id;
-        const details = document.createElement('details');
-        const summary = text('summary', `${adjustment.label || '値引き・調整'} · ${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`);
+        const details = document.createElement('details'); details.className = 'receipt-adjustment-details';
+        const summary = document.createElement('summary'); summary.className = 'receipt-compact-summary';
+        const summaryTitle = text('span', '', 'receipt-compact-title');
+        const summaryAmount = text('span', '', 'receipt-compact-amount');
+        const summaryMeta = text('span', '', 'receipt-compact-meta');
+        const refreshSummary = () => {
+          summaryTitle.textContent = adjustment.label || (adjustment.amountYen > 0 ? '調整' : '値引き');
+          summaryAmount.textContent = `${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`;
+          summaryMeta.textContent = adjustment.amountYen > 0 ? 'その他の調整' : '値引き';
+        };
+        refreshSummary();
+        summary.append(summaryTitle, summaryAmount, summaryMeta);
         details.open = expandAdjustmentId === adjustment.id;
+        details.addEventListener('toggle', () => {
+          if (!details.open) {
+            if (expandAdjustmentId === adjustment.id) expandAdjustmentId = null;
+            return;
+          }
+          expandAdjustmentId = adjustment.id;
+          adjustmentsList.querySelectorAll<HTMLDetailsElement>('details.receipt-adjustment-details').forEach(other => {
+            if (other !== details) other.open = false;
+          });
+        });
         const label = fieldLabel('label', '内容', `adjustment-label-${adjustment.id}`);
         const name = document.createElement('input'); name.id = label.htmlFor; name.dataset.adjustmentLabel = ''; name.value = adjustment.label; name.maxLength = 100;
         const kindLabel = fieldLabel('label', '種類', `adjustment-kind-${adjustment.id}`);
@@ -666,7 +707,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const remove = button('値引きを削除', () => { adjustments = readAdjustments().filter(entry => entry.id !== adjustment.id); drawAdjustments(); updateDifference(); scheduleDraft(); });
         for (const input of [name, value, target, kind]) input.addEventListener('input', () => {
           amountLabel.textContent = kind.value === 'discount' ? '値引き額（円）' : '調整額（円）';
-          summary.textContent = `${name.value || (kind.value === 'discount' ? '値引き' : '調整')} · ${kind.value === 'discount' ? '−' : '+'}${yen(Number(value.value))}`;
+          adjustment.label = name.value;
+          adjustment.amountYen = (kind.value === 'discount' ? -1 : 1) * Number(value.value);
+          refreshSummary();
           updateDifference(); scheduleDraft();
         });
         details.append(summary, label, name, kindLabel, kind, amountLabel, value, targetLabel, target, remove);
