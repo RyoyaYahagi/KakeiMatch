@@ -142,6 +142,8 @@ try {
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
   await updatedMilkRule.locator('summary').click();
   await updatedMilkRule.locator('input[role=switch]').check();
+  // Saving replaces the row; wait for the refreshed enabled control before reopening it.
+  await updatedMilkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('summary').click();
   await updatedMilkRule.locator('select').selectOption(learningIds.food);
   await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
