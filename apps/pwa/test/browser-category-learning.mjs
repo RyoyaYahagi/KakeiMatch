@@ -121,13 +121,36 @@ try {
   assert.equal(jevRequests.length, 0);
   await cancelDraft();
 
+  // Users can inspect the learned evidence and override or disable an item rule.
+  await settings('分類ルール');
+  const milkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
+  await milkRule.locator('summary').click();
+  await milkRule.getByText(/根拠: 3件 \/ 3件 · 一致率 100%/).waitFor();
+  await page.screenshot({ path: process.env.PWA_CATEGORY_RULES_SCREENSHOT_PATH ?? '/tmp/issue-157-category-rules.png', fullPage: true });
+  await milkRule.locator('select').selectOption(learningIds.home);
+  await milkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
+  await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+  await milkRule.locator('summary').click();
+  await milkRule.locator('input[role=switch]').uncheck();
+  await analyze('known');
+  assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
+  await cancelDraft();
+  await settings('分類ルール');
+  const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
+  await updatedMilkRule.locator('summary').click();
+  await updatedMilkRule.locator('input[role=switch]').check();
+  await updatedMilkRule.locator('summary').click();
+  await updatedMilkRule.locator('select').selectOption(learningIds.food);
+  await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
+  await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+
   // A known item is omitted from Jev, but the unknown item receives native category IDs.
   await analyze('unknown');
   assert.equal(await itemRow(0).locator('[data-item-category]').inputValue(), learningIds.food);
   assert.equal(await itemRow(1).locator('[data-item-category]').inputValue(), learningIds.electronic);
-  assert.deepEqual(jevRequests[0].itemIndexes, [1]);
-  assert.equal(jevRequests[0].receipt.items.length, 2);
-  for (const id of Object.values(learningIds)) assert.ok(jevRequests[0].categories.some(category => category.id === id));
+  assert.deepEqual(jevRequests.at(-1).itemIndexes, [1]);
+  assert.equal(jevRequests.at(-1).receipt.items.length, 2);
+  for (const id of Object.values(learningIds)) assert.ok(jevRequests.at(-1).categories.some(category => category.id === id));
   await page.screenshot({ path: process.env.PWA_CATEGORY_LEARNING_SCREENSHOT_PATH ?? '/tmp/issue-79-category-learning.png', fullPage: true });
   // A one-receipt override makes Milk 3:1 (75%), below the 80% agreement threshold.
   await page.locator('#receipt-category').selectOption(learningIds.food);
@@ -138,8 +161,9 @@ try {
   assert.equal(new Set(audits.map(audit => audit.receiptId)).size, 4);
   assert.ok(audits.every(audit => audit.merchantCategoryId === null));
 
+  const requestCountBeforeEditedRule = jevRequests.length;
   await analyze('known');
-  assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
+  assert.equal(jevRequests.length, requestCountBeforeEditedRule);
   assert.equal(await itemRow(0).locator('[data-item-category]').inputValue(), learningIds.food);
   assert.equal(await itemRow(1).locator('[data-item-category]').inputValue(), learningIds.home);
   await cancelDraft();
@@ -152,7 +176,8 @@ try {
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-category-learning.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   audits = await readLearningAudits(); assert.equal(audits.length, 4);
-  await analyze('known'); assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
+  const requestCountBeforeRestoreCheck = jevRequests.length;
+  await analyze('known'); assert.equal(jevRequests.length, requestCountBeforeRestoreCheck);
   await cancelDraft();
 
   // Editing one receipt replaces that receipt's vote instead of adding another vote.
@@ -184,5 +209,17 @@ try {
   await click('キャンセル');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []); await context.setOffline(false);
-  console.log('PASS: three-receipt item rules, mixed-merchant guard, partial Jev requests with native categories, 75% fallback, backup/restore and one-receipt-one-vote editing');
+  await settings('分類ルール');
+  page.once('dialog', dialog => dialog.accept());
+  await click('すべての変更をリセット');
+  await page.getByText('分類ルールへの変更をリセットしました。', { exact: true }).waitFor();
+  const overrideCount = await page.evaluate(() => new Promise((resolve, reject) => {
+    const open = indexedDB.open('kakeimatch-local-data'); open.onerror = () => reject(open.error);
+    open.onsuccess = () => { const db = open.result; const request = db.transaction('records', 'readonly').objectStore('records').getAll();
+      request.onsuccess = () => { const profileId = localStorage.getItem('kakeimatch.local-profile.v1'); resolve(request.result.filter(row => row.profileId === profileId && row.id.startsWith('category-rule-override:')).length); db.close(); };
+      request.onerror = () => reject(request.error); };
+  }));
+  assert.equal(overrideCount, 0);
+  await analyze('known'); assert.deepEqual(jevRequests.at(-1).itemIndexes, [0, 1]); await cancelDraft();
+  console.log('PASS: item and merchant rules, disable and override, Jev unresolved items, backup/restore, reset, 75% fallback, and one-receipt-one-vote editing');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

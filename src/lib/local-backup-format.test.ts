@@ -26,6 +26,7 @@ function fixture(): LocalDataBackupV2 {
       { id: "reconciliation-run:synthetic-run", kind: "reconciliation-run", updatedAt: time, value: { runId: "synthetic-run", createdAt: time, completedAt: time, ruleVersion: "1.0.0", candidates: [], statementResults: [], receiptResults: [] } },
       { id: "settings:budget", kind: "app-settings", updatedAt: time, value: { budgetId: "synthetic-budget-id", dataDir: "synthetic-data-dir" } },
       { id: "settings:backup", kind: "app-settings", updatedAt: time, value: { lastExportAt: time } },
+      { id: "category-rule-override:item:synthetic%20milk", kind: "app-settings", updatedAt: time, value: { targetType: "item", normalizedName: "synthetic milk", categoryId: "synthetic-category", disabled: false, deleted: false } },
     ],
     blobs: [
       { id: "receipt-image:synthetic-1", ownerKind: "receipt", ownerId: "receipt:synthetic-1", blob: new Blob([new Uint8Array([1, 2, 3, 4])], { type: "image/jpeg" }), contentType: "image/jpeg", createdAt: time },
@@ -45,6 +46,13 @@ async function create(input = fixture()): Promise<Blob> {
 }
 
 describe("account metadata backup", () => {
+  it("preserves local learned-rule overrides in portable backups", async () => {
+    const result = await readPortableBackup(await create());
+    expect(result.localData.records.find(record => record.id.startsWith("category-rule-override:"))).toMatchObject({
+      kind: "app-settings", value: { targetType: "item", normalizedName: "synthetic milk", categoryId: "synthetic-category" },
+    });
+  });
+
   it("preserves a budget-scoped account type and accepts backups without account metadata", async () => {
     const oldBackup = await readPortableBackup(await create());
     expect(oldBackup.localData.records.some(record => record.kind === "account-metadata")).toBe(false);

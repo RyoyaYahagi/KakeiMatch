@@ -1,14 +1,23 @@
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import type { ActualCategory } from '../../../src/lib/actual-ledger';
 import type { LocalDataRecord, LocalDataRepository } from '../../../src/lib/local-data';
-import { categoryLearningObservationSchema, deriveCategoryRules, normalizeLearningName, type CategoryLearningObservation } from '../../../src/lib/category-learning';
+import { categoryLearningObservationSchema, deriveCategoryRuleStats, deriveCategoryRules, normalizeLearningName, type CategoryLearningObservation } from '../../../src/lib/category-learning';
 import type { ConfirmedReceiptValue } from './local-receipts';
+
+const OVERRIDE_PREFIX = 'category-rule-override:';
+type RuleOverride = { targetType: 'merchant' | 'item'; normalizedName: string; disabled?: boolean; deleted?: boolean; categoryId?: string };
+export type LocalCategoryRule = {
+  targetType: 'merchant' | 'item'; normalizedName: string; categoryId: string; receipts: number; matchingReceipts: number;
+  agreementPercent: number; enabled: boolean; deleted: boolean;
+};
+
+function overrideId(targetType: RuleOverride['targetType'], normalizedName: string) {
+  return `${OVERRIDE_PREFIX}${targetType}:${encodeURIComponent(normalizedName)}`;
+}
 
 export class LocalCategoryLearning {
   constructor(private readonly repository: LocalDataRepository) {}
-  async suggest(input: { merchant: string | null; items: Array<{ name: string }>; categories: ActualCategory[] }): Promise<{
-    merchantCategoryId: string | null; itemCategories: Array<string | null>; hasMerchantHistory: boolean;
-  }> {
+  private async observations() {
     const observations: CategoryLearningObservation[] = [];
     for (const { value } of await this.repository.list<Record<string, unknown>>('correction-audit')) {
       if (value?.targetType !== 'category-learning') continue;
@@ -16,10 +25,60 @@ export class LocalCategoryLearning {
       if (!parsed.success) throw new Error('保存済みの分類履歴を確認できませんでした。バックアップと端末データを確認してください。');
       observations.push(parsed.data);
     }
-    const rules = deriveCategoryRules(observations, new Set(input.categories.map(category => category.id)));
+    return observations;
+  }
+  private async overrides() {
+    const rows = await this.repository.list<Record<string, unknown>>('app-settings');
+    return new Map(rows.filter(row => row.id.startsWith(OVERRIDE_PREFIX)).map(row => {
+      const value = row.value;
+      if (!value || (value.targetType !== 'merchant' && value.targetType !== 'item') || typeof value.normalizedName !== 'string'
+        || normalizeLearningName(value.normalizedName) !== value.normalizedName
+        || value.disabled !== undefined && typeof value.disabled !== 'boolean'
+        || value.deleted !== undefined && typeof value.deleted !== 'boolean'
+        || value.categoryId !== undefined && typeof value.categoryId !== 'string') {
+        throw new Error('保存済みの分類ルール設定を確認できませんでした。バックアップと端末データを確認してください。');
+      }
+      if (row.id !== overrideId(value.targetType, value.normalizedName)) throw new Error('保存済みの分類ルール設定を確認できませんでした。バックアップと端末データを確認してください。');
+      return [row.id, value as RuleOverride] as const;
+    }));
+  }
+  async listRules(categories: ActualCategory[]): Promise<LocalCategoryRule[]> {
+    const available = new Set(categories.map(category => category.id));
+    const [observations, overrides] = await Promise.all([this.observations(), this.overrides()]);
+    return deriveCategoryRuleStats(observations, available).map(rule => {
+      const override = overrides.get(overrideId(rule.targetType, rule.normalizedName));
+      return { ...rule, categoryId: override?.categoryId && available.has(override.categoryId) ? override.categoryId : rule.categoryId,
+        enabled: !override?.disabled && !override?.deleted, deleted: !!override?.deleted };
+    });
+  }
+  async setRuleOverride(rule: Pick<LocalCategoryRule, 'targetType' | 'normalizedName'>, changes: Partial<Pick<RuleOverride, 'disabled' | 'deleted' | 'categoryId'>>): Promise<void> {
+    const id = overrideId(rule.targetType, rule.normalizedName);
+    const existing = await this.repository.get<RuleOverride>(id);
+    const value = { ...(existing?.value ?? { targetType: rule.targetType, normalizedName: rule.normalizedName }), ...changes };
+    await this.repository.put({ id, kind: 'app-settings', value, updatedAt: new Date().toISOString() });
+  }
+  async resetRuleOverride(rule: Pick<LocalCategoryRule, 'targetType' | 'normalizedName'>): Promise<void> {
+    await this.repository.delete(overrideId(rule.targetType, rule.normalizedName));
+  }
+  async resetAllRuleOverrides(): Promise<void> {
+    const overrides = await this.overrides();
+    for (const id of overrides.keys()) await this.repository.delete(id);
+  }
+  async suggest(input: { merchant: string | null; items: Array<{ name: string }>; categories: ActualCategory[] }): Promise<{
+    merchantCategoryId: string | null; itemCategories: Array<string | null>; hasMerchantHistory: boolean;
+  }> {
+    const observations = await this.observations();
+    const available = new Set(input.categories.map(category => category.id));
+    const rules = deriveCategoryRules(observations, available);
+    const overrides = await this.overrides();
+    const apply = (type: RuleOverride['targetType'], name: string, base: string | null) => {
+      const override = overrides.get(overrideId(type, name));
+      if (override?.disabled || override?.deleted) return null;
+      return override?.categoryId && available.has(override.categoryId) ? override.categoryId : base;
+    };
     const merchant = normalizeLearningName(input.merchant ?? '');
-    return { merchantCategoryId: rules.merchants.get(merchant) ?? null,
-      itemCategories: input.items.map(item => rules.items.get(normalizeLearningName(item.name)) ?? null),
+    return { merchantCategoryId: apply('merchant', merchant, rules.merchants.get(merchant) ?? null),
+      itemCategories: input.items.map(item => { const name = normalizeLearningName(item.name); return apply('item', name, rules.items.get(name) ?? null); }),
       hasMerchantHistory: observations.some(observation => observation.normalizedMerchant === merchant) };
   }
   recordsForConfirmation(receiptId: string, value: ConfirmedReceiptValue, categories: ActualCategory[], confirmedAt: string): LocalDataRecord<CategoryLearningObservation>[] {

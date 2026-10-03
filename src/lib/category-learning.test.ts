@@ -57,4 +57,41 @@ describe('confirmed category rules', () => {
     });
     await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories: [categories[1]!] })).resolves.toMatchObject({ itemCategories: [null] });
   });
+  it('lists evidence and applies disable, category override, delete suppression, and reset locally', async () => {
+    const repository = await LocalDataRepository.open(crypto.randomUUID()); repositories.push(repository);
+    const learning = new LocalCategoryLearning(repository);
+    const categories = [{ id: 'food-custom', name: 'Synthetic Food' }, { id: 'home-custom', name: 'Synthetic Home' }];
+    const value: ConfirmedReceiptValue = { merchant: 'Synthetic Market', purchasedDate: '2026-10-01', purchasedTime: null,
+      totalAmountYen: 200, accountId: 'synthetic-wallet', categoryId: 'food-custom', items: [{ id: 'milk', name: 'Synthetic Milk', amountYen: 200, categoryId: 'food-custom' }] };
+    for (const receiptId of ['a', 'b', 'c']) await repository.putRecords(learning.recordsForConfirmation(receiptId, value, categories, '2026-10-01T00:00:00Z'));
+    const itemRule = (await learning.listRules(categories)).find(rule => rule.targetType === 'item')!;
+    expect(itemRule).toMatchObject({ normalizedName: 'synthetic milk', receipts: 3, matchingReceipts: 3, agreementPercent: 100, enabled: true });
+    await learning.setRuleOverride(itemRule, { categoryId: 'home-custom' });
+    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories })).resolves.toMatchObject({ itemCategories: ['home-custom'] });
+    await learning.setRuleOverride(itemRule, { disabled: true });
+    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories })).resolves.toMatchObject({ itemCategories: [null] });
+    await learning.setRuleOverride(itemRule, { deleted: true, disabled: false });
+    expect((await learning.listRules(categories)).find(rule => rule.targetType === 'item')).toMatchObject({ enabled: false, deleted: true });
+    await learning.resetRuleOverride(itemRule);
+    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories })).resolves.toMatchObject({ itemCategories: ['food-custom'] });
+  });
+  it('lists and applies a stable merchant rule while keeping item rules higher priority', async () => {
+    const repository = await LocalDataRepository.open(crypto.randomUUID()); repositories.push(repository);
+    const learning = new LocalCategoryLearning(repository);
+    const categories = [{ id: 'food-custom', name: 'Synthetic Food' }, { id: 'home-custom', name: 'Synthetic Home' }];
+    const value: ConfirmedReceiptValue = { merchant: 'Synthetic Market', purchasedDate: '2026-10-01', purchasedTime: null,
+      totalAmountYen: 200, accountId: 'synthetic-wallet', categoryId: 'food-custom', items: [] };
+    for (const receiptId of ['a', 'b', 'c']) await repository.putRecords(learning.recordsForConfirmation(receiptId, value, categories, '2026-10-01T00:00:00Z'));
+    expect(await learning.listRules(categories)).toContainEqual(expect.objectContaining({ targetType: 'merchant', normalizedName: 'synthetic market', receipts: 3, matchingReceipts: 3 }));
+    await expect(learning.suggest({ merchant: value.merchant, items: [], categories })).resolves.toMatchObject({ merchantCategoryId: 'food-custom' });
+    const merchant = (await learning.listRules(categories)).find(rule => rule.targetType === 'merchant')!;
+    await learning.setRuleOverride(merchant, { categoryId: 'home-custom' });
+    await expect(learning.suggest({ merchant: value.merchant, items: [], categories })).resolves.toMatchObject({ merchantCategoryId: 'home-custom' });
+    await learning.resetRuleOverride(merchant);
+    const withItem = { ...value, merchant: 'Synthetic Other Market', items: [{ id: 'milk', name: 'Synthetic Milk', amountYen: 200, categoryId: 'home-custom' }] };
+    for (const receiptId of ['d', 'e', 'f']) await repository.putRecords(learning.recordsForConfirmation(receiptId, withItem, categories, '2026-10-02T00:00:00Z'));
+    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories })).resolves.toMatchObject({
+      merchantCategoryId: 'food-custom', itemCategories: ['home-custom'],
+    });
+  });
 });
