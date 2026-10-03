@@ -43,4 +43,4 @@ Service Workerは `/api/*` をcacheしません。Workerはブラウザー内の
 
 旧Next.jsアプリとserver adapterはlegacyまたは移行時の参照として残します。本番client、起動経路、家計データの正本ではありません。PWA production buildが共有するroot moduleは、browser-safeな12ファイルに限定しています。Vite pluginは実際のmodule graphを検査し、それ以外のroot moduleやlegacy runtime packageがbundleへ入る場合はbuildを失敗させます。詳細は[legacy文書index](legacy/README.md)と[legacy runtime inventory](LEGACY_RUNTIME_INVENTORY.md)を参照してください。現行PWAの動作と合成データによる確認手順は[ローカル利用フロー](LOCAL_FIRST_FLOW.md)に記載します。
 
-お問い合わせでは、利用者が録音を文字へ変換する時に音声をGoogleへ送り、送信する時に文章をGeminiへ送ります。不具合と改善要望の文章はGitHub Issueへ登録します。家計データやアカウントの個人情報を自動添付しません。詳細は[お問い合わせ](CONTACT.md)を参照してください。
+お問い合わせでは、録音終了後に音声をGoogleへ送り自動で文字起こしします。利用者が許可した場合は、文章をGeminiへ送り、1問ずつの深掘りと送信前要約を行います。最終送信時に文章を分類し、不具合と改善要望はGitHub Issueへ登録します。最初の問い合わせと深掘り後の文章をIssueに残し、深掘り途中の本文・質問・回答、家計データ、アカウントの個人情報はD1やIssueへ自動保存しません。詳細は[お問い合わせ](CONTACT.md)を参照してください。
