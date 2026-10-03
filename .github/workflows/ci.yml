@@ -53,7 +53,7 @@ jobs:
           - shard: 2
             scripts: test:e2e test:masters-e2e test:deletions-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e
           - shard: 3
-            scripts: test:manual-e2e test:transfers-e2e test:monthly-budgets-e2e test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e
+            scripts: test:manual-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e
           - shard: 4
             scripts: test:receipt-items-e2e test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e test:provider-only-reconciliation-e2e test:desktop-layout-e2e test:contact-e2e
     name: local-first (${{ matrix.shard }}/4)
