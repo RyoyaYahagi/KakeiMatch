@@ -272,6 +272,20 @@ describe("Actual browser ledger", () => {
     expect(sendHandlers.some((send) => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
   });
 
+  it("does not claim orphan cleanup when an import rejects before metadata can be enumerated", async () => {
+    const { ledger, api, selectedBudget, saveBudgetId, sendHandlers, budgetsByDir } = fixture([{ id: "budget", name: "Existing" }]);
+    api.importBudget.mockImplementationOnce(async () => {
+      // Equivalent failure seam: a partial SQLite write never appears in get-budgets.
+      expect(budgetsByDir.get("/failed/unlisted")).toEqual([]);
+      throw new Error("synthetic metadata write failure before ID return");
+    });
+    await expect(ledger.restoreBackup(new Uint8Array([8]), "/failed/unlisted")).rejects.toBeInstanceOf(ActualRestoreIncompleteError);
+    expect(sendHandlers.some(send => send.mock.calls.some(([method]) => method === "delete-budget"))).toBe(false);
+    expect(selectedBudget.current).toBe("budget"); expect(saveBudgetId).not.toHaveBeenCalled();
+    expect(api.init).toHaveBeenLastCalledWith({ dataDir: "/documents" });
+    expect(budgetsByDir.get("/documents")).toEqual([{ id: "budget", name: "Existing" }]);
+  });
+
   it("preserves incomplete-import classification when returning to the source directory also fails", async () => {
     const { ledger, api } = fixture([{ id: "budget", name: "Existing" }]);
     const reactivationError = new Error("source init failed");

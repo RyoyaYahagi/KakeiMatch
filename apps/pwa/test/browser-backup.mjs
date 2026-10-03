@@ -352,6 +352,24 @@ try {
   // The profile is deliberately signed out in this fresh browser context.
   await page.locator('#settings-tab').click();
   await page.getByText(/未ログイン|AIアカウントへ接続できません/).waitFor();
+  // Synthetic unresolved-import marker: new imports must stop even if the public list is empty.
+  const incompleteKey = 'kakeimatch.incomplete-actual-restore.v1';
+  const profileBeforeGuard = await page.evaluate(() => localStorage.getItem('kakeimatch.local-profile.v1'));
+  await page.evaluate(key => localStorage.setItem(key, JSON.stringify(['/kakeimatch-restore/synthetic-incomplete'])), incompleteKey);
+  await page.locator('#settings-tab').click();
+  await page.waitForFunction(() => document.querySelector('#backup-import')?.disabled === true);
+  assert.ok((await exportBackup()).byteLength > 64, 'an unresolved restore must not prevent exporting the active household');
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#backup-file').setInputFiles({ name: 'synthetic-blocked-retry.kmb', mimeType: 'application/octet-stream', buffer: Buffer.from(noRawBackup) });
+  await page.getByText(/新しい復元を開始できません/).waitFor();
+  assert.equal(await page.evaluate(() => localStorage.getItem('kakeimatch.local-profile.v1')), profileBeforeGuard);
+  await page.reload(); await waitForReady(); await page.locator('#settings-tab').click();
+  await page.waitForFunction(() => document.querySelector('#backup-import')?.disabled === true);
+  assert.ok((await exportBackup()).byteLength > 64, 'export remains available after restarting with the marker');
+  if (process.env.PWA_RESTORE_GUARD_SCREENSHOT_PATH) await page.locator('#backup-settings').screenshot({ path: process.env.PWA_RESTORE_GUARD_SCREENSHOT_PATH });
+  // Remove the marker only in this synthetic test to resume the existing full-wipe regression.
+  // Production intentionally has no API to declare unenumerable Actual data clean.
+  await page.evaluate(key => localStorage.removeItem(key), incompleteKey);
   if (process.env.PWA_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREENSHOT_PATH, fullPage: true });
   await wipeLocalData();
   await waitForReady();

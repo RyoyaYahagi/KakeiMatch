@@ -42,6 +42,8 @@ KakeiMatch設定に保存しているActual `budgetId` と端末固有の `dataD
 
 ## 原本の整理と端末データの消去
 
+ID返却前に失敗した不完全復元の印がある間は、新しい`.kmb`復元と単独家計簿ZIP読込も停止します。元のデータの閲覧・書き出しは続けられます。再読み込みで印を消さず、追加の一時保存先を作りません。公開APIの調査根拠と復旧手順は [不完全復元の調査](ACTUAL_RESTORE_CLEANUP.md) を参照してください。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts)
+
 利用者が設定画面から原本を削除できます。レシート画像はActual登録済みで確認値とActual取引IDがあるレコードだけを対象にします。CSV原本は取込情報とcanonical明細行を検証し、除外行とファイル内重複を除いた件数が保存済み明細行数と一致する場合だけを対象にします。別ファイルとの重複により保存行数が少ないCSVは、安全側に残します。削除しても確認値、明細行、照合結果、利用者判断、履歴は残ります。未確認・登録待ち・失敗・再試行待ちのレシート画像は削除対象にしません。原本の自動削除はしません。[実装: `local-data-lifecycle.ts`](../apps/pwa/src/local-data-lifecycle.ts)
 
 「この端末の家計データをすべて削除」は、IndexedDB内の全local profile、Actualの `/documents` 保存先、アプリが追跡しているrestore保存先を削除します。Actual公式APIが認識できるbudgetは公開API経由で削除します。Cloud account、Passkey、session、AI利用権限にはアクセスしません。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts) [実装: `actual-browser-ledger.ts`](../src/lib/actual-browser-ledger.ts)

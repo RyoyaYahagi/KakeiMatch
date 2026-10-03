@@ -9,6 +9,7 @@ import { initializeContactUi } from './contact-ui';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import { renderOssLicenses } from './oss-licenses';
+import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { recordLocalDiagnostic } from './local-diagnostics';
 import './style.css';
@@ -21,6 +22,7 @@ root.innerHTML = `
   <main>
     <h1 class="visually-hidden">KakeiMatch</h1>
     <p class="network-status" id="network" role="status" hidden></p>
+    <p class="network-status" id="app-update-notice" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
       <p class="nav-brand" aria-hidden="true">KakeiMatch</p>
       <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${iconMarkup('home')}<span>ホーム</span></button>
@@ -379,7 +381,9 @@ window.addEventListener('unhandledrejection', () => recordDiagnosticFailure(new 
 showNetwork();
 
 if ('serviceWorker' in navigator) {
-  void navigator.serviceWorker.register('/sw.js').catch(() => {
+  void navigator.serviceWorker.register('/sw.js').then(registration => {
+    observeAppUpdates(registration, element<HTMLElement>('app-update-notice'));
+  }).catch(() => {
     recordLocalDiagnostic('startup', { code: 'service_worker_failed' });
     message.textContent = 'オフライン用の画面を準備できませんでした。オンラインで再読込してください。';
   });

@@ -7,6 +7,7 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node test/sw.test.mjs",
+    "test:updates-e2e": "node test/browser-updates.mjs",
     "test:diagnostics-e2e": "node test/browser-diagnostics.mjs",
     "build": "tsc --noEmit && cf build",
     "icons": "node scripts/render-icons.mjs",

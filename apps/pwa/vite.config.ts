@@ -1,4 +1,6 @@
 import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { defineConfig, type Plugin } from 'vite';
 import { cloudflare } from '@cloudflare/vite-plugin';
@@ -63,6 +65,10 @@ export default defineConfig({
       if (this.environment.name !== 'client') return;
       const assets = Object.keys(bundle).filter(name => /\.(js|css|wasm)$/.test(name)).map(name => `/${name}`);
       this.emitFile({ type: 'asset', fileName: 'offline-assets.json', source: JSON.stringify(assets) });
+      const template = readFileSync(new URL('./public/sw.js', import.meta.url), 'utf8');
+      const build = createHash('sha256').update(JSON.stringify(assets)).update(template).digest('hex').slice(0, 20);
+      this.emitFile({ type: 'asset', fileName: `offline-assets-${build}.json`, source: JSON.stringify({ build, assets }) });
+      this.emitFile({ type: 'asset', fileName: 'sw.js', source: template.replaceAll('__KM_BUILD__', build) });
     },
   }],
   resolve: { alias: { '@': fileURLToPath(new URL('../../src', import.meta.url)) } },

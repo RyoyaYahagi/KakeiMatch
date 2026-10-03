@@ -4,7 +4,7 @@ import { LocalDataStorageError, type LocalDataRepository } from "../../../src/li
 import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType } from "../../../src/lib/receipt-validation";
 import { getAiAccessToken } from "./ai-auth";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
-import { LocalCategoryLearning } from "./local-category-learning";
+import { LocalCategoryLearning, type AppliedCategoryRule } from "./local-category-learning";
 
 const RECEIPT_KIND = "receipt-metadata" as const;
 const EXTRACTION_KIND = "receipt-extraction" as const;
@@ -41,7 +41,7 @@ export type LocalReceipt = {
   aiFlowId?: string;
   itemCategories?: Array<string | null>;
   classificationAttempt?: { flowId?: string; model: string; attemptedAt: string; itemCategories?: Array<string | null>; categoryId: string | null };
-  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "learned_rule" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string };
+  aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "learned_rule" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string; categoryRules?: AppliedCategoryRule[] };
   confirmedValue: ConfirmedReceiptValue | null;
   registration: { status: "pending" | "processing" | "applied" | "failed" | "deleted"; actualTransactionId: string | null; lastError: string | null };
 };
@@ -262,6 +262,13 @@ export class LocalReceiptService {
         const learnedItems = extraction.items.map((_, index) => resolveCurrent(rules.itemCategories[index]));
         const itemCategories = extraction.items.map((_, index) => learnedItems[index] ?? merchantRule ?? null);
         const usedLearningRule = !!merchantRule || learnedItems.some(Boolean);
+        const categoryRules: AppliedCategoryRule[] = [];
+        const addAppliedRule = (rule: AppliedCategoryRule | null, categoryId: string | null) => {
+          if (!rule || rule.categoryId !== categoryId || categoryRules.some(existing => existing.targetType === rule.targetType && existing.normalizedName === rule.normalizedName)) return;
+          categoryRules.push(rule);
+        };
+        if (extraction.items.length) itemCategories.forEach((categoryId, index) => addAppliedRule(learnedItems[index] ? rules.itemRules[index] ?? null : rules.merchantRule, categoryId));
+        else addAppliedRule(rules.merchantRule, merchantCategory);
         const usedLegacyMapping = !merchantRule && !!legacyMerchantCategory;
         const legacyJevAttempt = (receipt.aiSuggestion.source === "jev" || receipt.aiSuggestion.source === "unclassified") &&
           !!receipt.aiSuggestion.attemptedAt && !!receipt.aiSuggestion.model
@@ -282,7 +289,7 @@ export class LocalReceiptService {
           const categoryId = extraction.items.length ? itemCategories[0] ?? null : merchantCategory ?? resolveCurrent(receipt.aiSuggestion.categoryId);
           const updated = { ...receipt, classificationAttempt: attempted ? (receipt.classificationAttempt ?? attempted) : receipt.classificationAttempt,
             itemCategories: extraction.items.length ? itemCategories : receipt.itemCategories,
-            aiSuggestion: { categoryId, source: sourceWithoutJev, probabilities: null, model: null, attemptedAt: nowIso(this.options), ...(receipt.aiFlowId ? { flowId: receipt.aiFlowId } : {}) },
+            aiSuggestion: { categoryId, source: sourceWithoutJev, probabilities: null, model: null, attemptedAt: nowIso(this.options), ...(receipt.aiFlowId ? { flowId: receipt.aiFlowId } : {}), ...(categoryRules.length ? { categoryRules } : {}) },
             updatedAt: nowIso(this.options) };
           await this.save(updated);
           return categoryId;
@@ -292,7 +299,7 @@ export class LocalReceiptService {
           await this.save({ ...receipt, classificationAttempt: attempted ? (receipt.classificationAttempt ?? attempted) : receipt.classificationAttempt,
             itemCategories, aiSuggestion: { categoryId, source: itemCategories.some(Boolean) ? "jev" : "unclassified",
               probabilities: null, model: attempted?.model ?? null, attemptedAt: attempted?.attemptedAt ?? null,
-              ...(attempted?.flowId ? { flowId: attempted.flowId } : {}) }, updatedAt: nowIso(this.options) });
+              ...(attempted?.flowId ? { flowId: attempted.flowId } : {}), ...(categoryRules.length ? { categoryRules } : {}) }, updatedAt: nowIso(this.options) });
           return categoryId;
         };
 
@@ -342,7 +349,7 @@ export class LocalReceiptService {
           const categoryId = itemCategories[0] ?? null;
           await this.save({ ...receipt, itemCategories,
             classificationAttempt: { flowId: receipt.aiFlowId, model: body.model, attemptedAt: timestamp, itemCategories: jevItems, categoryId: null },
-            aiSuggestion: { categoryId, source: itemCategories.some(Boolean) ? "jev" : "unclassified", probabilities: null, model: body.model, attemptedAt: timestamp, flowId: receipt.aiFlowId }, updatedAt: timestamp });
+            aiSuggestion: { categoryId, source: itemCategories.some(Boolean) ? "jev" : "unclassified", probabilities: null, model: body.model, attemptedAt: timestamp, flowId: receipt.aiFlowId, ...(categoryRules.length ? { categoryRules } : {}) }, updatedAt: timestamp });
           return categoryId;
         }
 
