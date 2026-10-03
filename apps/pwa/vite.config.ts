@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { defineConfig, type Plugin } from 'vite';
 import { cloudflare } from '@cloudflare/vite-plugin';
 
@@ -31,6 +32,7 @@ const runtimeBoundary: Plugin = {
 };
 
 export default defineConfig({
+  define: { __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
   server: { host: '127.0.0.1', headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
   // Built assets are served from the app's own origin, as on Cloudflare.
   // Vite's default CORS adds Vary: Origin, unlike the deployed asset response.
