@@ -272,7 +272,10 @@ describe("households, devices, and credentials", () => {
     const second = await join();
     expect((await call("POST", "/devices")).json.error).toBe("device_limit_exceeded");
     const listed = await call("GET", "/devices", { credential: first.credential });
-    expect(listed.json.devices.map((device: { deviceId: string; current: boolean }) => [device.deviceId, device.current])).toEqual([[first.deviceId, true], [second.deviceId, false]]);
+    // Devices registered in the same millisecond are ordered by their random IDs, so compare without order.
+    const devices = listed.json.devices.map((device: { deviceId: string; current: boolean }) => [device.deviceId, device.current]);
+    expect(devices).toHaveLength(2);
+    expect(devices).toEqual(expect.arrayContaining([[first.deviceId, true], [second.deviceId, false]]));
     expect(listed.text).not.toContain(first.credential);
   });
 
