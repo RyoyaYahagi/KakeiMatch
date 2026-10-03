@@ -6,7 +6,7 @@ import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
-import { recordDiagnosticAction, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
+import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import './style.css';
 
@@ -358,6 +358,8 @@ function showNetwork() {
 window.addEventListener('online', showNetwork);
 window.addEventListener('offline', showNetwork);
 recordDiagnosticScreen('home');
+window.addEventListener('error', () => recordDiagnosticFailure(new Error('unhandled_ui_error')));
+window.addEventListener('unhandledrejection', () => recordDiagnosticFailure(new Error('unhandled_ui_rejection')));
 showNetwork();
 
 if ('serviceWorker' in navigator) {
