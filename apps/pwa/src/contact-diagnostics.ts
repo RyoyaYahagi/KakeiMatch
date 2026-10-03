@@ -1,3 +1,5 @@
+import { recordLocalDiagnostic, type DiagnosticFeature } from './local-diagnostics';
+
 export type DiagnosticScreen =
   | 'home'
   | 'records'
@@ -132,6 +134,9 @@ export function safeDiagnosticErrorCode(error: unknown): SafeDiagnosticErrorCode
 
 export function recordDiagnosticFailure(error: unknown, screen: DiagnosticScreen = currentScreen) {
   push({ type: 'error', at: Date.now(), screen, errorCode: safeDiagnosticErrorCode(error) });
+  const action = [...events].reverse().find(event => event.type === 'action' && event.screen === screen) as Extract<DiagnosticEvent, { type: 'action' }> | undefined;
+  const feature: DiagnosticFeature = action?.action === 'receipt_ai_started' ? 'ai' : screen === 'records' || screen === 'statements' || screen === 'reconciliation' ? 'save' : 'runtime';
+  recordLocalDiagnostic(feature, error);
 }
 
 export function getSanitizedDiagnosticContext(now = Date.now()): SanitizedDiagnosticContext {
