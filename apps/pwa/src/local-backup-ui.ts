@@ -31,7 +31,9 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   };
   const cleanupInfo = text('p', '');
   async function refresh() {
-    incompleteWarning.textContent = localStorage.getItem(INCOMPLETE_RESTORE_KEY) ? '復元途中のデータが残っている可能性があります。アプリからの全削除は停止しています。元の家計データのバックアップを保存し、ブラウザーのサイトデータ削除を利用してください。' : '';
+    const incomplete = localStorage.getItem(INCOMPLETE_RESTORE_KEY) !== null;
+    incompleteWarning.textContent = incomplete ? '復元途中のデータが残っている可能性があります。新しい復元とアプリからの全削除は停止しています。元の家計データのバックアップを保存し、ブラウザーのサイトデータ削除を利用してください。' : '';
+    (document.getElementById('backup-import') as HTMLButtonElement).disabled = incomplete;
     const saved = await repository.get<{ lastExportAt: string }>('settings:backup');
     const at = saved?.value.lastExportAt ?? null;
     exportDate.textContent = at ? `最終書き出し生成日時：${new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}（日本時間）` : 'まだバックアップを書き出していません。';
