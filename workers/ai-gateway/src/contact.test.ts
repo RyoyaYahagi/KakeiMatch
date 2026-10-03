@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleRequest, type GatewayEnv, type AccountD1Binding } from './worker';
-import { parseContactInput, parseContactInterviewInput, parseContactInterview } from './contact';
+import { parseContactInput, parseContactInterviewInput, parseContactInterview, parseDiagnosticContext } from './contact';
 import { monthlyCosts } from './ai-provider-costs';
 
 const origin = 'https://contact.example.test';
@@ -21,7 +21,16 @@ function request(body: unknown, path = '/api/contact', headers: Record<string,st
 const message = { flowId, message: '合成テスト: 記録を追加すると保存が失敗します。' };
 const wav = Buffer.from('RIFF0000WAVEsynthetic-audio').toString('base64');
 const audio = { flowId, audioBase64: wav, contentType: 'audio/wav' };
-const interview = { flowId, message: '入力が面倒です', history: [], finish: false };
+const diagnostic = {
+  version: 1 as const,
+  currentScreen: 'records',
+  network: 'online',
+  events: [
+    { type: 'screen_open', secondsAgo: 12, screen: 'records' },
+    { type: 'error', secondsAgo: 8, screen: 'records', errorCode: 'storage' },
+  ],
+};
+const interview = { flowId, message: '入力が面倒です', history: [], finish: false, diagnostic };
 function provider(text: string, model = 'gemini-3.5-flash-lite') {
   return { model, steps: [{ type: 'model_output', content: [{ type: 'text', text }] }], usage: { total_input_tokens: 100, total_output_tokens: 20, total_tokens: 120 } };
 }
@@ -75,7 +84,15 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect(await response.json()).toEqual({ status: 'ask', kind: 'improvement', question: 'どの場面で一番手間に感じますか？', recommendation: '品目を入力する場面です。', summary: '' });
     const payload = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
     expect(payload.store).toBe(false);
-    expect(JSON.parse(payload.input[1].text)).toEqual({ message: interview.message, history: [], finish: false });
+    expect(payload.input[1].text).toContain('TRUSTED_PRODUCT_CONTEXT');
+    expect(payload.input[1].text).toContain('local-first household ledger PWA');
+    expect(JSON.parse(payload.input[2].text)).toEqual({
+      userReport: interview.message,
+      interviewHistory: [],
+      finish: false,
+      sanitizedDiagnosticContext: diagnostic,
+    });
+    expect(JSON.stringify(payload.input[1])).not.toContain(interview.message);
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM contact_submissions').get()?.n).toBe(0);
 
     const readyInput = { ...interview, flowId: crypto.randomUUID(), history: [{ question: 'どの場面で一番手間に感じますか？', answer: '品目を入力する場面です。' }] };
@@ -87,8 +104,8 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect(readyResponse.status).toBe(200);
     expect((await readyResponse.json() as { status: string }).status).toBe('ready');
   });
-  it('keeps the original complaint beside the user-approved refined text in the GitHub issue', async () => {
-    const refined = { flowId, message: '困っていること: 保存できない。\n期待すること: 正常に保存したい。\n再現条件: 未確認。', originalMessage: '保存できなくて困っています' };
+  it('keeps the original complaint and sanitized diagnostics beside the user-approved refined text in the GitHub issue', async () => {
+    const refined = { flowId, message: '困っていること: 保存できない。\n期待すること: 正常に保存したい。\n再現条件: 未確認。', originalMessage: '保存できなくて困っています', diagnostic };
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(githubOk());
     const response = await run(request(refined), fetchImpl);
     expect(response.status).toBe(200);
@@ -97,9 +114,13 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect(post.body).toContain(refined.originalMessage);
     expect(post.body).toContain('深掘り後の内容:');
     expect(post.body).toContain(refined.message);
+    expect(post.body).toContain('アプリ側で確認できた情報');
+    expect(post.body).toContain('storage');
+    expect(post.body).toContain('records');
     const row = sqlite.prepare('SELECT * FROM contact_submissions').get();
     expect(JSON.stringify(row)).not.toContain(refined.originalMessage);
     expect(JSON.stringify(row)).not.toContain(refined.message);
+    expect(JSON.stringify(row)).not.toContain('storage');
   });
   it('sends Base64 audio inline with transcribe model and meters its price', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('合成の音声入力です。', 'gemini-3.5-transcribe')));
@@ -182,5 +203,8 @@ it('rejects oversize, invalid encodings, malformed interview history and mismatc
   expect(parseContactInput({ ...message, originalMessage: 'x'.repeat(4001) }, false)).toBeNull();
   expect(parseContactInterviewInput({ ...interview, history: Array.from({ length: 5 }, () => ({ question: 'q', answer: 'a' })) })).toBeNull();
   expect(parseContactInterviewInput({ ...interview, history: [{ question: 'q', answer: '' }] })).toBeNull();
+  expect(parseDiagnosticContext({ ...diagnostic, events: [{ type: 'error', secondsAgo: 1, screen: 'records', errorCode: 'secret_user_text' }] })).toBeNull();
+  expect(parseDiagnosticContext({ ...diagnostic, currentScreen: 'receipt:private-id' })).toBeNull();
+  expect(parseContactInput({ ...message, diagnostic: { ...diagnostic, extra: 'private' } }, false)).toBeNull();
   expect(() => parseContactInterview(JSON.stringify({ status: 'ready', kind: 'bug', question: 'extra', recommendation: '', summary: 'summary' }))).toThrow('invalid_provider_response');
 });
