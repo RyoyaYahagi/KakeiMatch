@@ -73,6 +73,9 @@
 /* Base */
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
+/* iOS/Safari paints a rectangular tap highlight over the full hit area by default.
+   Remove that touch-only flash; :focus-visible below still provides keyboard focus feedback. */
+button, summary { -webkit-tap-highlight-color: transparent; }
 main { max-width: 640px; margin: 0 auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
 h1 { margin: 0; font-size: 1.375rem; }
 h2 { font-size: 1.125rem; margin: var(--space-6) 0 var(--space-3); }
