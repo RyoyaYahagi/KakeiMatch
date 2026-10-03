@@ -122,12 +122,20 @@ try {
   // Optional guided interview asks one plain-language question at a time and requires final user approval.
   await page.locator('#contact-message').fill('改善したいけれど、入力が面倒です');
   await page.locator('#contact-interview-optin').check();
+  await page.locator('#contact-diagnostics-optin').check();
   assert.equal(await button('詳しくしてから送信').isEnabled(), true);
   await button('詳しくしてから送信').click();
   await page.getByText('どの場面で一番手間に感じますか？', { exact: true }).waitFor();
   assert.equal(await page.getByText('品目を入力するために何度も操作する場面です。', { exact: true }).count(), 1);
   assert.equal(interviewRequests.at(-1).body.history.length, 0);
   assert.equal(interviewRequests.at(-1).body.finish, false);
+  const diagnostic = interviewRequests.at(-1).body.diagnostic;
+  assert.equal(diagnostic.version, 1);
+  assert.equal(diagnostic.currentScreen, 'settings');
+  assert.equal(diagnostic.network, 'online');
+  assert.equal(Array.isArray(diagnostic.events), true);
+  assert.equal(diagnostic.events.some(event => event.screen === 'contact'), false, 'support-screen events are excluded from the attached pre-contact context');
+  assert.equal(JSON.stringify(diagnostic).includes('改善したいけれど、入力が面倒です'), false, 'diagnostics never contain the user report text');
   await button('おすすめを使う').click();
   assert.equal(await page.locator('#contact-interview-answer').inputValue(), '品目を入力するために何度も操作する場面です。');
   await button('回答して続ける').click();
@@ -145,9 +153,12 @@ try {
   const refined = contactRequests.at(-1).body;
   assert.equal(refined.originalMessage, '改善したいけれど、入力が面倒です');
   assert.match(refined.message, /再現条件: 未確認/);
-  assert.deepEqual(Object.keys(refined).sort(), ['flowId', 'message', 'originalMessage']);
+  assert.deepEqual(Object.keys(refined).sort(), ['diagnostic', 'flowId', 'message', 'originalMessage']);
+  assert.deepEqual(refined.diagnostic, diagnostic);
+  assert.equal(JSON.stringify(refined.diagnostic).includes('品目を入力するために何度も操作する場面です。'), false);
   assert.equal(interviewRequests.every(value => value.authorization === 'Bearer synthetic-contact-token'), true);
   await page.locator('#contact-interview-optin').uncheck();
+  await page.locator('#contact-diagnostics-optin').uncheck();
 
   // Definite failures preserve the text and flow ID for a retry.
   await page.locator('#contact-message').fill('不具合の報告です');
