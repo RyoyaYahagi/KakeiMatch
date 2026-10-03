@@ -361,6 +361,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         } else link.hidden = true;
       } else link.hidden = true;
       result.hidden = false;
+      if (originalMessage) resetInterview();
       status.textContent = '送信しました。送信した文章はこの画面内に残しています。';
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
