@@ -56,9 +56,17 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
-  await page.getByRole('button', { name: /^品目一覧/ }).click();
+  assert.equal(await row(0).getAttribute('open'), null);
+  assert.equal(await row(1).getAttribute('open'), null);
+  await click('品目一覧');
   assert.equal(await page.locator('#receipt-merchant').isVisible(), false);
   assert.equal(await row(0).isVisible(), true);
+  const collapsedHeight = (await row(0).locator('summary').boundingBox()).height;
+  assert.ok(collapsedHeight <= 52, `collapsed receipt item row should stay compact, got ${collapsedHeight}px`);
+  await row(0).locator('summary').click();
+  await row(1).locator('summary').click();
+  assert.equal(await row(0).getAttribute('open'), null);
+  assert.equal(await row(1).getAttribute('open'), '');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await click('全体');
   assert.equal(await page.locator('#receipt-merchant').isVisible(), true);
