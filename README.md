@@ -23,8 +23,6 @@
 
 家計簿アプリは記録や集計には優れています。しかし「レシートで記録した支出」と「後日届くカード明細」の照合は、人の手に残りがちです。KakeiMatchは、この照合作業を減らすために作りました。
 
-主な利用者は親で、開発者本人も使っています。スマートフォンで毎日開くことを前提に設計しました。
-
 ### 目指したこと
 
 1. **レシートから楽に記録できる**: 撮影した画像から店名・日付・金額・品目を読み取り、カテゴリも提案します
@@ -149,175 +147,9 @@ flowchart TB
 | 検証・解析 | Zod、csv-parse |
 | テスト | Vitest、Playwright（合成データによるブラウザーE2E）、GitHub Actions |
 
-### 開発の進め方
-
-AIコーディングエージェントと一緒に開発しています。[AGENTS.md](AGENTS.md)と[CONTRIBUTING.md](CONTRIBUTING.md)に、データ境界、AIの使い方、UIの原則、ブランチ運用を明文化しました。機能ごとにIssueと小さなPull Requestで進め、CIで型検査、単体テスト、照合の評価、ブラウザーE2Eを実行しています。テストには実際の家計データを使わず、合成データだけを使います。
-
-## 開発者向け
-
-### 必要なもの
-
-- Node.js 22
-- pnpm（`package.json` の `packageManager` で固定したバージョン）
-
-pnpmはCorepackで用意します。rootのscriptが内部で `pnpm` を呼ぶため、最初に一度Corepackを有効にしてください。
-
-```sh
-corepack enable
-```
-
-### ローカルで動かす
-
-リポジトリのrootで実行します。
-
-```sh
-pnpm install
-pnpm dev
-```
-
-`dev` はCloudflare Vite Plugin経由で、PWAと同じoriginのAPIを <http://127.0.0.1:5173> で起動します。ローカルではCloud accountとAIを設定していないため、`/api/ai/*` などは `503 not_configured` を返します。それ以外の家計機能はそのまま試せます。
-
-本番と同じbuild出力で確認する場合は次を実行します。
-
-```sh
-pnpm build
-pnpm start
-```
-
-### テスト
-
-```sh
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm eval:reconciliation
-pnpm --dir apps/pwa test
-```
-
-ブラウザーE2Eは、build済みのPWAを起動してから実行します。
-
-```sh
-pnpm --dir apps/pwa build
-pnpm --dir apps/pwa exec playwright-core install chromium
-pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port 5173
-```
-
-別のターミナルで、起動したURLを指定して実行します。
-
-```sh
-PWA_E2E_URL=http://127.0.0.1:5173 pnpm --dir apps/pwa test:e2e
-```
-
-E2Eのscript一覧は [apps/pwa/package.json](apps/pwa/package.json) にあります。AI Gateway Workerは独立したnpm packageです。
-
-```sh
-npm ci --prefix workers/ai-gateway
-npm run --prefix workers/ai-gateway test
-npm run --prefix workers/ai-gateway typecheck
-```
-
-テストやfixtureに実際の家計情報を入れないでください。
-
-### リポジトリ構成
-
-```text
-apps/pwa/             本番のPWAと、それを配信するWorkerの入口
-workers/ai-gateway/   Cloud account・AI・お問い合わせのAPIとD1 migration
-src/                  PWAと共有する一部のmoduleと、legacyサーバー実装
-eval/                 照合ロジックの評価セット
-docs/                 設計・運用の資料
-legacy/               以前のサーバー中心構成の資料
-```
-
 ## セルフホスト
 
-自分のCloudflareアカウントでKakeiMatchを動かす手順です。Cloudflare Workers、D1、Rate Limitingを使います。AI機能を使う場合は、GeminiとTypeSafe（Jev）のAPIキーも必要で、利用量に応じて費用がかかります。
-
-> [!IMPORTANT]
-> ブラウザーの保存領域はURL（origin）ごとに分かれます。利用を始めた後にWorker名やURLを変えると、保存済みの家計データがアプリから見えなくなります。公開するWorker名とURLは最初に決め、変更しないでください。
-
-### 1. 設定を自分の環境に合わせる
-
-[apps/pwa/cloudflare.config.ts](apps/pwa/cloudflare.config.ts) の本番用の値は、このリポジトリの公開環境を指しています。次の値を変更してください。
-
-| 設定 | 内容 |
-| --- | --- |
-| `worker.name` の本番値（`kakeimatch`） | 公開するWorker名 |
-| `CLOUD_ACCOUNT_ORIGIN` の本番値 | 公開URL（例: `https://<worker名>.<subdomain>.workers.dev`） |
-| `GITHUB_ISSUES_REPOSITORY` | お問い合わせの登録先リポジトリ（`owner/repo`） |
-| `AI_USER_RATE_LIMIT` の本番 `namespace` | アカウント内で重複しないRate LimitingのID |
-| `AI_FREE_MONTHLY_LIMIT` | アカウントごとの月間AI利用回数（初期値 `30`） |
-
-お問い合わせ画面からリンクしているIssue一覧のURLは [apps/pwa/src/contact-ui.ts](apps/pwa/src/contact-ui.ts) にあります。
-
-### 2. Cloudflareにログインし、D1を作る
-
-Cloudflareの操作には、新しい公式CLIの `cf` を使います。`cf` はopen betaのため、実行前に `cf --help` と `cf cli search "<やりたいこと>"` で現在のコマンドを確認してください。
-
-```sh
-pnpm --dir apps/pwa exec cf auth login
-pnpm --dir apps/pwa exec cf d1 create --name <D1の名前>
-```
-
-作成したD1のIDと名前を環境変数に設定します。本番modeのbuildは、この2つがないと失敗します。
-
-```sh
-export ACCOUNT_D1_ID='<D1のID>'
-export ACCOUNT_D1_NAME='<D1の名前>'
-```
-
-### 3. D1にmigrationを適用する
-
-```sh
-pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
-```
-
-### 4. デプロイする
-
-```sh
-pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run
-pnpm --dir apps/pwa exec cf deploy --mode production-deploy
-```
-
-`--mode production-deploy` を付けない通常のbuildは、開発用のpreview設定を選びます。
-
-### 5. secretを登録する
-
-次の値をWorkerのsecretとして登録します。値はGit、設定ファイル、シェル履歴、コマンド引数に残さないでください。初回デプロイの前後で登録方法が異なるため、[Cloudflareの公式手順](https://developers.cloudflare.com/workers/configuration/secrets/)と、その時点の `cf` を確認してください。
-
-| secret | 用途 | 必要な場面 |
-| --- | --- | --- |
-| `BETTER_AUTH_SECRET` | Cloud accountのsession署名 | ログイン |
-| `ACCOUNT_BOOTSTRAP_SECRET` | 招待の発行 | アカウント作成 |
-| `AI_GATEWAY_AUTH_SECRET` | AI要求用トークンの署名 | AI |
-| `GEMINI_API_KEY` | レシート読み取り、お問い合わせ | AI |
-| `TYPESAFE_API_KEY` | カテゴリ提案（Jev） | AI |
-| `GITHUB_ISSUES_TOKEN` | お問い合わせのIssue登録（対象リポジトリのIssues書き込み権限） | お問い合わせ |
-| `AI_GUARDRAILS_JSON` | 費用上限の上書き。未設定なら初期値で制限 | 任意 |
-| `AI_EMERGENCY_STOP` | `true` で全AIを停止 | 任意 |
-
-secretを登録しなくても、AI以外の家計機能は使えます。その場合、ログインとAIの要求は拒否されます。
-
-### 6. 最初のアカウントを招待する
-
-アカウントは招待制です。`ACCOUNT_BOOTSTRAP_SECRET` を使い、[招待script](workers/ai-gateway/scripts/account-invite.mjs)で招待URLを発行します。手順は[デプロイ](docs/DEPLOYMENT.md#本人による招待と実機確認)を参照してください。招待URLを開き、Passkeyを登録するとログインできます。
-
-### 7. 公開後に確認する
-
-- `GET /` が200を返し、`Cross-Origin-Opener-Policy: same-origin` と `Cross-Origin-Embedder-Policy: require-corp` が付いている
-- 未ログインでの `/api/account/*` と `/api/ai/*` が401や403で拒否され、500やsecretを返さない
-- iPhoneのSafariでホーム画面に追加し、機内モードでも保存済みデータを閲覧できる
-
-本番の更新手順、費用上限の運用、お問い合わせの導入は[デプロイ](docs/DEPLOYMENT.md)と[AI費用の停止と再開](docs/AI_COST_GUARDRAILS.md)にまとめています。
-
-> [!NOTE]
-> rootの `pnpm deploy` は、このリポジトリの本番Workerへのデプロイを想定したscriptです。`pnpm deploy:preview` は開発者用のpreview Workerを指しています。セルフホストでは上記のコマンドを使ってください。
-
-### データについての注意
-
-- `.kmb` バックアップは暗号化されません。安全な場所に保管してください
-- previewや開発環境では、合成データだけを使ってください
-- 以前のNext.js・Docker Compose・Actual Sync Serverによる構成はlegacyです。セルフホストに自宅サーバーは不要です
+自分用のセルフホスト環境では、APIキーを用意する代わりに、ChatGPTのサブスクリプションの利用枠でAI機能を使えるようにする予定です。実験的な機能として[Issue #147](https://github.com/RyoyaYahagi/KakeiMatch/issues/147)で開発を進めています。
 
 ## ドキュメント
 
@@ -350,10 +182,6 @@ secretを登録しなくても、AI以外の家計機能は使えます。その
 - [暗号化クラウド保存の共通形式](docs/ENCRYPTED_HOUSEHOLD_STORAGE.md)（開発中）
 - [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhoneでの確認状況
 - [コントリビューション](CONTRIBUTING.md): ブランチとPull Requestの運用
-
-## legacyサーバー実装
-
-以前のNext.js、SQLite、ファイル保存、Actual CLIのコードは、テストと移行の参照用に残しています。`legacy:` で始まるscriptは開発専用で、PWAの利用やデプロイには不要です。PWAは旧サーバーのSQLiteを直接読みません。旧Actual ServerのZIPに含まれるのはActual Budgetの取引だけで、旧receipt/statement metadataは自動移行されません。詳細は[legacy文書index](docs/legacy/README.md)と[legacy runtime inventory](docs/LEGACY_RUNTIME_INVENTORY.md)を参照してください。
 
 ## ライセンス
 
