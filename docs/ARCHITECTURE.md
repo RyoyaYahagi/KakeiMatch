@@ -35,6 +35,8 @@ Service Workerは `/api/*` をcacheしません。Workerはブラウザー内の
 
 ## 端末内データの移行
 
+Issue #38のクラウド保存は、明示同意後の暗号文のみを端末外へ送る追加経路として段階的に実装します。端末側の共通暗号形式と復旧コードは[暗号化クラウド保存の共通形式](ENCRYPTED_HOUSEHOLD_STORAGE.md)に定義します。現段階では送信・保存先・同意UIは未実装で、通常の端末内利用には影響しません。将来の保存先へ平文家計データ、復旧コード、復号鍵を送らず、Cloud account/Passkeyと復号鍵を分けます。
+
 `.kmb` archiveにはActualブラウザー版の家計簿、KakeiMatchの端末記録、残っているレシート画像と明細CSVを含めます。復元時は内容を検証し、新しい端末profileとActual data directoryへstagingしてから、有効profileを切り替えます。Cloud credentials、session、AI token、利用権限、AI利用量、provider secretsは含めません。archiveは暗号化されません。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。
 
 旧Next.js環境から移行する場合、Actual ZIPにはActual Budgetの取引だけが含まれます。legacy Next.jsには `.kmb` export機能がありません。`.kmb` はlocal-first PWAで作成した場合に限り、KakeiMatchの端末記録や残っているreceipt/statement原本も含みます。PWAはlegacy server SQLiteを直接読みません。旧Next.js環境のreceipt/statement metadataは自動移行されず、Actual ZIPにも含まれません。これらの記録が必要な場合は別途手動移行してください。Actual孤児データの特殊な整理制約はIssue #58で管理します。
