@@ -272,7 +272,24 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const list = document.createElement('ul'); list.className = 'record-rows';
       for (const receipt of pending) {
         const item = document.createElement('li');
-        item.append(pendingReceiptRow(receipt.confirmedValue?.merchant || receipt.extraction?.merchant || (receipt.image ? '未入力のレシート' : '未入力の支出'), () => { void receiptEditor(receipt).catch(report); }));
+        const title = receipt.confirmedValue?.merchant || receipt.extraction?.merchant || (receipt.image ? '未入力のレシート' : '未入力の支出');
+        const canDeletePending = receipt.registration.status === 'pending' && receipt.registration.actualTransactionId === null;
+        item.append(pendingReceiptRow(title, () => { void receiptEditor(receipt).catch(report); }, canDeletePending ? () => {
+          if (!window.confirm(`「${title}」を削除しますか？このレシート画像と確認待ちの内容も削除されます。`)) return;
+          const removeButton = item.querySelector<HTMLButtonElement>('.pending-receipt-delete');
+          if (!removeButton || removeButton.disabled) return;
+          removeButton.disabled = true;
+          removeButton.textContent = '削除中…';
+          removeButton.setAttribute('aria-label', `削除中: ${title}`);
+          void receipts.deletePending(receipt.id).then(async () => {
+            if (screenTab === 'receipt') await recordsPage();
+          }).catch(error => {
+            report(error);
+            removeButton.textContent = '削除';
+            removeButton.setAttribute('aria-label', `削除: ${title}`);
+            removeButton.disabled = false;
+          });
+        } : undefined));
         list.append(item);
       }
       section.append(text('h3', `確認待ち ${pending.length}件`, 'record-day-header'), list);
@@ -555,8 +572,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (pendingEdit) return Promise.resolve();
       const value = read();
       saveTail = saveTail.catch(() => undefined).then(async () => {
-        await repository.put({ id: draftId, kind: 'category-state', value, updatedAt: new Date().toISOString() });
-        status.textContent = '入力内容を端末に保存しました。';
+        const saved = await repository.putIfRecordExists({ id: draftId, kind: 'category-state', value, updatedAt: new Date().toISOString() }, receipt.id);
+        status.textContent = saved ? '入力内容を端末に保存しました。' : 'この確認待ちレシートは削除されています。画面を開き直してください。';
       });
       return saveTail;
     }

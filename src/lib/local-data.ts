@@ -209,6 +209,23 @@ export class LocalDataRepository {
     }
   }
 
+  /** Writes a receipt draft only while its receipt still exists in the same profile. */
+  async putIfRecordExists<T>(record: LocalDataRecord<T>, requiredRecordId: string): Promise<boolean> {
+    try {
+      const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
+      const done = transactionDone(transaction);
+      const store = transaction.objectStore(RECORDS_STORE);
+      const required = store.get(toKey(this.profileId, requiredRecordId));
+      let exists = false;
+      required.onsuccess = () => {
+        exists = required.result !== undefined;
+        if (exists) store.put({ ...record, profileId: this.profileId, key: toKey(this.profileId, record.id) });
+      };
+      await done;
+      return exists;
+    } catch (error) { throw storageError(error); }
+  }
+
   async put<T>(record: LocalDataRecord<T>): Promise<void> {
     try {
       const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
@@ -288,6 +305,52 @@ export class LocalDataRepository {
     } catch (error) { throw storageError(error); }
   }
 
+  /** Removes one receipt and its extraction in the same transaction as its unshared image blob. */
+  async deleteReceiptData(receiptId: string, extractionId: string, draftId: string): Promise<void> {
+    try {
+      const transaction = this.database.transaction([RECORDS_STORE, BLOBS_STORE], "readwrite");
+      const done = transactionDone(transaction);
+      const records = transaction.objectStore(RECORDS_STORE);
+      const blobs = transaction.objectStore(BLOBS_STORE);
+      const profileRecords = records.index("profileId").openCursor(IDBKeyRange.only(this.profileId));
+      const referencedBlobIds = new Set<string>();
+      const receiptOwnersByBlobId = new Map<string, string>();
+      profileRecords.onsuccess = () => {
+        const cursor = profileRecords.result;
+        if (cursor) {
+          const row = cursor.value as StoredRecord;
+          if (row.id !== receiptId) {
+            collectBlobReferences(row.value, referencedBlobIds);
+            if (row.kind === "receipt-metadata") {
+              const image = (row.value as { image?: { blobId?: unknown } } | null)?.image;
+              if (typeof image?.blobId === "string") receiptOwnersByBlobId.set(image.blobId, row.id);
+            }
+          }
+          cursor.continue();
+          return;
+        }
+        records.delete(toKey(this.profileId, receiptId));
+        records.delete(toKey(this.profileId, extractionId));
+        records.delete(toKey(this.profileId, draftId));
+        records.delete(toKey(this.profileId, `category-learning:${receiptId}`));
+        const owned = blobs.index("owner").openCursor(IDBKeyRange.only([this.profileId, "receipt", receiptId]));
+        owned.onsuccess = () => {
+          const blobCursor = owned.result;
+          if (!blobCursor) return;
+          const row = blobCursor.value as StoredBlob;
+          if (!referencedBlobIds.has(row.id)) blobCursor.delete();
+          else {
+            const newOwnerId = receiptOwnersByBlobId.get(row.id);
+            if (!newOwnerId) { transaction.abort(); return; }
+            blobCursor.update({ ...row, ownerId: newOwnerId });
+          }
+          blobCursor.continue();
+        };
+      };
+      await done;
+    } catch (error) { throw storageError(error); }
+  }
+
   async estimate(): Promise<StorageEstimate> {
     try {
       if (!navigator.storage?.estimate) return { usage: null, quota: null };
@@ -349,6 +412,20 @@ export class LocalDataRepository {
   private async listBlobs(): Promise<LocalBlob[]> {
     const rows = await requestResult(this.database.transaction(BLOBS_STORE).objectStore(BLOBS_STORE).index("profileId").getAll(this.profileId)) as StoredBlob[];
     return rows.map(stripBlob);
+  }
+}
+
+
+function collectBlobReferences(value: unknown, references: Set<string>, seen = new WeakSet<object>()): void {
+  if (!value || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) collectBlobReferences(item, references, seen);
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "blobId" && typeof item === "string") references.add(item);
+    else collectBlobReferences(item, references, seen);
   }
 }
 

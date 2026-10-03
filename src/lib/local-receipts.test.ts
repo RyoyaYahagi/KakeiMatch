@@ -1,6 +1,7 @@
 import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalDataRepository } from "./local-data";
+import { createPortableBackup } from "./local-backup-format";
 import { LocalReceiptService, receiptAllocations, type ConfirmedReceiptValue } from "../../apps/pwa/src/local-receipts";
 
 const extraction = {
@@ -540,4 +541,106 @@ it("retains raw extraction when item classification fails", async () => {
   expect((await service.get(receipt.id))?.extraction).toEqual(extraction);
   expect(await repository.get(`receipt-extraction:${receipt.id}`)).not.toBeNull();
   expect((await service.get(receipt.id))?.registration.status).toBe("pending");
+});
+
+describe("pending receipt deletion", () => {
+  it("atomically removes only the receipt, extraction, draft, and its unshared image", async () => {
+    const { repository, service } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    await repository.put({ id: `receipt-extraction:${receipt.id}`, kind: "receipt-extraction", value: { receiptId: receipt.id, extraction }, updatedAt: receipt.updatedAt });
+    await repository.put({ id: `receipt-draft:${receipt.id}`, kind: "category-state", value: { merchant: "Synthetic draft" }, updatedAt: receipt.updatedAt });
+    await repository.put({ id: `category-learning:${receipt.id}`, kind: "correction-audit", value: { targetType: "category-learning", receiptId: receipt.id }, updatedAt: receipt.updatedAt });
+    await repository.put({ id: "merchant-mapping:synthetic-global", kind: "merchant-mapping", value: { normalizedMerchant: "shared history" }, updatedAt: receipt.updatedAt });
+    const sibling = { ...receipt, id: "receipt:sibling", image: null, extraction: null };
+    await repository.put({ id: sibling.id, kind: "receipt-metadata", value: sibling, updatedAt: sibling.updatedAt });
+    await service.deletePending(receipt.id);
+    expect(await service.get(receipt.id)).toBeNull();
+    expect(await repository.get(`receipt-extraction:${receipt.id}`)).toBeNull();
+    expect(await repository.get(`receipt-draft:${receipt.id}`)).toBeNull();
+    expect(await repository.get(`category-learning:${receipt.id}`)).toBeNull();
+    expect(await repository.get("merchant-mapping:synthetic-global")).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+    expect(await service.get(sibling.id)).not.toBeNull();
+  });
+
+  it("transfers a shared image to its remaining receipt and keeps the backup valid", async () => {
+    const { repository, service } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    const sibling = { ...receipt, id: "receipt:sibling" };
+    await repository.put({ id: sibling.id, kind: "receipt-metadata", value: sibling, updatedAt: sibling.updatedAt });
+    await service.deletePending(receipt.id);
+    expect(await service.get(receipt.id)).toBeNull();
+    expect((await repository.getBlob(receipt.image!.blobId))?.ownerId).toBe(sibling.id);
+    await expect(createPortableBackup({ actualBackup: new Uint8Array([0x50, 0x4b, 0x03, 0x04]), localData: await repository.serialize() })).resolves.toBeInstanceOf(Blob);
+  });
+
+  it("refuses deletion when a non-receipt record refers to an owned image", async () => {
+    const { repository, service } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    await repository.put({ id: "synthetic-other-reference", kind: "category-state", value: { nested: { blobId: receipt.image!.blobId } }, updatedAt: receipt.updatedAt });
+    await expect(service.deletePending(receipt.id)).rejects.toBeDefined();
+    expect(await service.get(receipt.id)).not.toBeNull();
+    expect((await repository.getBlob(receipt.image!.blobId))?.ownerId).toBe(receipt.id);
+  });
+
+  it.each(["processing", "failed", "applied"] as const)("refuses to delete a receipt in %s state", async status => {
+    const { repository, service } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    const value = { ...receipt, registration: { status, actualTransactionId: status === "applied" ? "actual-synthetic" : null, lastError: null } };
+    await repository.put({ id: receipt.id, kind: "receipt-metadata", value, updatedAt: receipt.updatedAt });
+    await expect(service.deletePending(receipt.id)).rejects.toMatchObject({ code: "receipt_not_deletable" });
+    expect(await service.get(receipt.id)).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).not.toBeNull();
+  });
+
+  it("refuses deletion when Actual already contains the receipt import ID", async () => {
+    const { repository, service } = await setup(vi.fn(), { getTransactions: vi.fn(async () => [{ importedId: "kakeimatch:receipt:00000000-0000-4000-8000-000000000001" }]) });
+    const receipt = await service.saveImage(pngBlob());
+    await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 100, categoryId: "actual-food", accountId: "cash" });
+    await expect(service.deletePending(receipt.id)).rejects.toMatchObject({ code: "receipt_actual_data_exists" });
+    expect(await service.get(receipt.id)).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).not.toBeNull();
+  });
+
+  it("keeps every item when the atomic local deletion fails", async () => {
+    const { repository, service } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    await repository.put({ id: `receipt-extraction:${receipt.id}`, kind: "receipt-extraction", value: { receiptId: receipt.id, extraction }, updatedAt: receipt.updatedAt });
+    await repository.put({ id: `receipt-draft:${receipt.id}`, kind: "category-state", value: { merchant: "Synthetic draft" }, updatedAt: receipt.updatedAt });
+    await repository.put({ id: `category-learning:${receipt.id}`, kind: "correction-audit", value: { targetType: "category-learning", receiptId: receipt.id }, updatedAt: receipt.updatedAt });
+    vi.spyOn(repository, "deleteReceiptData").mockRejectedValue(new Error("synthetic storage failure"));
+    await expect(service.deletePending(receipt.id)).rejects.toMatchObject({ code: "unavailable" });
+    expect(await service.get(receipt.id)).not.toBeNull();
+    expect(await repository.get(`receipt-extraction:${receipt.id}`)).not.toBeNull();
+    expect(await repository.get(`receipt-draft:${receipt.id}`)).not.toBeNull();
+    expect(await repository.get(`category-learning:${receipt.id}`)).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).not.toBeNull();
+  });
+
+  it("waits for in-flight AI analysis and cannot recreate the deleted receipt", async () => {
+    let releaseResponse!: (response: Response) => void;
+    let requestStarted!: () => void;
+    const started = new Promise<void>(resolve => { requestStarted = resolve; });
+    const fetchImpl = vi.fn(() => { requestStarted(); return new Promise<Response>(resolve => { releaseResponse = resolve; }); });
+    const tails = new Map<string, Promise<void>>();
+    const withRegistrationLock = async <T>(id: string, operation: () => Promise<T>): Promise<T> => {
+      const prior = tails.get(id) ?? Promise.resolve();
+      let release!: () => void;
+      const tail = new Promise<void>(resolve => { release = resolve; });
+      tails.set(id, tail);
+      await prior;
+      try { return await operation(); } finally { release(); }
+    };
+    const { repository, service } = await setup(fetchImpl, {}, { withRegistrationLock });
+    const receipt = await service.saveImage(pngBlob());
+    const analysis = service.analyze(receipt.id);
+    await started;
+    const deletion = service.deletePending(receipt.id);
+    releaseResponse(Response.json(extraction));
+    await analysis;
+    await deletion;
+    expect(await service.get(receipt.id)).toBeNull();
+    expect(await repository.get(`receipt-extraction:${receipt.id}`)).toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+  });
 });
