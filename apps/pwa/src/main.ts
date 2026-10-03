@@ -457,9 +457,10 @@ void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
   const canRescue = error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema');
   migrationRescue.hidden = !canRescue;
   if (canRescue) {
-    document.querySelector<HTMLElement>('nav.app-nav')!.hidden = true;
+    for (const id of ['home-tab', 'receipt-tab', 'add-record', 'reconciliation-tab']) {
+      element<HTMLElement>(id).hidden = true;
+    }
     householdView.hidden = true;
-    settingsView.hidden = true;
     element<HTMLElement>('local-view').hidden = true;
   }
 });

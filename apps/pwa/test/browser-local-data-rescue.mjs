@@ -35,8 +35,13 @@ try {
   await page.goto(url);
   await page.getByRole('heading', { name: '端末データの救出' }).waitFor();
   await page.getByText('この画面より新しい版の端末内データがあります。').waitFor();
-  assert.equal(await page.locator('nav.app-nav').isVisible(), false, 'normal navigation must stay unavailable after startup fails');
+  assert.equal(await page.locator('nav.app-nav').isVisible(), true, 'settings navigation must remain available for diagnostics');
+  for (const id of ['home-tab', 'receipt-tab', 'add-record', 'reconciliation-tab']) {
+    assert.equal(await page.locator(`#${id}`).isVisible(), false, `${id} must stay unavailable after startup fails`);
+  }
   assert.equal(await page.locator('#household-view').isVisible(), false, 'stale household UI must stay unavailable after startup fails');
+  await page.locator('#settings-tab').click();
+  assert.equal(await page.locator('#settings-view').isVisible(), true, 'settings diagnostics must remain available after startup fails');
   if (process.env.PWA_RESCUE_SCREENSHOT_PATH) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.locator('#migration-rescue').screenshot({ path: process.env.PWA_RESCUE_SCREENSHOT_PATH });
