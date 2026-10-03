@@ -525,6 +525,21 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const circuit = await db.prepare("SELECT reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ reason: string }>();
     expect(circuit).toEqual({ reason: "provider_failures" });
   });
+  it("accepts printed seconds, slash dates and zero quantities by normalizing only their notation", async () => {
+    const printed = { ...receipt, purchasedDate: "2026/9/30", purchasedTime: "9:05:42", items: [{ name: "Synthetic Item", amountYen: 3284, quantity: 0 }] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(printed) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ purchasedDate: "2026-09-30", purchasedTime: "09:05", items: [{ name: "Synthetic Item", amountYen: 3284 }] });
+  });
+  it("logs only the rejected field name for an invalid extraction", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const discountAsItem = { ...receipt, items: [{ name: "Synthetic Secret Item", amountYen: 3384 }, { name: "Synthetic Discount", amountYen: -100 }] };
+      expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(discountAsItem) }))).status).toBe(502);
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "receipt_extraction_rejected", field: "items.amountYen" }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("Synthetic");
+    } finally { warn.mockRestore(); }
+  });
   it("fails closed on emergency stop and invalid guard settings before quota or event writes", async () => {
     env.AI_EMERGENCY_STOP = "true";
     const stopped = await gemini();
