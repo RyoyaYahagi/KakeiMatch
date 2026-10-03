@@ -38,7 +38,6 @@ export default defineConfig(({ mode, isPreview }) => {
         ACCOUNT_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600144' : '600145', simple: { limit: 5, period: 60 } }),
         TURNSTILE_SITE_KEY: bindings.text(turnstileSiteKey),
         TURNSTILE_SECRET_KEY: bindings.secret(),
-        FAMILY_MAX_ACCOUNTS: bindings.text('5'),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),
         JEV_MODEL: bindings.text('jev-latest'),
         TYPESAFE_API_URL: bindings.text('https://api.typesafe.ai/v1/systemone'),

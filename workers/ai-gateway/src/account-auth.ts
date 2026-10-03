@@ -5,7 +5,7 @@ import {
   withinRateLimit, type RateLimitBinding,
 } from "./account-http";
 import { consumeSignupTicket, handleSignupConfigRequest, handleSignupRequest, resolveSignupTicket, type SignupOptions } from "./account-signup";
-import { acceptFamilyInvite, createFamilyInvite, familyMaxAccounts } from "./family-invites";
+import { acceptFamilyInvite, createFamilyInvite } from "./family-invites";
 
 export interface AccountD1Database {
   prepare(query: string): {
@@ -26,7 +26,6 @@ export interface AccountEnv {
   ACCOUNT_RATE_LIMIT?: RateLimitBinding;
   TURNSTILE_SITE_KEY?: string;
   TURNSTILE_SECRET_KEY?: string;
-  FAMILY_MAX_ACCOUNTS?: string;
 }
 
 export interface AccountSession {
@@ -216,15 +215,13 @@ async function handleFamilyInviteIssue(request: Request, env: AccountEnv, origin
   if (limit === "unavailable") return json(503, { error: "temporarily_unavailable" });
   if (limit === "limited") return json(429, { error: "rate_limited" });
   const body = await readJson(request);
-  if (!body || (body.email !== undefined && body.email !== null && !isEmail(body.email))) return json(400, { error: "invalid_request" });
-  const targetEmail = typeof body.email === "string" ? normalizeEmail(body.email) : null;
+  if (!body) return json(400, { error: "invalid_request" });
   try {
-    const invite = await createFamilyInvite(env.ACCOUNT_DB, targetEmail, (options.now ?? Date.now)());
+    const invite = await createFamilyInvite(env.ACCOUNT_DB, (options.now ?? Date.now)());
     // The token is in the fragment, so browsers do not send it to the server or in Referer headers.
     return json(201, {
       inviteUrl: `${originUrl.origin}/#family-invite=${invite.token}`,
       expiresAt: new Date(invite.expiresAt).toISOString(),
-      targetEmail,
     });
   } catch {
     return json(503, { error: "temporarily_unavailable" });
@@ -245,9 +242,8 @@ async function handleFamilyInviteAccept(request: Request, env: AccountEnv, origi
   const body = await readJson(request);
   if (!body) return json(400, { error: "invalid_request" });
   try {
-    const result = await acceptFamilyInvite(env.ACCOUNT_DB, { userId: user.id, email: user.email }, body.token, {
+    const result = await acceptFamilyInvite(env.ACCOUNT_DB, { userId: user.id }, body.token, {
       now: (options.now ?? Date.now)(),
-      maxFamilyAccounts: familyMaxAccounts(env.FAMILY_MAX_ACCOUNTS),
     });
     if (result.status === "granted") return json(200, { plan: "family" });
     if (result.status === "already_family") return json(200, { plan: "family", alreadyFamily: true });

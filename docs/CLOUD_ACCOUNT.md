@@ -34,16 +34,16 @@ Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。
 
 `family` は月間product quotaを持たないため、管理された招待でだけ付与します。招待は既存accountのplanを変えるもので、accountを作りません。
 
-- 発行: `POST /api/account/family-invites` は `ACCOUNT_BOOTSTRAP_SECRET` のBearer認証が必須です。一般sessionでは発行できません。外部originのブラウザーからの要求は拒否し、rate limitを適用します。bodyの `email` は任意です。
+- 発行: `POST /api/account/family-invites` は `ACCOUNT_BOOTSTRAP_SECRET` のBearer認証が必須です。一般sessionでは発行できません。外部originのブラウザーからの要求は拒否し、rate limitを適用します。メールアドレスは受け取りません。
 - 招待URLは `/#family-invite=<token>` です。tokenは256 bitの乱数で、URL fragmentに置くため、ブラウザーはサーバーやRefererへ送りません。PWAは開いた直後にfragmentを消し、tokenをそのタブのsessionStorageだけに保持します。
-- D1にはtokenのSHA-256と、指定された場合は正規化したメールアドレスのSHA-256だけを保存します。有効期間は7日間で、使用済みの行は再利用を防ぐため残します。
-- 受諾: `POST /api/account/family-invites/accept` は同一originと有効なHttpOnly sessionが必須です。user IDとメールアドレスはsessionから決め、bodyからは `token` だけを読みます。`plan`、`userId` などは無視します。
-- 付与は `family-invites.ts` の `acceptFamilyInvite` だけで行います。1つのD1 batchで、未使用・期限内・対象メール一致・Family人数上限未満を条件にtokenを使用済みにし、同じ実行の中でentitlementを `family` にします。D1はbatchを直列のtransactionとして実行するため、同じtokenを複数accountが同時に使っても成功するのは最大1件です。
-- 同じaccountが成功後に再送した場合は200を返し、追加の付与はしません。既にFamilyのaccountはtokenを消費しません。不正・期限切れ・使用済み・対象不一致はすべて `400 invalid_family_invite` とし、理由を区別しません。人数上限（`FAMILY_MAX_ACCOUNTS`、既定5）に達した場合は `409 family_limit_reached` です。
+- D1にはtokenのSHA-256だけを保存します。有効期間は7日間で、使用済みの行は再利用を防ぐため残します。
+- 受諾: `POST /api/account/family-invites/accept` は同一originと有効なHttpOnly sessionが必須です。user IDはsessionから決め、bodyからは `token` だけを読みます。`plan`、`userId`、メールアドレスなどのclient申告は認可に使いません。
+- 付与は `family-invites.ts` の `acceptFamilyInvite` だけで行います。1つのD1 batchで、未使用・期限内・Family人数上限未満を条件にtokenを使用済みにし、同じ実行の中でentitlementを `family` にします。D1 batchに加えてentitlement triggerも上限を検査するため、同じtokenの並行受諾でも、管理者のplan変更でも上限を越えません。
+- 同じaccountが成功後に再送した場合は200を返し、追加の付与はしません。既にFamilyのaccountはtokenを消費しません。不正・期限切れ・使用済みtokenはすべて `400 invalid_family_invite` とし、理由を区別しません。D1の `account_family_settings.max_accounts`（初期値5）に達した場合は `409 family_limit_reached` です。
 
 未登録の人は招待URLを開いた後に「新規登録」、登録済みの人は「Passkeyで続ける」を選び、ログイン後に「家族プランを受け取る」を押します。
 
-メールアドレスは到達確認をしていないため、対象メールの指定は「漏れたURLを任意のaccountで使われる」ことを防ぐ追加の制限です。対象者より先に同じメールアドレスで登録された場合は防げません。招待URLは本人へ直接渡し、できるだけ対象メールを指定してください。漏えい時の影響はFamily人数上限で限定します。
+Passkey-only登録ではメールアドレスの所有を確認していません。そのためメールアドレスをFamily招待の認可に使わず、256-bit tokenをbearer capabilityとして扱います。招待URLは本人へ直接渡してください。漏えい時の影響はFamily人数上限で限定します。
 
 アカウントsessionは初回から14日後に失効します。利用から24時間以上が経って再度使われると、その時点から14日後へ有効期限を延長します。cookieはHttpOnly、SameSite=Laxで、HTTPSではSecure属性を付けます。AI専用JWTは最大10分です。両者は別の有効期間です。有効なsessionがある限り、AI JWTの期限切れ後もPasskeyを求めず `/api/ai/token` から再取得できます。PWAはJWTをメモリ内だけに保持し、期限が近づいた場合にsession cookieを使って無人で更新します。ログアウト時にメモリ内JWTを破棄し、端末内の家計データは削除しません。[Better Auth session資料](https://better-auth.com/docs/concepts/session-management)を参照してください。
 

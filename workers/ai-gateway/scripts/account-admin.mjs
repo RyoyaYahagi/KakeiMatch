@@ -6,7 +6,7 @@ const baseUrl = process.env.ACCOUNT_ADMIN_URL;
 const secret = process.env.ACCOUNT_BOOTSTRAP_SECRET;
 
 const usage = [
-  'Usage: ACCOUNT_ADMIN_URL=https://... ACCOUNT_BOOTSTRAP_SECRET=... node scripts/account-admin.mjs family-invite [email]',
+  'Usage: ACCOUNT_ADMIN_URL=https://... ACCOUNT_BOOTSTRAP_SECRET=... node scripts/account-admin.mjs family-invite',
   '   or: ACCOUNT_ADMIN_URL=https://... ACCOUNT_BOOTSTRAP_SECRET=... node scripts/account-admin.mjs recover <email>',
 ];
 
@@ -26,7 +26,7 @@ if (!['family-invite', 'recover'].includes(operation) || (operation === 'recover
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify(email ? { email } : {}),
+      body: JSON.stringify(operation === 'recover' ? { email } : {}),
     });
     const result = await response.json().catch(() => null);
     if (!response.ok) {

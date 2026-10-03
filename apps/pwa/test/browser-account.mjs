@@ -5,7 +5,7 @@ if (!url || !process.env.PWA_ACCOUNT_SECRET_FILE) throw new Error('Set PWA_E2E_U
 // The preview uses Cloudflare's always-pass Turnstile testing keys; never run this against production.
 const secret=JSON.parse(readFileSync(process.env.PWA_ACCOUNT_SECRET_FILE,'utf8')).ACCOUNT_BOOTSTRAP_SECRET;
 const email=`synthetic144-${Date.now()}@example.test`;
-const response=await fetch(`${url}/api/account/family-invites`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:JSON.stringify({email})});
+const response=await fetch(`${url}/api/account/family-invites`,{method:'POST',headers:{authorization:`Bearer ${secret}`,'content-type':'application/json'},body:'{}'});
 if(!response.ok)throw new Error(`Preview Family invite failed ${response.status}`);
 const {inviteUrl}=await response.json();
 const browser=await chromium.launch({headless:true,...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}),args:['--no-sandbox']});

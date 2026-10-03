@@ -31,6 +31,8 @@ try {
   const response = await page.goto(url);
   const csp = response?.headers()['content-security-policy'] ?? '';
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
+  assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com/);
+  assert.match(csp, /connect-src 'self' https:\/\/challenges\.cloudflare\.com/);
   assert.match(csp, /worker-src 'self' blob: data:/);
   assert.equal(await page.evaluate(() => crossOriginIsolated && typeof SharedArrayBuffer === 'function'), true);
   await page.getByText('今月の支出 ¥0').waitFor();

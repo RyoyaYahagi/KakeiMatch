@@ -180,7 +180,7 @@ describe("Open signup", () => {
 });
 
 describe("Family invites", () => {
-  const issue = (headers: Record<string, string>, body: unknown = { email: "family@example.test" }) =>
+  const issue = (headers: Record<string, string>, body: unknown = {}) =>
     new Request("https://kakeimatch.example/api/account/family-invites", {
       method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
     });
@@ -199,7 +199,6 @@ describe("Family invites", () => {
     expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}`, origin: "https://attacker.example" }), env)).status).toBe(403);
     expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), { ...env, ACCOUNT_BOOTSTRAP_SECRET: undefined })).status).toBe(401);
     expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), signupEnv(database, () => false))).status).toBe(429);
-    expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }, { email: "not-an-email" }), env)).status).toBe(400);
     expect(calls.some((call) => call.query.includes("INSERT INTO family_invites"))).toBe(false);
 
     const response = await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), env);
@@ -223,7 +222,7 @@ describe("Family invites", () => {
     expect(batches).toHaveLength(0);
   });
 
-  it("binds acceptance to the session user and ignores client-supplied plans or user IDs", async () => {
+  it("uses the bearer token as the invite capability, binds the grant to the session user, and ignores client identity claims", async () => {
     const { database, calls, batches } = testDatabase();
     signedIn("synthetic-self", "self@example.test");
     const response = await handleAccountRequest(accept({ token, plan: "family", userId: "another-user", email: "another@example.test" }), signupEnv(database));

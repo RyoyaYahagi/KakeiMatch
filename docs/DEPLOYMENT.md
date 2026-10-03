@@ -14,7 +14,7 @@ Issue #39では本番route、D1、secretを準備・検証せず、本番deploy�
 
 preview上ではActualブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`TYPESAFE_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、登録・Family招待用の `ACCOUNT_RATE_LIMIT`（1分5回）も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`CLOUD_ACCOUNT_ORIGIN`、`TURNSTILE_SITE_KEY`、`FAMILY_MAX_ACCOUNTS`、`GEMINI_MODEL`、`JEV_MODEL`、`TYPESAFE_API_URL` です。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数 `TURNSTILE_SITE_KEY` が必須です。previewはCloudflareの常に成功するテスト用site keyを使い、`TURNSTILE_SECRET_KEY` にもテスト用secretを設定します。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`TYPESAFE_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、登録・Family招待用の `ACCOUNT_RATE_LIMIT`（1分5回）も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`CLOUD_ACCOUNT_ORIGIN`、`TURNSTILE_SITE_KEY`、`GEMINI_MODEL`、`JEV_MODEL`、`TYPESAFE_API_URL` です。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数 `TURNSTILE_SITE_KEY` が必須です。previewはCloudflareの常に成功するテスト用site keyを使い、`TURNSTILE_SECRET_KEY` にもテスト用secretを設定します。PWAのCSPではTurnstileが必要とするscript、frame、connect originとして `https://challenges.cloudflare.com` だけを許可します。`unsafe-inline` と一般の `unsafe-eval` はscript policyへ追加しません。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
 ## ローカル開発と確認
 
@@ -59,7 +59,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0008_open_signup_family_invites.sql` までが必要です。0008は登録ticketとFamily招待のテーブルを追加するだけで、既存のuser、Passkey、session、entitlementを変更しません。既存のFamily accountはそのまま維持されます。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0008_open_signup_family_invites.sql` までが必要です。0008は登録ticket・Family招待・人数設定を追加し、既存のuser、Passkey、session、entitlementを変更しません。既存のFamily accountはそのまま維持され、以降のFamily付与はD1 triggerが初期5アカウント上限を強制します。上限を変更する場合は `account_family_settings.max_accounts` を更新します。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -81,19 +81,18 @@ corepack pnpm --dir apps/pwa exec cf deploy --mode production-deploy
 
 一般の利用者は招待なしで「新規登録」からaccountを作成し、freeで始めます。管理者の操作は不要です。
 
-家族だけにFamily招待を発行します。リポジトリrootのzshで次を実行すると、bootstrap secretと対象メールアドレスを対話入力してFamily招待URLを発行できます。対象メールを空にすると、どのaccountでも1回だけ使える招待になります。招待URLは本人だけへ直接渡し、Gitや公開ログへ保存しません。
+家族だけにFamily招待を発行します。リポジトリrootのzshで次を実行すると、bootstrap secretを対話入力してFamily招待URLを発行できます。招待URLはbearer tokenなので、本人だけへ直接渡し、Gitや公開ログへ保存しません。
 
 ```sh
 read -rs 'ACCOUNT_BOOTSTRAP_SECRET?本番bootstrap secret: '
 echo
 export ACCOUNT_BOOTSTRAP_SECRET
-read -r 'family_email?Family招待の対象メールアドレス（省略可）: '
 ACCOUNT_ADMIN_URL=https://kakeimatch.yhgry.workers.dev \
-node workers/ai-gateway/scripts/account-admin.mjs family-invite ${family_email:+"$family_email"}
-unset ACCOUNT_BOOTSTRAP_SECRET family_email
+node workers/ai-gateway/scripts/account-admin.mjs family-invite
+unset ACCOUNT_BOOTSTRAP_SECRET
 ```
 
-家族は招待URLを開き、未登録なら「新規登録」、登録済みなら「Passkeyで続ける」でログインしてから「家族プランを受け取る」を押します。招待は7日間・1回限りで、Familyは `FAMILY_MAX_ACCOUNTS`（既定5）までです。`account:set-plan` は例外的な変更や降格のために残します。本人の明示指示なしに実ユーザーのplanを変更しません。Passkeyを失った人の復旧は `account-admin.mjs recover <email>` で行います。
+家族は招待URLを開き、未登録なら「新規登録」、登録済みなら「Passkeyで続ける」でログインしてから「家族プランを受け取る」を押します。招待は7日間・1回限りで、FamilyはD1の `account_family_settings.max_accounts`（既定5）までです。`account:set-plan` は例外的な変更や降格のために残しますが、D1 triggerが上限を強制します。本人の明示指示なしに実ユーザーのplanを変更しません。Passkeyを失った人の復旧は `account-admin.mjs recover <email>` で行います。
 
 一般登録を外部へ案内する前に、[アカウント削除](CLOUD_ACCOUNT.md)の導線が本番で動作することを確認します。
 

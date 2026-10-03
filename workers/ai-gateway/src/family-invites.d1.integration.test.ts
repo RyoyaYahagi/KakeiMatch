@@ -39,13 +39,13 @@ async function database() {
   return d1;
 }
 
-const session = (id: string) => ({ userId: id, email: `${id}@example.test` });
-const options = { now: now + 1000, maxFamilyAccounts: 5 };
+const session = (id: string) => ({ userId: id });
+const options = { now: now + 1000 };
 const planOf = async (d1: Awaited<ReturnType<typeof database>>, id: string) =>
   (await d1.prepare("SELECT plan FROM account_entitlements WHERE user_id = ?").bind(id).first<{ plan: string }>())?.plan ?? "free";
 
 describe("Family invites with local D1", () => {
-  it("issues a fragment URL with an operator secret and stores only digests", async () => {
+  it("issues a fragment URL with an operator secret and stores only the token digest", async () => {
     const d1 = await database();
     const env: AccountEnv = {
       ACCOUNT_DB: d1, BETTER_AUTH_SECRET: "better-auth-secret-for-d1-integration-test", ACCOUNT_BOOTSTRAP_SECRET: bootstrapSecret,
@@ -54,19 +54,18 @@ describe("Family invites with local D1", () => {
     const response = await handleAccountRequest(new Request(`${origin}/api/account/family-invites`, {
       method: "POST",
       headers: { authorization: `Bearer ${bootstrapSecret}`, "content-type": "application/json" },
-      body: JSON.stringify({ email: " Alice@Example.test " }),
+      body: JSON.stringify({}),
     }), env);
     expect(response.status).toBe(201);
-    const body = await response.json() as { inviteUrl: string; targetEmail: string };
+    const body = await response.json() as { inviteUrl: string };
     const token = new URL(body.inviteUrl).hash.replace("#family-invite=", "");
     expect(new URL(body.inviteUrl).search).toBe("");
-    expect(body.targetEmail).toBe("alice@example.test");
-    const row = await d1.prepare("SELECT token_hash, target_email_hash FROM family_invites").first<{ token_hash: string; target_email_hash: string }>();
+    const row = await d1.prepare("SELECT token_hash FROM family_invites").first<{ token_hash: string }>();
     expect(row?.token_hash).toBe(await digest(token));
-    expect(row?.target_email_hash).toBe(await digest("alice@example.test"));
-    expect(JSON.stringify(row)).not.toContain("alice");
 
-    expect(await acceptFamilyInvite(d1, session("alice"), token, { now: Date.now(), maxFamilyAccounts: 5 })).toEqual({ status: "granted" });
+    // Passkey registration does not verify email ownership. A valid bearer token
+    // grants the invite to the authenticated session regardless of its email.
+    expect(await acceptFamilyInvite(d1, { userId: "alice" }, token, { now: Date.now() })).toEqual({ status: "granted" });
     expect(await planOf(d1, "alice")).toBe("family");
   });
 
@@ -76,11 +75,11 @@ describe("Family invites with local D1", () => {
       VALUES ('ticket','new-member','ticket-hash','new@example.test','New',?,?)`).bind(now, now + 60_000).run();
     const newUserId = await consumeSignupTicket(d1, "ticket-hash", now + 1);
     expect(await planOf(d1, newUserId!)).toBe("free");
-    const forNew = await createFamilyInvite(d1, "new@example.test", now);
-    expect(await acceptFamilyInvite(d1, { userId: newUserId!, email: "new@example.test" }, forNew.token, options)).toEqual({ status: "granted" });
+    const forNew = await createFamilyInvite(d1, now);
+    expect(await acceptFamilyInvite(d1, { userId: newUserId! }, forNew.token, options)).toEqual({ status: "granted" });
     expect(await planOf(d1, newUserId!)).toBe("family");
 
-    const forExisting = await createFamilyInvite(d1, null, now);
+    const forExisting = await createFamilyInvite(d1, now);
     expect(await acceptFamilyInvite(d1, session("bob"), forExisting.token, options)).toEqual({ status: "granted" });
     // A lost response may be retried by the same user without granting anything else.
     expect(await acceptFamilyInvite(d1, session("bob"), forExisting.token, options)).toEqual({ status: "granted" });
@@ -88,22 +87,22 @@ describe("Family invites with local D1", () => {
     expect(await planOf(d1, "carol")).toBe("free");
   });
 
-  it("rejects tampered, expired, and wrong-target tokens without changing the plan", async () => {
+  it("rejects tampered and expired tokens without changing the plan", async () => {
     const d1 = await database();
-    const valid = await createFamilyInvite(d1, "alice@example.test", now);
+    const valid = await createFamilyInvite(d1, now);
     const tampered = `${valid.token.slice(0, -1)}${valid.token.endsWith("A") ? "B" : "A"}`;
     expect(await acceptFamilyInvite(d1, session("alice"), tampered, options)).toEqual({ status: "invalid" });
     expect(await acceptFamilyInvite(d1, session("alice"), "not-a-token", options)).toEqual({ status: "invalid" });
-    expect(await acceptFamilyInvite(d1, session("bob"), valid.token, options)).toEqual({ status: "invalid" });
-    expect(await acceptFamilyInvite(d1, session("alice"), valid.token, { ...options, now: valid.expiresAt })).toEqual({ status: "invalid" });
+    expect(await acceptFamilyInvite(d1, session("bob"), valid.token, options)).toEqual({ status: "granted" });
+    expect(await acceptFamilyInvite(d1, session("alice"), valid.token, { now: valid.expiresAt })).toEqual({ status: "invalid" });
     expect(await planOf(d1, "alice")).toBe("free");
-    expect(await planOf(d1, "bob")).toBe("free");
-    expect(await d1.prepare("SELECT COUNT(*) AS count FROM family_invites WHERE used_at IS NOT NULL").first()).toEqual({ count: 0 });
+    expect(await planOf(d1, "bob")).toBe("family");
+    expect(await d1.prepare("SELECT COUNT(*) AS count FROM family_invites WHERE used_at IS NOT NULL").first()).toEqual({ count: 1 });
   });
 
   it("lets at most one of many concurrent users consume the same token", async () => {
     const d1 = await database();
-    const invite = await createFamilyInvite(d1, null, now);
+    const invite = await createFamilyInvite(d1, now);
     const users = ["alice", "bob", "carol", "dave"];
     const results = await Promise.all(users.map((id) => acceptFamilyInvite(d1, session(id), invite.token, options)));
     expect(results.filter((result) => result.status === "granted")).toHaveLength(1);
@@ -113,9 +112,10 @@ describe("Family invites with local D1", () => {
 
   it("enforces the Family account cap inside the consuming transaction", async () => {
     const d1 = await database();
-    const invites = await Promise.all(["alice", "bob", "carol"].map(() => createFamilyInvite(d1, null, now)));
+    await d1.prepare("UPDATE account_family_settings SET max_accounts = 2 WHERE id = 1").run();
+    const invites = await Promise.all(["alice", "bob", "carol"].map(() => createFamilyInvite(d1, now)));
     const results = await Promise.all(["alice", "bob", "carol"].map((id, index) =>
-      acceptFamilyInvite(d1, session(id), invites[index].token, { ...options, maxFamilyAccounts: 2 })));
+      acceptFamilyInvite(d1, session(id), invites[index].token, options)));
     expect(results.filter((result) => result.status === "granted")).toHaveLength(2);
     expect(results.filter((result) => result.status === "limit_reached")).toHaveLength(1);
     const unused = await d1.prepare("SELECT COUNT(*) AS count FROM family_invites WHERE used_at IS NULL").first();
@@ -125,7 +125,7 @@ describe("Family invites with local D1", () => {
   it("keeps an existing Family entitlement and does not spend a token on it", async () => {
     const d1 = await database();
     await d1.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES ('erin', 'family', NULL), ('frank', 'pro', 100)").run();
-    const invite = await createFamilyInvite(d1, null, now);
+    const invite = await createFamilyInvite(d1, now);
     expect(await acceptFamilyInvite(d1, session("erin"), invite.token, options)).toEqual({ status: "already_family" });
     expect(await d1.prepare("SELECT used_at FROM family_invites").first()).toEqual({ used_at: null });
     expect(await planOf(d1, "frank")).toBe("pro");
@@ -133,7 +133,7 @@ describe("Family invites with local D1", () => {
 
   it("does not let a deleted account's used token become reusable", async () => {
     const d1 = await database();
-    const invite = await createFamilyInvite(d1, null, now);
+    const invite = await createFamilyInvite(d1, now);
     expect(await acceptFamilyInvite(d1, session("alice"), invite.token, options)).toEqual({ status: "granted" });
     await d1.prepare("DELETE FROM user WHERE id = 'alice'").run();
     expect(await acceptFamilyInvite(d1, session("bob"), invite.token, options)).toEqual({ status: "invalid" });
@@ -148,5 +148,20 @@ describe("Family grant audit", () => {
       .filter((name) => /(INSERT INTO|UPDATE|DELETE FROM)\s+account_entitlements/.test(readFileSync(new URL(name, sourceDir), "utf8")));
     // Plan changes are otherwise only the operator's `account:set-plan` command, outside the Worker.
     expect(writers).toEqual(["family-invites.ts"]);
+  });
+
+  it("enforces the Family cap in D1 for operator writes too", async () => {
+    const d1 = await database();
+    await d1.prepare("UPDATE account_family_settings SET max_accounts = 1 WHERE id = 1").run();
+    await d1.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES ('bob', 'free', 30)").run();
+    await d1.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES ('alice', 'family', NULL)").run();
+    await expect(d1.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES ('bob', 'family', NULL)").run())
+      .rejects.toThrow("family_capacity_reached");
+    await expect(d1.prepare("UPDATE account_entitlements SET plan = 'family' WHERE user_id = 'bob'").run())
+      .rejects.toThrow("family_capacity_reached");
+    // Idempotently retaining the same existing Family entitlement remains valid.
+    await d1.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES ('alice', 'family', NULL) ON CONFLICT(user_id) DO UPDATE SET plan = excluded.plan").run();
+    await expect(d1.prepare("UPDATE account_family_settings SET max_accounts = 0 WHERE id = 1").run())
+      .rejects.toThrow();
   });
 });
