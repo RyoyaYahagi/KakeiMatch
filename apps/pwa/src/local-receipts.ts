@@ -3,6 +3,7 @@ import { ReceiptExtractionError, validateReceiptExtraction, type ReceiptExtracti
 import { LocalDataStorageError, type LocalDataRepository } from "../../../src/lib/local-data";
 import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType } from "../../../src/lib/receipt-validation";
 import { getAiAccessToken } from "./ai-auth";
+import { prepareAiImage } from "./receipt-ai-image";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
 import { LocalCategoryLearning, type AppliedCategoryRule } from "./local-category-learning";
 
@@ -204,14 +205,14 @@ export class LocalReceiptService {
     const blob = await this.repository.getBlob(receipt.image.blobId);
     if (!blob) throw new LocalReceiptServiceError("image_missing", "レシート画像を端末で見つけられませんでした。");
     try {
-      const bytes = new Uint8Array(await blob.blob.arrayBuffer());
-      if (bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。");
+      const image = await prepareAiImage(blob.blob, receipt.image.contentType);
+      if (image.bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。");
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのため読み取れません。レシート画像は端末に保存されています。接続後に再試行してください。");
       const token = await (this.options.getToken ?? getAiAccessToken)();
       const flowId = crypto.randomUUID();
       const response = await this.fetchImpl(this.options.geminiUrl ?? "/api/ai/gemini", {
         method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ flowId, contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
+        body: JSON.stringify({ flowId, contentType: image.contentType, imageBase64: toBase64(image.bytes) }),
       });
       if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
       const extraction = validateReceiptExtraction(await response.json());
