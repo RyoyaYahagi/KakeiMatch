@@ -413,7 +413,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (receipt.registration.actualTransactionId) { const remove = deleteButton(receipt.registration.actualTransactionId); remove.className = 'text-button destructive-text'; actions.append(remove); }
     view.append(actions);
   }
-  async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean } = {}) {
+  async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean; categorySuggestion?: Promise<string | null> } = {}) {
     if (receipt.registration.status === 'deleted') throw new Error('この取引は削除済みです。記録一覧を開き直してください。');
     if (receipt.registration.status === 'applied' && !editorOptions.edit) { await receiptDetail(receipt); return; }
     const editing = receipt.registration.status === 'applied';
@@ -517,19 +517,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
       try {
         await receipts.analyze(receipt.id);
-        try {
-          const suggested = await receipts.suggestCategory(receipt.id);
-          recordLocalDiagnostic('ai');
-          const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
-          if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
-          if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
-        } catch (error) {
-          report(error);
-          const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
-          el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
-        }
+        // Show the read values now; the editor fills categories when the suggestion arrives.
+        const categorySuggestion = receipts.suggestCategory(receipt.id);
+        categorySuggestion.then(() => recordLocalDiagnostic('ai'), () => undefined);
+        const updated = await receipts.get(receipt.id);
+        if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId, categorySuggestion });
+        else categorySuggestion.catch(report);
       } catch (error) {
         report(error);
         if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
@@ -818,6 +811,42 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     });
     const cancelEntry = button('キャンセル', editing ? () => receiptDetail(receipt) : newEntryReturn); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
+    if (editorOptions.categorySuggestion) void fillSuggestedCategories(editorOptions.categorySuggestion);
+
+    /** Fills only the categories the user has not chosen while the suggestion was pending. */
+    async function fillSuggestedCategories(suggestion: Promise<string | null>) {
+      const pending = text('p', 'カテゴリを提案しています…', 'muted'); pending.setAttribute('role', 'status');
+      aiArea.append(pending);
+      submit.disabled = true; aiButton.disabled = true;
+      try {
+        const suggested = await suggestion;
+        const updated = await receipts.get(receipt.id);
+        if (!form.isConnected || !updated) return;
+        const extractionIndex = new Map(extractionItems.map((item, index) => [item.id, index]));
+        itemsList.querySelectorAll<HTMLElement>('[data-receipt-item]').forEach(row => {
+          const index = extractionIndex.get(row.dataset.receiptItem!);
+          const select = row.querySelector<HTMLSelectElement>('[data-item-category]')!;
+          const categoryId = index === undefined ? '' : actualCategoryId(updated.itemCategories?.[index]);
+          if (select.value || !categoryId) return;
+          select.value = categoryId;
+          select.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const overallCategoryId = extractionItems.length ? '' : actualCategoryId(updated.aiSuggestion.categoryId);
+        if (!category.value && overallCategoryId) {
+          category.value = overallCategoryId;
+          category.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        if (updated.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
+        if (suggested === null && updated.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
+      } catch (error) {
+        if (!form.isConnected) return;
+        report(error);
+        el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
+      } finally {
+        pending.remove();
+        submit.disabled = false; aiButton.disabled = false;
+      }
+    }
   }
   let selectedStatementProvider: StatementProvider = 'paypay_card';
   const statementProviderLabels: Record<StatementProvider, string> = { paypay: 'PayPay取引履歴（旧形式）', paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード' };
