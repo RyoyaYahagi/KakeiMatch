@@ -8,9 +8,9 @@ KakeiMatch PWAは、Actual Budgetの家計簿とKakeiMatchの端末内記録・�
 
 ### 起動時の移行に失敗した場合
 
-端末データの更新に失敗した場合や、現在のアプリより新しいIndexedDBを検出した場合は、通常の家計画面を隠して救出画面を表示します。救出機能は、すでに存在する `kakeimatch-local-data` をversion指定なしで開き、読み取り専用transactionで現在のprofileに属する `records` と `blobs` だけを読みます。データベースのversion・store・record・blobは変更しません。データベースがない場合は作成せず終了します。[実装: `local-data-rescue.ts`](../apps/pwa/src/local-data-rescue.ts)
+端末データの更新に失敗した場合や、現在のアプリより新しいIndexedDBを検出した場合は、通常の家計画面を隠して救出画面を表示します。救出機能は、すでに存在する `kakeimatch-local-data` をversion指定なしで開き、読み取り専用transactionで現在のprofileに属する既知のrecord kindとblob owner kindだけを読みます。未知の将来データを含め、データベースのversion・store・record・blobは変更しません。データベースがない場合は作成せず終了します。[実装: `local-data-rescue.ts`](../apps/pwa/src/local-data-rescue.ts)
 
-書き出しは復元できない別形式の `.kmr` ファイルです。Actual Budgetの家計簿、`app-settings`、画面ロック設定、クラウドのログイン情報、同期用のCryptoKey、別profile、他のIndexedDBは含みません。record JSON合計32 MiB、合計10,000 records/blobs、blobは1件32 MiB・合計64 MiBまでです。blobは1 MiB単位で読み込みます。上限超過や読取・生成エラーではファイルを作らず、元データも変更しません。救出後は修正版へ更新して再読み込みしてください。`.kmr` からの復元は行わず、完全な家計バックアップの代わりにもなりません。
+書き出しは復元できない別形式の `.kmr` ファイルです。現行 `LocalDataKind` のうち `app-settings` を除いた記録と、owner kindが `receipt` または `statement-import` の原本だけを対象にします。Actual Budgetの家計簿、設定、画面ロック情報、クラウドのログイン情報、同期用のCryptoKey、未対応のrecord kind/blob owner kind、別profile、他のIndexedDBは含みません。record JSON合計32 MiB、合計10,000 records/blobs、blobは1件32 MiB・合計64 MiBまでです。blobは1 MiB単位で読み込みます。上限超過や読取・生成エラーではファイルを作らず、元データも変更しません。救出後は修正版へ更新して再読み込みしてください。`.kmr` からの復元は行わず、完全な家計バックアップの代わりにもなりません。
 
 375 CSS px幅での救出画面:
 

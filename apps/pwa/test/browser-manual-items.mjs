@@ -113,6 +113,11 @@ try {
   await save(true);
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
+  await page.waitForFunction(() => {
+    const section = document.querySelector('#backup-settings');
+    return !section?.hasAttribute('inert')
+      && section?.querySelector('[role="status"]')?.textContent === 'バックアップを生成しました。Filesなどへの保存を確認してください。';
+  });
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-manual-items.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();

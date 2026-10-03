@@ -23,8 +23,10 @@ await page.addInitScript(async ({ profileId }) => {
   const tx = db.transaction(['records', 'blobs', 'unrelated-credentials'], 'readwrite');
   tx.objectStore('records').put({ key: `${profileId}\\0receipt`, profileId, id: 'receipt', kind: 'receipt-metadata', value: { merchant: 'Synthetic Market' }, updatedAt: '2026-09-30T00:00:00.000Z' });
   tx.objectStore('records').put({ key: `${profileId}\\0settings`, profileId, id: 'settings', kind: 'app-settings', value: { token: 'synthetic-cloud-token' }, updatedAt: '2026-09-30T00:00:00.000Z' });
+  tx.objectStore('records').put({ key: `${profileId}\\0sync-session`, profileId, id: 'sync-session', kind: 'sync-session', value: { token: 'synthetic-future-cloud-secret' }, updatedAt: '2026-09-30T00:00:00.000Z' });
   tx.objectStore('records').put({ key: 'other\\0receipt', profileId: 'other', id: 'foreign', kind: 'receipt-metadata', value: { merchant: 'Other profile' }, updatedAt: '2026-09-30T00:00:00.000Z' });
   tx.objectStore('blobs').put({ key: `${profileId}\\0image`, profileId, id: 'image', ownerKind: 'receipt', ownerId: 'receipt', blob: new Blob(['synthetic image'], { type: 'image/jpeg' }), contentType: 'image/jpeg', createdAt: '2026-09-30T00:00:00.000Z' });
+  tx.objectStore('blobs').put({ key: `${profileId}\\0sync-attachment`, profileId, id: 'sync-attachment', ownerKind: 'sync-session', ownerId: 'sync-session', blob: new Blob(['synthetic future secret payload']), contentType: 'application/octet-stream', createdAt: '2026-09-30T00:00:00.000Z' });
   tx.objectStore('unrelated-credentials').put({ token: 'arbitrary-db-secret' }, 'secret');
   await new Promise((resolve, reject) => { tx.oncomplete = resolve; tx.onabort = () => reject(tx.error); });
   db.close();
@@ -57,8 +59,10 @@ try {
   assert.deepEqual(rescue.records.map(record => record.id), ['receipt']);
   assert.deepEqual(rescue.blobs.map(blob => blob.id), ['image']);
   assert.equal(rescue.manifest.skippedSensitiveRecords, 1);
-  assert.match(rescue.manifest.warning, /Actual Budgetの家計簿を含みません/);
-  assert.doesNotMatch(JSON.stringify(rescue), /synthetic-cloud-token|arbitrary-db-secret|Other profile/);
+  assert.equal(rescue.manifest.skippedUnknownRecords, 1);
+  assert.equal(rescue.manifest.skippedUnknownBlobs, 1);
+  assert.match(rescue.manifest.warning, /Actual Budgetの家計簿.*含みません/);
+  assert.doesNotMatch(JSON.stringify(rescue), /synthetic-cloud-token|synthetic-future-cloud-secret|synthetic future secret payload|arbitrary-db-secret|Other profile/);
   const state = await page.evaluate(async () => {
     const db = await new Promise((resolve, reject) => {
       const request = indexedDB.open('kakeimatch-local-data');

@@ -36,9 +36,9 @@ root.innerHTML = `
     <p class="status" id="message" role="status"></p>
     <section id="migration-rescue" class="surface-section migration-rescue" aria-labelledby="migration-rescue-title" hidden>
       <h2 id="migration-rescue-title">端末データの救出</h2>
-      <p>更新に失敗した場合や、新しい版のデータをこのアプリが開けない場合に、既存のKakeiMatch記録を読み取り専用で書き出せます。</p>
+      <p>更新に失敗した場合や、新しい版のデータをこのアプリが開けない場合に、対応済みのKakeiMatch記録を読み取り専用で書き出せます。</p>
       <p>このファイルを読み込んで復元することはできません。救出後はアプリを修正版へ更新し、再読み込みして開き直してください。</p>
-      <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿は含まず、このファイルから復元できません。画面ロック設定、クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
+      <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿と未対応の新しい種類のデータは含まず、このファイルから復元できません。画面ロック設定、クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
       <button id="migration-rescue-export" class="secondary" type="button">救出データを書き出す</button>
       <p id="migration-rescue-status" role="status" aria-live="polite"></p>
     </section>

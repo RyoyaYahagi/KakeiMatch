@@ -1,5 +1,13 @@
 import { LOCAL_DATABASE_NAME, LOCAL_PROFILE_KEY } from '../../../src/lib/local-data';
 
+// Keep recovery output limited to record types the current app understands.
+const RESCUABLE_RECORD_KINDS: ReadonlySet<string> = new Set([
+  'receipt-metadata', 'receipt-extraction', 'category-state', 'merchant-mapping',
+  'statement-import', 'statement-transaction', 'reconciliation-run', 'reconciliation-result',
+  'reconciliation-resolution', 'correction-audit', 'account-metadata',
+]);
+const RESCUABLE_BLOB_OWNER_KINDS: ReadonlySet<string> = new Set(['receipt', 'statement-import']);
+
 export const LOCAL_RESCUE_LIMITS = {
   maxRecords: 10_000,
   maxTotalRecordBytes: 32 * 1024 * 1024,
@@ -35,6 +43,8 @@ export interface LocalDataRescueFile {
     excludes: string[];
     warning: string;
     skippedSensitiveRecords: number;
+    skippedUnknownRecords: number;
+    skippedUnknownBlobs: number;
   };
   records: RescueRecord[];
   blobs: RescueBlob[];
@@ -149,17 +159,27 @@ export async function createLocalDataRescueFile(options: {
 
     const records: RescueRecord[] = [];
     let skippedSensitiveRecords = 0;
+    let skippedUnknownRecords = 0;
     for (const row of storedRecords) {
       if (row.kind === 'app-settings' || containsCryptoKey(row)) {
         skippedSensitiveRecords += 1;
+        continue;
+      }
+      if (typeof row.kind !== 'string' || !RESCUABLE_RECORD_KINDS.has(row.kind)) {
+        skippedUnknownRecords += 1;
         continue;
       }
       records.push({ id: String(row.id), kind: String(row.kind), value: row.value, updatedAt: String(row.updatedAt) });
     }
 
     let totalBytes = 0;
+    let skippedUnknownBlobs = 0;
     const blobs: RescueBlob[] = [];
     for (const row of storedBlobs) {
+      if (typeof row.ownerKind !== 'string' || !RESCUABLE_BLOB_OWNER_KINDS.has(row.ownerKind)) {
+        skippedUnknownBlobs += 1;
+        continue;
+      }
       const blob = row.blob;
       if (!(blob instanceof Blob)) throw new Error('原本の形式を確認できません。データは変更していません。');
       const read = await readBlobChunks(blob, totalBytes);
@@ -176,11 +196,13 @@ export async function createLocalDataRescueFile(options: {
       version: 1,
       exportedAt: (options.now ?? (() => new Date()))().toISOString(),
       manifest: {
-        scope: '選択中プロフィールのKakeiMatch端末内IndexedDB。復旧用の読み取り専用救出データです。',
-        includes: ['recordsストアの対象プロフィール記録（JSON化した読取量が合計32 MiB以内。設定とCryptoKeyを含む記録を除外）', 'blobsストアの対象プロフィール原本（1 MiB単位のBase64チャンク、1件32 MiB・合計64 MiB以内）'],
-        excludes: ['Actual Budgetの家計簿とデータベース', 'app-settings', '画面ロック設定', 'Cloud credentials・session・AI token', '同期用CryptoKey', '別プロフィール', '他のブラウザーデータベース'],
-        warning: 'これは完全な家計バックアップではありません。.kmb形式ではなく、このアプリから復元できません。Actual Budgetの家計簿を含みません。公開せず、更新後の復旧支援に限って保管してください。',
+        scope: '選択中プロフィールのKakeiMatch端末内IndexedDBにある既知のrecord kindとblob owner kind。復旧用の読み取り専用救出データです。',
+        includes: ['対応済みrecord kindの対象プロフィール記録（JSON化した読取量が合計32 MiB以内。設定とCryptoKeyを含む記録を除外）', 'owner kindがreceiptまたはstatement-importの原本（1 MiB単位のBase64チャンク、1件32 MiB・合計64 MiB以内）'],
+        excludes: ['Actual Budgetの家計簿とデータベース', 'app-settings', '画面ロック設定', 'クラウドのログイン情報・session・AI token', '同期用CryptoKey', '未対応のrecord kindとblob owner kind', '別プロフィール', '他のブラウザーデータベース'],
+        warning: 'これは完全な家計バックアップではありません。.kmb形式ではなく、このアプリから復元できません。Actual Budgetの家計簿と未対応の将来データを含みません。公開せず、更新後の復旧支援に限って保管してください。',
         skippedSensitiveRecords,
+        skippedUnknownRecords,
+        skippedUnknownBlobs,
       },
       records,
       blobs,

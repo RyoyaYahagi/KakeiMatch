@@ -30,12 +30,20 @@ async function seedFutureDatabase(factory: IDBFactory): Promise<void> {
     value: { cloudToken: 'synthetic-secret' }, updatedAt: '2026-09-30T00:00:00.000Z',
   });
   tx.objectStore('records').put({
+    key: `${profileId}\0sync-session`, profileId, id: 'sync-session', kind: 'sync-session',
+    value: { token: 'synthetic-future-cloud-secret' }, updatedAt: '2026-09-30T00:00:00.000Z',
+  });
+  tx.objectStore('records').put({
     key: `other\0foreign`, profileId: 'other', id: 'foreign', kind: 'receipt-metadata',
     value: { merchant: 'Other profile' }, updatedAt: '2026-09-30T00:00:00.000Z',
   });
   tx.objectStore('blobs').put({
     key: `${profileId}\0image`, profileId, id: 'image', ownerKind: 'receipt', ownerId: 'kept',
     blob: new Blob(['synthetic image payload'], { type: 'image/jpeg' }), contentType: 'image/jpeg', createdAt: '2026-09-30T00:00:00.000Z',
+  });
+  tx.objectStore('blobs').put({
+    key: `${profileId}\0sync-attachment`, profileId, id: 'sync-attachment', ownerKind: 'sync-session', ownerId: 'sync-session',
+    blob: new Blob(['synthetic future secret payload']), contentType: 'application/octet-stream', createdAt: '2026-09-30T00:00:00.000Z',
   });
   tx.objectStore('unrelated-credentials').put({ token: 'must-not-export' }, 'credential');
   await new Promise<void>((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onabort = () => reject(tx.error); });
@@ -56,8 +64,13 @@ describe('createLocalDataRescueFile', () => {
     expect(file.manifest.excludes).toContain('Actual Budgetの家計簿とデータベース');
     expect(file.records.map(row => row.id)).toEqual(['kept']);
     expect(file.manifest.skippedSensitiveRecords).toBe(1);
+    expect(file.manifest.skippedUnknownRecords).toBe(1);
+    expect(file.manifest.skippedUnknownBlobs).toBe(1);
     expect(file.blobs).toHaveLength(1);
     expect(file.blobs[0]?.chunksBase64).toEqual([Buffer.from('synthetic image payload').toString('base64')]);
+    expect(JSON.stringify(file)).not.toContain('synthetic-future-cloud-secret');
+    expect(JSON.stringify(file)).not.toContain('synthetic future secret payload');
+    expect(file.manifest.excludes).toContain('未対応のrecord kindとblob owner kind');
 
     const reopened = await open(factory, 3);
     expect(reopened.version).toBe(3);
