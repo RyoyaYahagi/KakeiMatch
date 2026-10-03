@@ -204,18 +204,25 @@ export function initializeMasterUi(
   container.append(categoryEntry, accountEntry);
 
   async function categoriesPage(kind: boolean | null = false) {
-    const page = beginPage();
+    const enteringFromSettings = !managing;
+    const page = enteringFromSettings ? beginPage() : showPage('カテゴリ');
+    const appendSwitcher = () => {
+      const switcher = element('div', undefined, 'segmented master-switcher'); switcher.setAttribute('role', 'group'); switcher.setAttribute('aria-label', 'カテゴリの種類');
+      const expenses = button('支出', () => categoriesPage(false)); expenses.className = ''; expenses.setAttribute('aria-label', '支出カテゴリ');
+      const income = button('収入', () => categoriesPage(true)); income.className = ''; income.setAttribute('aria-label', '収入カテゴリ');
+      expenses.setAttribute('aria-pressed', String(kind === false));
+      income.setAttribute('aria-pressed', String(kind === true));
+      switcher.append(expenses, income);
+      section.append(switcher);
+    };
+    if (!enteringFromSettings) appendSwitcher();
     const categories = (await ledger.listCategories()).filter(row => kind === null || row.isIncome === kind);
     const usage = new Map(await Promise.all(categories.map(async category => [category.id, await ledger.getCategoryUsage(category.id)] as const)));
-    if (page !== pageRevision) return;
-    showPage('カテゴリ', undefined, page);
-    const switcher = element('div', undefined, 'segmented master-switcher'); switcher.setAttribute('role', 'group'); switcher.setAttribute('aria-label', 'カテゴリの種類');
-    const expenses = button('支出', () => categoriesPage(false)); expenses.className = ''; expenses.setAttribute('aria-label', '支出カテゴリ');
-    const income = button('収入', () => categoriesPage(true)); income.className = ''; income.setAttribute('aria-label', '収入カテゴリ');
-    expenses.setAttribute('aria-pressed', String(kind === false));
-    income.setAttribute('aria-pressed', String(kind === true));
-    switcher.append(expenses, income);
-    section.append(switcher);
+    if (enteringFromSettings) {
+      if (page !== pageRevision) return;
+      showPage('カテゴリ', undefined, page);
+      appendSwitcher();
+    } else if (!isCurrent(page)) return;
     // Frequently used categories first, the same order as the category buttons in the entry forms.
     const ordered = [...categories].sort((a, b) => Number(a.hidden) - Number(b.hidden) || (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || categoryRank(a.name) - categoryRank(b.name));
     const rows = ordered.map(category => {
@@ -295,11 +302,14 @@ export function initializeMasterUi(
   const accountTones: Record<AccountType, string> = { credit_card: 'transport', bank: 'daily', cash: 'util', other: 'other' };
 
   async function accountsPage() {
-    const page = beginPage();
+    const enteringFromSettings = !managing;
+    const page = enteringFromSettings ? beginPage() : showPage('支払元・口座');
     const accounts = await ledger.getAccountBalances();
     const providers = new Map(await Promise.all(accounts.map(async account => [account.id, await options.getStatementProvider?.(account.id) ?? null] as const)));
-    if (page !== pageRevision) return;
-    showPage('支払元・口座', undefined, page);
+    if (enteringFromSettings) {
+      if (page !== pageRevision) return;
+      showPage('支払元・口座', undefined, page);
+    } else if (!isCurrent(page)) return;
     const open = accounts.filter(account => !account.closed);
     const total = open.reduce((sum, account) => sum + account.balanceYen, 0);
     const totalCard = element('div', undefined, 'surface-section account-total');
