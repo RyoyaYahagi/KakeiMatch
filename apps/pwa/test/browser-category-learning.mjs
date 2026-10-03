@@ -134,19 +134,25 @@ try {
   await milkRule.locator('select').selectOption(learningIds.home);
   await milkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+  await milkRule.getByText('synthetic same milk → Synthetic Learning Home', { exact: true }).waitFor();
   await milkRule.locator('summary').click();
+  await milkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor();
   await milkRule.locator('input[role=switch]').uncheck();
+  await milkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
   await analyze('known');
   assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
   await cancelDraft();
   await settings('分類ルール');
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
   await updatedMilkRule.locator('summary').click();
+  await updatedMilkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('input[role=switch]').check();
+  await updatedMilkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('summary').click();
   await updatedMilkRule.locator('select').selectOption(learningIds.food);
   await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+  await updatedMilkRule.getByText('synthetic same milk → Synthetic Learning Food', { exact: true }).waitFor();
 
   // A known item is omitted from Jev, but the unknown item receives native category IDs.
   await analyze('unknown');
