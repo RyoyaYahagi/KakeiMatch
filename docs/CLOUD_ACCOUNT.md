@@ -7,7 +7,7 @@ Cloud accountはAIなどのクラウド機能を使うためのアカウント�
 | 端末内に保存する家計データ | Cloudflare D1に保存するアカウント情報 |
 | --- | --- |
 | Actual Budgetデータ | Better Authのusers、sessions、passkeys |
-| レシートと画像 | entitlement（planと月間上限） |
+| レシートと画像 | entitlement（planと月間上限）、Family招待のhash |
 | 明細ファイルとcanonical rows | provider別の月間AI利用数 |
 | 照合状態と判断 | 必要最小限の認証metadata |
 
@@ -15,19 +15,49 @@ D1には取引、店名・商品名などの履歴、レシート画像、明細
 
 ## Passkeyとsession
 
-Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。WebAuthnのchallenge生成、検証、replay対策をアプリ独自に実装しません。一般公開のsignupを無効にし、管理された招待で利用者を追加します。招待された人はPWAで一度限りの招待tokenを使い、自分のPasskeyを登録します。ログイン後は設定から複数のPasskeyを登録・一覧・削除できます。
+Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。WebAuthnのchallenge生成、検証、replay対策をアプリ独自に実装しません。メールアドレスとパスワードによるsignupは無効のままです。ログイン後は設定から複数のPasskeyを登録・一覧・削除できます。
+
+### 一般登録（Issue #144）
+
+誰でも設定画面の「新規登録」からCloud accountを作成できます。登録は次の順に進みます。
+
+1. PWAが `GET /api/account/signup-config` で公開用のTurnstile site keyを取得し、Cloudflare Turnstileのbot確認を表示します。
+2. 表示名・メールアドレス・Turnstile tokenを `POST /api/account/signup` へ送ります。サーバーは同一origin、接続元IP単位のrate limit（`ACCOUNT_RATE_LIMIT`）、Turnstileのsiteverify（成功、hostname、`action=signup`）を確認します。どれかが失敗した場合は何も保存しません。
+3. サーバーは15分間有効な一度限りの登録ticketを発行します。D1にはtokenのSHA-256、事前に採番したランダムなuser ID、表示名、メールアドレスだけを保存し、user行はまだ作りません。期限切れticketは次の登録要求で削除します。
+4. PWAはticketを `context` としてPasskey登録を開始します。Better AuthがWebAuthnを検証した後、1つのD1 batchでuser行を作成してticketを削除します。同じticketの再送や、その間に同じメールアドレスが登録された場合はaccountを作りません。
+
+登録要求はplanを受け取りません。新規accountにはentitlement行がないため、必ず `free`（`AI_FREE_MONTHLY_LIMIT`）で始まります。メールアドレスの到達確認は行いません。登録済みのメールアドレスでは `409 email_unavailable` を返します。これは登録済みかどうかを知らせますが、bot確認とrate limitの後にしか得られません。Turnstileのsecretやrate limit bindingが無い場合、signupは `503` で失敗します（fail closed）。
+
+一般登録による複数accountでのfree枠の水増しは完全には防げません。bot確認とsignupのrate limitで大量登録を抑え、account単位の月間上限・`AI_USER_RATE_LIMIT`・サービス全体の費用制限（Issue #56）で金額の最悪値を制限します。メール確認、電話番号認証、異常登録検知は必要になった時点で検討します。
+
+### Family招待（Issue #144）
+
+`family` は月間product quotaを持たないため、管理された招待でだけ付与します。招待は既存accountのplanを変えるもので、accountを作りません。
+
+- 発行: `POST /api/account/family-invites` は `ACCOUNT_BOOTSTRAP_SECRET` のBearer認証が必須です。一般sessionでは発行できません。外部originのブラウザーからの要求は拒否し、rate limitを適用します。bodyの `email` は任意です。
+- 招待URLは `/#family-invite=<token>` です。tokenは256 bitの乱数で、URL fragmentに置くため、ブラウザーはサーバーやRefererへ送りません。PWAは開いた直後にfragmentを消し、tokenをそのタブのsessionStorageだけに保持します。
+- D1にはtokenのSHA-256と、指定された場合は正規化したメールアドレスのSHA-256だけを保存します。有効期間は7日間で、使用済みの行は再利用を防ぐため残します。
+- 受諾: `POST /api/account/family-invites/accept` は同一originと有効なHttpOnly sessionが必須です。user IDとメールアドレスはsessionから決め、bodyからは `token` だけを読みます。`plan`、`userId` などは無視します。
+- 付与は `family-invites.ts` の `acceptFamilyInvite` だけで行います。1つのD1 batchで、未使用・期限内・対象メール一致・Family人数上限未満を条件にtokenを使用済みにし、同じ実行の中でentitlementを `family` にします。D1はbatchを直列のtransactionとして実行するため、同じtokenを複数accountが同時に使っても成功するのは最大1件です。
+- 同じaccountが成功後に再送した場合は200を返し、追加の付与はしません。既にFamilyのaccountはtokenを消費しません。不正・期限切れ・使用済み・対象不一致はすべて `400 invalid_family_invite` とし、理由を区別しません。人数上限（`FAMILY_MAX_ACCOUNTS`、既定5）に達した場合は `409 family_limit_reached` です。
+
+未登録の人は招待URLを開いた後に「新規登録」、登録済みの人は「Passkeyで続ける」を選び、ログイン後に「家族プランを受け取る」を押します。
+
+メールアドレスは到達確認をしていないため、対象メールの指定は「漏れたURLを任意のaccountで使われる」ことを防ぐ追加の制限です。対象者より先に同じメールアドレスで登録された場合は防げません。招待URLは本人へ直接渡し、できるだけ対象メールを指定してください。漏えい時の影響はFamily人数上限で限定します。
 
 アカウントsessionは初回から14日後に失効します。利用から24時間以上が経って再度使われると、その時点から14日後へ有効期限を延長します。cookieはHttpOnly、SameSite=Laxで、HTTPSではSecure属性を付けます。AI専用JWTは最大10分です。両者は別の有効期間です。有効なsessionがある限り、AI JWTの期限切れ後もPasskeyを求めず `/api/ai/token` から再取得できます。PWAはJWTをメモリ内だけに保持し、期限が近づいた場合にsession cookieを使って無人で更新します。ログアウト時にメモリ内JWTを破棄し、端末内の家計データは削除しません。[Better Auth session資料](https://better-auth.com/docs/concepts/session-management)を参照してください。
 
-招待は一度だけ使え、有効期間は7日間です。管理者が `POST /api/account/invites` にメールアドレスと表示名を渡して新規利用者向け招待を発行します。招待tokenは `/?invite=...` として本人へ安全に渡します。Passkeyをすべて失った場合、管理者は本人を別経路で確認したうえで `POST /api/account/recovery` を使います。この操作は既存のPasskeyとsessionを無効にし、古い招待を失効させて、新しい招待を発行します。メールによる自動復旧は設定しません。Cloudflareまたは認証が停止しても端末内の家計データは保持されます。
+Passkeyをすべて失った場合、管理者は本人を別経路で確認したうえで `POST /api/account/recovery` を使います。この操作は既存のPasskeyとsessionを無効にし、古い復旧招待を失効させて、7日間有効な一度限りの復旧招待を発行します。復旧tokenは `/?invite=...` として本人へ安全に渡し、PWAはこのURLで開いた場合だけ「招待コードで登録」を表示します。メールによる自動復旧は設定しません。Cloudflareまたは認証が停止しても端末内の家計データは保持されます。
+
+Issue #144以前の管理者によるaccount作成用招待 `POST /api/account/invites` は廃止しました。発行済みで未使用の招待は、期限まで同じURLでPasskeyを登録できます。
 
 ログイン中の本人は `DELETE /api/account/delete` でアカウントを削除できます。サーバーは同一originと有効なHttpOnly sessionを確認し、要求からuser IDを受け取りません。D1の1つのbatchで削除済みIDの再利用を防ぐtombstoneを記録し、user行を削除します。外部キーによりPasskey、session、招待、利用権限、AI利用量・料金、問い合わせ処理状態も削除されます。途中失敗はbatch全体がrollbackされ、503を返すため、画面は完了扱いにせず再試行を案内します。削除したランダムIDだけは、遅れて完了したPasskey登録が同じuser IDを再作成しないようtombstoneに保持します。email、氏名、認証情報、家計データはtombstoneへ保存しません。削除後のAI要求はuser行の存在確認で拒否します。
 
 ## AI entitlementと利用量
 
-planは `free`、`pro`、`family` です。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとfamilyはclientから設定できません。課金処理はこのIssueの範囲外です。
+planは `free`、`pro`、`family` です。新規アカウントは必ず `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとfamilyはclientから設定できません。AI利用時のplanは毎回、session（AIではJWTの `sub`）で確定したuser IDを使い、D1の `account_entitlements` から読みます。client表示、localStorage、JWTやrequestに含まれるplan値は判定に使いません。課金処理はこのIssueの範囲外です。
 
-Familyは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitはfamilyでも有効です。管理者はCloudflare D1に対する `account:set-plan` 運用commandでfamilyを割り当てます。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
+Familyは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitと、サービス全体の費用制限はfamilyでも有効です。通常はFamily招待で付与します。D1に対する `account:set-plan` 運用commandは、管理者による例外的な変更（降格を含む）のために残します。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
 
 月間利用量はAsia/Tokyoの暦月単位で集計し、1レシート解析フローを1回として表示します。Geminiだけの読み取りでも、同じフロー内でJevのカテゴリ提案を使っても合計1回です。利用者が「AIで読み取る」を押すたびに新しいフローを作ります。形式検証後、最初のGemini送信直前に利用枠を予約します。認証失敗、形式検証失敗、利用枠超過は計上しません。provider呼び出し開始後のtimeoutや失敗は計上します。同じフロー内の内部再試行は追加計上しません。
 
@@ -39,7 +69,7 @@ Issue #60の切替には `0003_receipt_ai_flows.sql` を適用してから、PWA
 
 ## APIと障害時の動作
 
-同一originの `/api/auth/*`、`/api/account/*`、`/api/ai/token`、`/api/ai/usage`、`/api/ai/gemini`、`/api/ai/jev` を使います。Service Workerは `/api/*` をキャッシュしません。
+同一originの `/api/auth/*`、`/api/account/*`（`signup-config`、`signup`、`family-invites`、`family-invites/accept`、`recovery`、`delete`）、`/api/ai/token`、`/api/ai/usage`、`/api/ai/gemini`、`/api/ai/jev` を使います。Service Workerは `/api/*` をキャッシュしません。
 
 認証・AIサービスが利用できない場合でも実装済みの端末内機能は利用できます。現在のPWAのレシート画面では、quota超過やprovider failure後も手動入力へ進め、保存済み画像を削除しません。Cloud accountのlogoutは端末内データに影響しません。
 
@@ -49,7 +79,7 @@ PWAはaccount状態、AI利用量、Passkey操作、token発行とレシート�
 
 ## 運用上の注意
 
-Cloudflare WorkerのsecretにはBetter Auth signing secret、AI Gateway signing secret、bootstrap/invite secret、provider API keysを設定します。secret値や認証/request bodyをGit、browser bundle、通常ログへ出しません。D1 schemaは `workers/ai-gateway/migrations/` のversion管理されたmigrationで再現します。Issue #6のpreview環境はproduction Workerと分けます。
+Cloudflare WorkerのsecretにはBetter Auth signing secret、AI Gateway signing secret、bootstrap/invite secret、Turnstile secret key、provider API keysを設定します。Turnstile site keyは公開値で、PWAへ返します。招待・登録tokenは通常ログやPR、Issueへ書きません。secret値や認証/request bodyをGit、browser bundle、通常ログへ出しません。D1 schemaは `workers/ai-gateway/migrations/` のversion管理されたmigrationで再現します。Issue #6のpreview環境はproduction Workerと分けます。
 
 ### Issue #6時点のpreview準備記録（履歴・フォールバック）
 

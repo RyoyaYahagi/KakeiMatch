@@ -15,9 +15,9 @@
        ▼
 Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
 ├─ PWA配信
-├─ /api/auth/* と /api/account/*（本人認証、招待、アカウント削除）
+├─ /api/auth/* と /api/account/*（本人認証、一般登録、Family招待、回復、アカウント削除）
 ├─ /api/ai/* と /api/contact*
-└─ D1: 本人確認 / session / Passkey / 招待・回復 /
+└─ D1: 本人確認 / session / Passkey / 登録ticket・Family招待・回復 /
        利用権限 / AI利用量・料金・制限 / 問い合わせ処理状態
 ```
 
@@ -27,7 +27,7 @@ Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
 
 Actual Budgetのブラウザー版は家計簿を端末内に保存します。KakeiMatchはレシート情報と画像、取り込んだ明細、照合run・判断、登録状態をブラウザー内に保存します。明細解析、照合、状態変更、金額処理は決定的な通常コードで行います。これらの家計データをアプリ用データベースへ送りません。
 
-Cloud accountは端末内の家計操作には不要です。Better AuthとPasskeyはアカウントとAI APIの本人確認に使います。D1には本人確認とsession、Passkey、招待・回復情報、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態だけを保存します。問い合わせ本文と音声はD1へ保存しません。取引、レシート画像、明細CSV、照合結果、Actual Budgetデータは保存しません。ログアウトしても端末の家計データは削除されません。
+Cloud accountは端末内の家計操作には不要です。Better AuthとPasskeyはアカウントとAI APIの本人確認に使います。D1には本人確認とsession、Passkey、登録ticket・Family招待・回復情報、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態だけを保存します。問い合わせ本文と音声はD1へ保存しません。取引、レシート画像、明細CSV、照合結果、Actual Budgetデータは保存しません。ログアウトしても端末の家計データは削除されません。
 
 本人によるアカウント削除は、同一originと有効sessionをサーバーで確認し、D1のbatchで削除済みの不透明なuser IDをtombstoneへ記録してからuser行を削除します。認証情報、session、招待、利用権限、AI利用記録、問い合わせ処理状態は外部キーにより削除します。tombstoneは遅れて終わるPasskey登録から同じIDが復活するのを防ぐためにだけ保持し、氏名・email・認証情報を持ちません。AI用JWTは要求ごとにD1のuser行を確認してから使います。家計データは端末に残り、アカウント削除と連動して消しません。
 

@@ -38,7 +38,7 @@ const browserBundleSecrets: Plugin = {
     if (this.environment.name !== 'client') return;
     const secretBindingNames = [
       'BETTER_AUTH_SECRET', 'ACCOUNT_BOOTSTRAP_SECRET', 'AI_GATEWAY_AUTH_SECRET',
-      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'AI_EMERGENCY_STOP',
+      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'AI_EMERGENCY_STOP', 'TURNSTILE_SECRET_KEY',
     ];
     const buildSecrets = secretBindingNames.flatMap(name => {
       const value = process.env[name];

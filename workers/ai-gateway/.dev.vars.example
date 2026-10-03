@@ -2,3 +2,5 @@ AI_GATEWAY_AUTH_SECRET=<local-synthetic-signing-secret>
 GEMINI_API_KEY=<local-synthetic-gemini-key>
 TYPESAFE_API_KEY=<local-synthetic-jev-key>
 GITHUB_ISSUES_TOKEN=<local-synthetic-github-issues-token>
+# Cloudflare's always-pass Turnstile testing secret. Never use it in production.
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

@@ -1,5 +1,11 @@
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
+import {
+  configuredOrigin as resolveOrigin, digest, hasOperatorSecret, isEmail, json, normalizeEmail, randomToken, readJson,
+  withinRateLimit, type RateLimitBinding,
+} from "./account-http";
+import { consumeSignupTicket, handleSignupConfigRequest, handleSignupRequest, resolveSignupTicket, type SignupOptions } from "./account-signup";
+import { acceptFamilyInvite, createFamilyInvite, familyMaxAccounts } from "./family-invites";
 
 export interface AccountD1Database {
   prepare(query: string): {
@@ -16,6 +22,11 @@ export interface AccountEnv {
   BETTER_AUTH_SECRET?: string;
   ACCOUNT_BOOTSTRAP_SECRET?: string;
   CLOUD_ACCOUNT_ORIGIN?: string;
+  /** Shared limiter for signup, Family invite issue, and Family invite acceptance. */
+  ACCOUNT_RATE_LIMIT?: RateLimitBinding;
+  TURNSTILE_SITE_KEY?: string;
+  TURNSTILE_SECRET_KEY?: string;
+  FAMILY_MAX_ACCOUNTS?: string;
 }
 
 export interface AccountSession {
@@ -25,58 +36,12 @@ export interface AccountSession {
 
 const SESSION_LIFETIME_SECONDS = 60 * 60 * 24 * 14;
 const SESSION_REFRESH_AGE_SECONDS = 60 * 60 * 24;
-const INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_BODY_BYTES = 16 * 1024;
+const RECOVERY_INVITE_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 
 type InviteRow = { id: string; user_id: string; email: string; name: string };
 
 function configuredOrigin(env: AccountEnv, request: Request): URL | null {
-  const requestUrl = new URL(request.url);
-  const configured = env.CLOUD_ACCOUNT_ORIGIN;
-  if (configured) {
-    let allowlisted: URL;
-    try {
-      allowlisted = new URL(configured);
-    } catch {
-      return null;
-    }
-    if (allowlisted.origin !== configured || allowlisted.origin !== requestUrl.origin) return null;
-    return allowlisted;
-  }
-  if (requestUrl.hostname === "localhost" || requestUrl.hostname === "127.0.0.1") return requestUrl;
-  return null;
-}
-
-function secureEqual(left: string, right: string): boolean {
-  const a = new TextEncoder().encode(left);
-  const b = new TextEncoder().encode(right);
-  let difference = a.length ^ b.length;
-  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
-    difference |= (a[index] ?? 0) ^ (b[index] ?? 0);
-  }
-  return difference === 0;
-}
-
-function base64Url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-
-async function digest(value: string): Promise<string> {
-  const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
-  return base64Url(new Uint8Array(bytes));
-}
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return resolveOrigin(env.CLOUD_ACCOUNT_ORIGIN, request);
 }
 
 function accountDeletedResponse() {
@@ -94,48 +59,6 @@ export async function deleteAccountData(db: AccountD1Database, userId: string): 
   if (results.length !== 3 || results.some((result) => result?.success !== true)) throw new Error("account_deletion_failed");
   // D1 batches are atomic. A successful batch has written the tombstone and
   // deleted the account; avoid a follow-up read that could fail after commit.
-}
-
-async function readJson(request: Request): Promise<Record<string, unknown> | null> {
-  if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return null;
-  const length = request.headers.get("content-length");
-  if (length && /^\d+$/.test(length) && Number(length) > MAX_BODY_BYTES) return null;
-  const reader = request.body?.getReader();
-  if (!reader) return null;
-  const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    size += value.byteLength;
-    if (size > MAX_BODY_BYTES) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  const bytes = new Uint8Array(size);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  try {
-    const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
-    return value !== null && typeof value === "object" && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function isEmail(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-function isName(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.trim().length <= 120;
 }
 
 function authSecret(env: AccountEnv): string {
@@ -175,33 +98,45 @@ function createAuth(env: AccountEnv, originUrl: URL) {
         resolveUser: async ({ context }) => {
           if (typeof context !== "string" || context.length > 100) throw new Error("valid_account_invite_required");
           const tokenHash = await digest(context);
+          const now = Date.now();
+          // Operator recovery invites point at an existing user. Signup tickets
+          // describe a user that is created only after Passkey verification.
           const invite = await env.ACCOUNT_DB.prepare(`
             SELECT i.id, i.user_id, u.email, u.name
             FROM account_invite i JOIN user u ON u.id = i.user_id
             WHERE i.token_hash = ? AND i.used_at IS NULL AND i.expires_at > ?
             LIMIT 1
-          `).bind(tokenHash, Date.now()).first<InviteRow>();
-          if (!invite) throw new Error("valid_account_invite_required");
+          `).bind(tokenHash, now).first<InviteRow>();
+          const user = invite
+            ? { id: invite.user_id, name: invite.name, email: invite.email }
+            : await resolveSignupTicket(env.ACCOUNT_DB, tokenHash, now);
+          if (!user) throw new Error("valid_account_invite_required");
           const deleted = await env.ACCOUNT_DB.prepare("SELECT user_id FROM account_deletion_tombstones WHERE user_id=?")
-            .bind(invite.user_id).first<{ user_id: string }>();
+            .bind(user.id).first<{ user_id: string }>();
           if (deleted) throw new Error("deleted_account_id");
-          return { id: invite.user_id, name: invite.name, email: invite.email };
+          return user;
         },
         afterVerification: async ({ context }) => {
           // This callback also runs when an authenticated user adds a passkey.
           // Such a registration has no invite context and must follow Better Auth's normal flow.
           if (typeof context !== "string" || context.length > 100) return;
           const tokenHash = await digest(context);
+          const now = Date.now();
           const result = await env.ACCOUNT_DB.prepare(`
             UPDATE account_invite SET used_at = ?
             WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
-          `).bind(Date.now(), tokenHash, Date.now()).run();
-          if (!result.success || result.meta?.changes !== 1) throw new Error("account_invite_invalid_or_used");
-          const invite = await env.ACCOUNT_DB.prepare(`
-            SELECT user_id FROM account_invite WHERE token_hash = ? LIMIT 1
-          `).bind(tokenHash).first<{ user_id: string }>();
-          if (!invite) throw new Error("account_invite_user_missing");
-          return { userId: invite.user_id };
+          `).bind(now, tokenHash, now).run();
+          if (!result.success) throw new Error("account_invite_invalid_or_used");
+          if (result.meta?.changes === 1) {
+            const invite = await env.ACCOUNT_DB.prepare(`
+              SELECT user_id FROM account_invite WHERE token_hash = ? LIMIT 1
+            `).bind(tokenHash).first<{ user_id: string }>();
+            if (!invite) throw new Error("account_invite_user_missing");
+            return { userId: invite.user_id };
+          }
+          const userId = await consumeSignupTicket(env.ACCOUNT_DB, tokenHash, now);
+          if (!userId) throw new Error("account_invite_invalid_or_used");
+          return { userId };
         },
       },
     })],
@@ -225,16 +160,8 @@ export async function handleAuthRequest(request: Request, env: AccountEnv): Prom
 export async function getAccountSession(request: Request, env: AccountEnv): Promise<AccountSession | null> {
   const originUrl = configuredOrigin(env, request);
   if (!originUrl) return null;
-  try {
-    const result = await createAuth(env, originUrl).api.getSession({ headers: request.headers });
-    if (!result) return null;
-    return {
-      user: { id: result.user.id, email: result.user.email, name: result.user.name },
-      session: { id: result.session.id, expiresAt: result.session.expiresAt },
-    };
-  } catch {
-    return null;
-  }
+  const lookup = await lookupSession(env, originUrl, request);
+  return lookup.status === "ok" ? lookup.account : null;
 }
 
 /** Checks that a signed AI token still belongs to an account that can use the service. */
@@ -245,66 +172,119 @@ export async function isAccountActive(db: AccountD1Database, userId: string): Pr
   return account !== null;
 }
 
-/** Creates a time-limited invite after validating the operator-only bootstrap secret. */
-export async function handleAccountRequest(request: Request, env: AccountEnv): Promise<Response> {
+type SessionLookup = { status: "ok"; account: AccountSession } | { status: "none" | "unavailable" };
+
+async function lookupSession(env: AccountEnv, originUrl: URL, request: Request): Promise<SessionLookup> {
+  try {
+    const result = await createAuth(env, originUrl).api.getSession({ headers: request.headers });
+    if (!result) return { status: "none" };
+    return {
+      status: "ok",
+      account: {
+        user: { id: result.user.id, email: result.user.email, name: result.user.name },
+        session: { id: result.session.id, expiresAt: result.session.expiresAt },
+      },
+    };
+  } catch {
+    return { status: "unavailable" };
+  }
+}
+
+/** Routes `/api/account/*`: public signup, Family invites, operator recovery, and self-deletion. */
+export async function handleAccountRequest(request: Request, env: AccountEnv, options: SignupOptions = {}): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/account/delete") return handleDeleteAccountRequest(request, env);
-  if (url.pathname !== "/api/account/invites" && url.pathname !== "/api/account/recovery") return json(404, { error: "not_found" });
+  if (url.pathname === "/api/account/signup-config") return handleSignupConfigRequest(request, env);
+  const known = ["/api/account/signup", "/api/account/family-invites", "/api/account/family-invites/accept", "/api/account/recovery"];
+  if (!known.includes(url.pathname)) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   const originUrl = configuredOrigin(env, request);
   if (!originUrl) return json(403, { error: "untrusted_origin" });
+  if (url.pathname === "/api/account/signup") return handleSignupRequest(request, env, originUrl, options);
+  if (url.pathname === "/api/account/family-invites/accept") return handleFamilyInviteAccept(request, env, originUrl, options);
+
+  // Operator-only routes. Operator scripts send no Origin header; browsers on other origins do.
   const requestOrigin = request.headers.get("origin");
   if (requestOrigin && requestOrigin !== originUrl.origin) return json(403, { error: "forbidden_origin" });
-  const authorization = request.headers.get("authorization") ?? "";
-  const match = /^Bearer (.+)$/.exec(authorization);
-  const expectedSecret = env.ACCOUNT_BOOTSTRAP_SECRET;
-  if (!expectedSecret || expectedSecret.length < 32 || !match || !secureEqual(match[1], expectedSecret)) {
-    return json(401, { error: "unauthorized" });
+  if (!hasOperatorSecret(request, env.ACCOUNT_BOOTSTRAP_SECRET)) return json(401, { error: "unauthorized" });
+  if (url.pathname === "/api/account/family-invites") return handleFamilyInviteIssue(request, env, originUrl, options);
+  return handleRecoveryRequest(request, env, originUrl);
+}
+
+async function handleFamilyInviteIssue(request: Request, env: AccountEnv, originUrl: URL, options: SignupOptions): Promise<Response> {
+  const limit = await withinRateLimit(env.ACCOUNT_RATE_LIMIT, "family-invite-issue");
+  if (limit === "unavailable") return json(503, { error: "temporarily_unavailable" });
+  if (limit === "limited") return json(429, { error: "rate_limited" });
+  const body = await readJson(request);
+  if (!body || (body.email !== undefined && body.email !== null && !isEmail(body.email))) return json(400, { error: "invalid_request" });
+  const targetEmail = typeof body.email === "string" ? normalizeEmail(body.email) : null;
+  try {
+    const invite = await createFamilyInvite(env.ACCOUNT_DB, targetEmail, (options.now ?? Date.now)());
+    // The token is in the fragment, so browsers do not send it to the server or in Referer headers.
+    return json(201, {
+      inviteUrl: `${originUrl.origin}/#family-invite=${invite.token}`,
+      expiresAt: new Date(invite.expiresAt).toISOString(),
+      targetEmail,
+    });
+  } catch {
+    return json(503, { error: "temporarily_unavailable" });
   }
+}
+
+async function handleFamilyInviteAccept(request: Request, env: AccountEnv, originUrl: URL, options: SignupOptions): Promise<Response> {
+  if (request.headers.get("origin") !== originUrl.origin) return json(403, { error: "forbidden_origin" });
+  const lookup = await lookupSession(env, originUrl, request);
+  if (lookup.status !== "ok") {
+    return lookup.status === "none" ? json(401, { error: "unauthorized" }) : json(503, { error: "temporarily_unavailable" });
+  }
+  const { user } = lookup.account;
+  const limit = await withinRateLimit(env.ACCOUNT_RATE_LIMIT, `family-accept:${user.id}`);
+  if (limit === "unavailable") return json(503, { error: "temporarily_unavailable" });
+  if (limit === "limited") return json(429, { error: "rate_limited" });
+  // Only the token is read from the body. The user is always the session user.
+  const body = await readJson(request);
+  if (!body) return json(400, { error: "invalid_request" });
+  try {
+    const result = await acceptFamilyInvite(env.ACCOUNT_DB, { userId: user.id, email: user.email }, body.token, {
+      now: (options.now ?? Date.now)(),
+      maxFamilyAccounts: familyMaxAccounts(env.FAMILY_MAX_ACCOUNTS),
+    });
+    if (result.status === "granted") return json(200, { plan: "family" });
+    if (result.status === "already_family") return json(200, { plan: "family", alreadyFamily: true });
+    if (result.status === "limit_reached") return json(409, { error: "family_limit_reached" });
+    return json(400, { error: "invalid_family_invite" });
+  } catch {
+    return json(503, { error: "temporarily_unavailable" });
+  }
+}
+
+/** Revokes every authenticator and session, then issues a one-time Passkey re-registration invite. */
+async function handleRecoveryRequest(request: Request, env: AccountEnv, originUrl: URL): Promise<Response> {
   const body = await readJson(request);
   if (!body || !isEmail(body.email)) return json(400, { error: "invalid_request" });
-  const email = body.email.trim().toLowerCase();
-  const isRecovery = url.pathname === "/api/account/recovery";
-  const name = isName(body.name) ? body.name.trim() : "";
-  const inviteId = crypto.randomUUID();
-  const token = base64Url(crypto.getRandomValues(new Uint8Array(32)));
+  const email = normalizeEmail(body.email);
+  const token = randomToken();
   const tokenHash = await digest(token);
   const now = Date.now();
-  const expiresAt = now + INVITE_LIFETIME_MS;
+  const expiresAt = now + RECOVERY_INVITE_LIFETIME_MS;
   try {
-    if (isRecovery) {
-      const existing = await env.ACCOUNT_DB.prepare("SELECT id FROM user WHERE email = ? LIMIT 1")
-        .bind(email).first<{ id: string }>();
-      if (!existing) return json(404, { error: "account_not_found" });
-      // Recovery is an operator action: old sessions and every authenticator are revoked.
-      // D1 batch executes the statements atomically.
-      await env.ACCOUNT_DB.batch([
-        env.ACCOUNT_DB.prepare("DELETE FROM session WHERE userId = ?").bind(existing.id),
-        env.ACCOUNT_DB.prepare("DELETE FROM passkey WHERE userId = ?").bind(existing.id),
-        env.ACCOUNT_DB.prepare("UPDATE account_invite SET used_at = ? WHERE user_id = ? AND used_at IS NULL")
-          .bind(now, existing.id),
-        env.ACCOUNT_DB.prepare(`
-          INSERT INTO account_invite (id, user_id, token_hash, created_at, expires_at)
-          VALUES (?, ?, ?, ?, ?)
-        `).bind(inviteId, existing.id, tokenHash, now, expiresAt),
-      ]);
-    } else {
-      if (!isName(body.name)) return json(400, { error: "invalid_request" });
-      const id = crypto.randomUUID();
-      await env.ACCOUNT_DB.prepare(`
-        INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt)
-        VALUES (?, ?, ?, 0, ?, ?)
-      `).bind(id, name, email, now, now).run().then((result) => {
-        if (!result.success) throw new Error("account_user_insert_failed");
-      });
-      const result = await env.ACCOUNT_DB.prepare(`
+    const existing = await env.ACCOUNT_DB.prepare("SELECT id FROM user WHERE email = ? LIMIT 1")
+      .bind(email).first<{ id: string }>();
+    if (!existing) return json(404, { error: "account_not_found" });
+    // Recovery is an operator action: old sessions and every authenticator are revoked.
+    // D1 batch executes the statements atomically.
+    await env.ACCOUNT_DB.batch([
+      env.ACCOUNT_DB.prepare("DELETE FROM session WHERE userId = ?").bind(existing.id),
+      env.ACCOUNT_DB.prepare("DELETE FROM passkey WHERE userId = ?").bind(existing.id),
+      env.ACCOUNT_DB.prepare("UPDATE account_invite SET used_at = ? WHERE user_id = ? AND used_at IS NULL")
+        .bind(now, existing.id),
+      env.ACCOUNT_DB.prepare(`
         INSERT INTO account_invite (id, user_id, token_hash, created_at, expires_at)
         VALUES (?, ?, ?, ?, ?)
-      `).bind(inviteId, id, tokenHash, now, expiresAt).run();
-      if (!result.success) throw new Error("account_invite_insert_failed");
-    }
+      `).bind(crypto.randomUUID(), existing.id, tokenHash, now, expiresAt),
+    ]);
   } catch {
-    return json(409, { error: "account_already_exists_or_unavailable" });
+    return json(503, { error: "temporarily_unavailable" });
   }
   return json(201, {
     context: token,
@@ -320,20 +300,13 @@ async function handleDeleteAccountRequest(request: Request, env: AccountEnv): Pr
   if (request.headers.get("origin") !== originUrl.origin) return json(403, { error: "forbidden_origin" });
   if (request.body !== null) return json(400, { error: "invalid_request" });
 
-  let account: AccountSession | null;
-  try {
-    const result = await createAuth(env, originUrl).api.getSession({ headers: request.headers });
-    account = result ? {
-      user: { id: result.user.id, email: result.user.email, name: result.user.name },
-      session: { id: result.session.id, expiresAt: result.session.expiresAt },
-    } : null;
-  } catch {
-    return json(503, { error: "temporarily_unavailable" });
+  const lookup = await lookupSession(env, originUrl, request);
+  if (lookup.status !== "ok") {
+    return lookup.status === "none" ? json(401, { error: "unauthorized" }) : json(503, { error: "temporarily_unavailable" });
   }
-  if (!account) return json(401, { error: "unauthorized" });
 
   try {
-    await deleteAccountData(env.ACCOUNT_DB, account.user.id);
+    await deleteAccountData(env.ACCOUNT_DB, lookup.account.user.id);
     return accountDeletedResponse();
   } catch {
     return json(503, { error: "account_deletion_incomplete" });

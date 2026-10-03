@@ -8,8 +8,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "account:set-plan": "node ./scripts/account-set-plan.mjs",
-    "account:invite": "node ./scripts/account-invite.mjs invite",
-    "account:recover": "node ./scripts/account-invite.mjs recover"
+    "account:family-invite": "node ./scripts/account-admin.mjs family-invite",
+    "account:recover": "node ./scripts/account-admin.mjs recover"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.0",

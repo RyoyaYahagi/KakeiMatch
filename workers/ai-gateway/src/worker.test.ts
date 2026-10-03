@@ -171,6 +171,14 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     for (let i = 0; i < 3; i++) expect((await gemini()).status).toBe(200);
     expect(await usage()).toMatchObject({ plan: "family", used: 3, limit: null, remaining: null });
   });
+  it("reads the plan only from D1, ignoring plan claims in tokens, headers and bodies", async () => {
+    env.AI_FREE_MONTHLY_LIMIT = "1";
+    expect((await gemini()).status).toBe(200);
+    const forged = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID(), plan: "family" },
+      bearer("synthetic-user", now, { plan: "family" }), { "x-kakeimatch-plan": "family" }), env, options());
+    expect(forged.status).toBe(429);
+    expect(await usage()).toMatchObject({ plan: "free", used: 1, limit: 1, remaining: 0 });
+  });
   it("never reports negative remaining when a finite plan is lowered", async () => {
     await gemini();
     await gemini();
