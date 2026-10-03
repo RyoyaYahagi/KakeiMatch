@@ -32,6 +32,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [登録した記録の編集](docs/LOCAL_RECEIPT_EDITS.md): 品目・カテゴリ配分の修正と変更履歴
 - [口座間振替](docs/LOCAL_TRANSFERS.md): 登録・編集と両口座の残高
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
+- [アプリ更新](docs/PWA_UPDATES.md): 世代別配信と入力を保持する更新手順
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
 - [お問い合わせ](docs/CONTACT.md): 音声入力と不具合・改善要望のIssue登録
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
