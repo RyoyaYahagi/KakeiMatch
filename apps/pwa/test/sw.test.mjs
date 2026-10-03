@@ -106,4 +106,5 @@ test('all API requests including GET auth/session bypass the service worker', ()
   for (const path of ['/api/auth/get-session', '/api/account/usage', '/api/ai/gemini', '/api/contact', '/api/contact/transcribe', '/api/contact/interview']) {
     for (const method of ['GET', 'POST']) assert.equal(context.request(path, 'cors', method), undefined);
   }
+  assert.equal(context.request('/auth/callback?code=synthetic&state=synthetic', 'navigate', 'GET'), undefined);
 });

@@ -27,20 +27,21 @@ async function test() {
   const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
   try {
     const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
-    await context.addInitScript(() => { Object.defineProperty(navigator.serviceWorker, 'register', { value: async () => ({}) }); });
     await context.route('**/api/auth/get-session', route => route.fulfill({ json: null }));
     await context.route('**/api/ai/usage', route => route.fulfill({ status: 401, json: { error: 'synthetic_signed_out' } }));
     await context.route('**/api/ai/token', route => route.fulfill({ status: 401, json: { error: 'synthetic_signed_out' } }));
     await context.route('https://auth.openai.com/api/accounts/authorize?**', route => {
       const authorization = new URL(route.request().url()); const callback = new URL('/auth/callback', origin);
       callback.searchParams.set('state', authorization.searchParams.get('state')!); callback.searchParams.set('code', 'synthetic-code'); callback.searchParams.set('client_id', 'oaiapp_synthetic');
-      return route.fulfill({ status: 302, headers: { Location: callback.href }, body: '' });
+      return route.fulfill({ contentType: 'text/html', body: `<!doctype html><a href="${callback.href.replaceAll('&', '&amp;')}">Continue synthetic authorization</a>` });
     });
     const page = await context.newPage(); const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
     await page.goto(origin); await page.waitForFunction(() => document.querySelector('#message')?.textContent !== '家計簿を準備しています…');
     await page.locator('#settings-tab').click(); await page.locator('#developer-options').check();
     await page.locator('#chatgpt-plan-login').click();
-    await page.waitForURL(`${origin}/#settings`); await page.locator('#settings-tab').click(); await page.locator('#developer-options').check();
+    await page.getByRole('link', { name: 'Continue synthetic authorization', exact: true }).click();
+    await page.waitForURL(url => url.origin === origin && url.pathname === '/');
+    await page.locator('#settings-tab').click(); await page.locator('#developer-options').check();
     await page.locator('#chatgpt-plan-model').selectOption('synthetic-model'); await page.locator('#chatgpt-plan-enable').click();
     await page.getByText('接続済み。この端末の読み取りで使用します。', { exact: true }).waitFor();
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
