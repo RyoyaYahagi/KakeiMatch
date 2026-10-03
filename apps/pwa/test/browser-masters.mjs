@@ -13,6 +13,43 @@ await context.route('**/api/**', route => route.fulfill({ status: 403, json: { e
 await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
 const click = name => page.getByRole('button', { name, exact: true }).click();
 async function settings(kind) { await page.locator('#settings-tab').click(); await click(kind); }
+async function assertAtomicSettingsTransition(kind, target) {
+  await page.locator('#settings-tab').click();
+  await page.evaluate(targetName => {
+    window.__settingsTransitionPartial = false;
+    const settingsView = document.querySelector('#settings-view');
+    const localView = document.querySelector('#local-view');
+    const inspect = () => {
+      const master = document.querySelector('.master-settings');
+      if (targetName === 'category' && settingsView instanceof HTMLElement && !settingsView.hidden && master instanceof HTMLElement && !master.hidden
+        && master.querySelector('.page-title')?.textContent === 'カテゴリ' && !master.querySelector('.master-switcher')) window.__settingsTransitionPartial = true;
+      if (targetName === 'account' && settingsView instanceof HTMLElement && !settingsView.hidden && master instanceof HTMLElement && !master.hidden
+        && master.querySelector('.page-title')?.textContent === '支払元・口座' && !master.querySelector('.account-total')) window.__settingsTransitionPartial = true;
+      if (targetName === 'budget' && localView instanceof HTMLElement && !localView.hidden
+        && localView.querySelector('#budget-edit-month') && localView.querySelector('[role=status]')?.textContent?.includes('読み込んでいます')) window.__settingsTransitionPartial = true;
+      if (targetName === 'recurring' && localView instanceof HTMLElement && !localView.hidden
+        && Array.from(localView.querySelectorAll('h2')).some(node => node.textContent === '定期登録')
+        && !localView.querySelector('[aria-label="定期登録を追加する"]')) window.__settingsTransitionPartial = true;
+    };
+    const observer = new MutationObserver(inspect);
+    observer.observe(document.querySelector('main'), { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
+    window.__stopSettingsTransitionWatch = () => observer.disconnect();
+  }, target);
+  await click(kind);
+  if (target === 'category') await page.locator('.master-switcher').waitFor();
+  if (target === 'account') await page.locator('.account-total').waitFor();
+  if (target === 'budget') await page.waitForFunction(() => {
+    const status = document.querySelector('#local-view [role=status]');
+    return document.querySelector('#budget-edit-month') && !status?.textContent?.includes('読み込んでいます');
+  });
+  if (target === 'recurring') await page.locator('[aria-label="定期登録を追加する"]').waitFor();
+  const partial = await page.evaluate(() => {
+    window.__stopSettingsTransitionWatch?.();
+    return window.__settingsTransitionPartial;
+  });
+  assert.equal(partial, false, `${kind} displayed an incomplete intermediate settings screen`);
+  await page.locator('#settings-tab').click();
+}
 async function addAccount(name) {
   await settings('支払元'); await click('支払元を追加する');
   await page.getByLabel('支払元の名前', { exact: true }).fill(name); await click('追加する');
@@ -51,6 +88,10 @@ async function fillReceipt(merchant, account, category) {
 try {
   await page.goto(url);
   await page.waitForFunction(() => document.querySelector('#home-summary')?.textContent?.includes('今月の支出'));
+  await assertAtomicSettingsTransition('カテゴリ', 'category');
+  await assertAtomicSettingsTransition('支払元', 'account');
+  await assertAtomicSettingsTransition('予算設定', 'budget');
+  await assertAtomicSettingsTransition('定期登録', 'recurring');
   await addAccount('Synthetic Wallet');
   await accountDetail('Synthetic Wallet'); await click('編集する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Cash'); await click('変更を保存');
