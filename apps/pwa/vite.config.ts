@@ -32,7 +32,7 @@ const runtimeBoundary: Plugin = {
 };
 
 export default defineConfig({
-  define: { __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
+  define: { __CHATGPT_PLAN_ENABLED__: JSON.stringify(process.env.KAKEIMATCH_SELF_HOSTED_CHATGPT === '1'), __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
   server: { host: '127.0.0.1', headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } },
   // Built assets are served from the app's own origin, as on Cloudflare.
   // Vite's default CORS adds Vary: Origin, unlike the deployed asset response.

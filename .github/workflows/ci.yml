@@ -110,6 +110,29 @@ jobs:
             /tmp/kakeimatch-pwa-dev.log
           retention-days: 7
 
+  self-hosted-chatgpt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --dir apps/pwa build
+        env:
+          KAKEIMATCH_SELF_HOSTED_CHATGPT: '1'
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm --dir apps/pwa exec playwright-core install chromium
+      - run: pnpm exec tsx apps/pwa/test/browser-chatgpt-plan.ts
+
   ai-gateway:
     runs-on: ubuntu-latest
     timeout-minutes: 10

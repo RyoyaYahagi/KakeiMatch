@@ -12,6 +12,7 @@ import { renderOssLicenses } from './oss-licenses';
 import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { recordLocalDiagnostic } from './local-diagnostics';
+import { initializeChatGptPlanUi } from './chatgpt-plan-ui';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -130,6 +131,7 @@ root.innerHTML = `
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 renderOssLicenses(element<HTMLElement>('oss-licenses'));
 initializeDiagnosticsUi(element<HTMLElement>('app-info'));
+initializeChatGptPlanUi(element<HTMLElement>('app-info'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');

@@ -5,6 +5,7 @@ import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType }
 import { getAiAccessToken } from "./ai-auth";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
 import { LocalCategoryLearning, type AppliedCategoryRule } from "./local-category-learning";
+import { chatGptPlanSelected, chatGptRequestHeaders } from './chatgpt-plan-ui';
 
 const RECEIPT_KIND = "receipt-metadata" as const;
 const EXTRACTION_KIND = "receipt-extraction" as const;
@@ -207,13 +208,20 @@ export class LocalReceiptService {
       const bytes = new Uint8Array(await blob.blob.arrayBuffer());
       if (bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。");
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのため読み取れません。レシート画像は端末に保存されています。接続後に再試行してください。");
-      const token = await (this.options.getToken ?? getAiAccessToken)();
+      const selfHosted = !this.options.geminiUrl && chatGptPlanSelected();
+      const token = selfHosted ? null : await (this.options.getToken ?? getAiAccessToken)();
       const flowId = crypto.randomUUID();
-      const response = await this.fetchImpl(this.options.geminiUrl ?? "/api/ai/gemini", {
-        method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      const response = await this.fetchImpl(selfHosted ? '/api/self-hosted/chatgpt/receipt' : this.options.geminiUrl ?? "/api/ai/gemini", {
+        method: "POST", credentials: "same-origin", headers: selfHosted ? chatGptRequestHeaders : { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ flowId, contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
       });
-      if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
+      if (!response.ok) {
+        const code = await readGatewayCode(response);
+        if (selfHosted) throw new LocalReceiptServiceError(code ?? 'provider_unavailable', response.status === 429
+          ? 'ChatGPTプランの利用上限に達しました。手入力で登録するか、通常の読み取りに戻してください。'
+          : 'セルフホスト設定のChatGPT接続を確認してください。画像と入力内容はこの端末に残っています。');
+        throw gatewayError(code, response.status);
+      }
       const extraction = validateReceiptExtraction(await response.json());
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
