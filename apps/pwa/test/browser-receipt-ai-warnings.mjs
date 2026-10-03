@@ -10,12 +10,12 @@ await page.clock.setFixedTime(new Date('2026-10-04T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: 9999999999 } }));
 await context.route('**/api/ai/gemini', route => route.fulfill({ json: {
-  documentKind: 'receipt', merchant: 'Synthetic Net Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 0, taxAmountYen: null,
-  items: [{ name: 'Synthetic Rice', amountYen: 400 }, { name: 'Synthetic Lettuce', amountYen: 0 }, { name: 'Synthetic Chicken', amountYen: 600 }],
+  documentKind: 'receipt', merchant: 'Synthetic Net Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 1050, taxAmountYen: null, pointsUsedYen: 1050,
+  items: [{ name: 'Synthetic Rice', amountYen: 400 }, { name: 'Synthetic Lettuce', amountYen: 150 }, { name: 'Synthetic Chicken', amountYen: 600 }],
   adjustments: [{ label: 'Synthetic Coupon', amountYen: -100 }],
   warnings: [
-    { field: 'items', code: 'out_of_stock', message: '欠品のため金額が0円になっています。', index: 1 },
-    { field: 'totalAmountYen', code: 'points', message: 'ポイント利用で支払額が0円です。', index: null },
+    { field: 'items', code: 'price', message: '単価と金額が異なるため確認してください。', index: 1 },
+    { field: 'totalAmountYen', code: 'blurred', message: '合計金額の数字がかすれています。', index: null },
     { field: null, code: 'layout', message: 'Unusual document layout' },
   ],
 } }));
@@ -30,10 +30,10 @@ try {
   await click('AIで読み取る');
   const band = page.getByRole('region', { name: '画像と照らし合わせてほしいところが3件あります' });
   await band.waitFor();
-  const rows = band.getByRole('button');
+  const rows = band.locator('.receipt-review-row');
   assert.equal(await rows.count(), 3);
-  assert.match(await rows.nth(0).textContent(), /品目2「Synthetic Lettuce」.*欠品のため金額が0円になっています。/);
-  assert.match(await rows.nth(1).textContent(), /合計金額.*ポイント利用で支払額が0円です。/);
+  assert.match(await rows.nth(0).textContent(), /品目2「Synthetic Lettuce」.*単価と金額が異なるため確認してください。/);
+  assert.match(await rows.nth(1).textContent(), /合計金額.*合計金額の数字がかすれています。/);
   // A message that is not Japanese is replaced with a plain instruction.
   assert.match(await rows.nth(2).textContent(), /レシート全体.*画像の内容と照らし合わせてください。/);
   // The place is marked with words, not only color.
@@ -49,8 +49,27 @@ try {
   await page.getByRole('button', { name: '全体', exact: true }).click();
   await rows.nth(1).click();
   await page.waitForFunction(() => document.activeElement?.id === 'receipt-amount');
+  // Points are a payment method: the total stays the purchase amount and the points go to the memo.
+  assert.equal(await page.locator('#receipt-amount').inputValue(), '1050');
+  assert.equal(await page.locator('#receipt-memo').inputValue(), 'ポイント利用 1,050円');
+  // A checked row disappears, and editing a flagged field counts as checking it.
+  await click('レシート全体を確認した');
+  await page.getByRole('region', { name: '画像と照らし合わせてほしいところが2件あります' }).waitFor();
+  await page.locator('#receipt-amount').fill('1060');
+  await page.getByRole('region', { name: '画像と照らし合わせてほしいところが1件あります' }).waitFor();
+  assert.equal(await page.locator('#receipt-amount-review').count(), 0);
+  assert.equal(await page.locator('#receipt-amount').getAttribute('aria-describedby'), null);
+  // Checked warnings stay hidden when the receipt is opened again.
+  await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: 'Synthetic Net Market · 確認する', exact: true }).click();
+  const remaining = page.getByRole('region', { name: '画像と照らし合わせてほしいところが1件あります' });
+  await remaining.waitFor();
+  assert.match(await remaining.locator('.receipt-review-row').textContent(), /品目2「Synthetic Lettuce」/);
+  await click('品目2「Synthetic Lettuce」を確認した');
+  await remaining.waitFor({ state: 'detached' });
+  assert.doesNotMatch(await page.locator('[data-receipt-item]').nth(1).locator('.receipt-compact-meta').textContent(), /要確認/);
   assert.deepEqual(errors, []);
-  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, and move to each place.');
+  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, move to each place, hide checked or edited ones across reopening, and keep points as a memo.');
 } finally {
   await browser.close();
 }

@@ -343,7 +343,9 @@ form .category-picker button { margin: 0; }
 .receipt-review { align-items: flex-start; }
 .receipt-review-title { color: var(--text); font-weight: 700; }
 .receipt-review-list { width: 100%; margin: 0; padding: 0; list-style: none; }
-.receipt-review-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 44px; padding: var(--space-2) 0; color: var(--text); text-align: left; }
+.receipt-review-list li { display: flex; align-items: center; gap: var(--space-2); }
+.receipt-review-done { flex: none; }
+.receipt-review-row { display: flex; align-items: center; gap: var(--space-2); flex: 1; min-width: 0; min-height: 44px; padding: var(--space-2) 0; color: var(--text); text-align: left; }
 .receipt-review-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 .receipt-review-text span { font-size: .875rem; }
 .receipt-review-row .icon { color: var(--warning); }

@@ -40,6 +40,8 @@ export type LocalReceipt = {
   /** Usage flow for the latest successful extraction; older receipts may lack it. */
   aiFlowId?: string;
   itemCategories?: Array<string | null>;
+  /** Positions in extraction.warnings the user has checked; cleared by a new read. */
+  reviewedWarnings?: number[];
   classificationAttempt?: { flowId?: string; model: string; attemptedAt: string; itemCategories?: Array<string | null>; categoryId: string | null };
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "learned_rule" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string; categoryRules?: AppliedCategoryRule[] };
   confirmedValue: ConfirmedReceiptValue | null;
@@ -177,6 +179,18 @@ export class LocalReceiptService {
     return record?.kind === RECEIPT_KIND ? record.value : null;
   }
 
+  /** Records read warnings the user has compared with the image, so they are not shown again. */
+  async markWarningsReviewed(id: string, indexes: number[]): Promise<void> {
+    await this.withLock(id, async () => {
+      const receipt = await this.requireReceipt(id);
+      const count = receipt.extraction?.warnings.length ?? 0;
+      const reviewed = new Set(receipt.reviewedWarnings ?? []);
+      for (const index of indexes) if (Number.isSafeInteger(index) && index >= 0 && index < count) reviewed.add(index);
+      if (reviewed.size === (receipt.reviewedWarnings?.length ?? 0)) return;
+      await this.save({ ...receipt, reviewedWarnings: [...reviewed].sort((a, b) => a - b), updatedAt: nowIso(this.options) });
+    });
+  }
+
   async deletePending(id: string): Promise<void> {
     await this.withLock(id, async () => {
       try {
@@ -218,7 +232,7 @@ export class LocalReceiptService {
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
-      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp,
+      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp, reviewedWarnings: undefined,
         itemCategories: undefined, classificationAttempt: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;

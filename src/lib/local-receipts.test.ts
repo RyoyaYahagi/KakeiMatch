@@ -66,6 +66,23 @@ describe("LocalReceiptService", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("remembers checked read warnings until the receipt is read again", async () => {
+    const warned = { ...extraction, warnings: [
+      { field: "purchasedDate", code: "missing", message: "購入日が印字されていません。" },
+      { field: "totalAmountYen", code: "check", message: "合計金額を確認してください。" },
+    ] };
+    const fetchImpl = vi.fn(async () => Response.json(warned));
+    const { service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    await service.markWarningsReviewed(receipt.id, [1, 1, 7, -1]);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([1]);
+    await service.markWarningsReviewed(receipt.id, [0]);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([0, 1]);
+    await service.analyze(receipt.id);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toBeUndefined();
+  });
+
   it("keeps a valid image larger than the AI gateway limit locally for manual entry", async () => {
     const fetchImpl = vi.fn();
     const { repository, service } = await setup(fetchImpl);

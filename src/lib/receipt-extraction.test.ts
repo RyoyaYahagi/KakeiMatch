@@ -55,7 +55,7 @@ describe("receipt extraction schema and review derivation", () => {
   it("keeps the generated Gemini schema aligned with runtime fields", () => {
     const properties = (receiptExtractionJsonSchema as { properties: Record<string, unknown> }).properties;
     expect(Object.keys(properties)).toEqual([
-      "documentKind", "merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments", "warnings",
+      "documentKind", "merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "pointsUsedYen", "items", "adjustments", "warnings",
     ]);
     expect(JSON.stringify(receiptExtractionJsonSchema)).not.toContain("category");
     expect(JSON.stringify(receiptExtractionJsonSchema)).not.toMatch(/anyOf|\$schema|minLength|pattern/);

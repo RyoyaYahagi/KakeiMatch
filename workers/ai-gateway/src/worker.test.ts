@@ -545,6 +545,19 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       { field: "totalAmountYen", code: "points", message: "ポイント利用で支払額が0円です。", index: null },
     ]);
   });
+  it("returns points used separately and drops warnings about zero-amount lines", async () => {
+    const paidWithPoints = { ...receipt, totalAmountYen: 3284, pointsUsedYen: 3284,
+      items: [{ name: "Synthetic Item", amountYen: 3284 }, { name: "Synthetic Out Of Stock", amountYen: 0 }],
+      warnings: [
+        { field: "items", code: "out_of_stock", message: "欠品のため金額が0円です。", index: 1 },
+        { field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null },
+      ] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(paidWithPoints) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ totalAmountYen: 3284, pointsUsedYen: 3284,
+      warnings: [{ field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null }] });
+    expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify({ ...receipt, pointsUsedYen: -1 }) }))).status).toBe(502);
+  });
   it("logs only the rejected field name for an invalid extraction", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {
