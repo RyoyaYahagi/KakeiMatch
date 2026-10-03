@@ -513,6 +513,9 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 .record-rows li:last-child { border-bottom: 0; }
 .record-rows li.empty { padding: var(--space-4) 0; color: var(--muted); }
 .record-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-height: 60px; margin: 0; padding: var(--space-2) 0; border-radius: 0; background: transparent; color: var(--text); font-weight: 400; text-align: left; }
+.pending-receipt-row { gap: var(--space-2); }
+.pending-receipt-open { display: flex; align-items: center; gap: var(--space-3); flex: 1; min-width: 0; min-height: 60px; margin: 0; padding: var(--space-2) 0; border: 0; border-radius: 0; background: transparent; color: var(--text); font: inherit; text-align: left; }
+.pending-receipt-delete { min-width: 44px; min-height: 44px; padding: var(--space-2); flex: none; }
 .record-icon { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--radius-full); background: var(--tone-soft); color: var(--tone); flex: none; }
 .record-icon .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .record-main { display: flex; flex-direction: column; flex: 1; min-width: 0; }

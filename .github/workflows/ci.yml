@@ -51,7 +51,7 @@ jobs:
           - shard: 1
             scripts: test:backup-e2e test:receipt-edits-e2e test:account-types-e2e test:ai-costs-e2e test:smbc-statements-e2e test:rakuten-statements-e2e
           - shard: 2
-            scripts: test:e2e test:masters-e2e test:deletions-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e
+            scripts: test:e2e test:masters-e2e test:deletions-e2e test:pending-receipt-deletion-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e
           - shard: 3
             scripts: test:manual-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e
           - shard: 4

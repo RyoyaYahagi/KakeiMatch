@@ -291,3 +291,47 @@ describe("LocalDataRepository", () => {
     write.mockRestore();
   });
 });
+
+describe("pending receipt storage deletion", () => {
+  it("rolls back receipt metadata, extraction, draft, learning and image when the storage transaction aborts", async () => {
+    const repository = await open("profile-a", new IDBFactory());
+    const updatedAt = "2026-09-30T00:00:00.000Z";
+    const ids = ["receipt-1", "receipt-extraction:receipt-1", "receipt-draft:receipt-1", "category-learning:receipt-1"];
+    await repository.putRecords([
+      { id: ids[0], kind: "receipt-metadata", value: { image: { blobId: "image-1" } }, updatedAt },
+      { id: ids[1], kind: "receipt-extraction", value: { receiptId: ids[0] }, updatedAt },
+      { id: ids[2], kind: "category-state", value: { merchant: "人工店舗" }, updatedAt },
+      { id: ids[3], kind: "correction-audit", value: { receiptId: ids[0] }, updatedAt },
+    ]);
+    await repository.putBlob({ id: "image-1", ownerKind: "receipt", ownerId: "receipt-1", blob: new Blob(["synthetic image"]), contentType: "image/jpeg", createdAt: updatedAt });
+    const originalDelete = IDBObjectStore.prototype.delete;
+    const abort = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementation(function (this: IDBObjectStore, key) {
+      const request = originalDelete.call(this, key);
+      if (this.name === "records" && key === "profile-a\u0000receipt-draft:receipt-1") this.transaction.abort();
+      return request;
+    });
+    await expect(repository.deleteReceiptData(ids[0], ids[1], ids[2])).rejects.toThrow("変更内容は保存されていません");
+    abort.mockRestore();
+    for (const id of ids) expect(await repository.get(id)).not.toBeNull();
+    expect(await repository.getBlob("image-1")).not.toBeNull();
+  });
+
+  it("does not save a delayed draft after deletion, even when another profile still has the same receipt ID", async () => {
+    const factory = new IDBFactory();
+    const first = await open("profile-a", factory);
+    const other = await open("profile-b", factory);
+    const updatedAt = "2026-09-30T00:00:00.000Z";
+    const receipt = { id: "receipt-1", kind: "receipt-metadata" as const, value: { image: null }, updatedAt };
+    const draft = { id: "receipt-draft:receipt-1", kind: "category-state" as const, value: { merchant: "人工店舗" }, updatedAt };
+    await first.put(receipt);
+    await other.put(receipt);
+    expect(await first.putIfRecordExists(draft, receipt.id)).toBe(true);
+    const deletion = first.deleteReceiptData(receipt.id, "receipt-extraction:receipt-1", draft.id);
+    const staleWrite = first.putIfRecordExists(draft, receipt.id);
+    await deletion;
+    expect(await staleWrite).toBe(false);
+    expect(await first.get(draft.id)).toBeNull();
+    expect(await other.get(receipt.id)).not.toBeNull();
+    expect(await other.putIfRecordExists(draft, receipt.id)).toBe(true);
+  });
+});

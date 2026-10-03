@@ -86,7 +86,7 @@ try {
   // A receipt opened from the records list returns to the list on cancel.
   await page.getByRole('button', { name: 'キャンセル', exact: true }).click();
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: /Diagnostic Store/ }).click();
+  await page.getByRole('button', { name: /^Diagnostic Store/ }).click();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store');
   assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-30');
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1280');
@@ -99,7 +99,7 @@ try {
   await page.locator('#settings-tab').click();
   await page.getByText('今月の読み取り 1 / 30回 · Free', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: /Diagnostic Store/ }).click();
+  await page.getByRole('button', { name: /^Diagnostic Store/ }).click();
   await page.locator('#receipt-merchant').fill('Manual Store');
   await page.locator('#receipt-date').fill('2026-09-29');
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('11:30');
@@ -123,7 +123,7 @@ try {
   await page.getByText('今月の読み取り 2 / 30回 · Free', { exact: true }).waitFor();
   if (process.env.PWA_USAGE_SCREENSHOT_PATH) { await page.locator('#usage-summary').scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_USAGE_SCREENSHOT_PATH }); }
   await page.locator('#receipt-tab').click();
-  await page.getByRole('button', { name: /Diagnostic Store/ }).click();
+  await page.getByRole('button', { name: /^Diagnostic Store/ }).click();
   quotaExceeded = true;
   page.once('dialog', dialog => dialog.accept());
   await page.getByRole('button', { name: '再読み取り', exact: true }).click();

@@ -36,14 +36,21 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
 }
 
 /** A row for a saved receipt that still needs confirmation before it becomes a record. */
-export function pendingReceiptRow(title: string, open: () => void) {
+export function pendingReceiptRow(title: string, open: () => void, remove?: () => void) {
+  const row = document.createElement('div'); row.className = 'record-row pending-receipt-row';
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'record-row';
+  button.type = 'button'; button.className = 'pending-receipt-open';
   const badge = span('record-icon tone-pending'); badge.append(icon('receipt'));
   const main = span('record-main'); main.append(span('record-title', title), span('record-note', '内容を確認して登録してください'));
   const action = span('record-amount record-action', '確認する');
   button.append(badge, main, action);
   button.setAttribute('aria-label', `${title} · 確認する`);
   button.addEventListener('click', open);
-  return button;
+  row.append(button);
+  if (remove) {
+    const removeButton = document.createElement('button'); removeButton.type = 'button'; removeButton.className = 'text-button destructive-text pending-receipt-delete';
+    removeButton.textContent = '削除'; removeButton.setAttribute('aria-label', `削除: ${title}`); removeButton.addEventListener('click', remove);
+    row.append(removeButton);
+  }
+  return row;
 }

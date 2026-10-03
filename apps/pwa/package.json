@@ -36,7 +36,8 @@
     "test:account-types-e2e": "node test/browser-account-types.mjs",
     "test:ai-costs-e2e": "node test/browser-ai-costs.mjs",
     "test:ai-paused-e2e": "node test/browser-ai-paused.mjs",
-    "test:desktop-layout-e2e": "node test/browser-desktop-layout.mjs"
+    "test:desktop-layout-e2e": "node test/browser-desktop-layout.mjs",
+    "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

@@ -177,6 +177,25 @@ export class LocalReceiptService {
     return record?.kind === RECEIPT_KIND ? record.value : null;
   }
 
+  async deletePending(id: string): Promise<void> {
+    await this.withLock(id, async () => {
+      try {
+        const receipt = await this.requireReceipt(id);
+        if (receipt.registration.status !== "pending" || receipt.registration.actualTransactionId !== null) {
+          throw new LocalReceiptServiceError("receipt_not_deletable", "登録処理中、登録済み、または結果の確認が必要なレシートは削除できません。登録結果を確認してください。");
+        }
+        if (receipt.confirmedValue) {
+          const importedId = `kakeimatch:${receipt.id}`;
+          const transactions = await this.ledger.getTransactions({ startDate: "0001-01-01", endDate: "9999-12-31" });
+          if (transactions.some(transaction => transaction.importedId === importedId)) {
+            throw new LocalReceiptServiceError("receipt_actual_data_exists", "このレシートに対応する家計簿データが見つかりました。家計簿の記録を確認してから操作してください。");
+          }
+        }
+        await this.repository.deleteReceiptData(receipt.id, `receipt-extraction:${receipt.id}`, `receipt-draft:${receipt.id}`);
+      } catch (error) { throw safeError(error); }
+    });
+  }
+
   async analyze(id: string): Promise<LocalReceipt> {
     return this.withLock(id, async () => {
     const receipt = await this.requireReceipt(id);
