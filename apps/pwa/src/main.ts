@@ -6,6 +6,7 @@ import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
+import { recordDiagnosticAction, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import './style.css';
 
@@ -158,6 +159,8 @@ const developerCostsUi = initializeDeveloperCostsUi({
 
 
 function showTab(tab: 'home' | 'settings') {
+  recordDiagnosticAction(tab === 'home' ? 'navigate_home' : 'navigate_settings', tab);
+  recordDiagnosticScreen(tab);
   contactUi.close();
   settingsContent.hidden = false;
   contactView.hidden = true;
@@ -175,6 +178,8 @@ function showTab(tab: 'home' | 'settings') {
 }
 
 element<HTMLButtonElement>('settings-contact').addEventListener('click', () => {
+  recordDiagnosticAction('open_contact', 'settings');
+  recordDiagnosticScreen('contact');
   settingsContent.hidden = true;
   contactView.hidden = false;
   contactUi.open();
@@ -348,9 +353,11 @@ useAiButton.addEventListener('click', () => { void issueAiToken(); });
 function showNetwork() {
   network.hidden = navigator.onLine;
   network.textContent = navigator.onLine ? '' : 'オフライン';
+  recordDiagnosticNetwork(navigator.onLine);
 }
 window.addEventListener('online', showNetwork);
 window.addEventListener('offline', showNetwork);
+recordDiagnosticScreen('home');
 showNetwork();
 
 if ('serviceWorker' in navigator) {
