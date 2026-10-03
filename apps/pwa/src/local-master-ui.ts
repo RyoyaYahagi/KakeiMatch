@@ -126,6 +126,11 @@ export function initializeMasterUi(
   section.className = 'master-settings';
   section.hidden = true;
   container.after(section);
+  const settingsStatus = element('p', '', 'master-status');
+  settingsStatus.dataset.masterSettingsStatus = 'true';
+  settingsStatus.setAttribute('role', 'status');
+  settingsStatus.hidden = true;
+  container.prepend(settingsStatus);
   const parent = container.parentElement;
   const originalHidden = new Map<HTMLElement, boolean>();
   let managing = false;
@@ -133,6 +138,16 @@ export function initializeMasterUi(
   function showError(error: unknown) {
     const status = section.querySelector<HTMLElement>('[data-master-status]');
     if (status) { status.textContent = errorMessage(error); status.classList.add('error'); }
+  }
+  function clearSettingsError() {
+    settingsStatus.textContent = '';
+    settingsStatus.classList.remove('error');
+    settingsStatus.hidden = true;
+  }
+  function showSettingsError(error: unknown) {
+    settingsStatus.textContent = errorMessage(error);
+    settingsStatus.classList.add('error');
+    settingsStatus.hidden = false;
   }
   function button(label: string, action: () => Promise<void> | void, primary = false) {
     const node = element('button', label, primary ? '' : 'secondary');
@@ -206,6 +221,7 @@ export function initializeMasterUi(
   async function categoriesPage(kind: boolean | null = false) {
     const enteringFromSettings = !managing;
     const page = enteringFromSettings ? beginPage() : showPage('カテゴリ');
+    if (enteringFromSettings) clearSettingsError();
     const appendSwitcher = () => {
       const switcher = element('div', undefined, 'segmented master-switcher'); switcher.setAttribute('role', 'group'); switcher.setAttribute('aria-label', 'カテゴリの種類');
       const expenses = button('支出', () => categoriesPage(false)); expenses.className = ''; expenses.setAttribute('aria-label', '支出カテゴリ');
@@ -216,8 +232,17 @@ export function initializeMasterUi(
       section.append(switcher);
     };
     if (!enteringFromSettings) appendSwitcher();
-    const categories = (await ledger.listCategories()).filter(row => kind === null || row.isIncome === kind);
-    const usage = new Map(await Promise.all(categories.map(async category => [category.id, await ledger.getCategoryUsage(category.id)] as const)));
+    let categories: Category[];
+    let usage: Map<string, number>;
+    try {
+      categories = (await ledger.listCategories()).filter(row => kind === null || row.isIncome === kind);
+      usage = new Map(await Promise.all(categories.map(async category => [category.id, await ledger.getCategoryUsage(category.id)] as const)));
+    } catch (error) {
+      if (page !== pageRevision) return;
+      if (enteringFromSettings) showSettingsError(error);
+      else if (isCurrent(page)) showError(error);
+      return;
+    }
     if (enteringFromSettings) {
       if (page !== pageRevision) return;
       showPage('カテゴリ', undefined, page);
@@ -304,8 +329,18 @@ export function initializeMasterUi(
   async function accountsPage() {
     const enteringFromSettings = !managing;
     const page = enteringFromSettings ? beginPage() : showPage('支払元・口座');
-    const accounts = await ledger.getAccountBalances();
-    const providers = new Map(await Promise.all(accounts.map(async account => [account.id, await options.getStatementProvider?.(account.id) ?? null] as const)));
+    if (enteringFromSettings) clearSettingsError();
+    let accounts: Awaited<ReturnType<Ledger['getAccountBalances']>>;
+    let providers: Map<string, StatementProvider | null>;
+    try {
+      accounts = await ledger.getAccountBalances();
+      providers = new Map(await Promise.all(accounts.map(async account => [account.id, await options.getStatementProvider?.(account.id) ?? null] as const)));
+    } catch (error) {
+      if (page !== pageRevision) return;
+      if (enteringFromSettings) showSettingsError(error);
+      else if (isCurrent(page)) showError(error);
+      return;
+    }
     if (enteringFromSettings) {
       if (page !== pageRevision) return;
       showPage('支払元・口座', undefined, page);

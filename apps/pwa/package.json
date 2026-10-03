@@ -14,6 +14,7 @@
     "test:auth-e2e": "node test/browser-account.mjs",
     "test:backup-e2e": "node test/browser-backup.mjs",
     "test:masters-e2e": "node test/browser-masters.mjs",
+    "test:master-navigation-failure-e2e": "node test/browser-master-navigation-failure.mjs",
     "test:receipt-items-e2e": "node test/browser-receipt-items.mjs",
     "test:manual-items-e2e": "node test/browser-manual-items.mjs",
     "test:manual-e2e": "node test/browser-manual-transactions.mjs",
