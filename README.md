@@ -187,4 +187,4 @@ flowchart TB
 
 家計簿エンジンには[Actual Budget](https://github.com/actualbudget/actual)（MIT License）を使っています。著作権表示とライセンス全文は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)にあります。
 
-KakeiMatch本体のコードには、まだオープンソースライセンスを設定していません。
+KakeiMatch本体は[MIT License](LICENSE)で公開しています。
