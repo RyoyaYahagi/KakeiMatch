@@ -466,6 +466,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', async () => {
       if (receipt.extraction && !window.confirm('もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？')) return;
       if (receipt.registration.status === 'applied') return;
+      recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
       const accountId = account.value;
       form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
@@ -676,6 +677,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const value = pendingEdit?.after ?? read();
         if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
+        recordDiagnosticAction('receipt_save_started', 'records');
         await saveDraft();
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
         let saved: LocalReceipt;
@@ -718,9 +720,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (!selectedFile) throw new Error('CSVファイルを選択してください。');
       const chosenProvider = provider.value as StatementProvider;
       selectedStatementProvider = chosenProvider;
+      recordDiagnosticAction('statement_import_started', 'statements');
       provider.disabled = true; file.disabled = true;
       try {
         const result = await statements.importFile(selectedFile, chosenProvider);
+        recordDiagnosticAction('reconciliation_run_started', 'reconciliation');
         await reconciliation.run();
         ensureTab('reconciliation'); await reviewPage();
         const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
@@ -759,7 +763,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function reviewPage() {
     const screen = await open('reconciliation');
     // The result is saved even after leaving; only the redraw is skipped.
-    const rerun = async () => { await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
+    const rerun = async () => { recordDiagnosticAction('reconciliation_run_started', 'reconciliation'); await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
     const header = document.createElement('div'); header.className = 'page-header';
     const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact';
     header.append(text('h2', '照合'), refresh); view.append(header);
