@@ -34,6 +34,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
 - [アプリ更新](docs/PWA_UPDATES.md): 世代別配信と入力を保持する更新手順
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
+- [不完全復元の調査と停止](docs/ACTUAL_RESTORE_CLEANUP.md): 残存データの制約と再試行・復旧の扱い
 - [お問い合わせ](docs/CONTACT.md): 音声入力と不具合・改善要望のIssue登録
 - [端末内の診断](docs/LOCAL_DIAGNOSTICS.md): 家計内容を含めない処理結果の確認・書き出し
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
