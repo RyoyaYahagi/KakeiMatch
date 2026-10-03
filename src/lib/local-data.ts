@@ -71,7 +71,7 @@ export interface StorageEstimate {
 }
 
 export class LocalDataStorageError extends Error {
-  constructor(message: string, readonly cause: unknown) {
+  constructor(message: string, readonly cause: unknown, readonly code: 'storage_unavailable' | 'migration_failed' | 'future_schema' | 'storage_blocked' = 'storage_unavailable') {
     super(message);
     this.name = "LocalDataStorageError";
   }
@@ -175,17 +175,17 @@ export class LocalDataRepository {
           try {
             migrateDatabase(request.result, transaction, event.oldVersion);
           } catch (error) {
-            failure = new LocalDataStorageError("端末内データの更新に失敗しました。更新前のデータは保持されています。他の画面を閉じ、再読み込みしてください。", error);
+            failure = new LocalDataStorageError("端末内データの更新に失敗しました。更新前のデータは保持されています。他の画面を閉じ、再読み込みしてください。", error, 'migration_failed');
             transaction.abort();
           }
         };
         request.onblocked = () => {
-          failure = new LocalDataStorageError("別の画面が端末内データを使用しています。このアプリの他の画面を閉じ、再読み込みしてください。", null);
+          failure = new LocalDataStorageError("別の画面が端末内データを使用しています。このアプリの他の画面を閉じ、再読み込みしてください。", null, 'storage_blocked');
           reject(failure);
         };
         request.onerror = () => {
           if (request.error?.name === "VersionError") {
-            reject(new LocalDataStorageError("この画面より新しい版の端末内データがあります。アプリを更新して再読み込みしてください。保存済みデータは削除しないでください。", request.error));
+            reject(new LocalDataStorageError("この画面より新しい版の端末内データがあります。アプリを更新して再読み込みしてください。保存済みデータは削除しないでください。", request.error, 'future_schema'));
           } else {
             reject(failure ?? new LocalDataStorageError("端末内データを開けませんでした。保存済みデータは削除せず、再読み込みしてください。", request.error));
           }

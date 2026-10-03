@@ -1,4 +1,5 @@
 import type { LocalDataRepository } from '../../../src/lib/local-data';
+import { recordLocalDiagnostic, type DiagnosticFeature } from './local-diagnostics';
 import { cleanupReceiptImages, cleanupStatementCsv, getCleanupSummary, getStorageStatus, shouldRemindLocalExport } from './local-data-lifecycle';
 import { exportLocalBackup, INCOMPLETE_RESTORE_KEY, PREVIOUS_PROFILE_KEY, restoreLocalBackup, returnToPreviousProfile, wipeLocalHousehold, type BackupLedger } from './local-backup';
 
@@ -15,19 +16,19 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   const input = document.createElement('input'); input.type = 'file'; input.id = 'backup-file'; input.accept = '.kmb,application/octet-stream'; input.hidden = true;
   let running = false;
   let persistenceRequested = false;
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, feature: DiagnosticFeature = 'save') => {
     if (running) return;
     running = true;
     // Household controls stay inert during the snapshot/switch; account operations are independent.
     const targets = [document.querySelector('nav'), document.getElementById('household-view'), document.getElementById('local-view'), document.getElementById('local-settings'), section];
     for (const target of targets) target?.setAttribute('inert', '');
     status.textContent = '処理しています。この画面を閉じずにお待ちください。';
-    try { await action(); } catch (error) { status.textContent = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '処理に失敗しました。元のデータを確認してください。'; }
+    try { await action(); } catch (error) { recordLocalDiagnostic(feature, error); status.textContent = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '処理に失敗しました。元のデータを確認してください。'; }
     finally { running = false; for (const target of targets) target?.removeAttribute('inert'); }
   };
   const button = (id: string, label: string, action: () => Promise<void>, primary = false) => {
     const element = document.createElement('button'); element.type = 'button'; element.id = id; element.textContent = label; element.className = primary ? '' : 'secondary';
-    element.addEventListener('click', () => { void run(action); }); return element;
+    element.addEventListener('click', () => { void run(action, id === 'backup-export' ? 'backup' : id === 'restore-previous' ? 'restore' : 'save'); }); return element;
   };
   const cleanupInfo = text('p', '');
   async function refresh() {
@@ -54,7 +55,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a'); anchor.href = url; anchor.download = `KakeiMatch-${new Date().toISOString().replace(/[:.]/g, '-')}.kmb`; section.append(anchor); anchor.click(); anchor.remove();
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-      await refresh(); status.textContent = 'バックアップを生成しました。Filesなどへの保存を確認してください。';
+      await refresh(); recordLocalDiagnostic('backup'); status.textContent = 'バックアップを生成しました。Filesなどへの保存を確認してください。';
     }, true),
     text('p', '読み込みは新しい家計データとして復元します。現在のデータと合併しません。復元に成功した後に切り替え、元のデータも端末に残します。ほかのタブでの家計操作を終えてから実行してください。'),
     button('backup-import', 'バックアップを読み込む', async () => { input.value = ''; input.click(); status.textContent = 'バックアップファイルを選択してください。'; }), input,
@@ -78,7 +79,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   section.querySelector('#restore-previous')!.after(status);
   document.getElementById('data-settings')!.append(section);
   (document.getElementById('restore-previous') as HTMLButtonElement).disabled = !localStorage.getItem(PREVIOUS_PROFILE_KEY);
-  input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); location.reload(); }); });
+  input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); recordLocalDiagnostic('restore'); location.reload(); }, 'restore'); });
   document.getElementById('settings-tab')!.addEventListener('click', () => { void refresh().catch(error => { status.textContent = error instanceof Error ? error.message : '保存状況を確認できません。'; }); });
   await refresh();
 }
