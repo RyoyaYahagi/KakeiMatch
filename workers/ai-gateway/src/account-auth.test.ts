@@ -1,28 +1,43 @@
 import { describe, expect, it, vi } from "vitest";
 import { handleAccountRequest, handleAuthRequest, getAccountSession, type AccountD1Database, type AccountEnv } from "./account-auth";
 
+const authState = vi.hoisted(() => ({ session: null as unknown }));
+vi.mock("better-auth", () => ({
+  betterAuth: () => ({
+    handler: async () => new Response(null, { status: 404 }),
+    api: { getSession: async () => authState.session },
+  }),
+}));
+
 function testDatabase(existingUserId: string | null = null) {
   const calls: Array<{ query: string; values: unknown[] }> = [];
+  const batches: string[][] = [];
+  let hasTombstone = false;
   const database: AccountD1Database = {
     prepare(query) {
       return {
         bind(...values) {
           calls.push({ query, values });
-          return {
+          const statement = {
             async first<T>() {
               if (query.includes("SELECT id FROM user")) return existingUserId ? { id: existingUserId } as T : null;
+              if (query.includes("account_deletion_tombstones")) return hasTombstone ? { user_id: "synthetic-user" } as T : null;
               return null;
             },
             async run() { return { success: true, meta: { changes: 1 } }; },
           };
+          return Object.assign(statement, { query, values });
         },
       };
     },
     async batch(statements) {
+      const queries = statements.map((statement) => (statement as { query: string }).query);
+      batches.push(queries);
+      if (queries.some((query) => query.includes("account_deletion_tombstones"))) hasTombstone = true;
       return statements.map(() => ({ success: true })) as never[];
     },
   };
-  return { database, calls };
+  return { database, calls, batches };
 }
 
 function post(url: string, body: unknown, secret = "operator-secret-with-at-least-32-characters") {
@@ -103,8 +118,64 @@ describe("Cloud account bootstrap and recovery", () => {
   });
 
   it("does not resolve a session without a valid Better Auth session cookie", async () => {
+    authState.session = null;
     const { database } = testDatabase();
     const request = new Request("https://kakeimatch.example/api/ai/token");
     await expect(getAccountSession(request, envFor(database))).resolves.toBeNull();
+  });
+
+  it("deletes only the signed-in account after a same-origin request", async () => {
+    authState.session = {
+      user: { id: "synthetic-self", name: "Synthetic Self", email: "self@example.test" },
+      session: { id: "synthetic-session", expiresAt: new Date("2026-10-10T00:00:00Z") },
+    };
+    const { database, calls, batches } = testDatabase();
+    const response = await handleAccountRequest(new Request("https://kakeimatch.example/api/account/delete", {
+      method: "DELETE", headers: { origin: "https://kakeimatch.example", cookie: "synthetic-session-cookie" },
+    }), envFor(database));
+    const body = await response.json() as { deleted: boolean; localHouseholdDataPreserved: boolean };
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ deleted: true, localHouseholdDataPreserved: true });
+    expect(batches).toHaveLength(1);
+    expect(batches[0]?.some((query) => query.includes("INSERT INTO account_deletion_tombstones"))).toBe(true);
+    expect(batches[0]?.some((query) => query.includes("DELETE FROM user"))).toBe(true);
+    expect(calls.some((call) => call.query.includes("DELETE FROM user") && call.values.includes("synthetic-self"))).toBe(true);
+  });
+
+  it("treats a repeated deletion attempt as successful and idempotent", async () => {
+    authState.session = {
+      user: { id: "synthetic-self", name: "Synthetic Self", email: "self@example.test" },
+      session: { id: "synthetic-session", expiresAt: new Date("2026-10-10T00:00:00Z") },
+    };
+    const { database, batches } = testDatabase();
+    const makeRequest = () => new Request("https://kakeimatch.example/api/account/delete", {
+      method: "DELETE", headers: { origin: "https://kakeimatch.example", cookie: "synthetic-session-cookie" },
+    });
+
+    const first = await handleAccountRequest(makeRequest(), envFor(database));
+    const retry = await handleAccountRequest(makeRequest(), envFor(database));
+
+    expect(first.status).toBe(200);
+    expect(retry.status).toBe(200);
+    expect(batches).toHaveLength(2);
+  });
+
+  it("rejects missing sessions, external origins, and caller-supplied user IDs", async () => {
+    authState.session = null;
+    const { database, batches } = testDatabase();
+    const env = envFor(database);
+    const url = "https://kakeimatch.example/api/account/delete";
+    const noSession = await handleAccountRequest(new Request(url, { method: "DELETE", headers: { origin: "https://kakeimatch.example" } }), env);
+    expect(noSession.status).toBe(401);
+    const foreignOrigin = await handleAccountRequest(new Request(url, { method: "DELETE", headers: { origin: "https://attacker.example" } }), env);
+    expect(foreignOrigin.status).toBe(403);
+    const missingOrigin = await handleAccountRequest(new Request(url, { method: "DELETE" }), env);
+    expect(missingOrigin.status).toBe(403);
+    const suppliedId = await handleAccountRequest(new Request(url, {
+      method: "DELETE", headers: { origin: "https://kakeimatch.example", "content-type": "application/json" }, body: JSON.stringify({ userId: "another-user" }),
+    }), env);
+    expect(suppliedId.status).toBe(400);
+    expect(batches).toHaveLength(0);
   });
 });
