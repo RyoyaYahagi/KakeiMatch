@@ -38,6 +38,7 @@ const transcribeRequests = [];
 const interviewRequests = [];
 let contactFailure = null;
 let transcribeFailure = null;
+let transcribeText = '録音からの合成テキスト';
 let interviewStep = 0;
 await context.route('**/api/**', async route => {
   const url = new URL(route.request().url());
@@ -51,7 +52,7 @@ await context.route('**/api/**', async route => {
       transcribeFailure = null;
       return route.fulfill({ status: 502, json: { error } });
     }
-    return route.fulfill({ json: { text: '録音からの合成テキスト' } });
+    return route.fulfill({ json: { text: transcribeText } });
   }
   if (url.pathname.endsWith('/api/contact/interview')) {
     const body = route.request().postDataJSON();
@@ -146,16 +147,32 @@ try {
     answer: '品目を入力するために何度も操作する場面です。',
   });
   assert.equal(await page.locator('#contact-review-message').inputValue(), '改善の要望です。\n困っていること: 品目入力までの操作が多い。\n期待すること: 少ない操作で入力したい。\n再現条件: 未確認。');
+  const confirmedMessage = '改善したいけれど、入力が面倒です。利用者が確認して追記した内容です。';
+  await page.locator('#contact-review-message').fill(confirmedMessage);
+  assert.equal(await page.locator('#contact-message').inputValue(), '改善したいけれど、入力が面倒です', 'AI summary and review edits do not overwrite the original report');
   const beforeApprove = contactRequests.length;
   assert.equal(contactRequests.length, beforeApprove, 'interview does not publish before explicit approval');
+  contactFailure = 'issue_submission_failed';
+  await button('この内容で送信する').click();
+  await page.getByText('お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。', { exact: true }).waitFor();
+  const refinedFlowId = contactRequests.at(-1).body.flowId;
+  assert.equal(contactRequests.at(-1).body.message, confirmedMessage);
+  assert.equal(await page.locator('#contact-review-message').inputValue(), confirmedMessage, 'failed submission keeps the confirmed text for retry');
   await button('この内容で送信する').click();
   await page.getByText('改善のご要望を受け付けました。', { exact: true }).waitFor();
   const refined = contactRequests.at(-1).body;
+  assert.equal(refined.flowId, refinedFlowId, 'retry uses the same flow ID to prevent duplicate issues');
   assert.equal(refined.originalMessage, '改善したいけれど、入力が面倒です');
-  assert.match(refined.message, /再現条件: 未確認/);
+  assert.equal(refined.message, confirmedMessage);
+  assert.equal(refined.message, confirmedMessage, 'the edited final text is sent as written by the user');
   assert.deepEqual(Object.keys(refined).sort(), ['diagnostic', 'flowId', 'message', 'originalMessage']);
   assert.deepEqual(refined.diagnostic, diagnostic);
   assert.equal(JSON.stringify(refined.diagnostic).includes('品目を入力するために何度も操作する場面です。'), false);
+  assert.equal(await page.locator('#contact-result-message').innerText(), confirmedMessage, 'success displays the final user-confirmed text');
+  assert.equal(await page.locator('#contact-message').inputValue(), '改善したいけれど、入力が面倒です', 'success does not replace the original report with the AI summary');
+  if (process.env.PWA_CONTACT_RESULT_SCREENSHOT_PATH) {
+    await page.screenshot({ path: process.env.PWA_CONTACT_RESULT_SCREENSHOT_PATH, fullPage: true });
+  }
   assert.equal(interviewRequests.every(value => value.authorization === 'Bearer synthetic-contact-token'), true);
   await page.locator('#contact-interview-optin').uncheck();
   await page.locator('#contact-diagnostics-optin').uncheck();
@@ -183,7 +200,7 @@ try {
   await send();
   assert.notEqual(contactRequests.at(-1).body.flowId, blockedId);
 
-  // Navigation keeps the draft. Stopping a recording automatically transcribes it; there is no transcription button.
+  // Navigation keeps the draft. Stopping a recording automatically transcribes it; a failed transcription can retry the retained audio.
   await page.locator('#contact-message').fill('下書きは移動後も残ります');
   await page.locator('#home-tab').click();
   await openContact();
@@ -192,13 +209,13 @@ try {
   transcribeFailure = 'invalid_provider_response';
   await button('音声を録音').click();
   await button('録音を終了').click();
-  await page.getByText('音声を文字にできませんでした。録音を破棄して録り直してください。', { exact: true }).waitFor();
+  await page.getByText('音声を文字にできませんでした。録音はこの画面内に残っています。再試行するか、破棄して録り直してください。', { exact: true }).waitFor();
   assert.equal(await page.evaluate(() => window.__contactMedia.stoppedTracks), 1, 'stopping a recording releases its microphone track');
-  assert.equal(await button('録音を破棄して録り直す').isVisible(), true, 'failed automatic transcription keeps audio until the user discards it');
-  await button('録音を破棄して録り直す').click();
-  await button('音声を録音').click();
-  await button('録音を終了').click();
+  assert.equal(await button('録音を再試行する').isVisible(), true, 'failed automatic transcription exposes retry for retained audio');
+  const failedAudioFlowId = transcribeRequests.at(-1).body.flowId;
+  await button('録音を再試行する').click();
   await page.getByText('音声を文字にしました。送信前に内容を確認してください。', { exact: true }).waitFor();
+  assert.equal(transcribeRequests.at(-1).body.flowId, failedAudioFlowId, 'transcription retry reuses the retained audio flow ID');
   assert.equal(await page.locator('#contact-message').inputValue(), '下書きは移動後も残ります\n録音からの合成テキスト');
   const audioRequest = transcribeRequests.at(-1);
   assert.deepEqual(Object.keys(audioRequest.body).sort(), ['audioBase64', 'contentType', 'flowId']);
@@ -209,11 +226,27 @@ try {
   await page.getByText('お問い合わせありがとうございます。', { exact: true }).waitFor();
   assert.notEqual(contactRequests.at(-1).body.flowId, audioRequest.body.flowId, 'transcription and message submission use separate flow IDs');
 
+  // An overlong transcription keeps the audio and its ID until the user shortens the draft and retries.
+  await page.locator('#contact-message').fill('a'.repeat(3999));
+  transcribeText = 'b';
+  await button('音声を録音').click();
+  await button('録音を終了').click();
+  await page.getByText('文字起こし結果を加えると4,000文字を超えます。文章を短くしてから再度お試しください。録音はこの画面内に残っています。', { exact: true }).waitFor();
+  const overlongAudioFlowId = transcribeRequests.at(-1).body.flowId;
+  assert.equal(await button('録音を再試行する').isVisible(), true, 'overlong result keeps retry available');
+  await page.locator('#contact-message').fill('短くした下書き');
+  transcribeText = '追加した音声の内容';
+  await button('録音を再試行する').click();
+  await page.getByText('音声を文字にしました。送信前に内容を確認してください。', { exact: true }).waitFor();
+  assert.equal(transcribeRequests.at(-1).body.flowId, overlongAudioFlowId, 'retry after shortening keeps the same audio flow ID');
+  assert.equal(await page.locator('#contact-message').inputValue(), '短くした下書き\n追加した音声の内容');
+  transcribeText = '録音からの合成テキスト';
+
   // A recorder failure does not erase text. Closing during pending permission stops the late stream.
   await page.evaluate(() => { window.__contactMedia.failRecording = true; });
   await button('音声を録音').click();
   await page.getByText('録音を完了できませんでした。入力した文章はこの画面内に残っています。', { exact: true }).waitFor();
-  assert.equal(await page.locator('#contact-message').inputValue(), '下書きは移動後も残ります\n録音からの合成テキスト');
+  assert.equal(await page.locator('#contact-message').inputValue(), '短くした下書き\n追加した音声の内容');
   await page.evaluate(() => { window.__contactMedia.failRecording = false; window.__contactMedia.permissionPending = true; });
   await button('音声を録音').click();
   await page.locator('#settings-tab').click();
@@ -221,7 +254,7 @@ try {
   await page.waitForTimeout(50);
   assert.equal(await page.evaluate(() => window.__contactMedia.stoppedTracks), 4, 'a late permission result is stopped after navigation');
   await openContact();
-  assert.equal(await page.locator('#contact-message').inputValue(), '下書きは移動後も残ります\n録音からの合成テキスト');
+  assert.equal(await page.locator('#contact-message').inputValue(), '短くした下書き\n追加した音声の内容');
   await page.evaluate(() => { window.__contactMedia.permissionPending = false; });
   await button('音声を録音').click();
   assert.equal(await button('送信する').isDisabled(), true, 'sending is disabled while the microphone records');
@@ -235,7 +268,7 @@ try {
   assert.equal(await page.evaluate(() => window.__contactMedia.stoppedTracks), 6, 'recording stops automatically after 60 seconds');
   assert.deepEqual(errors, []);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  console.log('PASS: contact consent, guided interview approval, automatic audio transcription, stable retry IDs, draft retention, recorder errors, and microphone cleanup on navigation.');
+  console.log('PASS: contact consent, guided interview approval and edited-text retention, automatic transcription retries with stable IDs, overlong-result recovery, draft retention, recorder errors, and microphone cleanup on navigation.');
 } catch (error) {
   console.log(await page.locator('body').innerText());
   console.log('Synthetic requests:', { contact: contactRequests, transcribe: transcribeRequests, interview: interviewRequests });

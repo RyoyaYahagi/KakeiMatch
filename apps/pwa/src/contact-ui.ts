@@ -24,6 +24,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       <div class="contact-actions">
         <button id="contact-record" class="secondary" type="button">音声を録音</button>
         <button id="contact-discard-audio" class="secondary" type="button" hidden>録音を破棄して録り直す</button>
+        <button id="contact-retry-transcription" class="secondary" type="button" hidden>録音を再試行する</button>
       </div>
       <p id="contact-audio-status" class="muted" role="status"></p>
       <label class="contact-interview-consent">
@@ -66,6 +67,8 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       <section id="contact-result" class="contact-result" aria-live="polite" hidden>
         <h3 id="contact-result-title"></h3>
         <p id="contact-result-reply"></p>
+        <h4>送信した内容</h4>
+        <p id="contact-result-message"></p>
         <a id="contact-issue-link" target="_blank" rel="noreferrer" hidden>GitHubで内容を見る</a>
         <button id="contact-edit-result" class="secondary" type="button">内容を編集する</button>
       </section>
@@ -75,6 +78,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
   const count = container.querySelector<HTMLElement>('#contact-count')!;
   const recordButton = container.querySelector<HTMLButtonElement>('#contact-record')!;
   const discardAudioButton = container.querySelector<HTMLButtonElement>('#contact-discard-audio')!;
+  const retryTranscriptionButton = container.querySelector<HTMLButtonElement>('#contact-retry-transcription')!;
   const sendButton = container.querySelector<HTMLButtonElement>('#contact-send')!;
   const interviewOptIn = container.querySelector<HTMLInputElement>('#contact-interview-optin')!;
   const diagnosticsOptIn = container.querySelector<HTMLInputElement>('#contact-diagnostics-optin')!;
@@ -150,6 +154,8 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     recordButton.disabled = busy || interviewing || requestingPermission || stoppingRecording || audioBlob !== null;
     discardAudioButton.hidden = audioBlob === null;
     discardAudioButton.disabled = busy || interviewing;
+    retryTranscriptionButton.hidden = audioBlob === null;
+    retryTranscriptionButton.disabled = busy || interviewing || requestingPermission || stoppingRecording || recorder?.state === 'recording';
     interviewAnswer.disabled = busy;
     interviewNext.disabled = busy || !interviewAnswer.value.trim();
     interviewFinish.disabled = busy;
@@ -192,7 +198,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     if (code === 'invalid_flow' || code === 'invalid_request') return '送信内容を確認できませんでした。文章を編集して再度お試しください。';
     if (code === 'issue_submission_unknown') return '登録結果を確認できませんでした。重複を避けるため再登録を止めています。GitHubの課題一覧をご確認ください。';
     if (code === 'issue_submission_failed') return 'お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
-    if (code === 'invalid_provider_response') return transcribing ? '音声を文字にできませんでした。録音を破棄して録り直してください。' : '回答を確認できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
+    if (code === 'invalid_provider_response') return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。再試行するか、破棄して録り直してください。' : '回答を確認できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
     if (code === 'offline' || !navigator.onLine) return 'オフラインです。文章と録音はこの画面内に残っています。接続後に再度お試しください。';
     if (code === 'ai_quota_exceeded') return '今月のAI利用上限に達しました。文章と録音はこの画面内に残っています。利用枠の更新後に再度お試しください。';
     if (code === 'rate_limited') return '短時間に利用が続いています。文章はこの画面内に残っています。少し待ってから再度お試しください。';
@@ -369,9 +375,11 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       if (!['bug', 'improvement', 'question'].includes(response.kind) || typeof response.reply !== 'string' || !(response.issueUrl === null || typeof response.issueUrl === 'string')) throw new Error('invalid_provider_response');
       const heading = container.querySelector<HTMLElement>('#contact-result-title')!;
       const reply = container.querySelector<HTMLElement>('#contact-result-reply')!;
+      const submittedContent = container.querySelector<HTMLElement>('#contact-result-message')!;
       const link = container.querySelector<HTMLAnchorElement>('#contact-issue-link')!;
       heading.textContent = response.kind === 'bug' ? '不具合のご連絡' : response.kind === 'improvement' ? '改善のご要望' : 'お問い合わせ';
       reply.textContent = response.reply;
+      submittedContent.textContent = submittedMessage;
       if (response.issueUrl && (response.kind === 'bug' || response.kind === 'improvement')) {
         const url = new URL(response.issueUrl);
         if (url.protocol === 'https:' && url.hostname === 'github.com') {
@@ -476,6 +484,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     audioStatus.textContent = '録音を破棄しました。必要であれば録り直せます。';
     update();
   });
+  retryTranscriptionButton.addEventListener('click', () => { void transcribe(); });
   sendButton.addEventListener('click', () => {
     if (interviewOptIn.checked) void runInterview(false);
     else void submit();
