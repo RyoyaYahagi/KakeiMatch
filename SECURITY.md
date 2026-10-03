@@ -38,6 +38,18 @@ The application assumes the canonical production origin is `https://kakeimatch.y
 
 The production application does not require a home Linux server, Docker, Next.js server, Actual Sync Server, server household SQLite, or receipt/statement filesystem volumes. Legacy server components are not production security boundaries. Production route, D1, and secret provisioning must be verified before production use; Issue #39 does not deploy to or reconfigure production.
 
+## Browser policy and reviewed boundaries
+
+The PWA static responses and same-origin Worker API responses use a Content Security Policy. Scripts are limited to same-origin files; `wasm-unsafe-eval` permits the Actual browser engine to compile its embedded WebAssembly without enabling general `unsafe-eval`. `worker-src` permits same-origin, `blob:`, and `data:` workers because Actual's browser build creates an embedded worker from a Blob and retains a data URL fallback. `style-src 'unsafe-inline'` remains for the app's runtime CSS custom properties and Actual's generated styles; inline scripts are not permitted. Images and media are limited to same-origin, local Blob URLs, and data URLs used for local receipts and bundled resources. Network connections are same-origin only. The policy blocks objects and framing, and restricts base URLs and form targets.
+
+The Service Worker caches the root response as received and returns that response for offline navigation, preserving CSP together with COOP and COEP. It does not intercept `/api/*`; the Worker sets the same policy on its JSON responses. A dedicated synthetic browser test checks the online app shell, Actual-backed local records, offline use, and CSP violations. It puts HTML-shaped merchant, item, and memo values through save and detail rendering online and offline, and verifies that they remain text.
+
+The browser test observes one expected `script-src` violation: the generated Actual browser bundle probes whether the general `Function("")` constructor is available and catches the blocked result. The app continues through that fallback. The policy intentionally leaves general `unsafe-eval` disabled; the test fails on any other CSP violation.
+
+The browser bundle build checks emitted client chunks for secret values provided through known build environment variables and Google API-key-shaped values. Cloudflare runtime bindings are only available to the Worker; provider and authentication secrets are configured there. The Vite module-graph boundary also rejects unapproved server modules from the browser build. These checks complement code review; they cannot detect arbitrary secret values copied under an unrecognized format.
+
+Boundary review for this change found that the browser has only same-origin application/API fetches and no third-party script or analytics SDK. The three `innerHTML` sites are limited to fixed application markup and SVG strings selected from the compile-time icon map; receipt, merchant, item, memo, and statement text is rendered through DOM text nodes. Existing auth routes retain trusted-origin checks, CSRF protection, HttpOnly/SameSite cookies, and server-derived identity. Existing upload/archive validators and memory-only fixed-field diagnostics remain the input and logging boundaries. COOP/COEP, `nosniff`, API cache exclusions, and the Service Worker update/cache behavior remain in place. This scoped review is not a full dependency, authentication, archive, or browser security audit; dependency vulnerability tracking and the remaining checks listed in Issue #54 require separate work.
+
 ## Reporting
 
 This is a personal project. Report security issues privately to the repository owner rather than posting sensitive reproduction data in a public issue.

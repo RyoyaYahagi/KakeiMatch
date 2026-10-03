@@ -4,6 +4,13 @@ import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+const headers = readFileSync(new URL('../public/_headers', import.meta.url), 'utf8');
+const csp = headers.match(/Content-Security-Policy:\s*(.+)/)?.[1];
+assert.ok(csp, 'Static PWA responses must define CSP.');
+assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
+assert.match(csp, /worker-src 'self' blob: data:/);
+const scriptSrc = csp.split(';').find(directive => directive.trim().startsWith('script-src'));
+assert.doesNotMatch(scriptSrc, /'unsafe-inline'|'unsafe-eval'/);
 
 function worker() {
   const handlers = new Map();
@@ -28,7 +35,7 @@ function worker() {
   const fetch = async request => {
     if (!online) throw new Error('offline');
     if (request === '/offline-assets.json') return new Response(JSON.stringify(['/assets/browser.js']));
-    if (request === '/') return new Response('<script src="/assets/app.js"></script>', { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } });
+    if (request === '/') return new Response('<script src="/assets/app.js"></script>', { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Content-Security-Policy': csp } });
     return new Response('online');
   };
   runInNewContext(source, { self, caches, fetch, Response, URL, Error });
@@ -52,6 +59,7 @@ test('install caches the app shell and offline navigation keeps isolation header
   const cached = await response;
   assert.equal(cached.headers.get('Cross-Origin-Opener-Policy'), 'same-origin');
   assert.equal(cached.headers.get('Cross-Origin-Embedder-Policy'), 'require-corp');
+  assert.equal(cached.headers.get('Content-Security-Policy'), csp);
 });
 
 test('AI and contact API requests are never cached or intercepted', () => {
