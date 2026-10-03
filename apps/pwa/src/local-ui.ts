@@ -29,6 +29,7 @@ import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
+import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticScreen, type DiagnosticAction, type DiagnosticScreen } from './contact-diagnostics';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const HOME_RECENT_LIMIT = 3;
@@ -47,6 +48,7 @@ async function busy(node: HTMLButtonElement, action: () => Promise<unknown> | vo
 class StaleScreenError extends Error {}
 function report(error: unknown) {
   if (error instanceof StaleScreenError) return;
+  recordDiagnosticFailure(error);
   const message = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '操作を完了できませんでした。保存済みのデータを確認して再試行してください。';
   el('message').textContent = message;
 }
@@ -112,6 +114,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   // An action redraws its screen only while the person stays on that tab.
   function ensureTab(tab: typeof screenTab) { if (tab !== screenTab) throw new StaleScreenError(); }
   async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') {
+    const diagnosticScreen: DiagnosticScreen = tab === 'receipt' ? 'records' : tab === 'statement' ? 'statements' : tab;
+    const diagnosticAction: DiagnosticAction = tab === 'receipt' ? 'navigate_records' : tab === 'statement' ? 'navigate_statements' : tab === 'reconciliation' ? 'navigate_reconciliation' : 'navigate_home';
+    recordDiagnosticAction(diagnosticAction, diagnosticScreen);
+    recordDiagnosticScreen(diagnosticScreen);
     const revision = ++screenRevision; screenTab = tab;
     await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve();
     ensureScreen(revision);
