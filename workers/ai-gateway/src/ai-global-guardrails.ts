@@ -1,4 +1,4 @@
-import type { AccountEnv } from "./account-auth";
+import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-auth";
 import { costUsdMicros, monthBounds, pricingFor, type Provider } from "./ai-provider-costs";
 import { monthKey } from "./receipt-ai-usage";
 
@@ -63,16 +63,16 @@ const UNKNOWN_WINDOW = 3600;
 const STALE_SECONDS = 120;
 const liability = "CASE WHEN metering_status='metered' THEN estimated_cost_usd_micros ELSE reserved_cost_usd_micros END";
 const failed = "(safe_error_code IN ('provider_timeout','invalid_provider_response','provider_http_408','provider_http_429','provider_http_529') OR safe_error_code GLOB 'provider_http_5[0-9][0-9]')";
-export async function refreshCircuit(db: Db, provider: Provider, limits: ProviderLimits, now: number): Promise<void> {
-  const result = await db.prepare(`INSERT INTO ai_provider_circuits(provider,opened_at,reason,resumed_at)
+/** Opens the provider circuit when recent failures or unknown metering reach their thresholds. */
+export function refreshCircuitStatement(db: Db, provider: Provider, limits: ProviderLimits, now: number): AccountD1Statement {
+  return db.prepare(`INSERT INTO ai_provider_circuits(provider,opened_at,reason,resumed_at)
     SELECT ?,?,CASE WHEN failures>=? THEN 'provider_failures' ELSE 'unknown_metering' END,0 FROM (
       SELECT COALESCE(SUM(CASE WHEN dispatched_at>=? AND ${failed} THEN 1 ELSE 0 END),0) AS failures,
         COALESCE(SUM(CASE WHEN dispatched_at>=? AND metering_status='unknown' AND (completed_at IS NOT NULL OR dispatched_at<=?) THEN 1 ELSE 0 END),0) AS unknowns
       FROM ai_provider_cost_events WHERE provider=? AND dispatched_at>=? AND rowid>COALESCE((SELECT resumed_after_event FROM ai_provider_circuits WHERE provider=?),0)
     ) WHERE failures>=? OR unknowns>=?
     ON CONFLICT(provider) DO UPDATE SET opened_at=COALESCE(ai_provider_circuits.opened_at,excluded.opened_at),reason=COALESCE(ai_provider_circuits.reason,excluded.reason)`)
-    .bind(provider,now,limits.failureThreshold,now-FAILURE_WINDOW,now-UNKNOWN_WINDOW,now-STALE_SECONDS,provider,now-UNKNOWN_WINDOW,provider,limits.failureThreshold,limits.unknownThreshold).run();
-  if (!result.success) throw new Error("guardrail_unavailable");
+    .bind(provider,now,limits.failureThreshold,now-FAILURE_WINDOW,now-UNKNOWN_WINDOW,now-STALE_SECONDS,provider,now-UNKNOWN_WINDOW,provider,limits.failureThreshold,limits.unknownThreshold);
 }
 export type CostAdmission = { reservation: number; predicate: string; parameters: unknown[] };
 export async function costAdmission(db: Db, provider: Provider, model: string, body: string, now: number, config: Guardrails, emergencyStop?: string): Promise<CostAdmission> {
@@ -80,7 +80,6 @@ export async function costAdmission(db: Db, provider: Provider, model: string, b
   const limits = config[provider];
   if (!limits.enabled) throw new AiPausedError();
   const reservation = requestReservation(provider,model,body,limits.requestReserveUsdMicros,now);
-  await refreshCircuit(db,provider,limits,now);
   const day = dayStart(now), month = monthBounds(monthKey(now))!.start;
   // All predicates run inside the same INSERT as the event reservation. D1/SQLite
   // serialization prevents parallel users from all passing a separate SELECT.
@@ -94,5 +93,15 @@ export async function costAdmission(db: Db, provider: Provider, model: string, b
     conditions.push(`(SELECT COALESCE(SUM(${liability}),0) FROM ai_provider_cost_events WHERE dispatched_at>=? ${scoped ? "AND provider=?" : ""}) + ? <= ?`);
     parameters.push(since,...(scoped ? [provider] : []),reservation,ceiling);
   }
-  return { reservation, predicate: conditions.join(" AND "), parameters };
+  const admission = { reservation, predicate: conditions.join(" AND "), parameters };
+  // Refresh the circuit and check before product-flow reservation for ordinary
+  // paused requests, in one round trip. The event INSERT repeats these
+  // predicates atomically against concurrent admissions.
+  const [circuit, check] = await db.batch<AccountD1BatchResult>([
+    refreshCircuitStatement(db, provider, limits, now),
+    db.prepare(`SELECT CASE WHEN ${admission.predicate} THEN 1 ELSE 0 END AS allowed`).bind(...admission.parameters),
+  ]);
+  if (!circuit?.success) throw new Error("guardrail_unavailable");
+  if ((check?.results?.[0] as { allowed?: number } | undefined)?.allowed !== 1) throw new AiPausedError();
+  return admission;
 }

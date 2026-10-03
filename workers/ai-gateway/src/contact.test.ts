@@ -1,10 +1,11 @@
 import { createHmac } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
-import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleRequest, type GatewayEnv, type AccountD1Binding } from './worker';
 import { parseContactInput, parseContactInterviewInput, parseContactInterview, parseDiagnosticContext } from './contact';
 import { monthlyCosts } from './ai-provider-costs';
+import { sqliteD1 } from './test-support/sqlite-d1';
 
 const origin = 'https://contact.example.test';
 const secret = 'synthetic-contact-signing-secret';
@@ -42,17 +43,7 @@ describe('contact Gateway with real SQLite migrations', () => {
     const dir = new URL('../migrations/', import.meta.url);
     for (const name of readdirSync(dir).filter(name => name.endsWith('.sql')).sort()) sqlite.exec(readFileSync(new URL(name, dir), 'utf8'));
     sqlite.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Synthetic','synthetic@example.test',0,0),('another-user','Another','another@example.test',0,0)");
-    db = {
-      async batch<T>(): Promise<T[]> { throw new Error('unused'); },
-      prepare(sql) {
-        let params: SQLInputValue[] = [];
-        const statement = {
-          bind(...values: unknown[]) { params = values as SQLInputValue[]; return statement; },
-          async first<T>() { return sqlite.prepare(sql).get(...params) as T ?? null; },
-          async run() { return { success: true, meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) } }; },
-        }; return statement;
-      },
-    };
+    db = sqliteD1(sqlite);
     env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, GEMINI_API_KEY: 'synthetic-gemini',
       GITHUB_ISSUES_TOKEN: 'synthetic-github', GITHUB_ISSUES_REPOSITORY: 'Synthetic/Contact', AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) } };
   });

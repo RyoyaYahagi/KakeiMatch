@@ -1,11 +1,12 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flowUsage, monthKey, reserveFlow } from "./receipt-ai-usage";
 import { deleteAccountData } from "./account-auth";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { sqliteD1 } from "./test-support/sqlite-d1";
 
 const accountState = vi.hoisted(() => ({ session: true, userId: "synthetic-user" }));
 vi.mock("./account-auth", async (importOriginal) => {
@@ -34,34 +35,7 @@ function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
   for (const migration of migrations) sqlite.exec(migration);
-  const db: AccountD1Binding = {
-    async batch<T>(statements: Array<unknown>): Promise<T[]> {
-      sqlite.exec("BEGIN");
-      try {
-        const results = statements.map((value) => {
-          const statement = value as { query: string; values: SQLInputValue[] };
-          const result = sqlite.prepare(statement.query).run(...statement.values);
-          return { success: true, meta: { changes: Number(result.changes) } };
-        });
-        sqlite.exec("COMMIT");
-        return results as T[];
-      } catch (error) {
-        sqlite.exec("ROLLBACK");
-        throw error;
-      }
-    },
-    prepare(sql: string) {
-      let params: SQLInputValue[] = [];
-      const statement = {
-        query: sql,
-        get values() { return params; },
-        bind(...args: unknown[]) { params = args as SQLInputValue[]; return statement; },
-        async first<T>() { return sqlite.prepare(sql).get(...params) as T | undefined ?? null; },
-        async run() { return { success: true, meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) } }; },
-      };
-      return statement;
-    },
-  };
+  const db = sqliteD1(sqlite);
   return { db, dispose: async () => sqlite.close() };
 }
 
@@ -89,13 +63,15 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
   it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
     const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
     const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, 2)));
-    expect(reservations.filter(Boolean)).toHaveLength(2);
+    expect(reservations.filter(result => result === "reserved")).toHaveLength(2);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE user_id='synthetic-user' AND dispatched=0").bind().first<{ count: number }>())
       .toEqual({ count: 2 });
     expect(await flowUsage(db, "synthetic-user", "2026-09")).toBe(0);
-    const admittedFlow = candidates[reservations.findIndex(Boolean)]!;
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe(true);
-    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe(false);
+    expect(reservations.filter(result => result !== "reserved")).toEqual(Array(6).fill("ai_quota_exceeded"));
+    const admittedFlow = candidates[reservations.indexOf("reserved")]!;
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe("reserved");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, 2)).toBe("invalid_flow");
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe("ai_quota_exceeded");
   });
 });
 
@@ -132,6 +108,30 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     for (let i = 0; i < 2; i++) expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(200);
     expect(await usage()).toMatchObject({ used: 1, remaining: 0, limit: 1, month: "2026-09" });
     expect((await gemini()).status).toBe(429);
+  });
+  // Miniflare D1 statements cannot be instrumented, so count round trips on SQLite.
+  it.skipIf(mode === "D1")("reads a receipt with six D1 round trips", async () => {
+    let roundTrips = 0;
+    const counted: AccountD1Binding = {
+      batch: async statements => { roundTrips++; return db.batch(statements); },
+      prepare: sql => {
+        const prepared = db.prepare(sql);
+        const bind = prepared.bind.bind(prepared);
+        prepared.bind = (...values) => {
+          const bound = bind(...values);
+          const first = bound.first.bind(bound), run = bound.run.bind(bound);
+          bound.first = async () => { roundTrips++; return first(); };
+          bound.run = async () => { roundTrips++; return run(); };
+          return bound;
+        };
+        return prepared;
+      },
+    };
+    env.ACCOUNT_DB = counted;
+    const response = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }), env, options(fetchOk({ model: "gemini-3.5-flash-lite", output_text: JSON.stringify(receipt) })));
+    expect(response.status).toBe(200);
+    // Account check, admission, reservation, dispatch, completion and the category grant.
+    expect(roundTrips).toBe(6);
   });
   it("counts an explicit reanalysis as a new flow and reports the default Free 30", async () => {
     expect((await gemini()).status).toBe(200);
