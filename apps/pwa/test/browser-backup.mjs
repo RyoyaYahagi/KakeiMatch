@@ -215,6 +215,8 @@ async function exportBackup() {
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
   const { readFile } = await import('node:fs/promises');
+  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   return readFile(path);
 }
 
