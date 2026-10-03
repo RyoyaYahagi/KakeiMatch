@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { handleRequest, type GatewayEnv, type AccountD1Binding } from './worker';
-import { parseContactInput } from './contact';
+import { parseContactInput, parseContactInterviewInput, parseContactInterview } from './contact';
 import { monthlyCosts } from './ai-provider-costs';
 
 const origin = 'https://contact.example.test';
@@ -21,6 +21,7 @@ function request(body: unknown, path = '/api/contact', headers: Record<string,st
 const message = { flowId, message: '合成テスト: 記録を追加すると保存が失敗します。' };
 const wav = Buffer.from('RIFF0000WAVEsynthetic-audio').toString('base64');
 const audio = { flowId, audioBase64: wav, contentType: 'audio/wav' };
+const interview = { flowId, message: '入力が面倒です', history: [], finish: false };
 function provider(text: string, model = 'gemini-3.5-flash-lite') {
   return { model, steps: [{ type: 'model_output', content: [{ type: 'text', text }] }], usage: { total_input_tokens: 100, total_output_tokens: 20, total_tokens: 120 } };
 }
@@ -66,6 +67,40 @@ describe('contact Gateway with real SQLite migrations', () => {
     const result = await response.json() as { kind: string; issueUrl: string | null };
     expect(result.kind).toBe(kind); expect(result.issueUrl === null).toBe(kind === 'question'); expect(fetchImpl).toHaveBeenCalledTimes(kind === 'question' ? 1 : 2);
   });
+  it('asks one non-technical interview question and can return a bounded ready summary', async () => {
+    const ask = provider(JSON.stringify({ status: 'ask', kind: 'improvement', question: 'どの場面で一番手間に感じますか？', recommendation: '品目を入力する場面です。', summary: '' }));
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(ask));
+    const response = await run(request(interview, '/api/contact/interview'), fetchImpl);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: 'ask', kind: 'improvement', question: 'どの場面で一番手間に感じますか？', recommendation: '品目を入力する場面です。', summary: '' });
+    const payload = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    expect(payload.store).toBe(false);
+    expect(JSON.parse(payload.input[1].text)).toEqual({ message: interview.message, history: [], finish: false });
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM contact_submissions').get()?.n).toBe(0);
+
+    const readyInput = { ...interview, flowId: crypto.randomUUID(), history: [{ question: 'どの場面で一番手間に感じますか？', answer: '品目を入力する場面です。' }] };
+    const ready = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider(JSON.stringify({
+      status: 'ready', kind: 'improvement', question: '', recommendation: '',
+      summary: '困っていること: 品目入力が手間。\n期待すること: 少ない操作で入力したい。\n再現条件: 未確認。',
+    }))));
+    const readyResponse = await run(request(readyInput, '/api/contact/interview'), ready);
+    expect(readyResponse.status).toBe(200);
+    expect((await readyResponse.json() as { status: string }).status).toBe('ready');
+  });
+  it('keeps the original complaint beside the user-approved refined text in the GitHub issue', async () => {
+    const refined = { flowId, message: '困っていること: 保存できない。\n期待すること: 正常に保存したい。\n再現条件: 未確認。', originalMessage: '保存できなくて困っています' };
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(githubOk());
+    const response = await run(request(refined), fetchImpl);
+    expect(response.status).toBe(200);
+    const post = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
+    expect(post.body).toContain('最初のお問い合わせ:');
+    expect(post.body).toContain(refined.originalMessage);
+    expect(post.body).toContain('深掘り後の内容:');
+    expect(post.body).toContain(refined.message);
+    const row = sqlite.prepare('SELECT * FROM contact_submissions').get();
+    expect(JSON.stringify(row)).not.toContain(refined.originalMessage);
+    expect(JSON.stringify(row)).not.toContain(refined.message);
+  });
   it('sends Base64 audio inline with transcribe model and meters its price', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('合成の音声入力です。', 'gemini-3.5-transcribe')));
     const response = await run(request(audio, '/api/contact/transcribe'), fetchImpl);
@@ -94,9 +129,13 @@ describe('contact Gateway with real SQLite migrations', () => {
     sqlite.exec("INSERT INTO ai_receipt_flows(user_id,flow_id,month,created_at,image_mac,dispatched) VALUES ('synthetic-user','existing','2026-10',1,'synthetic',1)");
     expect((await run(request(audio, '/api/contact/transcribe'), fetchImpl)).status).toBe(429); expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it('fails closed for malformed AI classification and empty audio output', async () => {
+  it('fails closed for malformed AI classification, interview output and empty audio output', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('{"kind":"bug","title":"x","reply":"x","repository":"evil"}')));
     expect((await run(request(message), fetchImpl)).status).toBe(502); expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const badInterview = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider(JSON.stringify({
+      status: 'ask', kind: 'bug', question: '何が起きましたか？', recommendation: '', summary: '',
+    }))));
+    expect((await run(request({ ...interview, flowId: crypto.randomUUID() }, '/api/contact/interview'), badInterview)).status).toBe(502);
     const blank = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('   ', 'gemini-3.5-transcribe')));
     expect((await run(request({ ...audio, flowId: crypto.randomUUID() }, '/api/contact/transcribe'), blank)).status).toBe(502);
   });
@@ -135,9 +174,13 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect((await run(request({ ...message, repository: 'evil/repo' }), fetchImpl)).status).toBe(400); expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
-it('rejects oversize, invalid encodings and mismatched audio headers', () => {
+it('rejects oversize, invalid encodings, malformed interview history and mismatched audio headers', () => {
   expect(parseContactInput({ ...audio, audioBase64: '!!!!' }, true)).toBeNull();
   expect(parseContactInput({ ...audio, contentType: 'audio/mp4' }, true)).toBeNull();
   expect(parseContactInput({ ...audio, audioBase64: Buffer.alloc(2 * 1024 * 1024 + 1).toString('base64') }, true)).toBeNull();
   expect(parseContactInput({ ...message, message: 'x'.repeat(4001) }, false)).toBeNull();
+  expect(parseContactInput({ ...message, originalMessage: 'x'.repeat(4001) }, false)).toBeNull();
+  expect(parseContactInterviewInput({ ...interview, history: Array.from({ length: 5 }, () => ({ question: 'q', answer: 'a' })) })).toBeNull();
+  expect(parseContactInterviewInput({ ...interview, history: [{ question: 'q', answer: '' }] })).toBeNull();
+  expect(() => parseContactInterview(JSON.stringify({ status: 'ready', kind: 'bug', question: 'extra', recommendation: '', summary: 'summary' }))).toThrow('invalid_provider_response');
 });
