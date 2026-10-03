@@ -44,7 +44,7 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 送信は「送信準備 → チャンク保存 → 公開」の順に行う。外部ProviderとD1をまたぐ原子的な保存は仮定しない。
 
 1. **送信準備** `POST /api/sync/uploads`: `requestId`、`versionId`、`baseVersionId`（なければ `null`）、`generation`、`chunkCount`、`totalBytes` を受け取り、`uploading` の版を作る。有効期限は既定24時間。
-2. **チャンク** `PUT /api/sync/versions/{versionId}/chunks/{index}`: 暗号文をバイナリのまま送る。`Content-Length` と `x-chunk-sha256`（小文字hex）が必須。D1に `pending` を記録してからProviderへストリームし、保存を確認して `stored` にする。同じ内容の再送は成功し、同じ番号に異なる内容を送ると `409 chunk_conflict`。SHA-256が合わない場合は `400 checksum_mismatch` で、正しい本文で再試行できる。
+2. **チャンク** `PUT /api/sync/versions/{versionId}/chunks/{index}`: 暗号文をバイナリのまま送る。`Content-Length` と `x-chunk-sha256`（小文字hex）が必須。D1に `pending` を記録してからProviderへストリームし、保存を確認して `stored` にする。同じ内容の再送は成功し、同じ番号に異なる内容を送ると `409 chunk_conflict`。SHA-256が合わない場合は `400 checksum_mismatch`。その保存先キーは回収対象となり、同じ版・番号への再送は `410 chunk_retired` になる。新しい版と要求IDで送信を準備し直す。
 3. **公開** `POST /api/sync/versions/{versionId}/publish`: すべてのチャンクが保存済みで合計が宣言と一致する場合だけ進む。1つのD1 batchで、(a) 現在の版の参照が親版と等しく、所有者・端末・世代・期限が有効な場合に限り参照と順序番号を更新、(b) 版を `published`、比較に失敗した場合は `conflict` にする、(c) 要求結果を記録する、を実行する。2端末が同じ親版から同時に公開しても、勝つのは1つだけで、もう一方は `409 conflict` と `conflict` の版として残る。競合版のチャンクも削除しない。
 
 要求IDは家計簿ごとに一意で、本文のハッシュと一緒に記録する。同じ要求IDの再送は保存済みの結果を返し、二重に公開しない。異なる内容で再利用すると `409 request_id_reused`。公開の応答が失われた場合は `GET /api/sync/requests/{requestId}` で結果を確認する。結果の保持は既定30日。
@@ -60,8 +60,10 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 ## 削除と回収
 
 - **クラウド削除** `DELETE /api/sync/household`: 直近の再認証が必要。まず家計簿を `deleting` にして世代を進め、全端末を失効し、新しい送信を止める。次に版を削除する。チャンクの行を消すとtriggerがobject keyを `sync_object_deletions` へ同じトランザクションで積み、Providerのobjectを消してから家計簿の行を消す。Providerの削除に失敗した場合は `503 deletion_incomplete` を返し、`deleting` のまま残る。成功と表示せず、同じ操作で再開できる。削除した家計簿のIDは不透明なIDだけをtombstoneへ残し、古い端末が同じIDで作り直せないようにする。他端末に保存済みのデータは消せない。
-- **アカウント削除との接続:** user行の削除は外部キーで同期の行を消す。そのときもtriggerがobject keyを積み、tombstoneを残す。object自体の削除は次の回収で行う。アカウント削除の画面・手順への接続は#151の範囲で、本変更ではアカウント削除の処理を変更しない。
-- **回収** `collectSyncGarbage`: 期限切れの未公開アップロード、保持数を超えた過去の版、古い要求結果を消し、積まれたobjectを削除する。現在の版、競合版、保持する履歴、期限内の送信中のデータは選ばない。Provider削除に失敗したobjectは積まれたまま残り、次回に再試行する。公開成功後と送信準備の容量確認で、その家計簿だけを対象に実行する。スケジュール実行は設定しておらず、本番で定期実行するにはcron等の追加が必要。
+- **保存中の削除:** Providerへ渡す前に `sync_storage_operations` を記録する。未確定の保存がある間はクラウド削除を `409 storage_operation_pending` で拒否する。遅れて保存が終わっても、削除中の家計簿へチャンクを登録せず、回収予定へ積む。結果不明の例外やWorkerの異常終了では記録を残し、時間が経っただけでは解除しない。
+- **アカウント削除との接続:** 本人の削除APIはアカウントのtombstoneで新しい保存を止め、同じ `SyncStorageProvider` で同期データを回収してから、既存のatomicなD1 batchでuser行を削除する。未確定の保存やProviderの削除失敗を成功として返さない。D1 triggerも未確定の保存中のuser削除を拒否する。同期用の家計簿があるのにR2 bindingがない場合は `503 storage_not_configured`。端末内の家計データは残る。
+- **保存先キーの再利用禁止:** 回収予定に積まれたキーは `sync_retired_object_keys` に不透明なキーだけを残す。回収後も同じキーへの保存を拒否し、遅れた削除処理が再送したデータを消すことを防ぐ。
+- **回収** `collectSyncGarbage`: 期限切れの未公開アップロード、保持数を超えた過去の版、古い要求結果を消し、積まれたobjectを削除する。現在の版、競合版、保持する履歴、期限内の送信中のデータは選ばない。未確定の保存がある版とobjectは回収しない。Provider削除に失敗したobjectは積まれたまま残り、次回に再試行する。公開成功後と送信準備の容量確認で、その家計簿だけを対象に実行する。スケジュール実行は設定しておらず、本番で定期実行するにはcron等の追加が必要。
 
 ## 上限
 
@@ -103,11 +105,11 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 | `GET /versions/{id}/chunks/{index}` | session + 端末 | チャンクの取得 |
 | `DELETE /household` | session + 再認証 | クラウド側の同期データをすべて削除する |
 
-主なエラー: `401 unauthorized`（sessionなし）、`403 forbidden_origin`・`recent_sign_in_required`・`invalid_device_credential`・`device_revoked`・`device_generation_stale`、`404`（他人の版・チャンクも同じ）、`409 conflict`・`generation_mismatch`・`chunk_conflict`・`request_id_reused`・`household_deleting`、`410 upload_expired`・`household_deleted`、`413`、`429`、`503 not_configured`。
+主なエラー: `401 unauthorized`（sessionなし）、`403 forbidden_origin`・`recent_sign_in_required`・`invalid_device_credential`・`device_revoked`・`device_generation_stale`、`404`（他人の版・チャンクも同じ）、`409 conflict`・`generation_mismatch`・`chunk_conflict`・`request_id_reused`・`household_deleting`・`storage_operation_pending`、`410 upload_expired`・`household_deleted`・`chunk_retired`、`413`、`429`、`503 not_configured`。
 
 ## 設定と適用
 
-- D1: `workers/ai-gateway/migrations/0009_device_sync.sql` を適用する（`0008` は別Issueで使う）。同期を使わない構成でも、テーブルは使われないだけで害はない。
+- D1: `workers/ai-gateway/migrations/0009_device_sync.sql` と `0010_sync_storage_operations.sql` を順に適用する（`0008` は別Issueで使う）。アカウント削除APIも同期の所有情報を確認するため、同期を有効にしない構成でも適用が必要。本変更では本番への適用を実行していない。
 - R2: `apps/pwa/cloudflare.config.ts` は、環境変数 `SYNC_R2_BUCKET_NAME` に既存の非公開バケット名を指定した場合だけ `SYNC_BUCKET` を設定する。未設定ならbindingを追加せず、既存のdeployに影響しない。本変更はバケットの作成、deploy、本番設定の変更をしていない。公開アクセスは有効にしない。
 
 ## 未実装（#143の残り）
@@ -121,6 +123,8 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 - Google Drive Providerと保存先の切り替え
 - Provider横断のE2E、2端末相当のE2E
 - iPhone実機とPCでの確認
-- 回収の定期実行、アカウント削除画面からの同期削除の接続（#151）
+- 回収の定期実行、削除途中の状態に応じた専用画面
+- 結果不明の保存の運用復旧手順と管理ツール。保留を解除するには、保存処理がもう完了しないこととProvider上の結果の確認が必要。期限や推測だけで行を消さない
+- #38の暗号化バックアップの目録、保護された復号鍵の保存とAPI。同期チャンクとは別の保存APIを本変更で追加しない
 
 実R2への書き込み（条件付きputとSHA-256検証の挙動）は、テストでは構造型の疑似bucketで確認しており、実際のR2では未確認である。

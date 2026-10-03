@@ -24,7 +24,7 @@ vi.mock("./account-auth", async (importOriginal) => {
 
 const origin = "https://sync.example.test";
 const T0 = Date.parse("2026-10-03T12:00:00Z");
-const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql"]
+const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0010_sync_storage_operations.sql"]
   .map((name) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8").replace(/^\s*--.*$/gm, "").replace(/\s+/g, " ").trim())
   .join("\n");
 
@@ -52,7 +52,7 @@ async function addUser(id: string, signedInAt = T0 - 60_000) {
 }
 
 beforeEach(async () => {
-  for (const table of ["user", "account_deletion_tombstones", "sync_object_deletions", "sync_deleted_households"]) await db.prepare(`DELETE FROM ${table}`).run();
+  for (const table of ["sync_storage_operations", "sync_retired_object_keys", "user", "account_deletion_tombstones", "sync_object_deletions", "sync_deleted_households"]) await db.prepare(`DELETE FROM ${table}`).run();
   provider = new InMemorySyncStorageProvider();
   clock = { now: T0 };
   limitEnv = {};
@@ -404,7 +404,7 @@ describe("idempotent uploads and compare-and-swap publication", () => {
     expect(stored?.sha256).toBe(payload.sha256);
   });
 
-  it("rejects a body that does not match its declared SHA-256 and allows the correct retry", async () => {
+  it("rejects a bad checksum and requires a new version after its object key is retired", async () => {
     const { credential } = await register();
     const versionId = fresh();
     await call("POST", "/uploads", { credential, body: { requestId: fresh(), versionId, baseVersionId: null, generation: 1, chunkCount: 1, totalBytes: 24 } });
@@ -414,8 +414,13 @@ describe("idempotent uploads and compare-and-swap publication", () => {
     expect(provider.keys()).toEqual([]);
     expect(await row<{ state: string }>("SELECT state FROM sync_chunks WHERE version_id = ?", versionId)).toEqual({ state: "pending" });
     expect((await publish("alice", credential, versionId)).json.error).toBe("upload_incomplete");
-    expect((await putChunk("alice", credential, versionId, 0, payload)).status).toBe(201);
-    expect((await publish("alice", credential, versionId)).status).toBe(200);
+    expect((await putChunk("alice", credential, versionId, 0, payload)).json.error).toBe("chunk_retired");
+    await collectSyncGarbage({ db, provider, limits: syncLimits(limitEnv), now: clock.now });
+    expect((await putChunk("alice", credential, versionId, 0, payload)).json.error).toBe("chunk_retired");
+    const next = fresh();
+    await call("POST", "/uploads", { credential, body: { requestId: fresh(), versionId: next, baseVersionId: null, generation: 1, chunkCount: 1, totalBytes: 24 } });
+    expect((await putChunk("alice", credential, next, 0, payload)).status).toBe(201);
+    expect((await publish("alice", credential, next)).status).toBe(200);
   });
 
   it("publishes in order and records sequence numbers from the server", async () => {
@@ -601,7 +606,7 @@ describe("garbage collection", () => {
     expect(await row("SELECT id FROM sync_versions WHERE id = ?", abandoned.versionId)).toBeNull();
   });
 
-  it("deletes unreferenced objects from a chunk write that finished after its version was removed", async () => {
+  it("defers expiry cleanup until an in-flight provider write finishes", async () => {
     const { credential } = await register();
     const versionId = fresh();
     await call("POST", "/uploads", { credential, body: { requestId: fresh(), versionId, baseVersionId: null, generation: 1, chunkCount: 1, totalBytes: 24 } });
@@ -609,10 +614,10 @@ describe("garbage collection", () => {
     const slowPut = provider.put.bind(provider);
     provider.put = async (key, body, content) => {
       clock.now += DEFAULT_SYNC_LIMITS.unpublishedTtlSeconds * 1000 + 1;
-      await collectSyncGarbage(context()); // removes the version row while the write is in flight
-      return slowPut(key, body, content); // the object lands afterwards, with no chunk row left
+      expect((await collectSyncGarbage(context())).expiredUploads).toBe(0); // in-flight version remains guarded
+      return slowPut(key, body, content);
     };
-    expect((await putChunk("alice", credential, versionId, 0, payload)).json.error).toBe("upload_aborted");
+    expect((await putChunk("alice", credential, versionId, 0, payload)).status).toBe(201);
     provider.put = slowPut;
     expect(provider.keys().length).toBe(1);
     await collectSyncGarbage(context());
@@ -703,5 +708,69 @@ describe("deleting cloud sync data", () => {
     expect(result).toMatchObject({ deleted: 2, failed: 0 });
     expect(provider.keys()).toEqual([]);
     expect(await row("SELECT id FROM sync_households WHERE owner_user_id = 'bob'")).not.toBeNull();
+  });
+});
+
+
+describe("durable storage operation guards", () => {
+  async function pendingUpload() {
+    const registered = await register(); const versionId = fresh();
+    await call("POST", "/uploads", { credential: registered.credential, body: { requestId: fresh(), versionId, baseVersionId: null, generation: 1, chunkCount: 1, totalBytes: 24 } });
+    const payload = await chunkPayload("guarded", 24);
+    return { ...registered, versionId, payload };
+  }
+  const ctx = () => ({ db, provider, limits: syncLimits(limitEnv), now: clock.now });
+
+  it("keeps deletion pending until a delayed put settles, then removes the late object", async () => {
+    const { credential, versionId, payload } = await pendingUpload();
+    const original = provider.put.bind(provider); const remove = vi.spyOn(provider, "delete");
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); const ready = new Promise<void>(resolve => { entered = resolve; });
+    provider.put = async (...args) => { entered(); await gate; return original(...args); };
+    const writing = putChunk("alice", credential, versionId, 0, payload); await ready;
+    try {
+      expect((await call("DELETE", "/household")).json.error).toBe("storage_operation_pending");
+      expect(remove).not.toHaveBeenCalled();
+      expect(await row("SELECT state FROM sync_storage_operations")).toEqual({ state: "pending" });
+    } finally { release(); }
+    expect((await writing).json.error).toBe("upload_aborted");
+    expect(provider.keys()).toHaveLength(1);
+    expect((await call("DELETE", "/household")).status).toBe(200);
+    expect(provider.keys()).toEqual([]);
+    expect(await row("SELECT id FROM sync_storage_operations")).toBeNull();
+  });
+
+  it("atomically refuses account cascade while a put is pending", async () => {
+    const { credential, versionId, payload } = await pendingUpload();
+    const original = provider.put.bind(provider);
+    let release!: () => void; let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }); const ready = new Promise<void>(resolve => { entered = resolve; });
+    provider.put = async (...args) => { entered(); await gate; return original(...args); };
+    const writing = putChunk("alice", credential, versionId, 0, payload); await ready;
+    try {
+      await expect(deleteAccountData(db, "alice")).rejects.toThrow();
+      expect(await row("SELECT id FROM user WHERE id = 'alice'")).not.toBeNull();
+      expect(await row("SELECT user_id FROM account_deletion_tombstones WHERE user_id = 'alice'")).toBeNull();
+      expect(await row("SELECT id FROM sync_households WHERE owner_user_id = 'alice'")).not.toBeNull();
+    } finally { release(); }
+    expect((await writing).status).toBe(201);
+    await deleteAccountData(db, "alice"); await collectSyncGarbage(ctx());
+    expect(provider.keys()).toEqual([]);
+    expect(await row("SELECT id FROM user WHERE id = 'alice'")).toBeNull();
+  });
+
+  it("does not expire an unknown provider outcome into a successful deletion or retry", async () => {
+    const { credential, versionId, payload } = await pendingUpload();
+    provider.put = async () => { throw new Error("synthetic unknown provider outcome"); };
+    expect((await putChunk("alice", credential, versionId, 0, payload)).status).toBe(503);
+    clock.now += 90 * 24 * 60 * 60 * 1000;
+    await collectSyncGarbage(ctx());
+    expect(await row("SELECT state FROM sync_storage_operations")).toEqual({ state: "pending" });
+    expect(await row("SELECT id FROM sync_versions WHERE id = ?", versionId)).not.toBeNull();
+    expect((await putChunk("alice", credential, versionId, 0, payload)).status).not.toBe(201);
+    await db.prepare("UPDATE session SET createdAt = ? WHERE id = 'session-alice'").bind(new Date(clock.now).toISOString()).run();
+    expect((await call("DELETE", "/household")).json.error).toBe("storage_operation_pending");
+    await expect(deleteAccountData(db, "alice")).rejects.toThrow();
+    expect(await row("SELECT id FROM user WHERE id = 'alice'")).not.toBeNull();
   });
 });

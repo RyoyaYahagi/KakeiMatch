@@ -49,6 +49,7 @@ describe('contact Gateway with real SQLite migrations', () => {
         const statement = {
           bind(...values: unknown[]) { params = values as SQLInputValue[]; return statement; },
           async first<T>() { return sqlite.prepare(sql).get(...params) as T ?? null; },
+          async all<T>() { return { results: sqlite.prepare(sql).all(...params) as T[] }; },
           async run() { return { success: true, meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) } }; },
         }; return statement;
       },

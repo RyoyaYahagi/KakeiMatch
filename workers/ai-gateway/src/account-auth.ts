@@ -1,21 +1,16 @@
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
+import { deleteHouseholdData, findHouseholdByOwner, SyncError, syncLimits, type SyncD1Database, type SyncLimitEnv } from "./device-sync";
+import { R2SyncStorageProvider, type SyncR2Bucket } from "./sync-storage-provider";
 
-export interface AccountD1Database {
-  prepare(query: string): {
-    bind(...values: unknown[]): {
-      first<T = Record<string, unknown>>(): Promise<T | null>;
-      run(): Promise<{ success: boolean; meta?: { changes?: number } }>;
-    };
-  };
-  batch<T = unknown>(statements: Array<unknown>): Promise<T[]>;
-}
+export type AccountD1Database = SyncD1Database;
 
-export interface AccountEnv {
+export interface AccountEnv extends SyncLimitEnv {
   ACCOUNT_DB: AccountD1Database;
   BETTER_AUTH_SECRET?: string;
   ACCOUNT_BOOTSTRAP_SECRET?: string;
   CLOUD_ACCOUNT_ORIGIN?: string;
+  SYNC_BUCKET?: SyncR2Bucket;
 }
 
 export interface AccountSession {
@@ -333,9 +328,22 @@ async function handleDeleteAccountRequest(request: Request, env: AccountEnv): Pr
   if (!account) return json(401, { error: "unauthorized" });
 
   try {
+    const household = await findHouseholdByOwner(env.ACCOUNT_DB, account.user.id);
+    if (household) {
+      if (!env.SYNC_BUCKET) throw new SyncError(503, "storage_not_configured");
+      await env.ACCOUNT_DB.prepare(`INSERT INTO account_deletion_tombstones(user_id)
+        SELECT id FROM user WHERE id=? ON CONFLICT(user_id) DO NOTHING`).bind(account.user.id).run();
+      await deleteHouseholdData({
+        db: env.ACCOUNT_DB,
+        provider: new R2SyncStorageProvider(env.SYNC_BUCKET),
+        limits: syncLimits(env),
+        now: Date.now(),
+      }, household);
+    }
     await deleteAccountData(env.ACCOUNT_DB, account.user.id);
     return accountDeletedResponse();
-  } catch {
+  } catch (error) {
+    if (error instanceof SyncError) return json(error.status, { error: error.code, ...error.details });
     return json(503, { error: "account_deletion_incomplete" });
   }
 }
