@@ -1,4 +1,4 @@
-import { parseContactInput, parseClassification, classificationPayload, transcriptionPayload, submitContact, type ContactEnv } from './contact';
+import { parseContactInput, parseClassification, parseContactInterviewInput, parseContactInterview, classificationPayload, transcriptionPayload, contactInterviewPayload, submitContact, type ContactEnv } from './contact';
 import { guardrailConfig, costAdmission, refreshCircuit, type CostAdmission } from "./ai-global-guardrails";
 import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
 import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatched } from "./receipt-ai-usage";
@@ -282,7 +282,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
       return json(200, { plan: ent.plan, month, used, limit: ent.limit, remaining: ent.limit === null ? null : Math.max(0, ent.limit - used) });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
   }
-  const contact = url.pathname === "/api/contact" || url.pathname === "/api/contact/transcribe";
+  const contact = url.pathname === "/api/contact" || url.pathname === "/api/contact/transcribe" || url.pathname === "/api/contact/interview";
   if (!contact && url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/jev") return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
@@ -301,14 +301,51 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   try { body = JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return json(400, { error: "invalid_request" }); }
   if (contact) {
     const transcribe = url.pathname.endsWith('/transcribe');
-    const input = parseContactInput(body, transcribe);
-    if (!input) return json(400, { error: 'invalid_request' });
+    const interview = url.pathname.endsWith('/interview');
     if (!env.GEMINI_API_KEY || !env.ACCOUNT_DB) return json(503, { error: 'not_configured' });
     const clock = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
     const now = clock();
     const fetchImpl = options.fetchImpl ?? fetch;
-    const payload = transcribe ? transcriptionPayload(input.input, input.contentType!)
-      : classificationPayload(input.input, env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite');
+    const model = env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
+
+    if (interview) {
+      const input = parseContactInterviewInput(body);
+      if (!input) return json(400, { error: 'invalid_request' });
+      const payload = contactInterviewPayload(input, model);
+      const callGemini = async (): Promise<string> => {
+        const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
+        const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, 'contact-interview', input);
+        if (!await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env))) throw new Error('ai_quota_exceeded');
+        if (!await attemptFlow(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', mac, now)) throw new Error('invalid_flow');
+        const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
+          'https://generativelanguage.googleapis.com/v1beta/interactions',
+          { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
+          30_000, fetchImpl, clock, admission, env);
+        if (!response.ok) throw new Error(response.status === 429 ? 'rate_limited' : 'provider_unavailable');
+        const text = geminiOutputText(decoded);
+        if (!text || !text.trim() || text.length > 8000) {
+          await invalidProviderResponse(env, eventId, 'gemini', clock());
+          throw new Error('invalid_provider_response');
+        }
+        try { parseContactInterview(text); } catch {
+          await invalidProviderResponse(env, eventId, 'gemini', clock());
+          throw new Error('invalid_provider_response');
+        }
+        return text;
+      };
+      try {
+        return json(200, parseContactInterview(await callGemini()));
+      } catch (error) {
+        const code = error instanceof Error ? error.message : '';
+        const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
+          invalid_flow: 409, provider_timeout: 504, rate_limited: 429, provider_unavailable: 503, invalid_provider_response: 502 };
+        return json(statuses[code] ?? 503, { error: Object.hasOwn(statuses, code) ? code : 'temporarily_unavailable' });
+      }
+    }
+
+    const input = parseContactInput(body, transcribe);
+    if (!input) return json(400, { error: 'invalid_request' });
+    const payload = transcribe ? transcriptionPayload(input.input, input.contentType!) : classificationPayload(input.input, model);
     const callGemini = async (): Promise<string> => {
       const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, transcribe ? 'contact-transcribe' : 'contact-classify', input);
@@ -335,7 +372,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     try {
       if (transcribe) return json(200, { text: await callGemini() });
       return json(200, await submitContact({ db: env.ACCOUNT_DB, user: identity, secret: env.AI_GATEWAY_AUTH_SECRET!, env,
-        flowId: input.flowId, message: input.input, now, classify: callGemini, fetchImpl }));
+        flowId: input.flowId, message: input.input, originalMessage: input.originalMessage, now, classify: callGemini, fetchImpl }));
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
       const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
