@@ -74,6 +74,9 @@
 * { box-sizing: border-box; }
 html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
 body { margin: 0; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
+/* iOS/Safari paints a rectangular tap highlight over the full hit area by default.
+   Remove that touch-only flash; :focus-visible below still provides keyboard focus feedback. */
+button, summary { -webkit-tap-highlight-color: transparent; }
 main { max-width: 640px; min-width: 0; margin: 0 auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
 main, form, dialog, .sheet-body, #local-view, #household-view, #settings-view { min-width: 0; }
 img, input, select, textarea, button { max-width: 100%; }
