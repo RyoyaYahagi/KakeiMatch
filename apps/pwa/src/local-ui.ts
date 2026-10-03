@@ -30,6 +30,7 @@ import { LocalCategoryLearning } from './local-category-learning';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticScreen, type DiagnosticAction, type DiagnosticScreen } from './contact-diagnostics';
+import { recordLocalDiagnostic } from './local-diagnostics';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const HOME_RECENT_LIMIT = 3;
@@ -506,6 +507,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         await receipts.analyze(receipt.id);
         try {
           const suggested = await receipts.suggestCategory(receipt.id);
+          recordLocalDiagnostic('ai');
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
           if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
@@ -788,6 +790,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
             if (receipt.registration.status === 'pending') await receipts.confirm(receipt.id, value);
             saved = await receipts.register(receipt.id);
           }
+          recordLocalDiagnostic('save');
         } catch (error) {
           const current = await receipts.get(receipt.id);
           if (current && screenTab === 'receipt') await receiptEditor(current, { edit: editing });
