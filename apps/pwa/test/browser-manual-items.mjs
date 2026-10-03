@@ -41,6 +41,16 @@ try {
     await row.locator('[data-item-name]').fill(name); await row.locator('[data-item-amount]').fill(amount);
     await row.locator('[data-item-category]').selectOption({ label: category });
   }
+  assert.equal(await page.getByRole('button', { name: '品目一覧', exact: true }).count(), 1);
+  assert.equal(await item(0).getAttribute('open'), null);
+  assert.equal(await item(1).getAttribute('open'), null);
+  assert.equal(await item(2).getAttribute('open'), '');
+  const collapsedHeight = (await item(0).locator('summary').boundingBox()).height;
+  assert.ok(collapsedHeight <= 52, `collapsed item row should stay compact, got ${collapsedHeight}px`);
+  await item(0).locator('summary').click();
+  assert.equal(await item(0).getAttribute('open'), '');
+  assert.equal(await item(2).getAttribute('open'), null);
+  await item(2).locator('summary').click();
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').first();
   await discount.locator('[data-adjustment-label]').fill('Synthetic Coupon');
