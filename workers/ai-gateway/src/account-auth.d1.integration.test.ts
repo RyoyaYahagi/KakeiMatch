@@ -9,6 +9,11 @@ const migrations = [
   "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql",
   "0007_account_deletion.sql",
 ].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
+const migrationSql = migrations
+  .map(migration => migration.replace(/^--.*$/gm, "").replace(/\s+/g, " ").trim())
+  .join("\n");
+type MigrationDatabase = Pick<Awaited<ReturnType<Miniflare["getD1Database"]>>, "exec">;
+const applyMigrations = (d1: MigrationDatabase) => d1.exec(migrationSql);
 const authSecret = "better-auth-secret-for-d1-integration-test";
 const bootstrapSecret = "operator-secret-for-d1-integration-test";
 const instances: Miniflare[] = [];
@@ -27,7 +32,7 @@ describe("Better Auth with local D1", () => {
     });
     instances.push(miniflare);
     const d1 = await miniflare.getD1Database("ACCOUNT_DB");
-    for (const migration of migrations) await d1.exec(migration);
+    await applyMigrations(d1);
     const env: AccountEnv = {
       ACCOUNT_DB: d1,
       BETTER_AUTH_SECRET: authSecret,
@@ -71,7 +76,7 @@ describe("Better Auth with local D1", () => {
     });
     instances.push(miniflare);
     const d1 = await miniflare.getD1Database("ACCOUNT_DB");
-    for (const migration of migrations) await d1.exec(migration);
+    await applyMigrations(d1);
     await d1.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES (?, ?, ?, 1, 1), (?, ?, ?, 1, 1)")
       .bind("deleted-user", "Synthetic Deleted", "deleted@example.test", "other-user", "Synthetic Other", "other@example.test").run();
     await d1.prepare("INSERT INTO session(id,expiresAt,token,createdAt,updatedAt,userId) VALUES ('s1',99,'token1',1,1,'deleted-user'),('s2',99,'token2',1,1,'other-user')").run();
