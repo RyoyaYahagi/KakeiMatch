@@ -595,3 +595,5 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+/* Diagnostics are readable without exposing a wide, horizontally scrolling block. */
+.diagnostics-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; padding: var(--space-3); background: var(--sunken); border-radius: var(--radius-md); }

@@ -32,6 +32,8 @@ Avoid logging financial data, raw AI request/response bodies, provider errors th
 
 ## Deployment
 
+Settings also provides a local diagnostic report with strictly validated build/schema versions, network status, whitelisted feature/result codes and relative ages. It remains in memory for at most 15 minutes and 40 events, and is cleared by reload or an explicit clear action. Copy/export uses the exact user-reviewed snapshot, works offline, and never automatically sends the report. No raw errors, arbitrary inputs, household content, filenames, URLs, secrets or persistent device identifiers are collected. See [local diagnostics](docs/LOCAL_DIAGNOSTICS.md).
+
 The application assumes the canonical production origin is `https://kakeimatch.yhgry.workers.dev`. Browser storage belongs to its origin, so keep the Worker name and origin stable after production use. Configuring a Worker named `kakeimatch` does not verify that Cloudflare routes this canonical origin to it. Production routes, D1, and secrets remain unprovisioned and unverified by Issue #39. Preview deployments are for synthetic tests only. The Service Worker must not cache `/api/*`; the Worker must retain its configured COOP and COEP headers for the browser-side Actual engine.
 
 The production application does not require a home Linux server, Docker, Next.js server, Actual Sync Server, server household SQLite, or receipt/statement filesystem volumes. Legacy server components are not production security boundaries. Production route, D1, and secret provisioning must be verified before production use; Issue #39 does not deploy to or reconfigure production.

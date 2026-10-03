@@ -34,6 +34,7 @@ Issue #31/#32/#37で行ったiPhone確認の結果は、それぞれのIssue本�
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md): バージョン判定と安全な移行
 - [バックアップと復元](docs/LOCAL_BACKUP.md): `.kmb` の書き出し、復元、整理
 - [お問い合わせ](docs/CONTACT.md): 音声入力と不具合・改善要望のIssue登録
+- [端末内の診断](docs/LOCAL_DIAGNOSTICS.md): 家計内容を含めない処理結果の確認・書き出し
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [セキュリティ](SECURITY.md): データとサービスの保護
 - [明細形式](docs/STATEMENT_FORMATS.md): 確認済みのCSV形式

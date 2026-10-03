@@ -9,6 +9,8 @@ import { initializeContactUi } from './contact-ui';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import { renderOssLicenses } from './oss-licenses';
+import { initializeDiagnosticsUi } from './local-diagnostics-ui';
+import { recordLocalDiagnostic } from './local-diagnostics';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -125,6 +127,7 @@ root.innerHTML = `
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 renderOssLicenses(element<HTMLElement>('oss-licenses'));
+initializeDiagnosticsUi(element<HTMLElement>('app-info'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');
@@ -377,10 +380,14 @@ showNetwork();
 
 if ('serviceWorker' in navigator) {
   void navigator.serviceWorker.register('/sw.js').catch(() => {
+    recordLocalDiagnostic('startup', { code: 'service_worker_failed' });
     message.textContent = 'オフライン用の画面を準備できませんでした。オンラインで再読込してください。';
   });
 }
 message.textContent = '家計簿を準備しています…';
-void initializeLocalUi({ openAccount: () => showTab('settings') }).catch((error: unknown) => {
+void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
+  recordLocalDiagnostic('startup');
+}).catch((error: unknown) => {
+  recordLocalDiagnostic(error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema') ? 'migration' : 'startup', error);
   message.textContent = error instanceof LocalDataStorageError ? error.message : '端末の家計簿を開けませんでした。保存状態を確認し、再読込してください。';
 });
