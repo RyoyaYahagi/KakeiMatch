@@ -6,7 +6,7 @@ KakeiMatchは、レシートから支出を記録し、後日取り込んだカ�
 
 本番アプリは `apps/pwa` のPWAです。同一のCloudflare WorkerがアプリとAPIを配信します。本番の正規URLは <https://kakeimatch.yhgry.workers.dev> です。ブラウザーの保存領域はURLごとに分かれるため、利用開始後はWorker名やURLを変更しないでください。
 
-家計簿、レシート、明細、照合データは利用者の端末に保存します。家計簿エンジンにはActual Budgetのブラウザー版を使います。Cloud accountは通常の家計操作には不要で、AIを使うときの本人確認と利用枠に使います。D1には本人確認、session、Passkey、招待・回復、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態を保存します。問い合わせ本文と音声はD1へ保存しません。端末内データは `.kmb` ファイルに書き出せます。
+家計簿、レシート、明細、照合データは利用者の端末に保存します。家計簿エンジンにはオープンソースの[Actual Budget](https://github.com/actualbudget/actual)（MIT License）のブラウザー版を使います。著作権表示とライセンス全文は[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)にあります。Cloud accountは通常の家計操作には不要で、AIを使うときの本人確認と利用枠に使います。D1には本人確認、session、Passkey、招待・回復、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態を保存します。問い合わせ本文と音声はD1へ保存しません。端末内データは `.kmb` ファイルに書き出せます。
 
 本番利用に自宅Linux、Docker Compose、Next.jsサーバー、Actual Sync Server、サーバー側の家計簿SQLiteやファイル保存領域は必要ありません。previewは合成データの確認専用です。deploy前に[デプロイ](docs/DEPLOYMENT.md)を確認してください。
 

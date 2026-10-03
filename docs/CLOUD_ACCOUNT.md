@@ -21,6 +21,8 @@ Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。
 
 招待は一度だけ使え、有効期間は7日間です。管理者が `POST /api/account/invites` にメールアドレスと表示名を渡して新規利用者向け招待を発行します。招待tokenは `/?invite=...` として本人へ安全に渡します。Passkeyをすべて失った場合、管理者は本人を別経路で確認したうえで `POST /api/account/recovery` を使います。この操作は既存のPasskeyとsessionを無効にし、古い招待を失効させて、新しい招待を発行します。メールによる自動復旧は設定しません。Cloudflareまたは認証が停止しても端末内の家計データは保持されます。
 
+ログイン中の本人は `DELETE /api/account/delete` でアカウントを削除できます。サーバーは同一originと有効なHttpOnly sessionを確認し、要求からuser IDを受け取りません。D1の1つのbatchで削除済みIDの再利用を防ぐtombstoneを記録し、user行を削除します。外部キーによりPasskey、session、招待、利用権限、AI利用量・料金、問い合わせ処理状態も削除されます。途中失敗はbatch全体がrollbackされ、503を返すため、画面は完了扱いにせず再試行を案内します。削除したランダムIDだけは、遅れて完了したPasskey登録が同じuser IDを再作成しないようtombstoneに保持します。email、氏名、認証情報、家計データはtombstoneへ保存しません。削除後のAI要求はuser行の存在確認で拒否します。
+
 ## AI entitlementと利用量
 
 planは `free`、`pro`、`family` です。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとfamilyはclientから設定できません。課金処理はこのIssueの範囲外です。
@@ -40,6 +42,8 @@ Issue #60の切替には `0003_receipt_ai_flows.sql` を適用してから、PWA
 同一originの `/api/auth/*`、`/api/account/*`、`/api/ai/token`、`/api/ai/usage`、`/api/ai/gemini`、`/api/ai/jev` を使います。Service Workerは `/api/*` をキャッシュしません。
 
 認証・AIサービスが利用できない場合でも実装済みの端末内機能は利用できます。現在のPWAのレシート画面では、quota超過やprovider failure後も手動入力へ進め、保存済み画像を削除しません。Cloud accountのlogoutは端末内データに影響しません。
+
+アカウント削除も端末内家計簿、レシート、明細、照合記録を削除しません。画面で削除前に説明し、Passkey・sessionとサーバー上の利用情報を削除した後も、端末内データの閲覧、バックアップ、原本整理、全削除を続けられます。端末内データの削除は別の明示操作です。既に別端末や外部サービスに渡ったデータを遠隔削除する機能はありません。課金契約・バックアップ・同期は別Issueの導入時に本経路へ接続します。
 
 PWAはaccount状態、AI利用量、Passkey操作、token発行とレシート解析・カテゴリ提案を同一originで接続しています。現行の起動・配信手順は[デプロイ](DEPLOYMENT.md)を正本とします。
 

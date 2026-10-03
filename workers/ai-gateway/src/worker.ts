@@ -2,7 +2,7 @@ import { parseContactInput, parseClassification, parseContactInterviewInput, par
 import { guardrailConfig, costAdmission, refreshCircuit, type CostAdmission } from "./ai-global-guardrails";
 import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
 import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatched } from "./receipt-ai-usage";
-import { getAccountSession, type AccountEnv } from "./account-auth";
+import { getAccountSession, isAccountActive, type AccountEnv } from "./account-auth";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -288,6 +288,10 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
   const identity = await authenticate(request, env.AI_GATEWAY_AUTH_SECRET, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
   if (!identity) return json(env.AI_GATEWAY_AUTH_SECRET ? 401 : 503, { error: env.AI_GATEWAY_AUTH_SECRET ? "unauthorized" : "not_configured" });
+  if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
+  try {
+    if (!await isAccountActive(env.ACCOUNT_DB, identity)) return json(401, { error: "unauthorized" });
+  } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!env.AI_USER_RATE_LIMIT) return json(503, { error: "not_configured" });
   const provider = contact || url.pathname.endsWith("/gemini") ? "gemini" : "jev";
   let limit: { success: boolean };
