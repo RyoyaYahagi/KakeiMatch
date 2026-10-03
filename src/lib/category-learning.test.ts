@@ -52,7 +52,7 @@ describe('confirmed category rules', () => {
     for (const receiptId of ['a', 'b', 'c']) await repository.putRecords(learning.recordsForConfirmation(receiptId, value, categories, '2026-10-01T00:00:00Z'));
     await repository.putRecords(learning.recordsForConfirmation('a', value, categories, '2026-10-02T00:00:00Z'));
     expect(await repository.list('correction-audit')).toHaveLength(3);
-    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic ＭＩＬＫ' }, { name: 'Synthetic Soap' }, { name: 'Unknown Synthetic Cable' }], categories })).resolves.toEqual({
+    await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic ＭＩＬＫ' }, { name: 'Synthetic Soap' }, { name: 'Unknown Synthetic Cable' }], categories })).resolves.toMatchObject({
       merchantCategoryId: null, itemCategories: ['food-custom', 'home-custom', null], hasMerchantHistory: true,
     });
     await expect(learning.suggest({ merchant: value.merchant, items: [{ name: 'Synthetic Milk' }], categories: [categories[1]!] })).resolves.toMatchObject({ itemCategories: [null] });

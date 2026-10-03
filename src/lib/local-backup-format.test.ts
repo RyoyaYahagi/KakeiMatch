@@ -46,6 +46,17 @@ async function create(input = fixture()): Promise<Blob> {
 }
 
 describe("account metadata backup", () => {
+  it("preserves the exact rule evidence that was applied to a receipt", async () => {
+    const data = fixture();
+    const receipt = data.records.find(record => record.kind === "receipt-metadata")!;
+    (receipt.value as { aiSuggestion: Record<string, unknown> }).aiSuggestion.categoryRules = [{ targetType: "item", normalizedName: "synthetic milk",
+      categoryId: "synthetic-category", categoryName: "Synthetic Food", receipts: 12, matchingReceipts: 11, agreementPercent: 92 }];
+    const result = await readPortableBackup(await create(data));
+    expect((result.localData.records.find(record => record.kind === "receipt-metadata")!.value as { aiSuggestion: { categoryRules?: unknown[] } }).aiSuggestion.categoryRules).toEqual([
+      { targetType: "item", normalizedName: "synthetic milk", categoryId: "synthetic-category", categoryName: "Synthetic Food", receipts: 12, matchingReceipts: 11, agreementPercent: 92 },
+    ]);
+  });
+
   it("preserves local learned-rule overrides in portable backups", async () => {
     const result = await readPortableBackup(await create());
     expect(result.localData.records.find(record => record.id.startsWith("category-rule-override:"))).toMatchObject({

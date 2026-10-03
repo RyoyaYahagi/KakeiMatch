@@ -1,7 +1,7 @@
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import type { ActualCategory } from '../../../src/lib/actual-ledger';
 import type { LocalDataRecord, LocalDataRepository } from '../../../src/lib/local-data';
-import { categoryLearningObservationSchema, deriveCategoryRuleStats, deriveCategoryRules, normalizeLearningName, type CategoryLearningObservation } from '../../../src/lib/category-learning';
+import { categoryLearningObservationSchema, deriveCategoryRuleStats, normalizeLearningName, type CategoryLearningObservation } from '../../../src/lib/category-learning';
 import type { ConfirmedReceiptValue } from './local-receipts';
 
 const OVERRIDE_PREFIX = 'category-rule-override:';
@@ -9,6 +9,10 @@ type RuleOverride = { targetType: 'merchant' | 'item'; normalizedName: string; d
 export type LocalCategoryRule = {
   targetType: 'merchant' | 'item'; normalizedName: string; categoryId: string; receipts: number; matchingReceipts: number;
   agreementPercent: number; enabled: boolean; deleted: boolean;
+};
+export type AppliedCategoryRule = {
+  targetType: 'merchant' | 'item'; normalizedName: string; categoryId: string; categoryName: string;
+  receipts: number; matchingReceipts: number; agreementPercent: number;
 };
 
 function overrideId(targetType: RuleOverride['targetType'], normalizedName: string) {
@@ -66,19 +70,27 @@ export class LocalCategoryLearning {
   }
   async suggest(input: { merchant: string | null; items: Array<{ name: string }>; categories: ActualCategory[] }): Promise<{
     merchantCategoryId: string | null; itemCategories: Array<string | null>; hasMerchantHistory: boolean;
+    merchantRule: AppliedCategoryRule | null; itemRules: Array<AppliedCategoryRule | null>;
   }> {
     const observations = await this.observations();
     const available = new Set(input.categories.map(category => category.id));
-    const rules = deriveCategoryRules(observations, available);
+    const rules = deriveCategoryRuleStats(observations, available);
     const overrides = await this.overrides();
-    const apply = (type: RuleOverride['targetType'], name: string, base: string | null) => {
+    const activeRule = (type: RuleOverride['targetType'], name: string): AppliedCategoryRule | null => {
+      const learned = rules.find(rule => rule.targetType === type && rule.normalizedName === name);
+      if (!learned) return null;
       const override = overrides.get(overrideId(type, name));
       if (override?.disabled || override?.deleted) return null;
-      return override?.categoryId && available.has(override.categoryId) ? override.categoryId : base;
+      const categoryId = override?.categoryId && available.has(override.categoryId) ? override.categoryId : learned.categoryId;
+      const categoryName = input.categories.find(category => category.id === categoryId)?.name;
+      if (!categoryName) return null;
+      return { ...learned, categoryId, categoryName };
     };
     const merchant = normalizeLearningName(input.merchant ?? '');
-    return { merchantCategoryId: apply('merchant', merchant, rules.merchants.get(merchant) ?? null),
-      itemCategories: input.items.map(item => { const name = normalizeLearningName(item.name); return apply('item', name, rules.items.get(name) ?? null); }),
+    const merchantRule = activeRule('merchant', merchant);
+    const itemRules = input.items.map(item => activeRule('item', normalizeLearningName(item.name)));
+    return { merchantCategoryId: merchantRule?.categoryId ?? null,
+      itemCategories: itemRules.map(rule => rule?.categoryId ?? null), merchantRule, itemRules,
       hasMerchantHistory: observations.some(observation => observation.normalizedMerchant === merchant) };
   }
   recordsForConfirmation(receiptId: string, value: ConfirmedReceiptValue, categories: ActualCategory[], confirmedAt: string): LocalDataRecord<CategoryLearningObservation>[] {

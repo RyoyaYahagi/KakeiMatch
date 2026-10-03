@@ -112,6 +112,9 @@ try {
   assert.ok(audits.every(audit => audit.items.some(item => item.normalizedName === 'synthetic same milk' && item.categoryId === learningIds.food)));
   assert.ok(audits.every(audit => audit.items.some(item => item.normalizedName === 'synthetic same soap' && item.categoryId === learningIds.home)));
   assert.equal(jevRequests.length, 0);
+  await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
+  assert.equal(await page.getByText('分類の理由', { exact: true }).count(), 0);
+  await page.getByRole('button', { name: '記録一覧へ戻る' }).click();
 
   // Both item rules resolve locally; no Jev request is needed for known items.
   await analyze('known');
@@ -157,13 +160,21 @@ try {
   if (await itemRow(0).getAttribute('open') === null) await itemRow(0).locator('summary').click();
   await itemRow(0).locator('[data-item-category]').selectOption(learningIds.home);
   await register();
+  await page.getByRole('button', { name: /^Synthetic Learning Shop · 10\/1 · .*レシート/ }).click();
+  const classificationReason = page.locator('details').filter({ has: page.getByText('分類の理由', { exact: true }) });
+  await classificationReason.locator('summary').click();
+  await classificationReason.getByText('品目「synthetic same milk」→「Synthetic Learning Food」で分類しました。', { exact: true }).waitFor();
+  await classificationReason.getByText('適用時は過去3件中3件が「Synthetic Learning Food」でした（一致率 100%）。', { exact: true }).waitFor();
+  await page.screenshot({ path: process.env.PWA_CATEGORY_EXPLANATION_SCREENSHOT_PATH ?? '/tmp/issue-157-category-explanation.png', fullPage: true });
+  await page.getByRole('button', { name: '記録一覧へ戻る' }).click();
   audits = await readLearningAudits(); assert.equal(audits.length, 4);
   assert.equal(new Set(audits.map(audit => audit.receiptId)).size, 4);
   assert.ok(audits.every(audit => audit.merchantCategoryId === null));
 
   const requestCountBeforeEditedRule = jevRequests.length;
   await analyze('known');
-  assert.equal(jevRequests.length, requestCountBeforeEditedRule);
+  assert.equal(jevRequests.length, requestCountBeforeEditedRule + 1);
+  assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
   assert.equal(await itemRow(0).locator('[data-item-category]').inputValue(), learningIds.food);
   assert.equal(await itemRow(1).locator('[data-item-category]').inputValue(), learningIds.home);
   await cancelDraft();
@@ -177,7 +188,8 @@ try {
   await navigation; await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   audits = await readLearningAudits(); assert.equal(audits.length, 4);
   const requestCountBeforeRestoreCheck = jevRequests.length;
-  await analyze('known'); assert.equal(jevRequests.length, requestCountBeforeRestoreCheck);
+  await analyze('known'); assert.equal(jevRequests.length, requestCountBeforeRestoreCheck + 1);
+  assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
   await cancelDraft();
 
   // Editing one receipt replaces that receipt's vote instead of adding another vote.

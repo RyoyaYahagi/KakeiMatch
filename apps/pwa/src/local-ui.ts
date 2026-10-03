@@ -379,6 +379,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       text('p', `${categoryName(value.categoryId)} · ${accounts.find(account => account.id === value.accountId)?.name ?? '利用不可'}`), registered);
     view.append(back, text('h2', value.merchant), summary);
     if (pending) view.append(text('p', '前回の変更は保存結果を確認中です。編集画面で同じ内容を再試行してください。', 'notice notice-warning'));
+    if (receipt.aiSuggestion.categoryRules?.length) {
+      const reasons = document.createElement('details'); reasons.className = 'surface-section detail-disclosure';
+      reasons.append(text('summary', '分類の理由'));
+      reasons.append(text('p', 'レシートを読み取った時に適用した、いつもの分類です。'));
+      for (const rule of receipt.aiSuggestion.categoryRules) {
+        const kind = rule.targetType === 'item' ? '品目' : '店舗';
+        reasons.append(text('p', `${kind}「${rule.normalizedName}」→「${rule.categoryName}」で分類しました。`));
+        reasons.append(text('p', `適用時は過去${rule.receipts}件中${rule.matchingReceipts}件が「${rule.categoryName}」でした（一致率 ${rule.agreementPercent}%）。`, 'muted'));
+      }
+      view.append(reasons);
+    }
     if (receipt.image) {
       const image = document.createElement('details'); image.className = 'surface-section detail-disclosure'; image.append(text('summary', 'レシート画像'));
       image.addEventListener('toggle', () => { if (!image.open || image.childElementCount > 1) return; void repository.getBlob(receipt.image!.blobId).then(blob => { if (!image.isConnected) return; if (!blob) { image.append(text('p', 'レシート画像の原本はありません。')); return; } imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; image.append(img); }).catch(report); });
