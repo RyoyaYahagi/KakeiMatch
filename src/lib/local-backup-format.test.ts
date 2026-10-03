@@ -57,6 +57,19 @@ describe("account metadata backup", () => {
     ]);
   });
 
+  it("keeps where a read warning points and rejects a position that points at no item", async () => {
+    const data = fixture();
+    const receipt = data.records.find(record => record.kind === "receipt-metadata")!;
+    const extraction = (receipt.value as { extraction: { warnings: unknown[] } }).extraction;
+    extraction.warnings = [{ field: "items", code: "check", message: "画像と照らし合わせてください。", index: 0 }];
+    const result = await readPortableBackup(await create(data));
+    expect((result.localData.records.find(record => record.kind === "receipt-metadata")!.value as { extraction: { warnings: unknown[] } }).extraction.warnings)
+      .toEqual([{ field: "items", code: "check", message: "画像と照らし合わせてください。", index: 0 }]);
+    extraction.warnings = [{ field: "items", code: "check", message: "画像と照らし合わせてください。", index: 1 }];
+    // Export validates the same contents, so an out-of-range position is refused before a file exists.
+    await expect(create(data)).rejects.toThrow("receipt-metadata");
+  });
+
   it("preserves local learned-rule overrides in portable backups", async () => {
     const result = await readPortableBackup(await create());
     expect(result.localData.records.find(record => record.id.startsWith("category-rule-override:"))).toMatchObject({

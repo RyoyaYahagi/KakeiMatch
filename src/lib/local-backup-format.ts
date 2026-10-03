@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { warningIndexInRange } from "./receipt-extraction";
 import { CATEGORY_IDS } from "./category";
 import { scheduleAuditSchema } from "./recurring-schedule";
 import { categoryLearningObservationSchema, normalizeLearningName } from "./category-learning";
@@ -45,8 +46,9 @@ const extraction = z.object({
   purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(), totalAmountYen: safeYen.nullable(), taxAmountYen: safeYen.nullable(),
   items: z.array(z.object({ name: z.string(), amountYen: safeYen.nullable(), quantity: z.number().finite().positive().nullable().optional(), unitPriceYen: safeYen.nullable().optional() }).strict()),
   adjustments: z.array(z.object({ label: z.string().min(1), amountYen: z.number().int().safe(), targetItemIndex: z.number().int().nonnegative().nullable().optional() }).strict()).max(100).optional(),
-  warnings: z.array(z.object({ field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"]).nullable(), code: z.string(), message: z.string() }).strict()),
-}).strict().refine(value => (value.adjustments ?? []).every(row => row.targetItemIndex == null || row.targetItemIndex < value.items.length));
+  warnings: z.array(z.object({ field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"]).nullable(), code: z.string(), message: z.string(), index: z.number().int().nonnegative().nullable().optional() }).strict()),
+}).strict().refine(value => (value.adjustments ?? []).every(row => row.targetItemIndex == null || row.targetItemIndex < value.items.length))
+  .refine(value => value.warnings.every(warning => warningIndexInRange(warning, value)));
 const categoryRuleApplication = z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000),
   categoryId: z.string().min(1).max(128), categoryName: z.string().min(1).max(512), receipts: z.number().int().safe().positive(),
   matchingReceipts: z.number().int().safe().positive(), agreementPercent: z.number().int().min(0).max(100) }).strict()

@@ -340,6 +340,14 @@ form .category-picker button { margin: 0; }
 .detail-disclosure > summary { color: var(--primary); font-weight: 500; }
 .detail-disclosure[open] { padding-bottom: var(--space-4); }
 .notice-warning { background: var(--warning-soft); color: var(--warning); }
+.receipt-review { align-items: flex-start; }
+.receipt-review-title { color: var(--text); font-weight: 700; }
+.receipt-review-list { width: 100%; margin: 0; padding: 0; list-style: none; }
+.receipt-review-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 44px; padding: var(--space-2) 0; color: var(--text); text-align: left; }
+.receipt-review-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.receipt-review-text span { font-size: .875rem; }
+.receipt-review-row .icon { color: var(--warning); }
+.review-flag { display: block; margin: 0 0 var(--space-1); color: var(--warning); font-size: .875rem; font-weight: 700; }
 
 /* Screens under settings: docs/UX.md 設定の奥の画面 */
 .page-title { margin: 0 0 var(--space-3); font-size: 1.375rem; }
