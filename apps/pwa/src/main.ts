@@ -7,6 +7,7 @@ import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
 import { iconMarkup } from './ui-icons';
+import { renderOssLicenses } from './oss-licenses';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -100,6 +101,9 @@ root.innerHTML = `
         <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
         <p id="developer-options-status" class="status" role="status"></p>
       </section>
+      <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
+        <h3 id="oss-licenses-title">オープンソースライセンス</h3>
+      </section>
       <h3 class="settings-group-title">サポート</h3>
       <section class="surface-section settings-list" aria-label="サポート">
         <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
@@ -111,6 +115,7 @@ root.innerHTML = `
   </main>`;
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+renderOssLicenses(element<HTMLElement>('oss-licenses'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');
