@@ -111,7 +111,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   function ensureScreen(revision: number) { if (revision !== screenRevision) throw new StaleScreenError(); }
   // An action redraws its screen only while the person stays on that tab.
   function ensureTab(tab: typeof screenTab) { if (tab !== screenTab) throw new StaleScreenError(); }
-  async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation') {
+  async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation', prepared?: HTMLElement) {
     const revision = ++screenRevision; screenTab = tab;
     await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve();
     ensureScreen(revision);
@@ -120,7 +120,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     for (const id of ['home', 'receipt', 'reconciliation', 'settings']) {
       setNavActive(el(`${id}-tab`), id === tab || (tab === 'statement' && id === 'settings'));
     }
-    el('message').textContent = ''; view.replaceChildren();
+    el('message').textContent = '';
+    if (prepared) view.replaceChildren(prepared); else view.replaceChildren();
     return revision;
   }
   let selectedMonth = today().slice(0, 7);
@@ -161,13 +162,19 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     renderHomeAttention(el('home-attention'), counts, () => reviewPage().catch(report));
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
-    await open('statement');
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
-    await showMonthlyBudgetEditor({ view, ledger, service: monthlyBudgets, mode, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
+    const originRevision = screenRevision;
+    const prepared = document.createElement('div');
+    await showMonthlyBudgetEditor({ view: prepared, ledger, service: monthlyBudgets, mode, yearMonth: selectedMonth, onBack: () => el('settings-tab').click(), onMonth: month => { selectedMonth = month; } });
+    if (screenTab !== 'settings' || screenRevision !== originRevision) return;
+    await open('statement', prepared);
   }
   async function recurringOverview() {
-    await open('statement');
-    await showRecurringSchedules({ view, ledger, service: recurring, onBack: () => el('settings-tab').click() });
+    const originRevision = screenRevision;
+    const prepared = document.createElement('div');
+    await showRecurringSchedules({ view: prepared, ledger, service: recurring, onBack: () => el('settings-tab').click() });
+    if (screenTab !== 'settings' || screenRevision !== originRevision) return;
+    await open('statement', prepared);
   }
   let chooserOrigin: () => Promise<void> = () => recordsPage();
   // docs/UX.md ＋追加: a bottom sheet over the current screen chooses the kind of record.
