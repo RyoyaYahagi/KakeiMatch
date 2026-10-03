@@ -95,6 +95,9 @@ li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .empty { padding: var(--space-6) 0; }
 #message:empty { margin: 0; }
 #message { margin: var(--space-3) 0; }
+.migration-rescue { margin: var(--space-5) 0; padding: var(--space-4); }
+.migration-rescue h2 { margin-top: 0; }
+.migration-rescue-warning { padding: var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-weight: 600; }
 .network-status { margin: 0 0 var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-size: .875rem; font-weight: 700; }
 
 /* Buttons: primary by default, then secondary / text / destructive. */

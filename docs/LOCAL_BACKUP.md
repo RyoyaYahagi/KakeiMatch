@@ -6,6 +6,16 @@ KakeiMatch PWAは、Actual Budgetの家計簿とKakeiMatchの端末内記録・�
 
 `.kmb` はKakeiMatch独自の非圧縮・非暗号化containerです。format version 1のmanifestと、Actual Budget ZIP、schema version 2の端末記録JSON、存在する画像・CSV原本を別entryとして格納します。manifestにはentry path、用途、size、SHA-256値と原本のmetadataを記録し、原本が欠けていればmissingとして表現します。SHA-256値はファイル破損の検出に使います。改ざん検知や暗号化を行うものではありません。[実装: `local-backup-format.ts`](../src/lib/local-backup-format.ts)
 
+### 起動時の移行に失敗した場合
+
+端末データの更新に失敗した場合や、現在のアプリより新しいIndexedDBを検出した場合は、通常の家計画面を隠して救出画面を表示します。救出機能は、すでに存在する `kakeimatch-local-data` をversion指定なしで開き、読み取り専用transactionで現在のprofileに属する `records` と `blobs` だけを読みます。データベースのversion・store・record・blobは変更しません。データベースがない場合は作成せず終了します。[実装: `local-data-rescue.ts`](../apps/pwa/src/local-data-rescue.ts)
+
+書き出しは復元できない別形式の `.kmr` ファイルです。Actual Budgetの家計簿、`app-settings`、画面ロック設定、クラウドのログイン情報、同期用のCryptoKey、別profile、他のIndexedDBは含みません。record JSON合計32 MiB、合計10,000 records/blobs、blobは1件32 MiB・合計64 MiBまでです。blobは1 MiB単位で読み込みます。上限超過や読取・生成エラーではファイルを作らず、元データも変更しません。救出後は修正版へ更新して再読み込みしてください。`.kmr` からの復元は行わず、完全な家計バックアップの代わりにもなりません。
+
+375 CSS px幅での救出画面:
+
+![端末データの救出画面（375px）](screenshots/issue-53-rescue-375.png)
+
 外側containerの制限は次のとおりです。
 
 | 対象 | 上限 |
