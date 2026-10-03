@@ -613,3 +613,22 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 }
 /* Diagnostics are readable without exposing a wide, horizontally scrolling block. */
 .diagnostics-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; padding: var(--space-3); background: var(--sunken); border-radius: var(--radius-md); }
+
+.screen-lock-overlay { position: fixed; z-index: 10000; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) max(var(--space-4), env(safe-area-inset-bottom)); background: var(--bg); }
+.screen-lock-content { width: min(100%, 420px); padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow); }
+.screen-lock-content .page-title { margin: 0 0 var(--space-3); font-size: 1.375rem; }
+.screen-lock-form, .screen-lock-enrollment { display: grid; gap: var(--space-3); margin-top: var(--space-4); }
+.screen-lock-form label, .screen-lock-enrollment label { display: grid; gap: var(--space-1); color: var(--muted); font-size: .875rem; }
+.screen-lock-form input, .screen-lock-enrollment input:not([type="checkbox"]) { width: 100%; min-height: 48px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface); color: var(--text); font: inherit; font-size: 1.25rem; letter-spacing: .16em; }
+.screen-lock-form button, .screen-lock-enrollment button { min-height: 48px; }
+.screen-lock-status, .screen-lock-settings-message { min-height: 1.5em; color: var(--danger); font-size: .875rem; }
+.screen-lock-recovery { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.screen-lock-recovery summary { min-height: 44px; color: var(--primary); cursor: pointer; }
+.screen-lock-settings { margin: var(--space-4) 0; padding: var(--space-4); }
+.screen-lock-settings > h3 { margin-top: 0; }
+.screen-lock-settings > button { width: 100%; min-height: 48px; margin: var(--space-1) 0; }
+.screen-lock-settings-status { font-weight: 600; }
+.screen-lock-recovery-display { padding: var(--space-3); border-radius: var(--radius-md); background: var(--sunken); }
+.screen-lock-code { display: block; overflow-wrap: anywhere; font-size: 1.1rem; letter-spacing: .08em; text-align: center; }
+.screen-lock-acknowledge { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: var(--space-2) !important; color: var(--text) !important; }
+.screen-lock-acknowledge input { width: 22px; height: 22px; }
