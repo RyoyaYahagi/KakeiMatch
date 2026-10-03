@@ -4,6 +4,14 @@ import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 
 const source = readFileSync(new URL('../public/sw.js', import.meta.url), 'utf8');
+const headers = readFileSync(new URL('../public/_headers', import.meta.url), 'utf8');
+const csp = headers.match(/Content-Security-Policy:\s*(.+)/)?.[1];
+assert.ok(csp, 'Static PWA responses must define CSP.');
+assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
+assert.match(csp, /worker-src 'self' blob: data:/);
+const scriptSrc = csp.split(';').find(directive => directive.trim().startsWith('script-src'));
+assert.doesNotMatch(scriptSrc, /'unsafe-inline'|'unsafe-eval'/);
+
 function worker(build = 'old', stores = new Map()) {
   const handlers = new Map();
   let online = true;
@@ -34,7 +42,7 @@ function worker(build = 'old', stores = new Map()) {
     networkCalls++;
     if (!online) throw new Error('offline');
     if (request === `/offline-assets-${build}.json`) return new Response(JSON.stringify({ build, assets: malformed ? ['https://external.test/unsafe.js'] : [`/assets/${build}.js`, `/assets/${build}-browser.js`] }));
-    if (request === '/') return new Response(`<script src="/assets/${deployed}.js"></script>`, { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' } });
+    if (request === '/') return new Response(`<script src="/assets/${deployed}.js"></script>`, { headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Content-Security-Policy': csp } });
     return new Response('online');
   };
   runInNewContext(source.replaceAll('__KM_BUILD__', build), { self, caches, fetch, Response, URL, Error, Set });
@@ -55,6 +63,7 @@ test('complete shell installs without forcing activation; offline preserves isol
   context.setOnline(false);
   const response = await context.request('/', 'navigate');
   assert.equal(response.headers.get('Cross-Origin-Opener-Policy'), 'same-origin'); assert.equal(response.headers.get('Cross-Origin-Embedder-Policy'), 'require-corp');
+  assert.equal(response.headers.get('Content-Security-Policy'), csp);
 });
 
 test('online navigation stays on the active shell when a newer deployment appears', async () => {
