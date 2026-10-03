@@ -46,6 +46,10 @@ describe('セルフホスト専用ChatGPT OAuth', () => {
     expect(await verifyOpenAiIdentity(await sign(), 'oaiapp_synthetic', 'expected', keys)).toBe('synthetic-subject');
     await expect(verifyOpenAiIdentity(await sign({ nonce: 'wrong' }), 'oaiapp_synthetic', 'expected', keys)).rejects.toThrow();
     await expect(verifyOpenAiIdentity(await sign(), 'oaiapp_other', 'expected', keys)).rejects.toThrow();
+    await expect(verifyOpenAiIdentity(await sign({ azp: 'oaiapp_other' }), 'oaiapp_synthetic', 'expected', keys)).rejects.toThrow();
+    const multipleAudience = (azp?: string) => new SignJWT({ nonce: 'expected', ...(azp ? { azp } : {}) }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer('https://auth.openai.com').setAudience(['oaiapp_synthetic', 'another-audience']).setSubject('synthetic-subject').setIssuedAt().setExpirationTime('5m').sign(pair.privateKey);
+    await expect(verifyOpenAiIdentity(await multipleAudience(), 'oaiapp_synthetic', 'expected', keys)).rejects.toThrow();
+    expect(await verifyOpenAiIdentity(await multipleAudience('oaiapp_synthetic'), 'oaiapp_synthetic', 'expected', keys)).toBe('synthetic-subject');
     const expired = await new SignJWT({ nonce: 'expected' }).setProtectedHeader({ alg: 'RS256', kid: jwk.kid }).setIssuer('https://auth.openai.com').setAudience('oaiapp_synthetic').setSubject('synthetic-subject').setIssuedAt().setExpirationTime(1).sign(pair.privateKey);
     await expect(verifyOpenAiIdentity(expired, 'oaiapp_synthetic', 'expected', keys)).rejects.toThrow();
     const token = await sign(); await expect(verifyOpenAiIdentity(token.slice(0, -3) + 'aaa', 'oaiapp_synthetic', 'expected', keys)).rejects.toThrow();

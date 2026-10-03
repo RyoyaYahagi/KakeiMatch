@@ -19,7 +19,7 @@ type VerifyIdentity = (token: string, clientId: string, nonce: string) => Promis
 const jwks = createRemoteJWKSet(new URL(`${ISSUER}/.well-known/jwks.json`));
 export async function verifyOpenAiIdentity(token: string, clientId: string, nonce: string, keySet: Parameters<typeof jwtVerify>[1] = jwks): Promise<string> {
   const { payload } = await jwtVerify(token, keySet, { issuer: ISSUER, audience: clientId, requiredClaims: ['sub', 'exp', 'iat', 'nonce'], clockTolerance: 5, algorithms: ['RS256'] });
-  if (payload.nonce !== nonce || typeof payload.sub !== 'string' || !payload.sub || (payload.azp !== undefined && payload.azp !== clientId)) throw new Error('Invalid identity');
+  if (payload.nonce !== nonce || typeof payload.sub !== 'string' || !payload.sub || ((payload.azp !== undefined || (Array.isArray(payload.aud) && payload.aud.length > 1)) && payload.azp !== clientId)) throw new Error('Invalid identity');
   return payload.sub;
 }
 type Pending = { state: string; nonce: string; verifier: string; redirectUri: string; expiresAt: number; clientId?: string; subject?: string };
