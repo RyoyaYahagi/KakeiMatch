@@ -372,7 +372,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     try {
       if (transcribe) return json(200, { text: await callGemini() });
       return json(200, await submitContact({ db: env.ACCOUNT_DB, user: identity, secret: env.AI_GATEWAY_AUTH_SECRET!, env,
-        flowId: input.flowId, message: input.input, originalMessage: input.originalMessage, now, classify: callGemini, fetchImpl }));
+        flowId: input.flowId, message: input.input, originalMessage: input.originalMessage, diagnostic: input.diagnostic, now, classify: callGemini, fetchImpl }));
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
       const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
