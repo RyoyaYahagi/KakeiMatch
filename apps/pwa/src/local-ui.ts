@@ -522,6 +522,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     overviewTab.addEventListener('click', () => setEditorPane('overview'));
     itemsTab.addEventListener('click', () => setEditorPane('items'));
     setEditorPane('overview', false);
+    // Native validation runs before submit. Reveal hidden basic fields before
+    // the browser focuses the invalid control and displays its message.
+    form.addEventListener('invalid', event => {
+      if (event.target instanceof HTMLElement && overviewFields.contains(event.target)) setEditorPane('overview', false);
+    }, true);
     function addCategoryShortcut(field: HTMLSelectElement) {
       return createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
         field, beforeOpen: saveDraft,
@@ -734,7 +739,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       void busy(submit, async () => {
         if (draftTimer) clearTimeout(draftTimer);
         const value = pendingEdit?.after ?? read();
-        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
+        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
+          setEditorPane('overview', false);
+          // The category picker uses visible buttons instead of native validation.
+          if (!value.categoryId) overviewFields.querySelector<HTMLButtonElement>('.category-choice')?.focus();
+          throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
+        }
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
         await saveDraft();
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });

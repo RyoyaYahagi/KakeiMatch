@@ -65,6 +65,8 @@ try {
   assert.ok(collapsedHeight <= 52, `collapsed receipt item row should stay compact, got ${collapsedHeight}px`);
   await row(0).locator('summary').click();
   await row(1).locator('summary').click();
+  await page.waitForFunction(() => !document.querySelectorAll('[data-receipt-item]')[0].open
+    && document.querySelectorAll('[data-receipt-item]')[1].open);
   assert.equal(await row(0).getAttribute('open'), null);
   assert.equal(await row(1).getAttribute('open'), '');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));

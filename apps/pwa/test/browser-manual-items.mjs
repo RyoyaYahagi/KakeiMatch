@@ -12,6 +12,10 @@ await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
 const item = index => page.locator('[data-receipt-item]').nth(index);
+async function waitForOpenItem(index) {
+  await page.waitForFunction(expected => [...document.querySelectorAll('[data-receipt-item]')]
+    .every((row, i) => row.open === (i === expected)), index);
+}
 async function save(edit = false) {
   await click(edit ? '変更を保存する' : '登録する');
   await page.getByText(edit ? '変更を保存しました。' : '登録しました。', { exact: true }).waitFor();
@@ -41,6 +45,7 @@ try {
     await row.locator('[data-item-name]').fill(name); await row.locator('[data-item-amount]').fill(amount);
     await row.locator('[data-item-category]').selectOption({ label: category });
   }
+  await waitForOpenItem(2);
   assert.equal(await page.getByRole('button', { name: '品目一覧', exact: true }).count(), 1);
   assert.equal(await item(0).getAttribute('open'), null);
   assert.equal(await item(1).getAttribute('open'), null);
@@ -48,9 +53,11 @@ try {
   const collapsedHeight = (await item(0).locator('summary').boundingBox()).height;
   assert.ok(collapsedHeight <= 52, `collapsed item row should stay compact, got ${collapsedHeight}px`);
   await item(0).locator('summary').click();
+  await waitForOpenItem(0);
   assert.equal(await item(0).getAttribute('open'), '');
   assert.equal(await item(2).getAttribute('open'), null);
   await item(2).locator('summary').click();
+  await waitForOpenItem(2);
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').first();
   await discount.locator('[data-adjustment-label]').fill('Synthetic Coupon');
@@ -68,6 +75,26 @@ try {
   if (process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH) { await remove.scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH }); }
   await remove.click(); assert.equal(await page.locator('[data-receipt-item]').count(), 2);
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1400');
+  // A missing basic field must be revealed when registering from the item pane.
+  // Keep the items and memo intact throughout failed validation.
+  for (const fieldName of ['payee', 'amount', 'date', 'account', 'category']) {
+    const field = page.locator(`#manual-transaction-${fieldName}`);
+    const original = await field.inputValue();
+    if (fieldName === 'account' || fieldName === 'category') await field.selectOption('');
+    else await field.fill('');
+    await click('品目一覧');
+    if (fieldName === 'payee' && process.env.PWA_INVALID_ENTRY_BEFORE_PATH) await page.screenshot({ path: process.env.PWA_INVALID_ENTRY_BEFORE_PATH });
+    await click('登録する');
+    await page.waitForFunction(() => !document.querySelector('.entry-overview-fields').hidden, null, { timeout: 5000 });
+    if (fieldName === 'payee' && process.env.PWA_INVALID_ENTRY_AFTER_PATH) await page.screenshot({ path: process.env.PWA_INVALID_ENTRY_AFTER_PATH });
+    assert.equal(await page.getByRole('button', { name: '全体', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
+    assert.equal(await item(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple');
+    assert.equal(await page.locator('[data-receipt-item]').count(), 2);
+    assert.equal(await page.locator('#message').textContent() === '登録しました。', false);
+    if (fieldName === 'account' || fieldName === 'category') await field.selectOption(original);
+    else await field.fill(original);
+  }
   if (process.env.PWA_MANUAL_ITEMS_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_MANUAL_ITEMS_SCREENSHOT_PATH, fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await save();
