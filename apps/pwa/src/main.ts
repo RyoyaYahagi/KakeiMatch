@@ -6,6 +6,7 @@ import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
+import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import { renderOssLicenses } from './oss-licenses';
 import './style.css';
@@ -71,7 +72,7 @@ root.innerHTML = `
       <div class="ai-usage">
         <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
         <div id="usage-meter" class="usage-meter" hidden><span></span></div>
-        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
+        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。お問い合わせの深掘りを使う場合は、AIへの質問1回ごとに利用枠を1回使います。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       </div>
       <div id="signed-out-actions" hidden>
         <p>AI機能を利用するにはアカウントが必要です。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
@@ -171,6 +172,8 @@ const developerCostsUi = initializeDeveloperCostsUi({
 
 
 function showTab(tab: 'home' | 'settings') {
+  recordDiagnosticAction(tab === 'home' ? 'navigate_home' : 'navigate_settings', tab);
+  recordDiagnosticScreen(tab);
   contactUi.close();
   settingsContent.hidden = false;
   contactView.hidden = true;
@@ -188,6 +191,8 @@ function showTab(tab: 'home' | 'settings') {
 }
 
 element<HTMLButtonElement>('settings-contact').addEventListener('click', () => {
+  recordDiagnosticAction('open_contact', 'settings');
+  recordDiagnosticScreen('contact');
   settingsContent.hidden = true;
   contactView.hidden = false;
   contactUi.open();
@@ -361,9 +366,13 @@ useAiButton.addEventListener('click', () => { void issueAiToken(); });
 function showNetwork() {
   network.hidden = navigator.onLine;
   network.textContent = navigator.onLine ? '' : 'オフライン';
+  recordDiagnosticNetwork(navigator.onLine);
 }
 window.addEventListener('online', showNetwork);
 window.addEventListener('offline', showNetwork);
+recordDiagnosticScreen('home');
+window.addEventListener('error', () => recordDiagnosticFailure(new Error('unhandled_ui_error')));
+window.addEventListener('unhandledrejection', () => recordDiagnosticFailure(new Error('unhandled_ui_rejection')));
 showNetwork();
 
 if ('serviceWorker' in navigator) {

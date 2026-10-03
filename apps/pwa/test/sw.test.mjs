@@ -57,7 +57,7 @@ test('install caches the app shell and offline navigation keeps isolation header
 test('AI and contact API requests are never cached or intercepted', () => {
   const context = worker();
   let intercepted = false;
-  for (const path of ['/api/ai/gemini', '/api/contact', '/api/contact/transcribe']) {
+  for (const path of ['/api/ai/gemini', '/api/contact', '/api/contact/transcribe', '/api/contact/interview']) {
     context.handlers.get('fetch')({
       request: { method: 'POST', url: `https://example.test${path}`, mode: 'cors' },
       respondWith: () => { intercepted = true; },

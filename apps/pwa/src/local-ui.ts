@@ -29,6 +29,7 @@ import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
+import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticScreen, type DiagnosticAction, type DiagnosticScreen } from './contact-diagnostics';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const HOME_RECENT_LIMIT = 3;
@@ -47,6 +48,7 @@ async function busy(node: HTMLButtonElement, action: () => Promise<unknown> | vo
 class StaleScreenError extends Error {}
 function report(error: unknown) {
   if (error instanceof StaleScreenError) return;
+  recordDiagnosticFailure(error);
   const message = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '操作を完了できませんでした。保存済みのデータを確認して再試行してください。';
   el('message').textContent = message;
 }
@@ -112,6 +114,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   // An action redraws its screen only while the person stays on that tab.
   function ensureTab(tab: typeof screenTab) { if (tab !== screenTab) throw new StaleScreenError(); }
   async function open(tab: 'home' | 'receipt' | 'statement' | 'reconciliation', prepared?: HTMLElement) {
+    const diagnosticScreen: DiagnosticScreen = tab === 'receipt' ? 'records' : tab === 'statement' ? 'statements' : tab;
+    const diagnosticAction: DiagnosticAction = tab === 'receipt' ? 'navigate_records' : tab === 'statement' ? 'navigate_statements' : tab === 'reconciliation' ? 'navigate_reconciliation' : 'navigate_home';
+    recordDiagnosticAction(diagnosticAction, diagnosticScreen);
+    recordDiagnosticScreen(diagnosticScreen);
     const revision = ++screenRevision; screenTab = tab;
     await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve();
     ensureScreen(revision);
@@ -475,6 +481,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', async () => {
       if (receipt.extraction && !window.confirm('もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？')) return;
       if (receipt.registration.status === 'applied') return;
+      recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
       const accountId = account.value;
       form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
@@ -754,6 +761,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
         }
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
+        recordDiagnosticAction('receipt_save_started', 'records');
         await saveDraft();
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
         let saved: LocalReceipt;
@@ -796,9 +804,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (!selectedFile) throw new Error('CSVファイルを選択してください。');
       const chosenProvider = provider.value as StatementProvider;
       selectedStatementProvider = chosenProvider;
+      recordDiagnosticAction('statement_import_started', 'statements');
       provider.disabled = true; file.disabled = true;
       try {
         const result = await statements.importFile(selectedFile, chosenProvider);
+        recordDiagnosticAction('reconciliation_run_started', 'reconciliation');
         await reconciliation.run();
         ensureTab('reconciliation'); await reviewPage();
         const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
@@ -837,7 +847,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   async function reviewPage() {
     const screen = await open('reconciliation');
     // The result is saved even after leaving; only the redraw is skipped.
-    const rerun = async () => { await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
+    const rerun = async () => { recordDiagnosticAction('reconciliation_run_started', 'reconciliation'); await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
     const header = document.createElement('div'); header.className = 'page-header';
     const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact';
     header.append(text('h2', '照合'), refresh); view.append(header);

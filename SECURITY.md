@@ -28,7 +28,7 @@ Category classification sends only validated merchant, total amount in yen, and 
 
 Receipt images and statement files are untrusted input. The PWA validates image signatures and size before local storage. It parses the complete supported PayPayカード CSV before saving the original file and canonical rows. Unsupported card formats remain disabled until their columns are verified. Statement CSV files and canonical rows never leave the device for Cloudflare, Gemini, Jev, or an Actual Sync Server. Confirmed statement-derived transactions can be registered in the device-local Actual browser engine.
 
-Avoid logging financial data, raw AI request/response bodies, provider errors that may contain user data, and secrets. Use synthetic or thoroughly anonymized fixtures; never commit family financial records.
+Avoid logging financial data, raw AI request/response bodies, provider errors that may contain user data, and secrets. Use synthetic or thoroughly anonymized fixtures; never commit family financial records. The PWA support Flight Recorder is an exception only for fixed, non-user-authored metadata: whitelisted screen/action names, safe error codes, network state, and relative event age. It must remain memory-only, must not accept free-form strings or stack traces, and is attached to support requests only after explicit user opt-in.
 
 ## Deployment
 
