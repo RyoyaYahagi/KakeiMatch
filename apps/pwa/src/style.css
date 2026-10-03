@@ -362,6 +362,20 @@ form .category-picker button { margin: 0; }
 .account-total { display: flex; flex-direction: column; margin-bottom: var(--space-3); padding: var(--space-3) var(--space-4); }
 .account-total strong { font-size: 1.625rem; font-variant-numeric: tabular-nums; }
 .account-group .settings-group-title { margin-top: var(--space-2); }
+.category-rule-list { margin-bottom: var(--space-4); }
+.category-rule-list li { padding: var(--space-2) 0; }
+.category-rule summary { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; cursor: pointer; list-style: none; }
+.category-rule summary::-webkit-details-marker { display: none; }
+.category-rule summary::after { content: "›"; margin-left: auto; color: var(--muted); font-size: 1.25rem; }
+.category-rule[open] summary::after { content: "⌄"; }
+.category-rule-title { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+.category-rule-kind { flex: none; padding: 2px var(--space-2); border-radius: var(--radius-full); background: var(--sunken); color: var(--muted); font-size: .75rem; }
+.category-rule-facts { margin: 0 0 var(--space-2); color: var(--muted); font-size: .875rem; }
+.category-rule-toggle { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; }
+.category-rule-toggle input { width: 22px; height: 22px; accent-color: var(--primary); }
+.category-rule > label { display: grid; gap: var(--space-1); margin: var(--space-2) 0; }
+.category-rule-actions { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+.category-rule-actions button { min-height: 44px; }
 .link-row-center { display: flex; justify-content: center; width: 100%; min-height: 48px; margin: 0; }
 .page-actions { position: sticky; bottom: calc(var(--nav-height) + env(safe-area-inset-bottom)); z-index: 5; display: flex; flex-direction: column; gap: var(--space-1); margin: var(--space-5) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); background: var(--surface); border-top: 1px solid var(--border); }
 .page-actions > button { width: 100%; margin: 0; }
@@ -403,6 +417,8 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 .usage-meter span { display: block; width: var(--usage, 0%); height: 100%; border-radius: var(--radius-full); background: var(--primary); }
 #passkey-list li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 48px; padding: var(--space-1) 0; }
 #passkey-list .text-button { color: var(--danger); }
+.account-delete-zone { margin-top: var(--space-6); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.account-delete-zone p { margin-bottom: var(--space-2); }
 
 /* Receipts */
 .entry-editor-tabs { margin: var(--space-2) 0 var(--space-3); }

@@ -57,6 +57,11 @@ export async function restoreStandaloneBudget(file: Blob, ledger: BackupLedger):
 
 async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData: LocalDataBackupV2}, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
   const deps = { ...defaults(), ...overrides };
+  // An empty public budget list does not prove that an earlier partial import was removed.
+  // Do not allocate further staging directories until the user has recovered the site data.
+  if (deps.storage.getItem(INCOMPLETE_RESTORE_KEY) !== null) {
+    throw new Error('以前の復元途中のデータが残っている可能性があるため、新しい復元を開始できません。元の家計データをバックアップしてから、ブラウザーのサイトデータ削除と復元を行ってください。');
+  }
   const previous = deps.storage.getItem(LOCAL_PROFILE_KEY);
   const profileId = deps.makeId();
   const dataDir = `/kakeimatch-restore/${profileId}`;
@@ -145,7 +150,7 @@ export async function returnToPreviousProfile(overrides: Partial<Dependencies> =
 /** The explicit full wipe uses only the household API/stores; it never calls an auth endpoint. */
 export async function wipeLocalHousehold(repository: LocalDataRepository, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<void> {
   const deps = { ...defaults(), ...overrides };
-  if (deps.storage.getItem(INCOMPLETE_RESTORE_KEY)) throw new Error('復元途中の家計簿データをアプリから完全に削除できるか確認できません。元のデータのバックアップを保存してから、ブラウザーのサイトデータ削除を利用してください。');
+  if (deps.storage.getItem(INCOMPLETE_RESTORE_KEY) !== null) throw new Error('復元途中の家計簿データをアプリから完全に削除できるか確認できません。元のデータのバックアップを保存してから、ブラウザーのサイトデータ削除を利用してください。');
   for (const dir of new Set(['/documents', ...directories(deps.storage)])) await ledger.discardDataDirectory(dir);
   await repository.clearAllDeviceProfiles();
   for (const key of [LOCAL_PROFILE_KEY, PREVIOUS_PROFILE_KEY, RESTORE_DIRECTORIES_KEY, INCOMPLETE_RESTORE_KEY]) deps.storage.removeItem(key);

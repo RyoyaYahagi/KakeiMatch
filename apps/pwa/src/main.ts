@@ -9,6 +9,7 @@ import { initializeContactUi } from './contact-ui';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
 import { iconMarkup } from './ui-icons';
 import { renderOssLicenses } from './oss-licenses';
+import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { recordLocalDiagnostic } from './local-diagnostics';
 import './style.css';
@@ -21,6 +22,7 @@ root.innerHTML = `
   <main>
     <h1 class="visually-hidden">KakeiMatch</h1>
     <p class="network-status" id="network" role="status" hidden></p>
+    <p class="network-status" id="app-update-notice" role="status" hidden></p>
     <nav class="app-nav" aria-label="アプリ">
       <p class="nav-brand" aria-hidden="true">KakeiMatch</p>
       <button id="home-tab" class="nav-button active" type="button" aria-pressed="true" aria-current="page">${iconMarkup('home')}<span>ホーム</span></button>
@@ -100,6 +102,10 @@ root.innerHTML = `
         <button id="add-passkey" class="secondary" type="button">Passkeyを追加</button>
         <button id="logout" class="text-button" type="button">ログアウト</button>
         <p class="muted">ログアウトしても、この端末の家計簿はそのまま使えます。</p>
+        <div class="account-delete-zone">
+          <p class="muted">Cloud accountを削除しても、家計簿・レシート・明細・照合記録はこの端末に残り、閲覧やバックアップを続けられます。端末内データの全削除は別の操作です。</p>
+          <button id="delete-account" class="text-button destructive-text" type="button">アカウントを削除</button>
+        </div>
       </div>
       <p class="status" id="account-message" role="status"></p>
       </section>
@@ -158,6 +164,7 @@ const inviteButton = element<HTMLButtonElement>('invite-register');
 const manualButton = element<HTMLButtonElement>('manual-entry');
 const addPasskeyButton = element<HTMLButtonElement>('add-passkey');
 const logoutButton = element<HTMLButtonElement>('logout');
+const deleteAccountButton = element<HTMLButtonElement>('delete-account');
 const useAiButton = element<HTMLButtonElement>('use-ai');
 const developerOptions = element<HTMLInputElement>('developer-options');
 const developerCosts = element<HTMLElement>('developer-costs');
@@ -364,6 +371,37 @@ logoutButton.addEventListener('click', () => {
   }).catch(() => { accountMessage.textContent = 'ログアウトできませんでした。'; });
 });
 
+deleteAccountButton.addEventListener('click', () => {
+  if (!window.confirm('Cloud accountを削除します。Passkey、ログイン状態、AI利用情報も削除され、元に戻せません。\n\nこの端末の家計簿・レシート・明細・照合記録は残ります。')) return;
+  if (window.prompt('確認のため「アカウントを削除」と入力してください。') !== 'アカウントを削除') return;
+
+  deleteAccountButton.disabled = true;
+  accountMessage.textContent = 'アカウントを削除しています…';
+  void fetch('/api/account/delete', {
+    method: 'DELETE',
+    credentials: 'same-origin',
+    headers: { accept: 'application/json' },
+  }).then(async response => {
+    if (!response.ok) {
+      if (response.status === 401) throw new Error('session_expired');
+      throw new Error('deletion_incomplete');
+    }
+    const result = await response.json() as { deleted?: unknown };
+    if (result.deleted !== true) throw new Error('deletion_incomplete');
+    clearAiAccessToken();
+    signedInActions.hidden = true;
+    signedOutActions.hidden = false;
+    developerCostsUi.setSignedIn(false);
+    accountStatus.textContent = '未ログインです。';
+    usageSummary.textContent = 'アカウントを削除しました。';
+    accountMessage.textContent = '家計簿・レシート・明細・照合記録はこの端末に残っています。引き続き利用できます。';
+  }).catch(error => {
+    accountMessage.textContent = error instanceof Error && error.message === 'session_expired'
+      ? 'ログイン状態を確認できません。ページを再読み込みしてください。'
+      : '削除を完了できませんでした。オンライン状態を確認して、もう一度お試しください。';
+  }).finally(() => { deleteAccountButton.disabled = false; });
+});
+
 useAiButton.addEventListener('click', () => { void issueAiToken(); });
 
 function showNetwork() {
@@ -379,7 +417,9 @@ window.addEventListener('unhandledrejection', () => recordDiagnosticFailure(new 
 showNetwork();
 
 if ('serviceWorker' in navigator) {
-  void navigator.serviceWorker.register('/sw.js').catch(() => {
+  void navigator.serviceWorker.register('/sw.js').then(registration => {
+    observeAppUpdates(registration, element<HTMLElement>('app-update-notice'));
+  }).catch(() => {
     recordLocalDiagnostic('startup', { code: 'service_worker_failed' });
     message.textContent = 'オフライン用の画面を準備できませんでした。オンラインで再読込してください。';
   });

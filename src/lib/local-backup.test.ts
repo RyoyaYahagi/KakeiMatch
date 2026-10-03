@@ -4,7 +4,7 @@ import { ActualRestoreIncompleteError } from './actual-browser-ledger';
 import { accountMetadataRecordId } from './actual-browser-ledger';
 import { LocalDataRepository, LOCAL_PROFILE_KEY } from './local-data';
 import { createPortableBackup, readPortableBackup } from './local-backup-format';
-import { exportLocalBackup, PREVIOUS_PROFILE_KEY, restoreLocalBackup, returnToPreviousProfile, wipeLocalHousehold } from '../../apps/pwa/src/local-backup';
+import { exportLocalBackup, INCOMPLETE_RESTORE_KEY, PREVIOUS_PROFILE_KEY, restoreLocalBackup, restoreStandaloneBudget, returnToPreviousProfile, wipeLocalHousehold } from '../../apps/pwa/src/local-backup';
 
 const sourceId = '00000000-0000-4000-8000-000000000001';
 const stagingId = '00000000-0000-4000-8000-000000000002';
@@ -157,6 +157,35 @@ describe('combined staging restore', () => {
     await expect(wipeLocalHousehold(source, budget, overrides())).rejects.toThrow('完全に削除');
     expect((await source.serialize()).records).toEqual(records);
     expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId);
+  });
+
+  it('stops subsequent restores before allocating another target, and still exports the source', async () => {
+    const budget = ledger(); budget.restoreBackup.mockRejectedValueOnce(new ActualRestoreIncompleteError());
+    const archive = await portable();
+    await expect(restoreLocalBackup(archive, budget, overrides())).rejects.toThrow('復元途中');
+    const marker = storage.getItem(INCOMPLETE_RESTORE_KEY);
+    const records = (await source.serialize()).records;
+    const makeId = vi.fn(() => stagingId);
+    const open = vi.fn(openRepository);
+    budget.restoreBackup.mockClear(); budget.discardDataDirectory.mockClear();
+    await expect(restoreLocalBackup(archive, budget, { ...overrides(), makeId, openRepository: open })).rejects.toThrow('新しい復元を開始できません');
+    await expect(restoreStandaloneBudget(new Blob([new Uint8Array([1, 2, 3])]), budget)).rejects.toThrow('新しい復元を開始できません');
+    expect(makeId).not.toHaveBeenCalled(); expect(open).not.toHaveBeenCalled();
+    expect(budget.restoreBackup).not.toHaveBeenCalled(); expect(budget.discardDataDirectory).not.toHaveBeenCalled();
+    expect(storage.getItem(INCOMPLETE_RESTORE_KEY)).toBe(marker);
+    expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId);
+    expect((await source.serialize()).records).toEqual(records);
+    const exported = await exportLocalBackup(source, budget);
+    expect((await readPortableBackup(exported)).localData.records).not.toHaveLength(0);
+  });
+
+  it('treats an unreadable existing marker as unresolved instead of silently clearing it', async () => {
+    storage.setItem(INCOMPLETE_RESTORE_KEY, '');
+    const budget = ledger();
+    await expect(restoreLocalBackup(await portable(), budget, overrides())).rejects.toThrow('新しい復元を開始できません');
+    expect(budget.restoreBackup).not.toHaveBeenCalled();
+    expect(storage.getItem(INCOMPLETE_RESTORE_KEY)).toBe('');
+    await expect(wipeLocalHousehold(source, budget, overrides())).rejects.toThrow('完全に削除');
   });
 
   it('records generation time only after successful archive creation', async () => {

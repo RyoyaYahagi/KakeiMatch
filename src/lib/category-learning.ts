@@ -17,9 +17,10 @@ export const categoryLearningObservationSchema = z.object({
 }).strict();
 export type CategoryLearningObservation = z.infer<typeof categoryLearningObservationSchema>;
 export type LearnedCategoryRules = { merchants: Map<string, string>; items: Map<string, string> };
+export type CategoryRuleStats = { targetType: 'merchant' | 'item'; normalizedName: string; categoryId: string; receipts: number; matchingReceipts: number; agreementPercent: number };
 
 /** One current confirmation per receipt; ambiguity remains in the agreement denominator. */
-export function deriveCategoryRules(observations: CategoryLearningObservation[], availableIds: Set<string>): LearnedCategoryRules {
+export function deriveCategoryRuleStats(observations: CategoryLearningObservation[], availableIds: Set<string>): CategoryRuleStats[] {
   const current = new Map<string, CategoryLearningObservation>();
   for (const observation of observations) {
     const existing = current.get(observation.receiptId);
@@ -39,17 +40,28 @@ export function deriveCategoryRules(observations: CategoryLearningObservation[],
     }
     for (const [key, categoryId] of receiptItems) add(items, key, categoryId);
   }
-  const stable = (groups: Map<string, Array<string | null>>, rejectMixed = false) => {
-    const rules = new Map<string, string>();
+  const stable = (groups: Map<string, Array<string | null>>, targetType: 'merchant' | 'item', rejectMixed = false) => {
+    const rules: CategoryRuleStats[] = [];
     for (const [key, votes] of groups) {
       if (votes.length < CATEGORY_LEARNING_MIN_RECEIPTS) continue;
       if (rejectMixed && votes.includes(null)) continue;
       const counts = new Map<string, number>();
       for (const vote of votes) if (vote && availableIds.has(vote)) counts.set(vote, (counts.get(vote) ?? 0) + 1);
       const winner = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
-      if (winner && winner[1] >= CATEGORY_LEARNING_MIN_RECEIPTS && winner[1] * 100 >= votes.length * CATEGORY_LEARNING_MIN_AGREEMENT_PERCENT) rules.set(key, winner[0]);
+      if (winner && winner[1] >= CATEGORY_LEARNING_MIN_RECEIPTS && winner[1] * 100 >= votes.length * CATEGORY_LEARNING_MIN_AGREEMENT_PERCENT) {
+        rules.push({ targetType, normalizedName: key, categoryId: winner[0], receipts: votes.length, matchingReceipts: winner[1], agreementPercent: Math.round(winner[1] * 100 / votes.length) });
+      }
     }
     return rules;
   };
-  return { merchants: stable(merchants, true), items: stable(items) };
+  return [...stable(items, 'item'), ...stable(merchants, 'merchant', true)];
+}
+
+export function deriveCategoryRules(observations: CategoryLearningObservation[], availableIds: Set<string>): LearnedCategoryRules {
+  const merchants = new Map<string, string>();
+  const items = new Map<string, string>();
+  for (const rule of deriveCategoryRuleStats(observations, availableIds)) {
+    (rule.targetType === 'item' ? items : merchants).set(rule.normalizedName, rule.categoryId);
+  }
+  return { merchants, items };
 }

@@ -1,5 +1,6 @@
 import { handleAccountRequest, handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
 import { handleRequest as handleAiRequest } from '../../../workers/ai-gateway/src/worker';
+import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
 
 type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1];
 
@@ -9,6 +10,7 @@ function secureApiResponse(response: Response): Response {
   headers.set('x-content-type-options', 'nosniff');
   headers.set('cross-origin-opener-policy', 'same-origin');
   headers.set('cross-origin-embedder-policy', 'require-corp');
+  headers.set('content-security-policy', PWA_CONTENT_SECURITY_POLICY);
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 

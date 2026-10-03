@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
 import { scheduleAuditSchema } from "./recurring-schedule";
-import { categoryLearningObservationSchema } from "./category-learning";
+import { categoryLearningObservationSchema, normalizeLearningName } from "./category-learning";
 import { monthlyBudgetSettingsSchema } from "./monthly-budget-settings";
 import { accountMetadataRecordId, nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
@@ -47,6 +47,10 @@ const extraction = z.object({
   adjustments: z.array(z.object({ label: z.string().min(1), amountYen: z.number().int().safe(), targetItemIndex: z.number().int().nonnegative().nullable().optional() }).strict()).max(100).optional(),
   warnings: z.array(z.object({ field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"]).nullable(), code: z.string(), message: z.string() }).strict()),
 }).strict().refine(value => (value.adjustments ?? []).every(row => row.targetItemIndex == null || row.targetItemIndex < value.items.length));
+const categoryRuleApplication = z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000),
+  categoryId: z.string().min(1).max(128), categoryName: z.string().min(1).max(512), receipts: z.number().int().safe().positive(),
+  matchingReceipts: z.number().int().safe().positive(), agreementPercent: z.number().int().min(0).max(100) }).strict()
+  .refine(rule => rule.matchingReceipts <= rule.receipts);
 const receipt = z.object({
   id: z.string().min(1), createdAt: isoDateTime, updatedAt: isoDateTime,
   image: z.object({ blobId: z.string().min(1), contentType: z.string().min(1), sizeBytes: z.number().int().safe().nonnegative() }).strict().nullable(),
@@ -55,7 +59,7 @@ const receipt = z.object({
   itemCategories: z.array(nullableString).max(100).optional(),
   classificationAttempt: z.object({ flowId: z.uuid().optional(), model: z.string().min(1), attemptedAt: isoDateTime,
     itemCategories: z.array(nullableString).max(100).optional(), categoryId: nullableString }).strict().optional(),
-  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "learned_rule", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional() }).strict(),
+  aiSuggestion: z.object({ categoryId: z.string().nullable(), source: z.enum(["merchant_mapping", "learned_rule", "jev", "unclassified"]), probabilities: probabilityMap, model: nullableString, attemptedAt: isoDateTime.nullable(), flowId: z.uuid().optional(), categoryRules: z.array(categoryRuleApplication).max(100).optional() }).strict(),
   confirmedValue: confirmedReceipt.nullable(),
   registration: z.object({ status: z.enum(["pending", "processing", "applied", "failed", "deleted"]), actualTransactionId: nullableString, lastError: nullableString }).strict(),
 }).strict();
@@ -140,6 +144,8 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id.startsWith("settings:monthly-budgets:")) return monthlyBudgetSettingsSchema;
+      if (id.startsWith("category-rule-override:")) return z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000).refine(value => normalizeLearningName(value) === value),
+        disabled: z.boolean().optional(), deleted: z.boolean().optional(), categoryId: z.string().min(1).max(128).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();
       if (id === "settings:backup") return z.object({ lastExportAt: isoDateTime }).strict();
       return z.never();

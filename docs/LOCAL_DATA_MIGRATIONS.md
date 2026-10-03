@@ -2,7 +2,7 @@
 
 KakeiMatchの端末内データは、IndexedDB（ブラウザーの端末内データベース）のバージョンを指定して開きます。移行は同じ更新トランザクション内で行い、失敗した場合はデータと構造の変更をまとめて取り消します。データベースを削除して作り直す復旧処理は行いません。
 
-この文書はIssue #69の実装順に合わせたIssue #53の最小範囲を扱います。対象はKakeiMatchのIndexedDBです。Actual Budgetの端末内データの更新、Service Worker（オフライン用のアプリ配信処理）の更新全体、iPhone実機確認はIssue #53の後続作業です。
+この文書はIssue #69の実装順に合わせたIssue #53のIndexedDB範囲を扱います。Service Workerの世代別配信と更新手順、Actual依存更新時の互換検証は [アプリ更新](PWA_UPDATES.md) に記載します。iPhone実機確認と破壊的移行前の復旧導線はIssue #53の残作業です。
 
 ## バージョンと対応範囲
 
@@ -38,6 +38,6 @@ KakeiMatchの端末内データは、IndexedDB（ブラウザーの端末内デ�
 - 新しい版、想定外の構造、別タブによる更新待ちを拒否し、既存データを維持すること。
 - 別タブの更新後、古い接続からの操作で再読み込みを案内すること。
 
-これはIndexedDBの模擬実装による検証です。iPhoneのホーム画面から起動したPWAの更新経路は未確認です。古いService Workerと新しいアプリの混在に対する更新戦略、移行前バックアップの案内、読み取り専用の復旧画面、Actual Budget更新時の互換性確認はIssue #53で継続します。
+これはIndexedDBの模擬実装による検証です。世代別Service Workerの更新検証とは別に、iPhoneのホーム画面から起動したPWAの更新経路は未確認です。移行前バックアップの案内、読み取り専用の復旧画面、Actual Budget依存更新時の旧データ互換性確認はIssue #53で継続します。
 
 実装は [local-data.ts](../src/lib/local-data.ts)、起動時の案内は [main.ts](../apps/pwa/src/main.ts) にあります。
