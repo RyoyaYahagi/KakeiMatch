@@ -1,4 +1,5 @@
 import { getAiAccessToken } from './ai-auth';
+import { getSanitizedDiagnosticContext, recordDiagnosticAction, recordDiagnosticFailure, type SanitizedDiagnosticContext } from './contact-diagnostics';
 
 type ContactResult = { kind: 'bug' | 'improvement' | 'question'; reply: string; issueUrl: string | null };
 type ContactInterviewResult = { status: 'ask' | 'ready'; kind: 'bug' | 'improvement' | 'question'; question: string; recommendation: string; summary: string };
@@ -28,6 +29,10 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       <label class="contact-interview-consent">
         <input id="contact-interview-optin" type="checkbox">
         <span><strong>送信前にAIに詳しく聞いてもらう（推奨）</strong><small>1問ずつ、わかりやすく確認します。おすすめ回答はそのまま使うか、書き直せます。</small></span>
+      </label>
+      <label class="contact-interview-consent contact-diagnostic-consent">
+        <input id="contact-diagnostics-optin" type="checkbox">
+        <span><strong>直前のアプリ動作情報を添付する（推奨）</strong><small>画面名・操作種別・安全なエラーコード・オンライン状態だけを使います。入力内容、金額、店名、レシートや明細の内容は含みません。</small></span>
       </label>
       <section id="contact-interview" class="contact-interview" hidden>
         <h3>もう少し詳しく教えてください</h3>
@@ -72,6 +77,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
   const discardAudioButton = container.querySelector<HTMLButtonElement>('#contact-discard-audio')!;
   const sendButton = container.querySelector<HTMLButtonElement>('#contact-send')!;
   const interviewOptIn = container.querySelector<HTMLInputElement>('#contact-interview-optin')!;
+  const diagnosticsOptIn = container.querySelector<HTMLInputElement>('#contact-diagnostics-optin')!;
   const interviewPanel = container.querySelector<HTMLElement>('#contact-interview')!;
   const interviewQuestion = container.querySelector<HTMLElement>('#contact-interview-question')!;
   const interviewRecommendation = container.querySelector<HTMLElement>('#contact-interview-recommendation')!;
@@ -111,6 +117,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
   let interviewHistory: InterviewTurn[] = [];
   let interviewFlowId: string | null = null;
   let currentInterviewQuestion = '';
+  let diagnosticContext: SanitizedDiagnosticContext | null = null;
 
   const uuid = () => crypto.randomUUID();
   const submissionKey = (value: string, originalMessage?: string) => JSON.stringify({ message: value, originalMessage: originalMessage ?? null });
@@ -136,6 +143,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     const interviewing = !interviewPanel.hidden || !reviewPanel.hidden;
     message.disabled = busy || interviewing;
     interviewOptIn.disabled = busy || interviewing;
+    diagnosticsOptIn.disabled = busy || interviewing;
     const directBlocked = unknownFlowId !== null && unknownFlowId === flowId && flowMessage === submissionKey(message.value);
     sendButton.disabled = busy || interviewing || requestingPermission || stoppingRecording || recorder?.state === 'recording' || !message.value.trim() || message.value.length > MAX_MESSAGE_LENGTH || directBlocked;
     sendButton.textContent = interviewOptIn.checked ? '詳しくしてから送信' : '送信する';
@@ -156,6 +164,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     interviewHistory = [];
     interviewFlowId = null;
     currentInterviewQuestion = '';
+    diagnosticContext = null;
     interviewPanel.hidden = true;
     reviewPanel.hidden = true;
     interviewAnswer.value = '';
@@ -276,10 +285,14 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         recordButton.textContent = '音声を録音';
         cleanRecordingResources(false);
         update();
-        if (audioBlob) void transcribe();
+        if (audioBlob) {
+          recordDiagnosticAction('contact_recording_finished', 'contact');
+          void transcribe();
+        }
       };
       activeRecorder.start(1000);
       startedAt = Date.now();
+      recordDiagnosticAction('contact_recording_started', 'contact');
       audioStatus.textContent = '録音中です。最大60秒で自動停止します。';
       timer = window.setInterval(() => {
         const seconds = Math.min(MAX_RECORDING_MS / 1000, Math.floor((Date.now() - startedAt) / 1000));
@@ -337,16 +350,22 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
 
   const submit = async (submittedMessage = message.value, originalMessage?: string) => {
     if (busy || !submittedMessage.trim() || submittedMessage.length > MAX_MESSAGE_LENGTH) return;
+    if (diagnosticsOptIn.checked && !diagnosticContext) diagnosticContext = getSanitizedDiagnosticContext();
     const key = submissionKey(submittedMessage, originalMessage);
     if (!flowId || flowMessage !== key) {
       flowId = uuid();
       flowMessage = key;
     }
+    recordDiagnosticAction('contact_submit_started', 'contact');
     setBusy(true);
     status.textContent = 'お問い合わせを送信しています…';
     requestController = new AbortController();
     try {
-      const response = await requestJson<ContactResult>('/api/contact', { flowId, message: submittedMessage, ...(originalMessage ? { originalMessage } : {}) }, requestController.signal);
+      const response = await requestJson<ContactResult>('/api/contact', {
+        flowId, message: submittedMessage,
+        ...(originalMessage ? { originalMessage } : {}),
+        ...(diagnosticsOptIn.checked && diagnosticContext ? { diagnostic: diagnosticContext } : {}),
+      }, requestController.signal);
       if (!['bug', 'improvement', 'question'].includes(response.kind) || typeof response.reply !== 'string' || !(response.issueUrl === null || typeof response.issueUrl === 'string')) throw new Error('invalid_provider_response');
       const heading = container.querySelector<HTMLElement>('#contact-result-title')!;
       const reply = container.querySelector<HTMLElement>('#contact-result-reply')!;
@@ -366,6 +385,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         const code = error instanceof Error ? error.message : '';
+        recordDiagnosticFailure(Object.assign(new Error('contact_submit_failed'), { code }), 'contact');
         status.textContent = errorMessage(code, false);
         if (code === 'issue_submission_unknown') {
           unknownFlowId = flowId;
@@ -382,14 +402,17 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
   const runInterview = async (finish: boolean) => {
     if (busy) return;
     if (!interviewOriginalMessage) interviewOriginalMessage = message.value.trim();
+    if (diagnosticsOptIn.checked && !diagnosticContext) diagnosticContext = getSanitizedDiagnosticContext();
     if (!interviewOriginalMessage) return;
     const activeFlow = interviewFlowId ?? (interviewFlowId = uuid());
+    recordDiagnosticAction('contact_interview_started', 'contact');
     setBusy(true);
     status.textContent = finish ? 'ここまでの内容を整理しています…' : '確認したいことを考えています…';
     requestController = new AbortController();
     try {
       const response = await requestJson<ContactInterviewResult>('/api/contact/interview', {
         flowId: activeFlow, message: interviewOriginalMessage, history: interviewHistory, finish,
+        ...(diagnosticsOptIn.checked && diagnosticContext ? { diagnostic: diagnosticContext } : {}),
       }, requestController.signal);
       if (!['ask', 'ready'].includes(response.status) || !['bug', 'improvement', 'question'].includes(response.kind) ||
           typeof response.question !== 'string' || typeof response.recommendation !== 'string' || typeof response.summary !== 'string') throw new Error('invalid_provider_response');
@@ -413,7 +436,9 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       }
     } catch (error) {
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        status.textContent = errorMessage(error instanceof Error ? error.message : '', false);
+        const code = error instanceof Error ? error.message : '';
+        recordDiagnosticFailure(Object.assign(new Error('contact_interview_failed'), { code }), 'contact');
+        status.textContent = errorMessage(code, false);
         if (status.textContent.includes('ログインが必要')) loginPathButton.hidden = false;
       }
     } finally {
@@ -456,6 +481,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
     else void submit();
   });
   interviewOptIn.addEventListener('change', () => { resetInterview(); update(); });
+  diagnosticsOptIn.addEventListener('change', () => { diagnosticContext = null; update(); });
   useRecommendation.addEventListener('click', () => { interviewAnswer.value = interviewRecommendation.textContent ?? ''; update(); interviewAnswer.focus(); });
   interviewAnswer.addEventListener('input', update);
   interviewNext.addEventListener('click', () => answerInterview(false));
