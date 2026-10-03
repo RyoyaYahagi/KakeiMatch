@@ -56,6 +56,22 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
+  assert.equal(await row(0).getAttribute('open'), null);
+  assert.equal(await row(1).getAttribute('open'), null);
+  await click('品目一覧');
+  assert.equal(await page.locator('#receipt-merchant').isVisible(), false);
+  assert.equal(await row(0).isVisible(), true);
+  const collapsedHeight = (await row(0).locator('summary').boundingBox()).height;
+  assert.ok(collapsedHeight <= 52, `collapsed receipt item row should stay compact, got ${collapsedHeight}px`);
+  await row(0).locator('summary').click();
+  await row(1).locator('summary').click();
+  await page.waitForFunction(() => !document.querySelectorAll('[data-receipt-item]')[0].open
+    && document.querySelectorAll('[data-receipt-item]')[1].open);
+  assert.equal(await row(0).getAttribute('open'), null);
+  assert.equal(await row(1).getAttribute('open'), '');
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await click('全体');
+  assert.equal(await page.locator('#receipt-merchant').isVisible(), true);
   await page.locator('#receipt-category').selectOption({ label: '食費' });
   await click('品目を追加'); await row(2).locator('[data-item-name]').fill('Temporary item');
   await row(2).locator('[data-item-amount]').fill('20'); await row(2).getByRole('button', { name: '品目を削除', exact: true }).click();

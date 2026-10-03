@@ -77,7 +77,7 @@ export async function showMonthlyBudgetEditor(options: {
     // Everyday categories first, the same order as the category screens.
     const summary = { ...loaded, categories: [...loaded.categories].sort((a, b) => categoryRank(a.categoryName) - categoryRank(b.categoryName)) };
     const stored = await Promise.all(summary.categories.map(row => mode === 'default' ? options.service.defaultBudget(row.categoryId) : options.service.monthOverride(row.categoryId, month)));
-    if (current !== revision || !title.isConnected) return;
+    if (current !== revision || !options.view.contains(title)) return;
     if (!summary.categories.length) { status.textContent = '先に支出カテゴリを追加してください。'; return; }
     const totalValue = node('strong'); totalValue.className = 'num';
     const total = node('div'); total.className = 'surface-section budget-total-card';
@@ -133,11 +133,11 @@ export async function showMonthlyBudgetEditor(options: {
           else if (change.reset || amount === null) await options.service.resetMonthlyOverride(month, change.categoryId);
           else await options.service.setMonthlyOverride(month, change.categoryId, amount);
         }
-        if (title.isConnected) await render(true);
+        if (options.view.contains(title)) await render(true);
       } catch (error) { report(error); }
-      finally { if (title.isConnected) { for (const row of inputs) row.input.disabled = false; submit.disabled = false; } }
+      finally { if (options.view.contains(title)) { for (const row of inputs) row.input.disabled = false; submit.disabled = false; } }
     }
-    function report(error: unknown) { if (title.isConnected) status.textContent = error instanceof Error ? error.message : '予算を保存できませんでした。'; }
+    function report(error: unknown) { if (options.view.contains(title)) status.textContent = error instanceof Error ? error.message : '予算を保存できませんでした。'; }
   }
   function report(error: unknown) { const status = options.view.querySelector('[role=status]'); if (status) status.textContent = error instanceof Error ? error.message : '予算を読み込めませんでした。'; }
   await render();
