@@ -4,10 +4,14 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flowUsage, monthKey, reserveFlow } from "./receipt-ai-usage";
+import { deleteAccountData } from "./account-auth";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
 
 const accountState = vi.hoisted(() => ({ session: true, userId: "synthetic-user" }));
-vi.mock("./account-auth", () => ({ getAccountSession: vi.fn(async () => accountState.session ? { user: { id: accountState.userId }, session: { id: "session" } } : null) }));
+vi.mock("./account-auth", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./account-auth")>();
+  return { ...original, getAccountSession: vi.fn(async () => accountState.session ? { user: { id: accountState.userId }, session: { id: "session" } } : null) };
+});
 const secret = "synthetic-ai-gateway-signing-secret-for-tests";
 const now = Date.parse("2026-09-30T14:59:00Z") / 1000;
 const receipt = { documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30", totalAmountYen: 3284, taxAmountYen: null, items: [{ name: "Synthetic Item", amountYen: 3284 }], warnings: [] };
@@ -25,16 +29,32 @@ function request(stage: string, body: unknown, token = bearer(), headers = {}) {
   return new Request(`${origin}/api/ai/${stage}`, { method: "POST", headers: { origin, authorization: token, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
 const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async () => Response.json(value, { status })) as typeof fetch;
-const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
+const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0007_account_deletion.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
   for (const migration of migrations) sqlite.exec(migration);
   const db: AccountD1Binding = {
-    async batch<T>(): Promise<T[]> { throw new Error("batch not used by flow tests"); },
+    async batch<T>(statements: Array<unknown>): Promise<T[]> {
+      sqlite.exec("BEGIN");
+      try {
+        const results = statements.map((value) => {
+          const statement = value as { query: string; values: SQLInputValue[] };
+          const result = sqlite.prepare(statement.query).run(...statement.values);
+          return { success: true, meta: { changes: Number(result.changes) } };
+        });
+        sqlite.exec("COMMIT");
+        return results as T[];
+      } catch (error) {
+        sqlite.exec("ROLLBACK");
+        throw error;
+      }
+    },
     prepare(sql: string) {
       let params: SQLInputValue[] = [];
       const statement = {
+        query: sql,
+        get values() { return params; },
         bind(...args: unknown[]) { params = args as SQLInputValue[]; return statement; },
         async first<T>() { return sqlite.prepare(sql).get(...params) as T | undefined ?? null; },
         async run() { return { success: true, meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) } }; },
@@ -649,6 +669,36 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const body = await token.json() as { token: string; expiresAt: number };
     expect(JSON.parse(Buffer.from(body.token.split(".")[1], "base64url").toString())).toMatchObject({ sub: "synthetic-user", aud: "kakeimatch-ai" });
     expect(body.expiresAt).toBe(now + 600);
+  });
+  it("rejects a previously signed AI token as soon as its account is deleted", async () => {
+    await db.prepare("INSERT INTO account_deletion_tombstones(user_id) VALUES (?)").bind("synthetic-user").run();
+    await db.prepare("DELETE FROM user WHERE id=?").bind("synthetic-user").run();
+    const provider = fetchOk({ output_text: JSON.stringify(receipt) });
+    const response = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer()), env, options(provider));
+    expect(response.status).toBe(401);
+    expect(provider).not.toHaveBeenCalled();
+  });
+  it("does not restore account or usage rows when an AI request finishes after deletion", async () => {
+    let started!: () => void;
+    let finish!: (response: Response) => void;
+    const providerStarted = new Promise<void>(resolve => { started = resolve; });
+    const providerResult = new Promise<Response>(resolve => { finish = resolve; });
+    const provider = vi.fn(async () => { started(); return providerResult; }) as typeof fetch;
+    const pending = gemini(crypto.randomUUID(), now, provider);
+    await providerStarted;
+
+    await deleteAccountData(env.ACCOUNT_DB!, "synthetic-user");
+    finish(Response.json({
+      modelVersion: "gemini-3.5-flash-lite",
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+      output_text: JSON.stringify(receipt),
+    }));
+
+    expect((await pending).status).toBe(503);
+    expect(await db.prepare("SELECT id FROM user WHERE id='synthetic-user'").bind().first()).toBeNull();
+    expect(await db.prepare("SELECT user_id FROM account_deletion_tombstones WHERE user_id='synthetic-user'").bind().first()).toMatchObject({ user_id: "synthetic-user" });
+    expect(await eventCount()).toBe(0);
+    expect((await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer()), env, options(fetchOk({ output_text: JSON.stringify(receipt) })))).status).toBe(401);
   });
   it("rejects oversized requests and converts timeouts into safe errors", async () => {
     const tooLarge = request("gemini", image, bearer(), { "content-length": "10000000" });

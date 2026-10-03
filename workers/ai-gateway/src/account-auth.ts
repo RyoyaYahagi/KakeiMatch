@@ -79,6 +79,23 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+function accountDeletedResponse() {
+  return json(200, { deleted: true, localHouseholdDataPreserved: true });
+}
+
+export async function deleteAccountData(db: AccountD1Database, userId: string): Promise<void> {
+  const results = await db.batch([
+    db.prepare(`INSERT INTO account_deletion_tombstones(user_id)
+      SELECT id FROM user WHERE id=? ON CONFLICT(user_id) DO NOTHING`).bind(userId),
+    db.prepare(`DELETE FROM verification WHERE identifier=(SELECT email FROM user WHERE id=?)`).bind(userId),
+    db.prepare(`DELETE FROM user WHERE id=?
+      AND EXISTS (SELECT 1 FROM account_deletion_tombstones WHERE user_id=?)`).bind(userId, userId),
+  ]) as Array<{ success?: boolean; meta?: { changes?: number } }>;
+  if (results.length !== 3 || results.some((result) => result?.success !== true)) throw new Error("account_deletion_failed");
+  // D1 batches are atomic. A successful batch has written the tombstone and
+  // deleted the account; avoid a follow-up read that could fail after commit.
+}
+
 async function readJson(request: Request): Promise<Record<string, unknown> | null> {
   if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return null;
   const length = request.headers.get("content-length");
@@ -165,6 +182,9 @@ function createAuth(env: AccountEnv, originUrl: URL) {
             LIMIT 1
           `).bind(tokenHash, Date.now()).first<InviteRow>();
           if (!invite) throw new Error("valid_account_invite_required");
+          const deleted = await env.ACCOUNT_DB.prepare("SELECT user_id FROM account_deletion_tombstones WHERE user_id=?")
+            .bind(invite.user_id).first<{ user_id: string }>();
+          if (deleted) throw new Error("deleted_account_id");
           return { id: invite.user_id, name: invite.name, email: invite.email };
         },
         afterVerification: async ({ context }) => {
@@ -217,9 +237,18 @@ export async function getAccountSession(request: Request, env: AccountEnv): Prom
   }
 }
 
+/** Checks that a signed AI token still belongs to an account that can use the service. */
+export async function isAccountActive(db: AccountD1Database, userId: string): Promise<boolean> {
+  const account = await db.prepare(`SELECT id FROM user
+    WHERE id=? AND NOT EXISTS (SELECT 1 FROM account_deletion_tombstones WHERE user_id=?)`)
+    .bind(userId, userId).first<{ id: string }>();
+  return account !== null;
+}
+
 /** Creates a time-limited invite after validating the operator-only bootstrap secret. */
 export async function handleAccountRequest(request: Request, env: AccountEnv): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname === "/api/account/delete") return handleDeleteAccountRequest(request, env);
   if (url.pathname !== "/api/account/invites" && url.pathname !== "/api/account/recovery") return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   const originUrl = configuredOrigin(env, request);
@@ -282,4 +311,31 @@ export async function handleAccountRequest(request: Request, env: AccountEnv): P
     expiresAt: new Date(expiresAt).toISOString(),
     inviteUrl: `${originUrl.origin}/?invite=${encodeURIComponent(token)}`,
   });
+}
+
+async function handleDeleteAccountRequest(request: Request, env: AccountEnv): Promise<Response> {
+  if (request.method !== "DELETE") return json(405, { error: "method_not_allowed" });
+  const originUrl = configuredOrigin(env, request);
+  if (!originUrl) return json(403, { error: "untrusted_origin" });
+  if (request.headers.get("origin") !== originUrl.origin) return json(403, { error: "forbidden_origin" });
+  if (request.body !== null) return json(400, { error: "invalid_request" });
+
+  let account: AccountSession | null;
+  try {
+    const result = await createAuth(env, originUrl).api.getSession({ headers: request.headers });
+    account = result ? {
+      user: { id: result.user.id, email: result.user.email, name: result.user.name },
+      session: { id: result.session.id, expiresAt: result.session.expiresAt },
+    } : null;
+  } catch {
+    return json(503, { error: "temporarily_unavailable" });
+  }
+  if (!account) return json(401, { error: "unauthorized" });
+
+  try {
+    await deleteAccountData(env.ACCOUNT_DB, account.user.id);
+    return accountDeletedResponse();
+  } catch {
+    return json(503, { error: "account_deletion_incomplete" });
+  }
 }
