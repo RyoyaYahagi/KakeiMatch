@@ -101,12 +101,12 @@ root.innerHTML = `
         <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
         <p id="developer-options-status" class="status" role="status"></p>
       </section>
+      <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
+        <h3 id="oss-licenses-title">オープンソースライセンス</h3>
+      </section>
       <h3 class="settings-group-title">サポート</h3>
       <section class="surface-section settings-list" aria-label="サポート">
         <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
-      </section>
-      <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
-        <h3 id="oss-licenses-title">オープンソースライセンス</h3>
       </section>
       <p class="muted settings-footnote">家計簿と画像はこの端末に保存されます。端末の紛失やブラウザーのデータ消去で失われることがあります。</p>
       </div>
