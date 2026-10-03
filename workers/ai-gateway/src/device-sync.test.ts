@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Miniflare } from "miniflare";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { ENCRYPTED_CHUNK_BYTES, MAX_ENCRYPTED_PLAIN_BYTES } from "../../../src/lib/encrypted-household-format";
 import { deleteAccountData } from "./account-auth";
 import {
   DEFAULT_SYNC_LIMITS, SYNC_FORMAT_CHUNK_BYTES, SYNC_FORMAT_MAX_PLAIN_BYTES, collectSyncGarbage, sha256Hex, syncLimits,
@@ -9,6 +8,17 @@ import {
 } from "./device-sync";
 import { handleSyncRequest } from "./device-sync-api";
 import { InMemorySyncStorageProvider } from "./sync-storage-provider";
+
+// The encryption format module depends on zod, which this package does not install. Read its
+// constants from source so this Worker test stays independent of the root package's dependencies.
+const formatSource = readFileSync(new URL("../../../src/lib/encrypted-household-format.ts", import.meta.url), "utf8");
+function formatConstant(name: string): number {
+  const expression = new RegExp(`export const ${name} = ([0-9 *]+);`).exec(formatSource)?.[1];
+  if (!expression) throw new Error(`missing ${name}`);
+  return expression.split("*").reduce((product, factor) => product * Number(factor.trim()), 1);
+}
+const ENCRYPTED_CHUNK_BYTES = formatConstant("ENCRYPTED_CHUNK_BYTES");
+const MAX_ENCRYPTED_PLAIN_BYTES = formatConstant("MAX_ENCRYPTED_PLAIN_BYTES");
 
 // Synthetic sessions: the user comes from a test-only header that production code never reads.
 vi.mock("./account-auth", async (importOriginal) => {

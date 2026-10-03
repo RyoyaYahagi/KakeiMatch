@@ -82,6 +82,14 @@ async function readLearningAudits() {
 async function optionValue(selector, label) {
   return page.locator(`${selector} option`).evaluateAll((options, target) => options.find(option => option.textContent?.includes(target))?.value ?? '', label);
 }
+// Saving a rule re-renders the list with every row closed. Wait for that before reopening the row,
+// otherwise the click can land on the old row just before it is replaced.
+async function reopenRule(rule, name) {
+  await page.waitForFunction(target => [...document.querySelectorAll('.category-rule')]
+    .some(row => row.textContent?.includes(target) && !row.open), name);
+  await rule.locator('summary').click();
+  await rule.locator('input[role=switch]').waitFor();
+}
 async function cancelDraft() { await click('キャンセル'); await click('閉じる'); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
@@ -133,7 +141,7 @@ try {
   await milkRule.locator('select').selectOption(learningIds.home);
   await milkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
-  await milkRule.locator('summary').click();
+  await reopenRule(milkRule, 'synthetic same milk');
   await milkRule.locator('input[role=switch]').uncheck();
   await analyze('known');
   assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
@@ -142,7 +150,7 @@ try {
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
   await updatedMilkRule.locator('summary').click();
   await updatedMilkRule.locator('input[role=switch]').check();
-  await updatedMilkRule.locator('summary').click();
+  await reopenRule(updatedMilkRule, 'synthetic same milk');
   await updatedMilkRule.locator('select').selectOption(learningIds.food);
   await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
@@ -183,6 +191,8 @@ try {
   await page.locator('#settings-tab').click();
   const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
+  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-category-learning.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
