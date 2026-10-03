@@ -72,11 +72,14 @@
 
 /* Base */
 * { box-sizing: border-box; }
+html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
 body { margin: 0; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
 /* iOS/Safari paints a rectangular tap highlight over the full hit area by default.
    Remove that touch-only flash; :focus-visible below still provides keyboard focus feedback. */
 button, summary { -webkit-tap-highlight-color: transparent; }
-main { max-width: 640px; margin: 0 auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
+main { max-width: 640px; min-width: 0; margin: 0 auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
+main, form, dialog, .sheet-body, #local-view, #household-view, #settings-view { min-width: 0; }
+img, input, select, textarea, button { max-width: 100%; }
 h1 { margin: 0; font-size: 1.375rem; }
 h2 { font-size: 1.125rem; margin: var(--space-6) 0 var(--space-3); }
 h3 { font-size: 1rem; margin: var(--space-5) 0 var(--space-2); }
@@ -142,7 +145,7 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .page-header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin: var(--space-2) 0 var(--space-3); }
 .page-header h2 { margin: 0; font-size: 1.375rem; }
 .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: var(--space-1); padding: var(--space-1); border-radius: var(--radius-lg); background: var(--sunken); }
-.segmented button { min-height: 36px; margin: 0; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: .875rem; font-weight: 500; }
+.segmented button { min-width: 0; min-height: 36px; margin: 0; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: transparent; color: var(--muted); font-size: .875rem; font-weight: 500; overflow-wrap: anywhere; }
 .segmented button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: var(--shadow); }
 .link-row { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 44px; margin: var(--space-2) 0; padding: 0 var(--space-1); text-align: left; }
 .link-row .icon:last-child { margin-left: auto; width: 16px; height: 16px; }
@@ -244,6 +247,14 @@ form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-rad
 .settings-list > .master-entry:last-child { border-bottom: 0; }
 .settings-list > .master-entry::after { content: "›"; float: none; margin-left: auto; font-size: 1.25rem; }
 .settings-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.storage-location { padding: var(--space-4); }
+.storage-location h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
+.storage-location p { margin: var(--space-2) 0; }
+.storage-location-device { display: flex; align-items: center; gap: var(--space-2); font-size: 1.125rem; }
+.storage-location-device .icon { width: 24px; height: 24px; color: var(--primary); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.storage-location-risk { margin-top: var(--space-3) !important; }
+.storage-location-link { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; margin-top: var(--space-2); color: var(--primary); font-weight: 600; text-decoration: none; }
+.storage-location-link .icon { width: 18px; height: 18px; margin-left: auto; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .settings-panel { padding: var(--space-4); }
 .settings-panel h2, .settings-panel h4 { margin: 0 0 var(--space-2); font-size: 1rem; }
 .settings-panel h3 { font-size: .9375rem; }
@@ -279,6 +290,12 @@ form .form-actions button { width: 100%; min-height: 52px; margin: 0; border-rad
 .settings-inner-disclosure { margin-top: var(--space-3); border-top: 1px solid var(--border); }
 .danger-zone > summary { color: var(--danger); }
 .danger-zone button { color: var(--danger); border-color: var(--danger); }
+.oss-licenses { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--border); }
+.oss-licenses h3 { margin: 0 0 var(--space-3); }
+.oss-licenses h4 { margin: 0; font-size: 1rem; }
+.oss-licenses p { margin: var(--space-2) 0; }
+.oss-project-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); overflow-wrap: anywhere; }
+.oss-license-text { margin: var(--space-2) 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .settings-footnote { margin: var(--space-5) var(--space-1) 0; }
 
 /* Follow-ups: bottom sheet, category buttons, receipt detail (docs/UX.md) */
@@ -372,10 +389,23 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 #passkey-list .text-button { color: var(--danger); }
 
 /* Receipts */
+.entry-editor-tabs { margin: var(--space-2) 0 var(--space-3); }
+.entry-overview-extras, .entry-overview-fields, .purchase-details { min-width: 0; }
+.purchase-details.items-only { margin-top: 0; }
+.purchase-details.items-only > summary { display: none; }
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }
 .receipt-item-list li, .receipt-adjustment-list li { border-bottom: 1px solid var(--border); padding: 0; }
-.receipt-item summary, .receipt-adjustment summary { overflow-wrap: anywhere; font-size: .875rem; }
+.receipt-compact-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 16px; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-1) 0; list-style: none; font-size: .875rem; }
+.receipt-compact-summary::-webkit-details-marker { display: none; }
+.receipt-compact-summary::after { content: "›"; color: var(--muted); font-size: 1.25rem; line-height: 1; text-align: center; transition: transform .15s ease; }
+details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
+.receipt-compact-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.receipt-compact-meta { max-width: 7rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .75rem; }
+.receipt-compact-amount { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 500; }
+.receipt-item[open], .receipt-adjustment-details[open] { padding-bottom: var(--space-1); }
+.purchase-details.items-only .receipt-item label, .purchase-details.items-only .receipt-adjustment label { margin-top: var(--space-2); }
+.purchase-details.items-only .receipt-item button, .purchase-details.items-only .receipt-adjustment button { margin: var(--space-2) 0; }
 .receipt-item label, .receipt-adjustment label { margin-top: var(--space-3); }
 .receipt-item button, .receipt-adjustment button { margin: var(--space-3) 0; }
 .receipt-difference { color: var(--warning); font-size: .875rem; }
