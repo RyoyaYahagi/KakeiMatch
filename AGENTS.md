@@ -9,6 +9,7 @@
 - セットアップ・開発コマンド・現在の機能を確認する: README.md
 - 機能の目的・要件・優先度を判断する: docs/PRODUCT.md
 - データ保存・同期・認可・外部API・モジュールの境界を変更する: docs/ARCHITECTURE.md
+- 端末間同期（版・端末資格・保存先Provider・削除）を変更する: docs/DEVICE_SYNC.md
 - 画面の操作・導線・確認表示・エラー表示を変更する: docs/UX.md
 - 見た目・部品・色・余白・画面幅への対応を変更する: docs/DESIGN.md
 - ブランチ・コミット・Pull Request・検証手順を扱う: CONTRIBUTING.md
@@ -34,6 +35,8 @@ Actual Budgetで解決済みの家計簿機能は可能な限り再実装しま�
 現行server-centric実装では、必ずサーバー側で認可してください。URL parameter、form、JSON body等から受け取ったuser IDをそのまま認可に使用しないでください。
 
 Issue #30以降のlocal-first移行では、家計データの正本は原則として利用者端末に置きます。通常のローカル家計閲覧をCloudflare user/sessionへ依存させず、Cloudflare側の利用者識別はGemini/Jev等の外部API利用境界に限定します。
+
+唯一の例外はIssue #143の端末間同期です。利用者が明示的に同期を有効にした場合に限り、端末で暗号化した家計簿の版を選択した同期保存先Providerへ置き、同期の認可・世代・現在の版の参照などの制御情報をD1へ保存できます。D1へ家計データの平文を保存しない原則、暗号鍵・復旧コードをサーバーへ送らない原則、同期の既定がOFFである原則は維持します。同期の認可には、同一originの検証済みsessionから決めた利用者と、サーバーが発行・検証する端末資格を使います。詳細は[docs/DEVICE_SYNC.md](docs/DEVICE_SYNC.md)を参照してください。
 
 ## AIの役割
 

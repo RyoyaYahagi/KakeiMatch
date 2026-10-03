@@ -6,9 +6,17 @@ KakeiMatch handles household finances and receipt images. Production uses the PW
 
 The browser-side Actual Budget engine and KakeiMatch IndexedDB hold budgets, receipts, statement imports, reconciliation results, and user decisions. The production app does not send those records to an application database. Cloudflare D1 stores Better Auth identity and sessions, Passkeys, invite and recovery state, entitlements, and AI usage counters only. D1 must never become a household history store.
 
+The only exception is opt-in device sync (Issue #143), which is off by default and not yet available to users. When a user explicitly enables it, household versions encrypted on the device are stored in the selected sync storage provider (initially a private R2 bucket), and D1 additionally holds sync control metadata: the owner, hashed device credentials, generation, the current-version pointer and sequence, chunk sizes and SHA-256 values, idempotency records, and object keys queued for deletion. D1 must never store household plaintext, the recovery code, or decryption keys, and sync tables hold no email or name. See [device sync](docs/DEVICE_SYNC.md).
+
 Cloud account is optional for local household use. Cloud API routes must validate the Better Auth session or the AI token as appropriate. Resolve account identity from validated server-side credentials; never authorize a Cloud request using a user ID supplied in its URL, form, or JSON body. Legacy Next.js routes and server-side household storage are retained for reference and are not part of the production PWA request path.
 
 The `.kmb` portable backup includes local household records and retained receipt/statement source files. It excludes Cloud credentials, sessions, AI tokens, entitlements, usage counters, and provider secrets. The archive is not encrypted. Keep it in a protected location outside browser storage and confirm restore behavior with synthetic data. Restore stages data into a new local profile before switching the active profile. The known Actual orphan cleanup limitation is tracked separately in Issue #58 and documented in [local backup and recovery](docs/LOCAL_BACKUP.md).
+
+## Device sync control plane
+
+`/api/sync/*` resolves the user only from the validated Better Auth session; user, household, and device IDs in the URL, headers, or body are never used for authorization. Every state-changing request must carry a same-origin `Origin`. Device credentials are server-issued 256-bit random values returned once and stored only as SHA-256; a request is accepted only for a non-revoked device of the session user's household at the current generation. Creating a household, joining a device, and deleting cloud data require a session created within the last 10 minutes (configurable). Revoking a device advances the generation, so old devices and in-flight uploads are rejected; plaintext or keys already stored on a device cannot be erased remotely.
+
+Provider objects are immutable and keyed by random IDs only. The R2 provider never overwrites an existing key, verifies SHA-256, and streams bodies without buffering. Publication is a single D1 compare-and-swap, so the Provider's timestamps never decide ordering and a conflicting version is kept, not discarded. Responses are `no-store`, and logs carry only generic error codes. Without the optional `SYNC_BUCKET` binding the routes return 503. Real R2 behavior, the device-sync UI, and the client-side consistency model are not yet implemented or verified.
 
 ## Secrets
 
