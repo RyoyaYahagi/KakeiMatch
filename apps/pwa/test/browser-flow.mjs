@@ -63,8 +63,8 @@ try {
   await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
-  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
+  await page.getByText('AI・ソフトウェア', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).count(), 0);
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
