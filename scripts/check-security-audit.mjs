@@ -9,7 +9,7 @@ function countVulnerabilities(counts) {
   if (!counts || typeof counts !== 'object') fail('audit JSON is missing vulnerability counts');
   const result = {};
   for (const severity of ['info', 'low', 'moderate', 'high', 'critical']) {
-    const value = counts[severity] ?? 0;
+    const value = counts[severity];
     if (!Number.isSafeInteger(value) || value < 0) fail(`invalid ${severity} count`);
     result[severity] = value;
   }
@@ -125,6 +125,7 @@ export function parseAuditReport(name, report, packageLock) {
     fail(`${name}: unsupported audit JSON shape`);
   }
   const reported = Object.values(counts).reduce((sum, value) => sum + value, 0);
+  if (findings.length > 0 && counts.high === 0 && counts.critical === 0) fail(`${name}: identified high/critical advisories contradict the reported counts`);
   if (reported > 0 && findings.length === 0 && (counts.high > 0 || counts.critical > 0)) fail(`${name}: report contains high/critical counts but no identified advisories`);
   return { counts, findings };
 }

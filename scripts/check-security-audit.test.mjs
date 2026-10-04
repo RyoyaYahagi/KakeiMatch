@@ -33,6 +33,22 @@ test('an exact reviewed finding is summarized without blocking before its expiry
   assert.equal(result.reviewed.length, 1);
 });
 
+test('incomplete severity counts cannot be interpreted as a clean audit', () => {
+  const input = reports();
+  input['worker-prod'] = { vulnerabilities: {}, metadata: { vulnerabilities: {} } };
+  const result = evaluateAudits({ reports: input, statuses: statuses(), baseline: baseline([]), packageLock: lock, today: '2026-10-04' });
+  assert.equal(result.passed, false);
+  assert.equal(result.operationalErrors.length, 1);
+});
+
+test('known high advisories with zero reported severity counts remain an audit error', () => {
+  const input = reports();
+  input['worker-prod'] = { ...npmVitest('high'), metadata: emptyNpm.metadata };
+  const result = evaluateAudits({ reports: input, statuses: statuses(), baseline: baseline([known]), packageLock: lock, today: '2026-10-04' });
+  assert.equal(result.passed, false);
+  assert.equal(result.operationalErrors.length, 1);
+});
+
 test('a still-present reviewed finding blocks on and after its expiry date', () => {
   const input = reports();
   input['worker-prod'] = npmVitest('high');

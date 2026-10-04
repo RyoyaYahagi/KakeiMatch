@@ -82,6 +82,8 @@ A fresh `npm ci --omit=dev --ignore-scripts` installs `better-auth > vitest > @v
 
 The Gateway now pins Vitest and its matching packages to 3.2.7. This removes the critical [GHSA-5xrq-8626-4rwp](https://github.com/advisories/GHSA-5xrq-8626-4rwp) finding; its affected entry points are a network-exposed Vitest UI/API or Windows UI/Browser Mode. Fresh installation and lockfile audit after the patch report zero high/critical findings with `--omit=dev`, and two moderate findings for Vitest and its mocker. The remaining development-tool findings still need the existing reachability and expiry review; this patch does not claim a clean full dependency audit.
 
+The 2026-10-04 review also identified `undici@5.29.0` at `node_modules/undici`, used by the development-only `miniflare@3.20250718.2`. Its three high advisories concern the Undici WebSocket client: [decompression memory exhaustion](https://github.com/advisories/GHSA-vrm6-8vpv-qv8q), [invalid compression parameter handling](https://github.com/advisories/GHSA-v9p9-hfj2-hcw8), and [fragment count bypass](https://github.com/advisories/GHSA-vxpw-j846-p89q). The D1 tests use synthetic local Workers and do not call that client; Miniflare's WebSocket connection path uses `ws`, and no Undici implementation is emitted in the deployable Worker bundle. These exact version/path/advisory exceptions retain the existing public Miniflare test API until a separately tested toolchain update. They are owned by the repository maintainer and expire on 2026-11-02. Do not expose test tools or connect them to untrusted servers.
+
 ## Reporting
 
 This is a personal project. Report security issues privately to the repository owner rather than posting sensitive reproduction data in a public issue.
