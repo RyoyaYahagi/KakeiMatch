@@ -26,6 +26,7 @@ export class HouseholdWriteGuard {
   private readonly deps: Dependencies;
   private active = 0;
   private held: Promise<() => void> | null = null;
+  private readonly listeners = new Set<() => void>();
 
   constructor(readonly profileId: string, overrides: Partial<Dependencies> = {}) {
     // Browser globals are read only when no override is given.
@@ -47,6 +48,12 @@ export class HouseholdWriteGuard {
     return this.write(write);
   };
 
+  /** Called after each counted household write, e.g. to schedule a sync. Returns an unsubscribe function. */
+  onChange(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   /** Counts a household change before running it, then runs it under the shared lock. */
   async write<T>(operation: () => Promise<T>): Promise<T> {
     await this.enter();
@@ -54,7 +61,10 @@ export class HouseholdWriteGuard {
       this.assertActive();
       this.update(state => ({ ...state, changeCounter: state.changeCounter + 1, lastChangeAt: this.deps.now().toISOString() }));
       return await operation();
-    } finally { this.leave(); }
+    } finally {
+      this.leave();
+      this.notify();
+    }
   }
 
   /**
@@ -75,8 +85,13 @@ export class HouseholdWriteGuard {
         ...state, pendingWriteSince: null,
         ...(changed ? { changeCounter: state.changeCounter + 1, lastChangeAt: this.deps.now().toISOString() } : {}),
       }));
+      if (changed) this.notify();
       return result;
     } finally { this.leave(); }
+  }
+
+  private notify(): void {
+    for (const listener of this.listeners) listener();
   }
 
   /** Runs with every household write in every tab stopped. Never call it from inside a write. */

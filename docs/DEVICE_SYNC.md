@@ -1,6 +1,6 @@
 # 端末間同期（サーバー側の制御）
 
-Issue #143の最初の段階として、方針の例外、保存先Providerの契約、D1の同期制御、`/api/sync/*` を実装する。**端末間同期は利用者向けに提供していない。** 画面、端末側の同期エンジン、2端末での確認は未実装で、`/api/sync/*` はR2のバケットを設定しない限り `503 not_configured` を返す。同期を使わない利用者の端末内利用は変わらない。
+Issue #143の端末間同期。方針の例外、保存先Providerの契約、D1の同期制御、`/api/sync/*`、端末側の一貫性と同期エンジン、設定画面を実装している。`/api/sync/*` はR2のバケットを設定しない限り `503 not_configured` を返し、その場合は画面から有効にしても失敗する（端末内の家計は変わらない）。本番のバケット設定・deploy・iPhone実機確認は未実施。同期を使わない利用者の端末内利用は変わらない。
 
 ## データ境界
 
@@ -167,7 +167,7 @@ Web Locks `kakeimatch-household:<profileId>` を使う。書き込みは共有�
 
 ## 同期エンジン（端末側）
 
-実装は `apps/pwa/src/device-sync-engine.ts`。通信は `device-sync-api.ts`、端末資格と家計簿鍵は `device-sync-secrets.ts`（専用のIndexedDB `kakeimatch-device-sync`。家計データの保存領域・`.kmb`・同期の版に含めない）。暗号化と検証付き復号は[暗号化同期版](ENCRYPTED_SYNC_VERSION.md)を、書き出し・取り込み・切り替えは上の「端末側の一貫性」を使う。画面からの呼び出しは次の段階で追加する。
+実装は `apps/pwa/src/device-sync-engine.ts`。通信は `device-sync-api.ts`、端末資格と家計簿鍵は `device-sync-secrets.ts`（専用のIndexedDB `kakeimatch-device-sync`。家計データの保存領域・`.kmb`・同期の版に含めない）。暗号化と検証付き復号は[暗号化同期版](ENCRYPTED_SYNC_VERSION.md)を、書き出し・取り込み・切り替えは上の「端末側の一貫性」を使う。画面は `device-sync-ui.ts`（[UX](UX.md)の端末間同期）。
 
 ### 保護済み鍵
 
@@ -210,15 +210,15 @@ Web Locks `kakeimatch-household:<profileId>` を使う。書き込みは共有�
 
 - 鍵は現在の世代のものだけを持つ。失効の直後、新しい世代で再公開されるまでの古い世代の版は取り込めず、`rejoin_required` になる。
 - 失効した端末自身が「この端末の同期を停止」を選んでも、サーバー上の端末登録は残る。他の端末から失効させる。
-- 2端末相当の確認は、実際の `/api/sync` 処理（D1はnode:sqlite、Providerはメモリー）と端末2台分の保存領域で行った。ブラウザー間・実R2・iPhoneは次の段階以降。
+- 2端末相当の確認は、実際の `/api/sync` 処理（D1はnode:sqlite、Providerはメモリー）を使い、単体テストでは端末2〜3台分の保存領域、E2E（`test:device-sync-e2e`）では2つのブラウザーで行った。E2EのCloud accountのsessionは合成で、Passkeyログインそのものは `test:auth-e2e` の対象。実R2・iPhoneは未確認。
 
 ## 未実装（#143の残り）
 
-次は本変更に含まれない。同期は完成しておらず、利用者向けに有効にしない。
+次は未実装。
 
-- 設定画面、参加、前面での自動同期、競合画面と競合版の整理・書き出し、停止・削除の画面（同期エンジンの操作は実装済み）
+- 競合版の一覧・書き出し（競合時は「この端末の内容を使う」「別の端末の内容を使う」の選択までを実装。選ばなかった版はクラウドの履歴・競合版として残るが、画面から取り出す操作はない）
 - Google Drive Providerと保存先の切り替え
-- Provider横断のE2E、ブラウザー2台での2端末E2E
+- Provider横断のE2E
 - iPhone実機とPCでの確認
 - 回収の定期実行、アカウント削除画面からの同期削除の接続（#151）
 

@@ -12,6 +12,7 @@
     "test:encryption-e2e": "node test/browser-encryption.mjs",
     "test:screen-lock-e2e": "node test/browser-screen-lock.mjs",
     "test:sync-consistency-e2e": "node test/browser-sync-consistency.mjs",
+    "test:device-sync-e2e": "node --import tsx test/browser-device-sync.mjs",
     "build": "tsc --noEmit && cf build",
     "icons": "node scripts/render-icons.mjs",
     "test:e2e": "node test/browser-flow.mjs",

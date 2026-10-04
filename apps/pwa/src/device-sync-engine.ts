@@ -18,6 +18,8 @@ export type SyncOutcome =
   | { status: 'published'; sequence: number | null }
   /** A newer version was imported; the page must reload to show it. */
   | { status: 'imported'; profileId: string }
+  /** A newer version exists but importing was held because the user may be typing. */
+  | { status: 'remote_changes' }
   /** Try again later: recent or unfinished local changes, or a change appeared during import. */
   | { status: 'waiting'; retryAfterMs: number }
   | { status: 'conflict'; remote: SyncVersion }
@@ -119,15 +121,24 @@ export class DeviceSyncEngine {
     return this.importVersion(secrets, current.current);
   }
 
-  /** Runs one sync. Concurrent calls share the same run. */
-  sync(): Promise<SyncOutcome> {
+  /**
+   * Runs one sync. Concurrent calls share the same run. With `allowImport: false` a newer
+   * version is reported as `remote_changes` instead of switching households under an open form.
+   */
+  sync(options: { allowImport?: boolean } = {}): Promise<SyncOutcome> {
     if (!this.running) {
-      const running = this.syncOnce().catch(error => outcomeOf(error)).finally(() => {
+      const running = this.syncOnce(options.allowImport ?? true).catch(error => outcomeOf(error)).finally(() => {
         if (this.running === running) this.running = null;
       });
       this.running = running;
     }
     return this.running;
+  }
+
+  /** True after the user has completed setup, or joined another device. */
+  async isEnabled(): Promise<boolean> {
+    const secrets = await this.deps.secrets.load();
+    return secrets !== null && !secrets.pendingSetup;
   }
 
   /** Keeps this device's household: publishes it on top of the other device's version. */
@@ -187,7 +198,7 @@ export class DeviceSyncEngine {
     return (await this.api(await this.requireSecrets()).listDevices()).devices;
   }
 
-  private async syncOnce(): Promise<SyncOutcome> {
+  private async syncOnce(allowImport: boolean): Promise<SyncOutcome> {
     const signal = this.controller.signal;
     const secrets = await this.deps.secrets.load();
     if (!secrets) return { status: 'off' };
@@ -211,7 +222,7 @@ export class DeviceSyncEngine {
     const rotated = current.current !== null && current.current.generation !== secrets.generation;
     if (bound && remoteId === state.baseVersionId) return local || rotated ? this.publish(secrets, remoteId) : { status: 'synced' };
     if (!current.current) return this.publish(secrets, null);
-    if (!local) return this.importVersion(secrets, current.current);
+    if (!local) return allowImport ? this.importVersion(secrets, current.current) : { status: 'remote_changes' };
     return { status: 'conflict', remote: current.current };
   }
 
