@@ -10,9 +10,9 @@ await page.clock.setFixedTime(new Date('2026-10-04T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: 9999999999 } }));
 await context.route('**/api/ai/gemini', route => route.fulfill({ json: {
-  documentKind: 'receipt', merchant: 'Synthetic Net Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 1050, taxAmountYen: null, pointsUsedYen: 1050,
+  documentKind: 'receipt', merchant: 'Synthetic Net Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 750, taxAmountYen: null,
   items: [{ name: 'Synthetic Rice', amountYen: 400 }, { name: 'Synthetic Lettuce', amountYen: 150 }, { name: 'Synthetic Chicken', amountYen: 600 }],
-  adjustments: [{ label: 'Synthetic Coupon', amountYen: -100 }],
+  adjustments: [{ label: 'Synthetic Coupon', amountYen: -100 }, { label: 'ポイント利用', amountYen: -300 }],
   warnings: [
     { field: 'items', code: 'price', message: '単価と金額が異なるため確認してください。', index: 1 },
     { field: 'totalAmountYen', code: 'blurred', message: '合計金額の数字がかすれています。', index: null },
@@ -24,6 +24,11 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 try {
   await page.goto(process.env.PWA_E2E_URL);
   await page.getByText('今月の支出 ¥0').waitFor();
+  await page.locator('#settings-tab').click(); await click('支払元'); await click('支払元を追加する');
+  await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Wallet'); await click('追加する');
+  await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
+  await page.locator('#settings-tab').click(); await click('カテゴリ'); await click('基本カテゴリを用意する');
+  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await click('記録を追加');
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
@@ -49,9 +54,9 @@ try {
   await page.getByRole('button', { name: '全体', exact: true }).click();
   await rows.nth(1).click();
   await page.waitForFunction(() => document.activeElement?.id === 'receipt-amount');
-  // Points are a payment method: the total stays the purchase amount and the points go to the memo.
-  assert.equal(await page.locator('#receipt-amount').inputValue(), '1050');
-  assert.equal(await page.locator('#receipt-memo').inputValue(), 'ポイント利用 1,050円');
+  // Points are an adjustment like a coupon: the total is the amount paid after points, with no memo added.
+  assert.equal(await page.locator('#receipt-amount').inputValue(), '750');
+  assert.equal(await page.locator('#receipt-memo').inputValue(), '');
   // A checked row disappears, and editing a flagged field counts as checking it.
   await click('レシート全体を確認した');
   await page.getByRole('region', { name: '画像と照らし合わせてほしいところが2件あります' }).waitFor();
@@ -68,8 +73,16 @@ try {
   await click('品目2「Synthetic Lettuce」を確認した');
   await remaining.waitFor({ state: 'detached' });
   assert.doesNotMatch(await page.locator('[data-receipt-item]').nth(1).locator('.receipt-compact-meta').textContent(), /要確認/);
+  // The receipt registers with the total after coupons and points.
+  await page.getByRole('button', { name: '全体', exact: true }).click();
+  await page.locator('#receipt-amount').fill('750');
+  await page.locator('#receipt-category').selectOption({ label: '食費' });
+  await page.locator('#receipt-account').selectOption({ label: 'Synthetic Wallet' });
+  await click('登録する');
+  await page.waitForFunction(() => document.querySelector('#message')?.textContent === '登録しました。' || [...document.querySelectorAll('button')].some(button => button.textContent === '登録を再試行する'));
+  assert.equal(await page.locator('#message').textContent(), '登録しました。');
   assert.deepEqual(errors, []);
-  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, move to each place, hide checked or edited ones across reopening, and keep points as a memo.');
+  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, move to each place, hide checked or edited ones across reopening, and register the total after points like a coupon.');
 } finally {
   await browser.close();
 }

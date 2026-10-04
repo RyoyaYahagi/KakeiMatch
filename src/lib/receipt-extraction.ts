@@ -12,8 +12,6 @@ export const receiptExtractionResultSchema = z.object({
   purchasedTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/).nullable(),
   totalAmountYen: z.number().int().safe().nonnegative().nullable(),
   taxAmountYen: z.number().int().safe().nonnegative().nullable(),
-  /** Points used as payment. totalAmountYen is the purchase total before them. */
-  pointsUsedYen: z.number().int().safe().nonnegative().nullable().optional(),
   items: z.array(z.object({
     name: z.string().trim().min(1),
     amountYen: z.number().int().safe().nonnegative().nullable(),

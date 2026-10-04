@@ -449,11 +449,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const usefulDraft = draft && (draft.merchant.trim() || draft.totalAmountYen > 0 || draft.items?.length) ? draft : null;
     const pendingEdit = editing ? await receipts.getPendingEdit(receipt.id) : null;
     const base = pendingEdit?.after ?? (useExtraction ? null : (receipt.registration.status === 'pending' || editing) ? usefulDraft ?? confirmed : confirmed);
-    // Points are a payment method: the total stays the purchase amount and the points go to the memo.
-    const pointsMemo = useExtraction && extraction?.pointsUsedYen ? `ポイント利用 ${extraction.pointsUsedYen.toLocaleString('ja-JP')}円` : null;
-    const draftMemo = usefulDraft?.memo ?? null;
     const initial: ReceiptDraft = {
-      memo: base?.memo !== undefined ? base.memo : pointsMemo && !draftMemo?.includes(pointsMemo) ? [draftMemo, pointsMemo].filter(Boolean).join('\n') : draftMemo,
+      memo: base?.memo !== undefined ? base.memo : usefulDraft?.memo ?? null,
       merchant: base?.merchant ?? extraction?.merchant ?? '',
       purchasedDate: base?.purchasedDate ?? extraction?.purchasedDate ?? today(),
       purchasedTime: base?.purchasedTime ?? extraction?.purchasedTime ?? null,
