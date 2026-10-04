@@ -24,6 +24,24 @@ export const CATEGORY_LABELS: Record<CategoryId, string> = {
   other: "その他",
 };
 
+export const BASIC_EXPENSE_CATEGORY_LABELS = [
+  "食費",
+  "外食",
+  "日用品",
+  "衣服・美容",
+  "交通",
+  "医療・健康",
+  "家電・デジタル",
+  "趣味・娯楽",
+  "AI・ソフトウェア",
+  "通信",
+  "教育・学習",
+  "交際費",
+  "住居",
+  "水道・光熱",
+  "その他",
+] as const;
+
 const categoryIdSet: ReadonlySet<string> = new Set(CATEGORY_IDS);
 
 export function isCategoryId(value: unknown): value is CategoryId {
