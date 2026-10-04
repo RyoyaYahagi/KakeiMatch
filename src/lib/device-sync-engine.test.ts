@@ -8,7 +8,7 @@ import { readSyncState } from '../../apps/pwa/src/household-sync-state';
 import { HouseholdWriteGuard } from '../../apps/pwa/src/household-write-guard';
 import { DeviceSyncApi } from '../../apps/pwa/src/device-sync-api';
 import { DeviceSyncSecretStore } from '../../apps/pwa/src/device-sync-secrets';
-import { DeviceSyncEngine } from '../../apps/pwa/src/device-sync-engine';
+import { DeviceSyncEngine, ExternalStorageAuthError, ExternalStorageMissingError, type ExternalSyncStorage } from '../../apps/pwa/src/device-sync-engine';
 import { handleSyncRequest, type SyncApiEnv } from '../../workers/ai-gateway/src/device-sync-api';
 import { InMemorySyncStorageProvider } from '../../workers/ai-gateway/src/sync-storage-provider';
 
@@ -22,7 +22,7 @@ vi.mock('../../workers/ai-gateway/src/account-auth', async (importOriginal) => (
 
 const origin = 'https://sync.example.test';
 const at = '2026-10-04T00:00:00.000Z';
-const migrations = ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql']
+const migrations = ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql']
   .map(name => readFileSync(new URL(`../../workers/ai-gateway/migrations/${name}`, import.meta.url), 'utf8'));
 
 function d1(sqlite: DatabaseSync) {
@@ -76,8 +76,37 @@ const receipt = (id: string): LocalDataRecord => ({ id, kind: 'receipt-metadata'
   registration: { status: 'applied', actualTransactionId: 'synthetic-tx', lastError: null },
 } });
 
+/** The user's Google Drive app folder, shared by both devices. Each device has its own connection. */
+class FakeDrive {
+  files = new Map<string, { bytes: Uint8Array; createdAt: string }>();
+  failPutsAfter: number | null = null;
+  connection(): ExternalSyncStorage & { connected: boolean } {
+    const files = this.files;
+    const shouldFail = () => this.failPutsAfter !== null && this.failPutsAfter-- <= 0;
+    return {
+      name: 'google-drive', connected: true,
+      isConnected() { return this.connected; },
+      async put(chunk) {
+        if (!this.connected) throw new ExternalStorageAuthError();
+        if (shouldFail()) throw new Error('synthetic drive failure');
+        const ref = `drive${crypto.randomUUID().replace(/-/g, '')}`;
+        files.set(ref, { bytes: new Uint8Array(await chunk.arrayBuffer()), createdAt: '2000-01-01T00:00:00.000Z' });
+        return ref;
+      },
+      async get(ref) {
+        if (!this.connected) throw new ExternalStorageAuthError();
+        const file = files.get(ref);
+        if (!file) throw new ExternalStorageMissingError();
+        return new Blob([file.bytes.slice().buffer as ArrayBuffer]);
+      },
+      async delete(ref) { files.delete(ref); },
+      async list() { return [...files].map(([ref, file]) => ({ ref, createdAt: file.createdAt })); },
+    };
+  }
+}
+
 /** One device: its own IndexedDB, localStorage, Actual stand-in and engine. */
-async function device(name: string) {
+async function device(name: string, externalStorage?: ExternalSyncStorage) {
   const factory = new IDBFactory();
   const values = new Map<string, string>();
   const storage = { getItem: (k: string) => values.get(k) ?? null, setItem: (k: string, v: string) => { values.set(k, v); }, removeItem: (k: string) => { values.delete(k); } };
@@ -99,7 +128,7 @@ async function device(name: string) {
     };
     // Exclusive household locks are not available in node; this stand-in runs one at a time.
     guard.exclusive = async <T>(operation: () => Promise<T>) => operation();
-    const engine = new DeviceSyncEngine({ api: new DeviceSyncApi(serverFetch), secrets, repository, ledger, guard, storage,
+    const engine = new DeviceSyncEngine({ api: new DeviceSyncApi(serverFetch), secrets, repository, ledger, guard, storage, externalStorage,
       backup: { openRepository: id => LocalDataRepository.open(id, factory), now: () => new Date(at) } });
     return { guard, repository, ledger, engine, dataDir };
   };
@@ -248,5 +277,120 @@ describe('device sync engine', () => {
     expect(provider.keys()).toEqual([]);
     expect(await a.ids()).toEqual(['receipt:a1']);
     a.close(); b.close();
+  });
+});
+
+describe('device sync with Google Drive', () => {
+  it('keeps versions only in the user\'s Drive and syncs two devices through it', async () => {
+    const drive = new FakeDrive();
+    const a = await device('a', drive.connection());
+    await a.write('receipt:a1');
+    const { recoveryCode } = await a.engine.enable('google-drive');
+    expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+    expect(provider.keys()).toEqual([]);
+    expect(drive.files.size).toBeGreaterThan(0);
+    for (const file of drive.files.values()) expect(new TextDecoder().decode(file.bytes)).not.toContain('Synthetic Store');
+
+    const bConnection = drive.connection();
+    const b = await device('b', bConnection);
+    bConnection.connected = false;
+    // Without a Drive connection the device stops syncing and keeps its own data.
+    expect(await b.engine.join(recoveryCode)).toEqual({ status: 'storage_reconnect_required', storage: 'google-drive' });
+    expect(await b.ids()).toEqual([]);
+    bConnection.connected = true;
+    expect(await b.engine.sync()).toMatchObject({ status: 'imported' });
+    await b.reload();
+    expect(await b.ids()).toEqual(['receipt:a1']);
+    await b.write('receipt:b1');
+    expect(await b.engine.sync()).toMatchObject({ status: 'published' });
+    expect(await a.engine.sync()).toMatchObject({ status: 'imported' });
+    await a.reload();
+    expect(await a.ids()).toEqual(['receipt:a1', 'receipt:b1']);
+    expect(provider.keys()).toEqual([]);
+    a.close(); b.close();
+  });
+
+  it('refuses to import a version whose Drive file is missing, and changes nothing locally', async () => {
+    const drive = new FakeDrive();
+    const a = await device('a', drive.connection());
+    await a.write('receipt:a1');
+    const { recoveryCode } = await a.engine.enable('google-drive');
+    await a.engine.sync();
+    drive.files.delete([...drive.files.keys()][0]);
+    const b = await device('b', drive.connection());
+    await b.write('receipt:b-local');
+    // The missing file fails verification before anything is restored.
+    expect(await b.engine.join(recoveryCode)).toMatchObject({ status: 'failed' });
+    expect(await b.ids()).toEqual(['receipt:b-local']);
+    expect(b.storage.getItem(PREVIOUS_PROFILE_KEY)).toBeNull();
+    a.close(); b.close();
+  });
+
+  it('switches from KakeiMatch Cloud to Drive only after a complete copy, and deletes the old data on request', async () => {
+    const drive = new FakeDrive();
+    const a = await device('a', drive.connection());
+    await a.write('receipt:a1');
+    await a.engine.enable();
+    await a.engine.sync();
+    const cloudObjects = provider.keys().length;
+    expect(cloudObjects).toBeGreaterThan(0);
+
+    drive.failPutsAfter = 0;
+    expect(await a.engine.switchStorage('google-drive')).toMatchObject({ status: 'failed' });
+    expect(await a.engine.storageLocation()).toBe('kakeimatch-cloud');
+    await a.write('receipt:a2');
+    expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+
+    drive.failPutsAfter = null;
+    expect(await a.engine.switchStorage('google-drive')).toMatchObject({ status: 'published' });
+    expect(await a.engine.storageLocation()).toBe('google-drive');
+    expect(provider.keys().length).toBeGreaterThan(0);
+    await a.engine.deleteOtherStorageData();
+    expect(provider.keys()).toEqual([]);
+
+    const b = await device('b', drive.connection());
+    const stale = (await a.engine.devices()).length;
+    expect(stale).toBe(1);
+    await a.engine.deleteCloudData();
+    expect(drive.files.size).toBe(0);
+    expect(await a.ids()).toEqual(['receipt:a1', 'receipt:a2']);
+    a.close(); b.close();
+  });
+});
+
+describe('the same operations on each storage location', () => {
+  /** Runs one sequence of syncs, a conflict and its resolution, and records what happened. */
+  async function scenario(storage: 'kakeimatch-cloud' | 'google-drive') {
+    sqlite.exec('DELETE FROM sync_households');
+    const drive = new FakeDrive();
+    const a = await device('a', drive.connection());
+    const b = await device('b', drive.connection());
+    const outcomes: string[] = [];
+    const record = (outcome: { status: string }) => { outcomes.push(outcome.status); };
+    await a.write('receipt:a1');
+    const { recoveryCode } = await a.engine.enable(storage);
+    record(await a.engine.sync());
+    record(await b.engine.join(recoveryCode));
+    await b.reload();
+    await b.write('receipt:b1');
+    record(await b.engine.sync());
+    record(await a.engine.sync());
+    await a.reload();
+    await a.write('receipt:a2');
+    await b.write('receipt:b2');
+    record(await a.engine.sync());
+    record(await b.engine.sync());
+    record(await b.engine.useOtherDevice());
+    await b.reload();
+    const result = { outcomes, a: await a.ids(), b: await b.ids(), sequence: b.syncState().baseSequence };
+    a.close(); b.close();
+    return result;
+  }
+
+  it('gives the same versions, conflicts and restored households on KakeiMatch Cloud and Google Drive', async () => {
+    const cloud = await scenario('kakeimatch-cloud');
+    const drive = await scenario('google-drive');
+    expect(cloud.outcomes).toEqual(['published', 'imported', 'published', 'imported', 'published', 'conflict', 'imported']);
+    expect(drive).toEqual(cloud);
   });
 });

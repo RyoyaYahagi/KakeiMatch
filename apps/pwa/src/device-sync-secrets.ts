@@ -13,6 +13,8 @@ export type DeviceSyncSecrets = {
   credential: string;
   /** Null after joining until the recovery code has been entered. */
   key: CryptoKey | null;
+  /** Set while a joining device has not opened the synced household yet. Its own data is never published. */
+  joining?: boolean;
 };
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {

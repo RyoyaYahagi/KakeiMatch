@@ -1,7 +1,8 @@
 import { hasUnsentChanges, readSyncState } from './household-sync-state';
 import type { HouseholdWriteGuard } from './household-write-guard';
 import type { DeviceSyncEngine, SyncOutcome } from './device-sync-engine';
-import { SyncApiError } from './device-sync-api';
+import { SyncApiError, type SyncConfig, type SyncStorageName } from './device-sync-api';
+import { startGoogleDriveConnection, type GoogleDriveReturn, type GoogleDriveStorage } from './google-drive-storage';
 
 // Settings > データ > 端末間の同期 (docs/UX.md 端末間同期, Issue #143 §7).
 // Sync is off by default. While it is on, it runs at startup, when the app returns to the
@@ -17,7 +18,12 @@ type Options = {
   reauthenticate: () => Promise<boolean>;
   /** True while a work screen (entry, edit, import) is open. Imports wait until it closes. */
   isEditing: () => boolean;
+  googleDrive: GoogleDriveStorage;
+  /** Google's reply when this page load is the return from the Google Drive consent page. */
+  googleDriveReturn: GoogleDriveReturn | null;
 };
+
+const storageNames: Record<SyncStorageName, string> = { 'kakeimatch-cloud': 'KakeiMatch Cloud', 'google-drive': 'Google Drive' };
 
 type Status = { symbol: string; label: string; tone: 'ok' | 'pending' | 'warning' | 'error' };
 const statuses: Record<string, Status> = {
@@ -28,6 +34,7 @@ const statuses: Record<string, Status> = {
   remote: { symbol: '!', label: '別の端末の変更があります', tone: 'warning' },
   failed: { symbol: '×', label: '同期できませんでした', tone: 'error' },
   removed: { symbol: '×', label: 'この端末は同期から外れました', tone: 'error' },
+  reconnect: { symbol: '!', label: 'Google Driveへの再接続が必要です', tone: 'warning' },
 };
 
 const text = (tag: string, value = '', className = '') => {
@@ -63,12 +70,19 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   const title = text('h2', '端末間の同期'); title.id = 'device-sync-title';
   const statusLine = text('p', '', 'sync-status'); statusLine.setAttribute('role', 'status'); statusLine.id = 'sync-status';
   const lastSync = text('p', '', 'muted');
+  const storageLine = text('p', '', 'sync-storage'); storageLine.id = 'sync-storage';
   const body = document.createElement('div');
   const message = text('p', '', 'status'); message.setAttribute('role', 'status'); message.id = 'sync-message';
-  section.append(title, statusLine, lastSync, body, message);
+  section.append(title, statusLine, lastSync, storageLine, body, message);
   container.append(section);
 
   let enabled = false;
+  let config: SyncConfig = { googleDrive: null };
+  let storage: SyncStorageName = 'kakeimatch-cloud';
+  const googleDrive = options.googleDrive;
+  const connectGoogleDrive = (intent: 'enable' | 'switch' | 'reconnect') => {
+    if (config.googleDrive) startGoogleDriveConnection(config.googleDrive.clientId, intent);
+  };
   let busy = false;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
   let afterSaveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -83,6 +97,16 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     lastSync.textContent = last ? `最終同期：${tokyoTime(last)}（日本時間）` : '';
   }
 
+  async function showStorage() {
+    storageLine.hidden = !enabled;
+    if (!enabled) return;
+    storageLine.textContent = `保存先：${storageNames[storage]}`;
+    if (storage === 'google-drive' && googleDrive.isConnected()) {
+      const account = await googleDrive.account().catch(() => null);
+      if (account) storageLine.textContent = `保存先：Google Drive（${account}）`;
+    }
+  }
+
   function updateStorageLocation() {
     const location = document.querySelector('.storage-location');
     if (!location) return;
@@ -91,7 +115,9 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     const cloud = location.querySelector<HTMLElement>('.storage-location-cloud');
     if (cloud) cloud.hidden = enabled;
     if (!enabled) return;
-    const note = text('p', '端末間の同期がオンです。暗号化した家計簿全体をKakeiMatch Cloudにも保存し、同じアカウントの端末と交換しています。AIアカウントの認証や利用枠の情報もCloudflareで管理します。', 'storage-location-sync');
+    const note = text('p', storage === 'google-drive'
+      ? '端末間の同期がオンです。暗号化した家計簿全体をあなたのGoogle Driveにも保存し、同じアカウントの端末と交換しています。同期の順序と端末の管理、AIアカウントの情報はCloudflareで管理します。'
+      : '端末間の同期がオンです。暗号化した家計簿全体をKakeiMatch Cloudにも保存し、同じアカウントの端末と交換しています。AIアカウントの認証や利用枠の情報もCloudflareで管理します。', 'storage-location-sync');
     location.querySelector('.storage-location-device')?.after(note);
   }
 
@@ -141,13 +167,34 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   function renderOff() {
     showStatus(null);
     lastSync.textContent = '';
-    body.replaceChildren(
-      text('p', 'オフです。オンにすると、同じアカウントの端末どうしで家計簿を暗号化して交換します。'),
-      aboutSync(),
-      button('この端末で同期を始める', 'primary', startSync, 'sync-enable'),
-      button('別の端末の同期に参加する', 'secondary', renderJoin, 'sync-join-start'),
-    );
+    storageLine.hidden = true;
+    const children: Node[] = [text('p', 'オフです。オンにすると、同じアカウントの端末どうしで家計簿を暗号化して交換します。'), aboutSync()];
+    if (config.googleDrive) children.push(storageChoice());
+    children.push(button('この端末で同期を始める', 'primary', startSync, 'sync-enable'),
+      button('別の端末の同期に参加する', 'secondary', renderJoin, 'sync-join-start'));
+    body.replaceChildren(...children);
   }
+
+  /** Google Drive is offered only when it is configured. */
+  function storageChoice() {
+    const fieldset = document.createElement('fieldset');
+    fieldset.className = 'sync-storage-choice';
+    fieldset.append(text('legend', '保存先'));
+    for (const [value, label, note] of [
+      ['kakeimatch-cloud', 'KakeiMatch Cloud', 'KakeiMatchが用意する保存先です。'],
+      ['google-drive', 'Google Drive', 'あなたのGoogle Driveの、このアプリ専用の領域に保存します。ほかのファイルは読みません。'],
+    ] as const) {
+      const input = document.createElement('input');
+      input.type = 'radio'; input.name = 'sync-storage'; input.value = value; input.id = `sync-storage-${value}`;
+      input.checked = value === 'kakeimatch-cloud';
+      const label_ = document.createElement('label'); label_.htmlFor = input.id;
+      label_.append(input, ` ${label}`);
+      fieldset.append(label_, text('p', note, 'muted'));
+    }
+    return fieldset;
+  }
+  const chosenStorage = (): SyncStorageName =>
+    (section.querySelector<HTMLInputElement>('input[name="sync-storage"]:checked')?.value as SyncStorageName | undefined) ?? 'kakeimatch-cloud';
 
   function renderJoin() {
     const input = document.createElement('input');
@@ -175,12 +222,20 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   }
 
   async function startSync() {
-    if (!window.confirm('端末間の同期を始めますか？\n\n暗号化した家計簿全体をKakeiMatch Cloudに保存します。次に表示する復旧コードを、端末の外に保存してください。')) return;
+    const target = chosenStorage();
+    if (!window.confirm(`端末間の同期を始めますか？\n\n暗号化した家計簿全体を${storageNames[target]}に保存します。次に表示する復旧コードを、端末の外に保存してください。`)) return;
+    if (target === 'google-drive' && !googleDrive.isConnected()) { connectGoogleDrive('enable'); return; }
+    await enableWith(target);
+  }
+
+  async function enableWith(target: SyncStorageName) {
     await run(async () => {
-      const result = await withRecentSignIn(() => engine.enable());
+      const result = await withRecentSignIn(() => engine.enable(target));
       if (!result) return;
       enabled = true;
+      storage = target;
       updateStorageLocation();
+      void showStorage();
       showRecoveryCode(result.recoveryCode, '同期を始めました。この復旧コードを保存してください。', async () => { await syncNow(true); });
     }, '同期の準備をしています…');
   }
@@ -198,6 +253,9 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     } else if (outcome?.status === 'rejoin_required') {
       children.push(text('p', '別の端末で失効されたか、同期データが削除されました。この端末の家計データは残っています。続けるには新しい復旧コードで参加し直してください。'),
         button('参加し直す', 'primary', async () => { await engine.stopOnThisDevice(); enabled = false; updateStorageLocation(); renderJoin(); }, 'sync-rejoin'));
+    } else if (outcome?.status === 'storage_reconnect_required') {
+      children.push(text('p', 'Google Driveへの接続が切れたため、同期を止めています。この端末の家計簿はそのまま使えます。', 'muted'),
+        button('Google Driveに再接続', 'primary', () => connectGoogleDrive('reconnect'), 'sync-reconnect'));
     } else if (outcome?.status === 'sign_in_required') {
       children.push(button('ログインする', 'primary', async () => { if (await options.reauthenticate()) await syncNow(true); }, 'sync-sign-in'));
     } else if (outcome?.status === 'recovery_code_required') {
@@ -210,11 +268,22 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     manage.className = 'settings-inner-disclosure danger-zone';
     manage.id = 'sync-manage';
     const deviceList = document.createElement('ul'); deviceList.className = 'sync-devices';
+    const deleteLabel = storage === 'google-drive' ? 'Google Drive上の同期データを削除' : 'クラウドの同期データをすべて削除';
     manage.append(text('summary', '端末と同期データの管理'), deviceList,
       text('p', 'この端末の同期を停止しても、この端末の家計データとクラウドの同期データは残ります。', 'muted'),
-      button('この端末の同期を停止', 'text', stopHere, 'sync-stop'),
-      text('p', 'クラウドの同期データをすべて削除しても、各端末に保存済みの家計データは消えません。他の端末のデータを遠隔で消すことはできません。', 'muted'),
-      button('クラウドの同期データをすべて削除', 'danger', deleteCloud, 'sync-delete-cloud'));
+      button('この端末の同期を停止', 'text', stopHere, 'sync-stop'));
+    if (config.googleDrive) {
+      const other: SyncStorageName = storage === 'google-drive' ? 'kakeimatch-cloud' : 'google-drive';
+      manage.append(text('p', `保存先を変えると、新しい保存先に家計簿を保存してから切り替えます。途中で失敗しても今の保存先のまま使えます。前の保存先のデータは「使っていない保存先のデータを削除」まで残ります。`, 'muted'),
+        button(`保存先を${storageNames[other]}に変更`, 'text', () => switchTo(other), 'sync-switch-storage'),
+        button('使っていない保存先のデータを削除', 'text', deleteOtherStorage, 'sync-delete-other-storage'));
+      if (googleDrive.isConnected()) {
+        manage.append(text('p', '接続を解除しても、この端末の家計データとGoogle Drive上の同期データは削除しません。', 'muted'),
+          button('Google Driveの接続を解除', 'text', disconnectDrive, 'sync-disconnect-drive'));
+      }
+    }
+    manage.append(text('p', `${deleteLabel.replace('を削除', '')}を削除しても、各端末に保存済みの家計データは消えません。他の端末のデータを遠隔で消すことはできません。`, 'muted'),
+      button(deleteLabel, 'danger', deleteCloud, 'sync-delete-cloud'));
     manage.addEventListener('toggle', () => { if (manage.open) void listDevices(deviceList); });
     children.push(aboutSync(), manage);
     body.replaceChildren(...children);
@@ -232,6 +301,38 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     } catch {
       list.replaceChildren(text('li', '端末の一覧を取得できません。オンラインで再度お試しください。'));
     }
+  }
+
+  async function switchTo(target: SyncStorageName) {
+    if (!window.confirm(`保存先を${storageNames[target]}に変更しますか？\n\nこの端末の家計簿を新しい保存先へ保存してから切り替えます。`)) return;
+    if (target === 'google-drive' && !googleDrive.isConnected()) { connectGoogleDrive('switch'); return; }
+    await run(async () => {
+      const outcome = await engine.switchStorage(target);
+      if (outcome.status === 'published' || outcome.status === 'synced') {
+        storage = await engine.storageLocation();
+        await showStorage();
+        updateStorageLocation();
+      }
+      await handle(outcome, true);
+      if (storage === target) message.textContent = `保存先を${storageNames[target]}に変更しました。前の保存先のデータは残っています。`;
+    }, '保存先を変更しています…');
+  }
+
+  async function deleteOtherStorage() {
+    if (!window.confirm('今使っていない保存先に残っている同期データを削除しますか？今の保存先と各端末の家計データは残ります。')) return;
+    await run(async () => {
+      await engine.deleteOtherStorageData();
+      message.textContent = '使っていない保存先のデータを削除しました。';
+    }, '削除しています…', () => '削除を完了できませんでした。削除済みではありません。オンラインで再度お試しください。');
+  }
+
+  async function disconnectDrive() {
+    if (!window.confirm('Google Driveの接続を解除しますか？\n\nこの端末の家計データとGoogle Drive上の同期データは削除しません。再接続するまで同期は止まります。')) return;
+    await run(async () => {
+      await googleDrive.disconnect();
+      message.textContent = 'Google Driveの接続を解除しました。';
+      await handle({ status: 'storage_reconnect_required', storage: 'google-drive' }, false);
+    });
   }
 
   async function revoke(deviceId: string) {
@@ -254,7 +355,8 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   }
 
   async function deleteCloud() {
-    if (!window.confirm('クラウドの同期データをすべて削除しますか？\n\n各端末に保存済みの家計データは消えません。他の端末のデータを遠隔で消すことはできません。元に戻せません。')) return;
+    const where = storage === 'google-drive' ? 'Google Drive上の同期データ' : 'クラウドの同期データ';
+    if (!window.confirm(`${where}をすべて削除しますか？\n\n各端末に保存済みの家計データは消えません。他の端末のデータを遠隔で消すことはできません。元に戻せません。`)) return;
     if (window.prompt('確認のため「同期データを削除」と入力してください。') !== '同期データを削除') { message.textContent = '削除を取り消しました。'; return; }
     await run(async () => {
       const deleted = await withRecentSignIn(async () => { await engine.deleteCloudData(); return true; });
@@ -262,8 +364,10 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
       enabled = false;
       updateStorageLocation();
       renderOff();
-      message.textContent = 'クラウドの同期データを削除しました。この端末の家計データは残っています。';
-    }, '削除しています…', () => '削除を完了できませんでした。削除済みではありません。オンラインで再度お試しください。');
+      message.textContent = `${where}を削除しました。この端末の家計データは残っています。`;
+    }, '削除しています…', error => error instanceof Error && error.name === 'ExternalStorageAuthError'
+      ? 'Google Driveに接続してから削除してください。削除済みではありません。'
+      : '削除を完了できませんでした。削除済みではありません。オンラインで再度お試しください。');
   }
 
   async function choose(side: 'this' | 'other') {
@@ -319,6 +423,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
       synced: 'synced', published: hasUnsentChanges(readSyncState(guard.profileId)) ? 'unsent' : 'synced',
       waiting: 'unsent', conflict: 'remote', remote_changes: 'remote', offline: 'offline',
       sign_in_required: 'sign_in', rejoin_required: 'removed', recovery_code_required: 'sign_in', failed: 'failed',
+      storage_reconnect_required: 'reconnect',
     }[outcome.status] as keyof typeof statuses;
     showStatus(key);
     if (outcome.status === 'failed' && userAction) message.textContent = '同期できませんでした。この端末の家計簿はそのまま使えます。時間をおいて再度お試しください。';
@@ -337,12 +442,26 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   }
 
   async function refresh() {
+    config = await engine.config().catch(() => ({ googleDrive: null }));
     enabled = await engine.isEnabled();
+    if (enabled) storage = await engine.storageLocation().catch(() => storage);
     updateStorageLocation();
-    if (!enabled) { renderOff(); return; }
+    void showStorage();
+    const back = options.googleDriveReturn;
+    if (back) {
+      section.scrollIntoView({ block: 'start' });
+      if (!back.connected) message.textContent = 'Google Driveに接続できませんでした。権限を許可して、もう一度お試しください。';
+      else message.textContent = 'Google Driveに接続しました。';
+    }
+    if (!enabled) {
+      renderOff();
+      if (back?.connected && back.intent === 'enable') await enableWith('google-drive');
+      return;
+    }
     showStatus(hasUnsentChanges(readSyncState(guard.profileId)) ? 'unsent' : 'synced');
     renderOn(null);
-    await syncNow(false);
+    if (back?.connected && back.intent === 'switch') { await switchTo('google-drive'); return; }
+    await syncNow(back?.connected === true);
   }
 
   guard.onChange(() => {

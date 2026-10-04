@@ -14,7 +14,7 @@ const base = new URL(url);
 
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec('PRAGMA foreign_keys = ON');
-for (const name of ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql']) {
+for (const name of ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql']) {
   sqlite.exec(readFileSync(new URL(`../../../workers/ai-gateway/migrations/${name}`, import.meta.url), 'utf8'));
 }
 sqlite.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Synthetic','synthetic@example.invalid',1,1)").run();

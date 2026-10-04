@@ -119,3 +119,12 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 ## お問い合わせの導入
 
 Worker更新前に `0006_contact_submissions.sql` を適用し、`GITHUB_ISSUES_TOKEN` をSecret bindingへ登録します。対象リポジトリへのIssues書き込み権限が必要です。`GITHUB_ISSUES_REPOSITORY` はサーバー設定で固定します。秘密値の登録は既存の本人による手順に従います。実際の投稿・文字起こし・iPhone録音は合成内容で確認してください。詳細は[お問い合わせ](CONTACT.md)を参照してください。
+
+## 端末間同期の保存先（Issue #143）
+
+同期の画面は、保存先が設定されていない環境では開始操作がサーバーの `503 not_configured` で失敗し、端末内の家計は変わらない。
+
+- **KakeiMatch Cloud（R2）**: 非公開のR2バケットを用意し、build時の環境変数 `SYNC_R2_BUCKET_NAME` にバケット名を指定する。公開アクセスは有効にしない。D1に `0009_device_sync.sql`、`0011_sync_household_keys.sql`、`0012_sync_external_storage.sql` を適用する。
+- **Google Drive**: Google CloudでOAuth同意画面とWebアプリ用のOAuthクライアントIDを作成する。承認済みのJavaScript生成元とリダイレクトURIには本番の正規origin（`https://kakeimatch.yhgry.workers.dev` と、その末尾に `/` を付けたもの）だけを登録する。スコープは `https://www.googleapis.com/auth/drive.appdata` だけにする。build時の環境変数 `GOOGLE_OAUTH_CLIENT_ID` にクライアントIDを指定する。クライアントIDは公開値で、クライアントシークレットは使わない（KakeiMatchは保持しない）。Google Drive APIを有効にする。
+
+どちらも、作成・設定・deployは本人が行う。previewでは合成データだけで確認する。

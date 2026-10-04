@@ -129,8 +129,14 @@ export interface VersionRow {
   created_at: number;
   published_at: number | null;
   expires_at: number;
+  /** Null: stored by the server's provider. Otherwise a storage location the device writes to itself. */
+  storage: ExternalStorage | null;
 }
-interface ChunkRow { chunk_index: number; sha256: string; size_bytes: number; object_key: string; state: "pending" | "stored" }
+export type ExternalStorage = "google-drive";
+export const EXTERNAL_STORAGES: readonly ExternalStorage[] = ["google-drive"];
+/** Object keys of externally stored chunks. The server never deletes these from its own provider. */
+export const EXTERNAL_KEY_PREFIX = "external/";
+interface ChunkRow { chunk_index: number; sha256: string; size_bytes: number; object_key: string; state: "pending" | "stored"; external_ref?: string | null }
 interface RequestRow {
   kind: "begin" | "publish";
   body_hash: string;
@@ -141,7 +147,7 @@ interface RequestRow {
 }
 
 const HOUSEHOLD_COLUMNS = "id, owner_user_id, provider, generation, current_version_id, current_sequence, status";
-const VERSION_COLUMNS = "id, household_id, parent_version_id, generation, sequence, state, chunk_count, total_bytes, object_prefix, created_at, published_at, expires_at";
+const VERSION_COLUMNS = "id, household_id, parent_version_id, generation, sequence, state, chunk_count, total_bytes, object_prefix, created_at, published_at, expires_at, storage";
 
 export async function sha256Hex(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -153,6 +159,11 @@ function newCredential(): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+/** The location name shown to devices. The server's own provider is always "kakeimatch-cloud". */
+export function storageOf(provider: string): ExternalStorage | "kakeimatch-cloud" {
+  return (EXTERNAL_STORAGES as readonly string[]).includes(provider) ? provider as ExternalStorage : "kakeimatch-cloud";
 }
 
 export const isUuid = (value: unknown): value is string =>
@@ -191,7 +202,7 @@ export function assertActive(household: HouseholdRow): void {
   if (household.status !== "active") throw new SyncError(409, "household_deleting");
 }
 
-export async function createHousehold(ctx: SyncContext, userId: string, householdId: string) {
+export async function createHousehold(ctx: SyncContext, userId: string, householdId: string, storage: ExternalStorage | null = null) {
   const { db, now } = ctx;
   if (await db.prepare("SELECT household_id FROM sync_deleted_households WHERE household_id = ?").bind(householdId).first()) {
     throw new SyncError(410, "household_deleted");
@@ -203,7 +214,7 @@ export async function createHousehold(ctx: SyncContext, userId: string, househol
       db.prepare(`INSERT INTO sync_households(id, owner_user_id, provider, generation, current_version_id, current_sequence, status, created_at, updated_at)
         SELECT ?, ?, ?, 1, NULL, 0, 'active', ?, ?
         WHERE NOT EXISTS (SELECT 1 FROM sync_deleted_households WHERE household_id = ?)`)
-        .bind(householdId, userId, ctx.provider.id, now, now, householdId),
+        .bind(householdId, userId, storage ?? ctx.provider.id, now, now, householdId),
       db.prepare("INSERT INTO sync_devices(id, household_id, credential_hash, generation, created_at) VALUES (?, ?, ?, 1, ?)")
         .bind(deviceId, householdId, await sha256Hex(credential), now),
     ]);
@@ -217,7 +228,7 @@ export async function createHousehold(ctx: SyncContext, userId: string, househol
     }
     throw error;
   }
-  return { householdId, generation: 1, provider: ctx.provider.id, deviceId, credential };
+  return { householdId, generation: 1, provider: storage ?? ctx.provider.id, storage: storageOf(storage ?? ctx.provider.id), deviceId, credential };
 }
 
 export async function joinDevice(ctx: SyncContext, household: HouseholdRow) {
@@ -234,7 +245,7 @@ export async function joinDevice(ctx: SyncContext, household: HouseholdRow) {
     .bind(deviceId, await sha256Hex(credential), now, household.id).run();
   if (changes(result) !== 1) throw new SyncError(409, "household_deleting");
   const device = await db.prepare("SELECT generation FROM sync_devices WHERE id = ?").bind(deviceId).first<{ generation: number }>();
-  return { householdId: household.id, generation: device?.generation ?? household.generation, provider: household.provider, deviceId, credential };
+  return { householdId: household.id, generation: device?.generation ?? household.generation, provider: household.provider, storage: storageOf(household.provider), deviceId, credential };
 }
 
 export async function listDevices(db: SyncD1Database, household: HouseholdRow, callerDeviceId: string) {
@@ -249,9 +260,10 @@ export async function getVersion(db: SyncD1Database, householdId: string, versio
   return db.prepare(`SELECT ${VERSION_COLUMNS} FROM sync_versions WHERE id = ? AND household_id = ?`).bind(versionId, householdId).first<VersionRow>();
 }
 
-export function versionJson(row: VersionRow, chunks?: Array<{ index: number; size: number; sha256: string }>) {
+export function versionJson(row: VersionRow, chunks?: Array<{ index: number; size: number; sha256: string; ref?: string }>) {
   return {
     versionId: row.id, parentVersionId: row.parent_version_id, generation: row.generation, sequence: row.sequence, state: row.state,
+    storage: row.storage ?? "kakeimatch-cloud",
     chunkCount: row.chunk_count, totalBytes: row.total_bytes, createdAt: iso(row.created_at), publishedAt: iso(row.published_at),
     ...(chunks ? { chunks } : {}),
   };
@@ -260,7 +272,7 @@ export function versionJson(row: VersionRow, chunks?: Array<{ index: number; siz
 export async function getCurrent(db: SyncD1Database, household: HouseholdRow) {
   const current = household.current_version_id ? await getVersion(db, household.id, household.current_version_id) : null;
   return {
-    householdId: household.id, generation: household.generation, provider: household.provider, status: household.status,
+    householdId: household.id, generation: household.generation, provider: household.provider, storage: storageOf(household.provider), status: household.status,
     currentSequence: household.current_sequence,
     current: current ? versionJson(current) : null,
   };
@@ -276,14 +288,18 @@ export async function listVersions(db: SyncD1Database, household: HouseholdRow, 
 export async function versionWithChunks(db: SyncD1Database, household: HouseholdRow, versionId: string) {
   const version = await getVersion(db, household.id, versionId);
   if (!version || version.state === "uploading") throw new SyncError(404, "version_not_found");
-  const chunks = await db.prepare("SELECT chunk_index, sha256, size_bytes FROM sync_chunks WHERE version_id = ? AND state = 'stored' ORDER BY chunk_index")
-    .bind(versionId).all<{ chunk_index: number; sha256: string; size_bytes: number }>();
-  return versionJson(version, chunks.results.map((row) => ({ index: row.chunk_index, size: row.size_bytes, sha256: row.sha256 })));
+  const chunks = await db.prepare("SELECT chunk_index, sha256, size_bytes, external_ref FROM sync_chunks WHERE version_id = ? AND state = 'stored' ORDER BY chunk_index")
+    .bind(versionId).all<{ chunk_index: number; sha256: string; size_bytes: number; external_ref: string | null }>();
+  return versionJson(version, chunks.results.map((row) => ({
+    index: row.chunk_index, size: row.size_bytes, sha256: row.sha256, ...(row.external_ref ? { ref: row.external_ref } : {}),
+  })));
 }
 
 export async function openChunk(ctx: SyncContext, household: HouseholdRow, versionId: string, index: number) {
   const version = await getVersion(ctx.db, household.id, versionId);
   if (!version || version.state === "uploading") throw new SyncError(404, "version_not_found");
+  // The device reads externally stored chunks from that location itself.
+  if (version.storage) throw new SyncError(409, "external_storage");
   const chunk = await ctx.db.prepare("SELECT chunk_index, sha256, size_bytes, object_key, state FROM sync_chunks WHERE version_id = ? AND chunk_index = ? AND state = 'stored'")
     .bind(versionId, index).first<ChunkRow>();
   if (!chunk) throw new SyncError(404, "chunk_not_found");
@@ -311,6 +327,8 @@ export interface BeginInput {
   generation: number;
   chunkCount: number;
   totalBytes: number;
+  /** Where the device will store the chunks. Null: the server's provider. */
+  storage: ExternalStorage | null;
 }
 
 async function checkUploadLimits(ctx: SyncContext, household: HouseholdRow, totalBytes: number): Promise<void> {
@@ -333,7 +351,8 @@ export async function beginUpload(ctx: SyncContext, household: HouseholdRow, dev
   if (input.totalBytes > limits.maxCiphertextBytes || input.totalBytes > input.chunkCount * limits.maxChunkBytes) {
     throw new SyncError(413, "version_too_large");
   }
-  const bodyHash = await sha256Hex(["begin", device.id, input.versionId, input.baseVersionId ?? "", input.generation, input.chunkCount, input.totalBytes].join("|"));
+  const bodyHash = await sha256Hex(["begin", device.id, input.versionId, input.baseVersionId ?? "", input.generation, input.chunkCount, input.totalBytes,
+    ...(input.storage ? [input.storage] : [])].join("|"));
   const replay = async () => {
     const recorded = await findRequest(db, household.id, input.requestId);
     if (!recorded) return null;
@@ -357,12 +376,12 @@ export async function beginUpload(ctx: SyncContext, household: HouseholdRow, dev
   const expiresAt = now + limits.unpublishedTtlSeconds * 1000;
   try {
     await db.batch([
-      db.prepare(`INSERT INTO sync_versions(id, household_id, parent_version_id, generation, state, chunk_count, total_bytes, object_prefix, created_by_device_id, created_at, expires_at)
-        SELECT ?1, ?2, ?3, ?4, 'uploading', ?5, ?6, ?7, ?8, ?9, ?10
+      db.prepare(`INSERT INTO sync_versions(id, household_id, parent_version_id, generation, state, chunk_count, total_bytes, object_prefix, created_by_device_id, created_at, expires_at, storage)
+        SELECT ?1, ?2, ?3, ?4, 'uploading', ?5, ?6, ?7, ?8, ?9, ?10, ?12
         WHERE EXISTS (SELECT 1 FROM sync_households WHERE id = ?2 AND status = 'active' AND generation = ?4)
           AND EXISTS (SELECT 1 FROM sync_devices WHERE id = ?8 AND household_id = ?2 AND revoked_at IS NULL AND generation = ?4)
           AND NOT EXISTS (SELECT 1 FROM sync_requests WHERE household_id = ?2 AND request_id = ?11)`)
-        .bind(input.versionId, household.id, input.baseVersionId, input.generation, input.chunkCount, input.totalBytes, objectPrefix, device.id, now, expiresAt, input.requestId),
+        .bind(input.versionId, household.id, input.baseVersionId, input.generation, input.chunkCount, input.totalBytes, objectPrefix, device.id, now, expiresAt, input.requestId, input.storage),
       db.prepare(`INSERT INTO sync_requests(household_id, request_id, kind, body_hash, outcome, version_id, sequence, created_at)
         SELECT household_id, ?1, 'begin', ?2, 'created', id, NULL, ?3 FROM sync_versions WHERE id = ?4 AND object_prefix = ?5`)
         .bind(input.requestId, bodyHash, now, input.versionId, objectPrefix),
@@ -410,6 +429,8 @@ export async function putChunk(ctx: SyncContext, household: HouseholdRow, device
   if (input.index < 0 || input.index >= version.chunk_count) throw new SyncError(400, "invalid_chunk_index");
   if (input.size < 1) throw new SyncError(400, "invalid_request");
   if (input.size > limits.maxChunkBytes) throw new SyncError(413, "chunk_too_large");
+  // A version stored elsewhere is never also written to the server's provider.
+  if (version.storage) throw new SyncError(409, "external_storage");
 
   const key = `${household.id}/${version.object_prefix}/${input.index}`;
   const findChunk = () => db.prepare("SELECT chunk_index, sha256, size_bytes, object_key, state FROM sync_chunks WHERE version_id = ? AND chunk_index = ?")
@@ -507,11 +528,14 @@ export async function publishVersion(ctx: SyncContext, household: HouseholdRow, 
   try {
     // One transaction: advance the pointer only if it still equals the recorded
     // base, mark the version published or conflict, and record the request result.
+    // The household's storage location follows the published version, so a storage
+    // switch takes effect only when its first version is published.
     await db.batch([
-      db.prepare(`UPDATE sync_households SET current_version_id = ?1, current_sequence = current_sequence + 1, updated_at = ?2
+      db.prepare(`UPDATE sync_households SET current_version_id = ?1, current_sequence = current_sequence + 1, updated_at = ?2,
+          provider = COALESCE((SELECT storage FROM sync_versions WHERE id = ?1), ?5)
         WHERE id = ?3 AND status = 'active' AND ${versionOk} AND ${deviceOk}
           AND current_version_id IS (SELECT parent_version_id FROM sync_versions WHERE id = ?1)`)
-        .bind(versionId, now, household.id, device.id),
+        .bind(versionId, now, household.id, device.id, ctx.provider.id),
       db.prepare(`UPDATE sync_versions SET
           state = CASE WHEN (SELECT current_version_id FROM sync_households WHERE id = ?3) = ?1 THEN 'published' ELSE 'conflict' END,
           sequence = CASE WHEN (SELECT current_version_id FROM sync_households WHERE id = ?3) = ?1
@@ -579,7 +603,8 @@ export async function drainObjectDeletions(ctx: Pick<SyncContext, "db" | "provid
     const page = await db.prepare("SELECT object_key FROM sync_object_deletions WHERE (? IS NULL OR household_id = ?) ORDER BY object_key LIMIT 50")
       .bind(options.householdId ?? null, options.householdId ?? null).all<{ object_key: string }>();
     if (page.results.length === 0) break;
-    const outcomes = await Promise.allSettled(page.results.map((row) => provider.delete(row.object_key)));
+    // External objects are removed by the device that can reach them; only the record is dropped here.
+    const outcomes = await Promise.allSettled(page.results.map((row) => row.object_key.startsWith(EXTERNAL_KEY_PREFIX) ? Promise.resolve() : provider.delete(row.object_key)));
     const done = page.results.filter((_, index) => outcomes[index].status === "fulfilled").map((row) => row.object_key);
     for (const key of done) await db.prepare("DELETE FROM sync_object_deletions WHERE object_key = ?").bind(key).run();
     result.deleted += done.length;
@@ -640,4 +665,69 @@ export async function deleteHouseholdData(ctx: SyncContext, household: Household
     AND NOT EXISTS (SELECT 1 FROM sync_object_deletions WHERE household_id = ?1)`).bind(household.id).run();
   // A late chunk write may have queued another object; the next attempt removes it.
   if (await db.prepare("SELECT id FROM sync_households WHERE id = ?").bind(household.id).first()) throw new SyncError(503, "deletion_incomplete");
+}
+
+export interface ExternalChunkInput { versionId: string; index: number; size: number; sha256: string; ref: string }
+
+/**
+ * Records a chunk the device has already stored in the version's external location.
+ * The server cannot read it; the size and SHA-256 are checked again by every device
+ * that downloads it, before decryption authenticates the content.
+ */
+export async function registerExternalChunk(ctx: SyncContext, household: HouseholdRow, device: DeviceRow, input: ExternalChunkInput) {
+  assertActive(household);
+  const { db, now, limits } = ctx;
+  const version = await getVersion(db, household.id, input.versionId);
+  if (!version) throw new SyncError(404, "version_not_found");
+  if (!version.storage) throw new SyncError(409, "not_external_storage");
+  if (version.state !== "uploading") throw new SyncError(409, "version_not_uploading");
+  if (version.expires_at <= now) throw new SyncError(410, "upload_expired");
+  if (version.generation !== household.generation) throw new SyncError(409, "generation_mismatch", { generation: household.generation });
+  if (input.index < 0 || input.index >= version.chunk_count) throw new SyncError(400, "invalid_chunk_index");
+  if (input.size < 1) throw new SyncError(400, "invalid_request");
+  if (input.size > limits.maxChunkBytes) throw new SyncError(413, "chunk_too_large");
+  const key = `${EXTERNAL_KEY_PREFIX}${household.id}/${version.object_prefix}/${input.index}`;
+  const existing = await db.prepare("SELECT chunk_index, sha256, size_bytes, object_key, state, external_ref FROM sync_chunks WHERE version_id = ? AND chunk_index = ?")
+    .bind(input.versionId, input.index).first<ChunkRow>();
+  if (existing) {
+    if (existing.sha256 !== input.sha256 || existing.size_bytes !== input.size || existing.external_ref !== input.ref) throw new SyncError(409, "chunk_conflict");
+    return { created: false, index: input.index, size: input.size, sha256: input.sha256 };
+  }
+  const inserted = await db.prepare(`INSERT INTO sync_chunks(household_id, version_id, chunk_index, sha256, size_bytes, object_key, state, created_at, external_ref)
+    SELECT ?1, ?2, ?3, ?4, ?5, ?6, 'stored', ?7, ?11
+    WHERE EXISTS (SELECT 1 FROM sync_versions v JOIN sync_households h ON h.id = v.household_id
+        WHERE v.id = ?2 AND v.state = 'uploading' AND v.expires_at > ?7 AND h.status = 'active' AND h.generation = v.generation)
+      AND EXISTS (SELECT 1 FROM sync_devices WHERE id = ?8 AND household_id = ?1 AND revoked_at IS NULL AND generation = ?9)
+      AND (SELECT COALESCE(SUM(size_bytes), 0) FROM sync_chunks WHERE version_id = ?2) + ?5 <= ?10
+    ON CONFLICT DO NOTHING`)
+    .bind(household.id, input.versionId, input.index, input.sha256, input.size, key, now, device.id, household.generation, version.total_bytes, input.ref).run();
+  if (changes(inserted) !== 1) {
+    const raced = await db.prepare("SELECT sha256, size_bytes, external_ref FROM sync_chunks WHERE version_id = ? AND chunk_index = ?").bind(input.versionId, input.index)
+      .first<{ sha256: string; size_bytes: number; external_ref: string | null }>();
+    if (raced && raced.sha256 === input.sha256 && raced.size_bytes === input.size && raced.external_ref === input.ref) {
+      return { created: false, index: input.index, size: input.size, sha256: input.sha256 };
+    }
+    throw new SyncError(409, raced ? "chunk_conflict" : "upload_rejected");
+  }
+  return { created: true, index: input.index, size: input.size, sha256: input.sha256 };
+}
+
+/**
+ * Removes versions kept in a storage location the household no longer uses, after the
+ * user switched locations. The current version is never removed. External chunks only
+ * lose their records; the device deletes the files it can reach.
+ */
+export async function deleteOtherStorageVersions(ctx: SyncContext, household: HouseholdRow) {
+  assertActive(household);
+  const { db } = ctx;
+  const current = storageOf(household.provider);
+  const where = `household_id = ?1 AND state IN ('published', 'conflict')
+      AND id IS NOT (SELECT current_version_id FROM sync_households WHERE id = ?1)
+      AND COALESCE(storage, 'kakeimatch-cloud') <> ?2`;
+  // D1 counts cascaded chunk rows in `changes`, so the versions are counted first.
+  const counted = await db.prepare(`SELECT COUNT(*) AS count FROM sync_versions WHERE ${where}`).bind(household.id, current).first<{ count: number }>();
+  await db.prepare(`DELETE FROM sync_versions WHERE ${where}`).bind(household.id, current).run();
+  const drained = await drainObjectDeletions(ctx, { householdId: household.id });
+  if (drained.failed > 0) throw new SyncError(503, "deletion_incomplete");
+  return { removedVersions: counted?.count ?? 0 };
 }

@@ -13,6 +13,7 @@ import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
+import { captureGoogleDriveReturn } from './google-drive-storage';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -427,7 +428,9 @@ if ('serviceWorker' in navigator) {
   });
 }
 message.textContent = '家計簿を準備しています…';
-void initializeLocalUi({ openAccount: () => showTab('settings'), reauthenticate: async () => {
+// Google returns here after the Google Drive consent page; the reply is read and removed at once.
+const googleDriveReturn = captureGoogleDriveReturn();
+void initializeLocalUi({ openAccount: () => showTab('settings'), googleDriveReturn, reauthenticate: async () => {
   const result = await authClient.signIn.passkey();
   if (result.error) return false;
   await refreshAccount();
@@ -437,4 +440,8 @@ void initializeLocalUi({ openAccount: () => showTab('settings'), reauthenticate:
 }).catch((error: unknown) => {
   recordLocalDiagnostic(error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema') ? 'migration' : 'startup', error);
   message.textContent = error instanceof LocalDataStorageError ? error.message : '端末の家計簿を開けませんでした。保存状態を確認し、再読込してください。';
+}).finally(() => {
+  if (!googleDriveReturn) return;
+  showTab('settings');
+  document.getElementById('device-sync-settings')?.scrollIntoView({ block: 'start' });
 });

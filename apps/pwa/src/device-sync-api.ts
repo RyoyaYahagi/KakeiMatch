@@ -10,13 +10,16 @@ export class SyncApiError extends Error {
   }
 }
 
+/** Where encrypted versions are kept. Google Drive is written by the device itself. */
+export type SyncStorageName = 'kakeimatch-cloud' | 'google-drive';
 export type SyncVersion = {
-  versionId: string; parentVersionId: string | null; generation: number; sequence: number | null;
+  versionId: string; parentVersionId: string | null; generation: number; sequence: number | null; storage: SyncStorageName;
   state: 'published' | 'conflict'; chunkCount: number; totalBytes: number; createdAt: string; publishedAt: string | null;
 };
-export type SyncVersionDetail = SyncVersion & { chunks: Array<{ index: number; size: number; sha256: string }> };
-export type SyncCurrent = { householdId: string; generation: number; provider: string; status: string; currentSequence: number; current: SyncVersion | null };
-export type DeviceRegistration = { householdId: string; generation: number; provider: string; deviceId: string; credential: string };
+export type SyncVersionDetail = SyncVersion & { chunks: Array<{ index: number; size: number; sha256: string; ref?: string }> };
+export type SyncCurrent = { householdId: string; generation: number; storage: SyncStorageName; status: string; currentSequence: number; current: SyncVersion | null };
+export type SyncConfig = { googleDrive: { clientId: string } | null };
+export type DeviceRegistration = { householdId: string; generation: number; storage: SyncStorageName; deviceId: string; credential: string };
 export type PublishResult = { outcome: 'published' | 'conflict'; versionId: string; sequence: number | null; currentVersionId: string | null };
 export type SyncDevice = { deviceId: string; generation: number; createdAt: string; revokedAt: string | null; current: boolean };
 
@@ -28,7 +31,8 @@ export class DeviceSyncApi {
   /** The same client, authenticating as this device for device-scoped requests. */
   withCredential(credential: string): DeviceSyncApi { return new DeviceSyncApi(this.fetchImpl, credential); }
 
-  createHousehold(householdId: string) { return this.json<DeviceRegistration>('POST', '/households', { householdId }, false); }
+  config() { return this.json<SyncConfig>('GET', '/config', undefined, false); }
+  createHousehold(householdId: string, storage: SyncStorageName) { return this.json<DeviceRegistration>('POST', '/households', { householdId, storage }, false); }
   joinHousehold() { return this.json<DeviceRegistration>('POST', '/devices', undefined, false); }
   current() { return this.json<SyncCurrent>('GET', '/current'); }
   putKey(generation: number, protectedKey: ProtectedHouseholdKey) { return this.json<{ generation: number }>('PUT', '/key', { generation, protectedKey }); }
@@ -36,10 +40,16 @@ export class DeviceSyncApi {
   listDevices() { return this.json<{ devices: SyncDevice[] }>('GET', '/devices'); }
   revokeDevice(deviceId: string) { return this.json<{ generation: number }>('POST', `/devices/${deviceId}/revoke`); }
   deleteHousehold() { return this.json<{ deleted: true }>('DELETE', '/household', undefined, false); }
-  beginUpload(input: { requestId: string; versionId: string; baseVersionId: string | null; generation: number; chunkCount: number; totalBytes: number }) {
+  beginUpload(input: { requestId: string; versionId: string; baseVersionId: string | null; generation: number; chunkCount: number; totalBytes: number; storage: SyncStorageName }) {
     return this.json<{ versionId: string }>('POST', '/uploads', input);
   }
   version(versionId: string) { return this.json<SyncVersionDetail>('GET', `/versions/${versionId}`); }
+  versions() { return this.json<{ versions: SyncVersion[] }>('GET', '/versions'); }
+  registerExternalChunk(versionId: string, index: number, input: { size: number; sha256: string; ref: string }) {
+    return this.json<{ index: number }>('PUT', `/versions/${versionId}/chunks/${index}/external`, input);
+  }
+  /** Removes versions kept in a storage location the household no longer uses. */
+  deleteOtherStorageVersions() { return this.json<{ removedVersions: number }>('DELETE', '/versions?storage=other'); }
   conflicts() { return this.json<{ versions: SyncVersion[] }>('GET', '/versions?state=conflict'); }
   request(requestId: string) { return this.json<{ outcome: string; versionId: string; sequence: number | null }>('GET', `/requests/${requestId}`); }
 
