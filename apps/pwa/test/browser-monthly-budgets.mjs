@@ -168,6 +168,14 @@ try {
   });
   await homeMonth('2026年12月');
   await page.getByText('12月の予算 · ¥0 / ¥5,000', { exact: true }).waitFor();
+
+  // A monthly override can be removed and falls back to the basic monthly plan.
+  await monthEditor('2026年12月');
+  await click('基本予算に戻す');
+  await page.getByText('予算を保存しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
+  await homeMonth('2026年12月');
+  await page.getByText('12月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
   await moveHome('2027年1月');
   await page.getByText('1月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
 
