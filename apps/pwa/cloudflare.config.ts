@@ -12,6 +12,8 @@ export default defineConfig(({ mode, isPreview }) => {
   // Device sync (Issue #143) stays unavailable (`/api/sync/*` answers 503) unless
   // an existing private R2 bucket is named here. No bucket is created by this config.
   const syncBucketName = process.env.SYNC_R2_BUCKET_NAME?.trim();
+  // Public OAuth client ID. Google Drive is offered for sync only when it is set.
+  const googleOAuthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID?.trim();
   return {
     worker: {
       name: production ? 'kakeimatch' : 'kakeimatch-issue-39-preview',
@@ -37,6 +39,7 @@ export default defineConfig(({ mode, isPreview }) => {
         JEV_MODEL: bindings.text('jev-latest'),
         TYPESAFE_API_URL: bindings.text('https://api.typesafe.ai/v1/systemone'),
         ...(syncBucketName ? { SYNC_BUCKET: bindings.r2({ name: syncBucketName }) } : {}),
+        ...(googleOAuthClientId ? { GOOGLE_OAUTH_CLIENT_ID: bindings.text(googleOAuthClientId) } : {}),
       },
     },
   };

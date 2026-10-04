@@ -102,6 +102,9 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 | `GET /versions/{id}` | session + 端末 | 版の詳細とチャンク一覧 |
 | `GET /versions/{id}/chunks/{index}` | session + 端末 | チャンクの取得 |
 | `DELETE /household` | session + 再認証 | クラウド側の同期データをすべて削除する |
+| `GET /config` | なし | 公開設定。Google Driveを選べる場合はOAuthクライアントID（公開値） |
+| `PUT /versions/{id}/chunks/{index}/external` | session + 端末 | 端末がGoogle Driveに保存したチャンクの参照（ファイルID）・サイズ・SHA-256を記録する |
+| `DELETE /versions?storage=other` | session + 端末 | 使っていない保存先に残る版を削除する（現在の版は残す） |
 | `PUT /key` | session + 端末 | 現在の世代の保護済み鍵を保存する。同じ鍵の再送は成功、別の鍵は `409 key_exists` |
 | `GET /key` | session + 端末 | 現在の世代の保護済み鍵を返す。参加した端末が復旧コードで鍵を復元するのに使う |
 
@@ -109,7 +112,8 @@ R2 Providerは、R2 bindingの最小の構造型だけを使い、SDKに依存�
 
 ## 設定と適用
 
-- D1: `workers/ai-gateway/migrations/0009_device_sync.sql` と `0011_sync_household_keys.sql` を適用する（`0008` と `0010` は別の変更で使う）。同期を使わない構成でも、テーブルは使われないだけで害はない。
+- D1: `workers/ai-gateway/migrations/0009_device_sync.sql`、`0011_sync_household_keys.sql`、`0012_sync_external_storage.sql` を適用する（`0008` と `0010` は別の変更で使う）。
+- Google Drive: 環境変数 `GOOGLE_OAUTH_CLIENT_ID` を指定した場合だけ `GOOGLE_OAUTH_CLIENT_ID`（公開値のtext binding）を設定し、画面で保存先として選べるようになる。下の「Google Drive」を参照。同期を使わない構成でも、テーブルは使われないだけで害はない。
 - R2: `apps/pwa/cloudflare.config.ts` は、環境変数 `SYNC_R2_BUCKET_NAME` に既存の非公開バケット名を指定した場合だけ `SYNC_BUCKET` を設定する。未設定ならbindingを追加せず、既存のdeployに影響しない。本変更はバケットの作成、deploy、本番設定の変更をしていない。公開アクセスは有効にしない。
 
 ## 端末側の一貫性
@@ -209,13 +213,31 @@ Web Locks `kakeimatch-household:<profileId>` を使う。書き込みは共有�
 - 失効した端末自身が「この端末の同期を停止」を選んでも、サーバー上の端末登録は残る。他の端末から失効させる。
 - 2端末相当の確認は、実際の `/api/sync` 処理（D1はnode:sqlite、Providerはメモリー）を使い、単体テストでは端末2〜3台分の保存領域、E2E（`test:device-sync-e2e`）では2つのブラウザーで行った。E2EのCloud accountのsessionは合成で、Passkeyログインそのものは `test:auth-e2e` の対象。実R2・iPhoneは未確認。
 
+## Google Drive
+
+保存先の2つ目。利用者自身のGoogle Driveへ暗号化したチャンクを置き、KakeiMatch Cloudへは二重に保存しない。D1には引き続き所有者・端末・世代・現在の版・順序、そしてDriveのファイルID・サイズ・SHA-256だけを置く。
+
+- **権限**: `https://www.googleapis.com/auth/drive.appdata` だけを求める。保存先はこのアプリ専用の隠しフォルダ（appDataFolder）で、利用者がフォルダを作ったりファイルを選んだりする必要はない。他のファイルは読めない。ファイル名は `kakeimatch-sync-<乱数>` で、店名・金額・日付を含めない。[Google Drive API (2026/10), Store application-specific data](https://developers.google.com/workspace/drive/api/guides/appdata)
+- **接続**: アプリは家計簿エンジンのため `Cross-Origin-Opener-Policy: same-origin` を使い、ポップアップ型のサインインは結果を受け取れない。そこでGoogleの同意画面へページごと移動し、URLのフラグメントでアクセストークンを受け取る（クライアント側アプリ向けのOAuth 2.0）。送信した `state` と一致しない応答と、`drive.appdata` を許可しない応答は使わない。受け取ったらすぐアドレスバーから消す。[Google Identity (2026/10), OAuth 2.0 for Client-side Web Applications](https://developers.google.com/identity/protocols/oauth2/javascript-implicit-flow)
+- **トークン**: そのタブの `sessionStorage` だけに置き、KakeiMatchのサーバーへ送らない。リフレッシュトークンは発行も保存もしない。期限切れ・取り消し（401、権限不足の403）では同期だけを止めて `storage_reconnect_required` とし、「Google Driveに再接続」で同じ手順をやり直す。端末内の家計データはそのまま使える。利用制限の403では接続を切らない。
+- **書き込みと読み込み**: 端末が暗号化済みのチャンクをDriveへ保存し、返ったファイルIDを `PUT /versions/{id}/chunks/{index}/external` で記録してから比較付きで公開する。取り込みでは、サーバーの記録から期待するサイズ・SHA-256・暗号化の識別情報を決め、Driveから読んだチャンクを検証してから復号する。ファイルが削除・移動・権限取消で読めない場合は空の家計簿として扱わず、何も変えずに失敗する。
+- **後片付け**: 公開に成功した後、サーバーが保持する版が参照しない、24時間以上前のこのアプリのファイルを削除する。24時間は、他の端末が保存して記録する前のファイルを消さないための猶予で、未公開アップロードの期限と同じ。失敗しても次の公開でやり直す。
+- **接続の解除とデータの削除は別の操作**: 「Google Driveの接続を解除」はこの端末のトークンを消してGoogleへ取り消しを依頼するだけで、端末内とDrive上のデータは消さない。「Google Drive上の同期データを削除」は接続した状態でだけ実行でき、このアプリのDriveファイルをすべて削除してから同期の記録を削除する。
+
+- **アカウント削除**: サーバーは利用者のDriveに触れられないため、Cloud accountの削除では同期の記録だけが消え、Drive上のファイルは残る。消す場合は、先に「Google Drive上の同期データを削除」を使うか、Googleアカウントの設定からこのアプリのデータを削除する。
+
+### 保存先の切り替え
+
+保存先は版ごとに記録し（`sync_versions.storage`）、家計簿の保存先は**公開に成功した版の保存先**へ同じトランザクションで移る。切り替えでは、まず同期してから、この端末の家計簿を新しい保存先へ完全に保存し、比較付きで公開する。途中で失敗した場合や他の端末が先に公開した場合は、元の保存先のまま使える。常時の二重書き込みはしない。元の保存先の版は保持数を超えるまで残り、「使っていない保存先のデータを削除」（`DELETE /versions?storage=other` とDriveの不要ファイル削除）で消せる。
+
+iCloud Driveは初期のPWAでは扱わず、画面にも出さない。
+
 ## 未実装（#143の残り）
 
 次は未実装。
 
 - 競合版の一覧・書き出し（競合時は「この端末の内容を使う」「別の端末の内容を使う」の選択までを実装。選ばなかった版はクラウドの履歴・競合版として残るが、画面から取り出す操作はない）
-- Google Drive Providerと保存先の切り替え
-- Provider横断のE2E
+- Google Driveの本番設定（Google CloudのOAuthクライアント・同意画面）と、実際のGoogleでの接続確認
 - iPhone実機とPCでの確認
 - 回収の定期実行、アカウント削除画面からの同期削除の接続（#151）
 

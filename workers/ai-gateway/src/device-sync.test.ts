@@ -34,7 +34,7 @@ vi.mock("./account-auth", async (importOriginal) => {
 
 const origin = "https://sync.example.test";
 const T0 = Date.parse("2026-10-03T12:00:00Z");
-const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0011_sync_household_keys.sql"]
+const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0011_sync_household_keys.sql", "0012_sync_external_storage.sql"]
   .map((name) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8").replace(/^\s*--.*$/gm, "").replace(/\s+/g, " ").trim())
   .join("\n");
 
@@ -761,5 +761,73 @@ describe("protected household keys", () => {
     expect((await call("PUT", "/key", { credential: first.credential, body: { generation: 2, protectedKey: protectedKey(first.householdId, 2, "c") } })).status).toBe(200);
     expect((await call("GET", "/key", { credential: first.credential })).json.protectedKey.generation).toBe(2);
     expect((await call("GET", "/key", { credential: second.credential })).json.error).toBe("device_revoked");
+  });
+});
+
+describe("storage the device writes itself (Google Drive)", () => {
+  async function beginExternal(credential: string, base: string | null, count = 2) {
+    const versionId = fresh();
+    const payloads = await Promise.all(Array.from({ length: count }, (_, index) => chunkPayload(`${versionId}-${index}`, 24 + index)));
+    const current = await call("GET", "/current", { credential });
+    const begin = await call("POST", "/uploads", { credential, body: {
+      requestId: fresh(), versionId, baseVersionId: base, generation: current.json.generation, chunkCount: count,
+      totalBytes: payloads.reduce((sum, p) => sum + p.bytes.byteLength, 0), storage: "google-drive",
+    } });
+    expect(begin.status).toBe(201);
+    return { versionId, payloads };
+  }
+  const register_ = (credential: string, versionId: string, index: number, payload: { bytes: Uint8Array; sha256: string }, ref = `drive-file-${index}-abcdef`) =>
+    call("PUT", `/versions/${versionId}/chunks/${index}/external`, { credential, body: { size: payload.bytes.byteLength, sha256: payload.sha256, ref } });
+
+  it("records only references for chunks stored in Google Drive, never the ciphertext", async () => {
+    const created = await call("POST", "/households", { body: { householdId: fresh(), storage: "google-drive" } });
+    expect(created.json.storage).toBe("google-drive");
+    const credential = created.json.credential as string;
+    const { versionId, payloads } = await beginExternal(credential, null);
+    // The server's own provider never receives a chunk of an external version.
+    expect((await putChunk("alice", credential, versionId, 0, payloads[0])).json.error).toBe("external_storage");
+    expect((await register_(credential, versionId, 0, payloads[0])).status).toBe(201);
+    expect((await register_(credential, versionId, 0, payloads[0])).status).toBe(200);
+    expect((await register_(credential, versionId, 0, payloads[0], "drive-file-other-abcdef")).json.error).toBe("chunk_conflict");
+    expect((await call("PUT", `/versions/${versionId}/chunks/1/external`, { credential, body: { size: 1, sha256: payloads[1].sha256, ref: "../escape" } })).status).toBe(400);
+    expect((await register_(credential, versionId, 1, payloads[1])).status).toBe(201);
+    expect((await publish("alice", credential, versionId)).status).toBe(200);
+
+    const detail = await call("GET", `/versions/${versionId}`, { credential });
+    expect(detail.json.storage).toBe("google-drive");
+    expect(detail.json.chunks.map((chunk: Json) => chunk.ref)).toEqual(["drive-file-0-abcdef", "drive-file-1-abcdef"]);
+    expect((await call("GET", `/versions/${versionId}/chunks/0`, { credential })).json.error).toBe("external_storage");
+    expect(provider.keys()).toEqual([]);
+    expect((await call("GET", "/current", { credential })).json.storage).toBe("google-drive");
+  });
+
+  it("switches storage only when the first version in the new location is published", async () => {
+    const { credential } = await register();
+    const first = await upload(credential, { base: null });
+    await publish("alice", credential, first.versionId);
+    const switching = await beginExternal(credential, first.versionId);
+    for (const [index, payload] of switching.payloads.entries()) await register_(credential, switching.versionId, index, payload, `switch-${index}-abcdef`);
+    // Until the publish, the household still uses KakeiMatch Cloud.
+    expect((await call("GET", "/current", { credential })).json.storage).toBe("kakeimatch-cloud");
+    expect((await publish("alice", credential, switching.versionId)).json.outcome).toBe("published");
+    expect((await call("GET", "/current", { credential })).json.storage).toBe("google-drive");
+    expect(provider.keys().length).toBeGreaterThan(0);
+
+    // The old location's data stays until the user removes it; the current version always stays.
+    expect((await call("DELETE", "/versions?storage=other", { credential })).json.removedVersions).toBe(1);
+    expect(provider.keys()).toEqual([]);
+    expect((await call("GET", `/versions/${switching.versionId}`, { credential })).status).toBe(200);
+    expect((await call("DELETE", "/versions", { credential })).status).toBe(400);
+  });
+
+  it("keeps the old location when switching fails before publishing, and lets the upload expire", async () => {
+    const { credential } = await register();
+    const first = await upload(credential, { base: null });
+    await publish("alice", credential, first.versionId);
+    const switching = await beginExternal(credential, first.versionId);
+    await register_(credential, switching.versionId, 0, switching.payloads[0]);
+    clock.now += 25 * 60 * 60 * 1000;
+    expect((await publish("alice", credential, switching.versionId)).status).toBe(410);
+    expect((await call("GET", "/current", { credential })).json).toMatchObject({ storage: "kakeimatch-cloud", current: { versionId: first.versionId } });
   });
 });

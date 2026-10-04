@@ -25,6 +25,7 @@ import { DeviceSyncApi } from './device-sync-api';
 import { DeviceSyncEngine } from './device-sync-engine';
 import { DeviceSyncSecretStore } from './device-sync-secrets';
 import { initializeDeviceSyncUi } from './device-sync-ui';
+import { GoogleDriveStorage, type GoogleDriveReturn } from './google-drive-storage';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { getOrCreateLocalProfileId, LOCAL_PROFILE_KEY, LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
@@ -81,7 +82,7 @@ function watchHouseholdSwitch(profileId: string) {
   });
 }
 
-export async function initializeLocalUi(options: { openAccount: () => void; reauthenticate: () => Promise<boolean> }) {
+export async function initializeLocalUi(options: { openAccount: () => void; reauthenticate: () => Promise<boolean>; googleDriveReturn: GoogleDriveReturn | null }) {
   // Every household write in this tab goes through one guard for device sync bookkeeping.
   const guard = new HouseholdWriteGuard(getOrCreateLocalProfileId());
   const repository = await LocalDataRepository.open(guard.profileId, indexedDB, { writeGate: guard.repositoryGate });
@@ -1071,9 +1072,11 @@ export async function initializeLocalUi(options: { openAccount: () => void; reau
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
-  const sync = new DeviceSyncEngine({ api: new DeviceSyncApi(), secrets: new DeviceSyncSecretStore(), repository, ledger, guard });
+  const googleDrive = new GoogleDriveStorage();
+  const sync = new DeviceSyncEngine({ api: new DeviceSyncApi(), secrets: new DeviceSyncSecretStore(), repository, ledger, guard, externalStorage: googleDrive });
   await initializeBackupUi(repository, ledger, () => sync.stopOnThisDevice());
   const syncUi = initializeDeviceSyncUi(el('data-settings'), { engine: sync, guard, reauthenticate: options.reauthenticate,
+    googleDrive, googleDriveReturn: options.googleDriveReturn,
     // Imports switch households, so they wait while a work screen or a field is in use.
     isEditing: () => !view.hidden || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || document.activeElement instanceof HTMLSelectElement });
   el('backup-settings').after(el('device-sync-settings'));

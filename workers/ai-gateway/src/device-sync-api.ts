@@ -1,6 +1,7 @@
 import { getAccountSession, type AccountEnv } from "./account-auth";
 import {
   SyncError, assertActive, authorizeDevice, beginUpload, collectSyncGarbage, createHousehold, deleteHouseholdData,
+  deleteOtherStorageVersions, registerExternalChunk, EXTERNAL_STORAGES, type ExternalStorage,
   findHouseholdByOwner, getCurrent, hasRecentSignIn, isUuid, joinDevice, listDevices, listVersions, lookupRequest,
   openChunk, publishVersion, putChunk, revokeDevice, syncLimits, versionWithChunks,
   type DeviceRow, type HouseholdRow, type SyncContext, type SyncD1Database, type SyncLimitEnv,
@@ -14,6 +15,8 @@ export interface SyncApiEnv extends SyncLimitEnv {
   CLOUD_ACCOUNT_ORIGIN?: string;
   /** Private R2 bucket for KakeiMatch Cloud sync objects. Absent unless configured. */
   SYNC_BUCKET?: SyncR2Bucket;
+  /** Public OAuth client ID for Google Drive sync. Absent unless configured. */
+  GOOGLE_OAUTH_CLIENT_ID?: string;
 }
 export interface SyncApiOptions {
   /** Replaces the R2 provider. Used by tests. */
@@ -82,6 +85,11 @@ const uuid = (value: unknown): string => {
   if (!isUuid(value)) throw new SyncError(400, "invalid_request");
   return value;
 };
+const storage = (value: unknown): ExternalStorage | null => {
+  if (value === undefined || value === null || value === "kakeimatch-cloud") return null;
+  if (typeof value === "string" && (EXTERNAL_STORAGES as readonly string[]).includes(value)) return value as ExternalStorage;
+  throw new SyncError(400, "invalid_request");
+};
 const integer = (value: unknown, min: number, max: number): number => {
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < min || value > max) throw new SyncError(400, "invalid_request");
   return value;
@@ -105,7 +113,7 @@ async function requireNoBody(request: Request): Promise<void> {
 const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
   { method: "POST", pattern: /^\/households$/, route: { auth: "reauth", handle: async (call) => {
     const body = await readJsonBody(call.request);
-    return json(201, await createHousehold(call.ctx, call.userId, uuid(body.householdId)));
+    return json(201, await createHousehold(call.ctx, call.userId, uuid(body.householdId), storage(body.storage)));
   } } },
   { method: "DELETE", pattern: /^\/household$/, route: { auth: "reauth", handle: async (call) => {
     await requireNoBody(call.request);
@@ -145,6 +153,7 @@ const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
       generation: integer(body.generation, 1, Number.MAX_SAFE_INTEGER),
       chunkCount: integer(body.chunkCount, 1, limits.maxChunkCount),
       totalBytes: integer(body.totalBytes, 1, Number.MAX_SAFE_INTEGER),
+      storage: storage(body.storage),
     });
     const { created, ...upload } = result;
     return json(created ? 201 : 200, upload);
@@ -164,6 +173,23 @@ const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
     const result = await putChunk(call.ctx, household, device, { versionId: uuid(call.params[0]), index: Number(call.params[1]), size, sha256, body: call.request.body });
     const { created, ...chunk } = result;
     return json(created ? 201 : 200, chunk);
+  } } },
+  { method: "PUT", pattern: /^\/versions\/([0-9a-f-]{36})\/chunks\/(\d{1,4})\/external$/, route: { auth: "device", handle: async (call) => {
+    const { household, device } = requireDevice(call);
+    const body = await readJsonBody(call.request);
+    if (typeof body.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(body.sha256)) throw new SyncError(400, "invalid_request");
+    // An opaque file ID from the external location. It is never used as a path or URL here.
+    if (typeof body.ref !== "string" || !/^[A-Za-z0-9_-]{8,200}$/.test(body.ref)) throw new SyncError(400, "invalid_request");
+    const result = await registerExternalChunk(call.ctx, household, device, {
+      versionId: uuid(call.params[0]), index: Number(call.params[1]), size: integer(body.size, 1, Number.MAX_SAFE_INTEGER), sha256: body.sha256, ref: body.ref,
+    });
+    const { created, ...chunk } = result;
+    return json(created ? 201 : 200, chunk);
+  } } },
+  { method: "DELETE", pattern: /^\/versions$/, route: { auth: "device", handle: async (call) => {
+    await requireNoBody(call.request);
+    if (call.url.searchParams.get("storage") !== "other") throw new SyncError(400, "invalid_request");
+    return json(200, await deleteOtherStorageVersions(call.ctx, requireDevice(call).household));
   } } },
   { method: "POST", pattern: /^\/versions\/([0-9a-f-]{36})\/publish$/, route: { auth: "device", handle: async (call) => {
     const { household, device } = requireDevice(call);
@@ -202,6 +228,10 @@ export async function handleSyncRequest(request: Request, env: SyncApiEnv, optio
   const url = new URL(request.url);
   if (!url.pathname.startsWith("/api/sync/")) return json(404, { error: "not_found" });
   const subpath = url.pathname.slice("/api/sync".length);
+  // Public, non-secret settings for the settings screen. No session is needed to read them.
+  if (subpath === "/config" && request.method === "GET") {
+    return json(200, { googleDrive: env.GOOGLE_OAUTH_CLIENT_ID ? { clientId: env.GOOGLE_OAUTH_CLIENT_ID } : null });
+  }
   const matches = routes.filter((entry) => entry.pattern.test(subpath));
   if (matches.length === 0) return json(404, { error: "not_found" });
   const match = matches.find((entry) => entry.method === request.method);
