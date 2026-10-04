@@ -139,3 +139,36 @@ export function withMonthlyPlan(
   }
   return monthlyBudgetSettingsSchema.parse(next);
 }
+
+
+export function clearDefaultPlan(settings: MonthlyBudgetSettings): MonthlyBudgetSettings {
+  const next = structuredClone(settings);
+  delete next.defaultTotal;
+  delete next.defaultBreakdown;
+  next.defaults = {};
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+export function resetMonthlyPlan(
+  settings: MonthlyBudgetSettings,
+  yearMonth: string,
+  categoryIds: string[],
+): MonthlyBudgetSettings {
+  const month = yearMonthSchema.parse(yearMonth);
+  const next = structuredClone(settings);
+  next.monthlyTotals ??= {};
+  next.monthlyBreakdown ??= {};
+  next.monthlyTotals[month] = { inherit: true };
+  next.monthlyBreakdown[month] = { inherit: true };
+  next.monthlyOverrides[month] = Object.fromEntries(
+    categoryIds.map(categoryId => [categoryIdSchema.parse(categoryId), { inherit: true }]),
+  );
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+export function hasExplicitMonthlyPlan(settings: MonthlyBudgetSettings, yearMonth: string): boolean {
+  const month = yearMonthSchema.parse(yearMonth);
+  if (typeof settings.monthlyTotals?.[month] === "number") return true;
+  if (typeof settings.monthlyBreakdown?.[month] === "boolean") return true;
+  return Object.values(settings.monthlyOverrides[month] ?? {}).some(value => typeof value === "number");
+}
