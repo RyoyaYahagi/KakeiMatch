@@ -561,6 +561,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       itemsTab.setAttribute('aria-pressed', String(itemsOnly));
       overviewExtras.hidden = itemsOnly;
       overviewFields.hidden = itemsOnly;
+      // Keep the overview focused on the fields needed to confirm and register.
+      // Item-level details, discounts, tax and item-total differences belong only to the items pane.
+      purchaseDetails.hidden = !itemsOnly;
+      warning.hidden = !itemsOnly;
       purchaseDetails.classList.toggle('items-only', itemsOnly);
       if (itemsOnly) purchaseDetails.open = true;
       if (scroll) editorTabs.scrollIntoView({ block: 'start' });
