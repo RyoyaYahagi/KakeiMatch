@@ -1,7 +1,7 @@
 import { getAccountSession, type AccountEnv } from "./account-auth";
 import {
   SyncError, assertActive, authorizeDevice, beginUpload, collectSyncGarbage, createHousehold, deleteHouseholdData,
-  deleteOtherStorageVersions, registerExternalChunk, EXTERNAL_STORAGES, type ExternalStorage,
+  deleteKeptVersion, deleteOtherStorageVersions, keepVersion, listDeletingHouseholds, listExternalRefs, registerExternalChunk, EXTERNAL_STORAGES, type ExternalStorage,
   findHouseholdByOwner, getCurrent, hasRecentSignIn, isUuid, joinDevice, listDevices, listVersions, lookupRequest,
   openChunk, publishVersion, putChunk, revokeDevice, syncLimits, versionWithChunks,
   type DeviceRow, type HouseholdRow, type SyncContext, type SyncD1Database, type SyncLimitEnv,
@@ -204,11 +204,19 @@ const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
   } } },
   { method: "GET", pattern: /^\/versions$/, route: { auth: "device", handle: async (call) => {
     const state = call.url.searchParams.get("state");
-    if (state !== null && state !== "published" && state !== "conflict") throw new SyncError(400, "invalid_request");
+    if (state !== null && state !== "published" && state !== "conflict" && state !== "kept") throw new SyncError(400, "invalid_request");
     return json(200, { versions: await listVersions(call.ctx.db, requireDevice(call).household, state) });
   } } },
   { method: "GET", pattern: /^\/versions\/([0-9a-f-]{36})$/, route: { auth: "device", handle: async (call) =>
     json(200, await versionWithChunks(call.ctx.db, requireDevice(call).household, uuid(call.params[0]))) } },
+  { method: "DELETE", pattern: /^\/versions\/([0-9a-f-]{36})$/, route: { auth: "device", handle: async (call) => {
+    await requireNoBody(call.request);
+    return json(200, await deleteKeptVersion(call.ctx, requireDevice(call).household, uuid(call.params[0])));
+  } } },
+  { method: "POST", pattern: /^\/versions\/([0-9a-f-]{36})\/keep$/, route: { auth: "device", handle: async (call) => {
+    await requireNoBody(call.request);
+    return json(200, await keepVersion(call.ctx, requireDevice(call).household, uuid(call.params[0])));
+  } } },
   { method: "GET", pattern: /^\/versions\/([0-9a-f-]{36})\/chunks\/(\d{1,4})$/, route: { auth: "device", handle: async (call) => {
     const chunk = await openChunk(call.ctx, requireDevice(call).household, uuid(call.params[0]), Number(call.params[1]));
     return new Response(chunk.body, {
@@ -219,6 +227,8 @@ const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
       },
     });
   } } },
+  { method: "GET", pattern: /^\/external-refs$/, route: { auth: "device", handle: async (call) =>
+    json(200, await listExternalRefs(call.ctx.db, requireDevice(call).household)) } },
   { method: "GET", pattern: /^\/requests\/([0-9a-f-]{36})$/, route: { auth: "device", handle: async (call) =>
     json(200, await lookupRequest(call.ctx.db, requireDevice(call).household, uuid(call.params[0]))) } },
 ];
@@ -273,4 +283,35 @@ export async function handleSyncRequest(request: Request, env: SyncApiEnv, optio
     console.warn("sync_unavailable");
     return json(503, { error: "temporarily_unavailable" });
   }
+}
+
+export type SyncMaintenanceResult =
+  | { status: "not_configured" }
+  | { status: "done"; expiredUploads: number; prunedVersions: number; deletedObjects: number; failedObjects: number; finishedDeletions: number; unfinishedDeletions: number };
+
+/**
+ * Scheduled cleanup (Cron Trigger). For every household it removes expired uploads, history
+ * beyond the retention count and old request records, and deletes queued objects. That queue
+ * also holds the objects of deleted accounts, whose rows were removed by cascade. Cloud
+ * deletions that stopped part way are finished. Kept versions are never selected.
+ */
+export async function runSyncMaintenance(env: SyncApiEnv, options: Pick<SyncApiOptions, "provider" | "now"> = {}): Promise<SyncMaintenanceResult> {
+  const provider = options.provider ?? (env.SYNC_BUCKET ? new R2SyncStorageProvider(env.SYNC_BUCKET) : null);
+  if (!env.ACCOUNT_DB || !provider) return { status: "not_configured" };
+  const ctx: SyncContext = { db: env.ACCOUNT_DB, provider, limits: syncLimits(env), now: (options.now ?? Date.now)() };
+  let finishedDeletions = 0;
+  let unfinishedDeletions = 0;
+  for (const household of await listDeletingHouseholds(ctx.db, 20)) {
+    try {
+      await deleteHouseholdData(ctx, household);
+      finishedDeletions += 1;
+    } catch {
+      unfinishedDeletions += 1;
+    }
+  }
+  const garbage = await collectSyncGarbage(ctx);
+  return {
+    status: "done", expiredUploads: garbage.expiredUploads, prunedVersions: garbage.prunedVersions,
+    deletedObjects: garbage.deleted, failedObjects: garbage.failed, finishedDeletions, unfinishedDeletions,
+  };
 }

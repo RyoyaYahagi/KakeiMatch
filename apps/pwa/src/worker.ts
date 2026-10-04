@@ -1,5 +1,5 @@
 import { handleAccountRequest, handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
-import { handleSyncRequest, type SyncApiEnv } from '../../../workers/ai-gateway/src/device-sync-api';
+import { handleSyncRequest, runSyncMaintenance, type SyncApiEnv } from '../../../workers/ai-gateway/src/device-sync-api';
 import { handleRequest as handleAiRequest } from '../../../workers/ai-gateway/src/worker';
 import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
 
@@ -34,6 +34,14 @@ const appWorker = {
       status: 404,
       headers: { 'content-type': 'application/json; charset=utf-8' },
     }));
+  },
+
+  /** Cron Trigger: device sync cleanup (Issue #143). Only counts are logged, never IDs or contents. */
+  async scheduled(_controller: unknown, env: AppEnv, ctx: { waitUntil(promise: Promise<unknown>): void }): Promise<void> {
+    ctx.waitUntil(runSyncMaintenance(env).then(
+      result => { console.log(JSON.stringify({ event: 'sync_maintenance', ...result })); },
+      () => { console.warn(JSON.stringify({ event: 'sync_maintenance', status: 'failed' })); },
+    ));
   },
 };
 

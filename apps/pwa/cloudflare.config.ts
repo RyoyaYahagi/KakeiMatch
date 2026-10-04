@@ -1,4 +1,4 @@
-import { bindings, defineConfig } from 'cf/config';
+import { bindings, defineConfig, triggers } from 'cf/config';
 import process from 'node:process';
 
 // Ordinary builds and previews never select the canonical production Worker.
@@ -21,6 +21,9 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
       assets: { runWorkerFirst: ['/api/*'] },
+      // Daily device sync cleanup at 03:17 JST: expired uploads, old history, and objects of
+      // deleted households and accounts. Only added when sync storage is configured.
+      ...(syncBucketName ? { triggers: [triggers.scheduled({ schedule: '17 18 * * *' })] } : {}),
       env: {
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),
         BETTER_AUTH_SECRET: bindings.secret(),

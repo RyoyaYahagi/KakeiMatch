@@ -15,6 +15,9 @@ export type SyncStorageName = 'kakeimatch-cloud' | 'google-drive';
 export type SyncVersion = {
   versionId: string; parentVersionId: string | null; generation: number; sequence: number | null; storage: SyncStorageName;
   state: 'published' | 'conflict'; chunkCount: number; totalBytes: number; createdAt: string; publishedAt: string | null;
+  createdByDeviceId: string;
+  /** Set on a published version kept because the user chose another one over it. */
+  keptAt: string | null;
 };
 export type SyncVersionDetail = SyncVersion & { chunks: Array<{ index: number; size: number; sha256: string; ref?: string }> };
 export type SyncCurrent = { householdId: string; generation: number; storage: SyncStorageName; status: string; currentSequence: number; current: SyncVersion | null };
@@ -44,13 +47,17 @@ export class DeviceSyncApi {
     return this.json<{ versionId: string }>('POST', '/uploads', input);
   }
   version(versionId: string) { return this.json<SyncVersionDetail>('GET', `/versions/${versionId}`); }
-  versions() { return this.json<{ versions: SyncVersion[] }>('GET', '/versions'); }
   registerExternalChunk(versionId: string, index: number, input: { size: number; sha256: string; ref: string }) {
     return this.json<{ index: number }>('PUT', `/versions/${versionId}/chunks/${index}/external`, input);
   }
   /** Removes versions kept in a storage location the household no longer uses. */
   deleteOtherStorageVersions() { return this.json<{ removedVersions: number }>('DELETE', '/versions?storage=other'); }
-  conflicts() { return this.json<{ versions: SyncVersion[] }>('GET', '/versions?state=conflict'); }
+  /** Versions the user did not choose: never cleaned up automatically. */
+  keptVersions() { return this.json<{ versions: SyncVersion[] }>('GET', '/versions?state=kept'); }
+  keepVersion(versionId: string) { return this.json<SyncVersion>('POST', `/versions/${versionId}/keep`); }
+  /** File references in the device's own storage that some version still uses. */
+  externalRefs() { return this.json<{ refs: string[] }>('GET', '/external-refs'); }
+  deleteVersion(versionId: string) { return this.json<{ deleted: true }>('DELETE', `/versions/${versionId}`); }
   request(requestId: string) { return this.json<{ outcome: string; versionId: string; sequence: number | null }>('GET', `/requests/${requestId}`); }
 
   /** A 409 conflict is an expected outcome of compare-and-swap, not an error. */
