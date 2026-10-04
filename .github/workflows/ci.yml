@@ -24,7 +24,9 @@ concurrency:
 jobs:
   ci:
     if: ${{ !github.event.pull_request.draft }}
-    runs-on: ubuntu-latest
+    # The repository variable CI_RUNNER=self-hosted runs CI on the always-on host
+    # without billed minutes; when it is unset, GitHub-hosted runners are used.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -50,17 +52,20 @@ jobs:
       # The runner image already provides Chromium's system libraries, so skip the slow apt step.
       - run: pnpm --dir apps/pwa exec playwright-core install chromium
       - name: Synthetic local-first flows without legacy runtime
+        env:
+          # A dev server may already hold 5173 on the self-hosted host.
+          E2E_PORT: 5199
         run: |
           unset ACTUAL_SERVER_URL ACTUAL_SERVER_PASSWORD ACTUAL_CLI_DATA_DIR
           unset RECEIPT_STORAGE_DIR STATEMENT_STORAGE_DIR DATABASE_PATH
-          pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port 5173 > /tmp/kakeimatch-pwa-dev.log 2>&1 &
+          pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port "$E2E_PORT" --strictPort > "$RUNNER_TEMP/kakeimatch-pwa-dev.log" 2>&1 &
           pwa_pid=$!
           trap 'kill "$pwa_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:5173/ > /dev/null; then break; fi
+            if curl --fail --silent "http://127.0.0.1:$E2E_PORT/" > /dev/null; then break; fi
             sleep 1
           done
-          export PWA_E2E_URL=http://127.0.0.1:5173
+          export PWA_E2E_URL="http://127.0.0.1:$E2E_PORT"
           mkdir -p e2e-logs
           # Keep each script's output separate so parallel logs stay readable.
           run_script() {
@@ -89,5 +94,5 @@ jobs:
           name: e2e-logs
           path: |
             e2e-logs/
-            /tmp/kakeimatch-pwa-dev.log
+            ${{ runner.temp }}/kakeimatch-pwa-dev.log
           retention-days: 7
