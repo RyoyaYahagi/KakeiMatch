@@ -20,32 +20,46 @@ export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudget
   const heading = node('summary');
   const headline = node('span', `${Number(summary.yearMonth.slice(5))}月の予算 · ${yen(summary.spentYen)} / ${yen(summary.budgetYen)}`); headline.className = 'budget-headline';
   heading.append(headline);
-  if (summary.budgetYen > 0) {
-    const meter = progress(summary, '予算全体の使用額'); meter.classList.add('budget-meter'); meter.classList.toggle('over', summary.remainingYen < 0);
+  if (summary.budgetConfigured) {
+    if (summary.budgetYen > 0) {
+      const meter = progress(summary, '予算全体の使用額'); meter.classList.add('budget-meter'); meter.classList.toggle('over', summary.remainingYen < 0);
+      heading.append(meter);
+    }
     const remaining = node('span', summary.remainingYen < 0 ? `超過 ${yen(-summary.remainingYen)}` : `残り ${yen(summary.remainingYen)}`); remaining.className = `budget-remaining${summary.remainingYen < 0 ? ' over' : ''}`;
-    heading.append(meter, remaining);
-  } else if (!configured.length) { const setup = node('span', '予算を設定する'); setup.className = 'budget-remaining'; heading.append(setup); }
+    heading.append(remaining);
+  } else {
+    const setup = node('span', '予算を設定する'); setup.className = 'budget-remaining'; heading.append(setup);
+  }
   details.append(heading);
-  if (!configured.length) details.append(node('p', 'この月の予算は未設定です。'));
-  else if (configured.some(category => category.budgetYen! >= 0)) {
-    const total = node('p', `予算対象カテゴリの合計：${amountLine(summary)}`); total.id = 'budget-total'; details.append(total);
+  if (!summary.budgetConfigured) {
+    details.append(node('p', 'この月の予算は未設定です。'));
+  } else {
+    const total = node('p', `全体予算：${amountLine(summary)}`); total.id = 'budget-total'; details.append(total);
+    if (!summary.breakdownEnabled) details.append(node('p', 'カテゴリ別の内訳は設定していません。'));
   }
-  const list = node('ul'); list.className = 'budget-category-list';
-  for (const category of configured) {
-    const row = node('li'); row.dataset.budgetCategory = category.categoryId;
-    row.append(node('p', `${category.categoryName} · ${amountLine({ ...category, budgetYen: category.budgetYen! })}`));
-    if (category.budgetYen! > 0) row.append(progress(category as { budgetYen: number; spentYen: number }, `${category.categoryName}の使用額`));
-    else if (category.budgetYen! < 0) row.append(node('p', 'この予算はマイナスの設定です。全体の予算合計には含めません。'));
-    list.append(row);
+  if (summary.breakdownEnabled) {
+    const list = node('ul'); list.className = 'budget-category-list';
+    for (const category of configured) {
+      const row = node('li'); row.dataset.budgetCategory = category.categoryId;
+      row.append(node('p', `${category.categoryName} · ${amountLine({ ...category, budgetYen: category.budgetYen! })}`));
+      if (category.budgetYen! > 0) row.append(progress(category as { budgetYen: number; spentYen: number }, `${category.categoryName}の使用額`));
+      list.append(row);
+    }
+    details.append(list);
   }
-  details.append(list, button('この月の予算を変更', edit)); target.append(details);
+  details.append(button('この月の予算を変更', edit)); target.append(details);
+}
+
+function parseAmount(value: string, label: string): number {
+  const amount = Number(value);
+  if (value.trim() === '' || !Number.isSafeInteger(amount) || amount < 0) throw new Error(`${label}は0円以上の整数で入力してください。`);
+  return amount;
 }
 
 export async function showMonthlyBudgetEditor(options: {
   view: HTMLElement; ledger: Ledger; service: LocalMonthlyBudgetService; yearMonth: string;
   mode: 'default' | 'monthly'; onBack: () => void; onMonth: (month: string) => void;
 }) {
-  // docs/UX.md 予算: every expense category on one screen, entered in place and saved together.
   let month = options.yearMonth;
   let mode = options.mode;
   let revision = 0;
@@ -74,68 +88,99 @@ export async function showMonthlyBudgetEditor(options: {
       options.view.append(navigation);
     }
     const loaded = await options.service.getSummary(month);
-    // Everyday categories first, the same order as the category screens.
     const summary = { ...loaded, categories: [...loaded.categories].sort((a, b) => categoryRank(a.categoryName) - categoryRank(b.categoryName)) };
-    const stored = await Promise.all(summary.categories.map(row => mode === 'default' ? options.service.defaultBudget(row.categoryId) : options.service.monthOverride(row.categoryId, month)));
+    const defaultPlan = mode === 'default' ? await options.service.getDefaultPlan() : null;
     if (current !== revision || !options.view.contains(title)) return;
     if (!summary.categories.length) { status.textContent = '先に支出カテゴリを追加してください。'; return; }
-    const totalValue = node('strong'); totalValue.className = 'num';
-    const total = node('div'); total.className = 'surface-section budget-total-card';
-    total.append(node('span', mode === 'default' ? '毎月の予算の合計' : `${monthLabel(month)}の予算の合計`), totalValue);
+
+    const totalCard = node('section'); totalCard.className = 'surface-section budget-total-card';
+    const totalLabel = node('label', mode === 'default' ? '1か月の全体予算' : `${monthLabel(month)}の全体予算`);
+    totalLabel.htmlFor = 'budget-overall-amount';
+    const totalField = node('span'); totalField.className = 'budget-input';
+    const totalInput = node('input'); totalInput.id = 'budget-overall-amount'; totalInput.type = 'number'; totalInput.inputMode = 'numeric'; totalInput.min = '0'; totalInput.step = '1'; totalInput.className = 'num';
+    const initialTotal = mode === 'default' ? defaultPlan?.totalYen : (summary.budgetConfigured ? summary.budgetYen : null);
+    totalInput.value = initialTotal === null || initialTotal === undefined ? '' : String(initialTotal);
+    totalInput.setAttribute('aria-label', '全体予算');
+    totalInput.placeholder = '例：50000';
+    totalField.append(node('span', '¥'), totalInput);
+    totalCard.append(totalLabel, totalField);
+
+    const breakdownRow = node('label'); breakdownRow.className = 'budget-breakdown-toggle';
+    const breakdown = document.createElement('input'); breakdown.type = 'checkbox'; breakdown.setAttribute('aria-label', 'カテゴリ別にも予算を設定する');
+    breakdown.checked = mode === 'default' ? Boolean(defaultPlan?.breakdownEnabled) : summary.breakdownEnabled;
+    breakdownRow.append(breakdown, node('span', 'カテゴリ別にも予算を設定する'));
+    totalCard.append(breakdownRow);
+
+    const categorySum = node('p'); categorySum.className = 'record-note'; totalCard.append(categorySum);
     const list = node('ul'); const section = node('section'); section.className = 'surface-section settings-rows budget-rows'; section.append(list);
-    const inputs: Array<{ categoryId: string; input: HTMLInputElement; initial: string }> = [];
+    const inputs: Array<{ categoryId: string; input: HTMLInputElement }> = [];
+    const defaultAllocations = defaultPlan?.allocations ?? {};
     summary.categories.forEach((row, index) => {
-      const value = stored[index];
-      const overridden = mode === 'monthly' && typeof value === 'number';
-      const initial = mode === 'default' ? (typeof value === 'number' ? String(value) : '') : overridden ? String(value) : row.budgetYen === null ? '' : String(row.budgetYen);
+      const initialAmount = mode === 'default'
+        ? (defaultAllocations[row.categoryId] ?? 0)
+        : (row.budgetYen ?? 0);
       const item = node('li'); item.className = 'budget-row'; item.dataset.budgetEditorCategory = row.categoryId;
       const tone = categoryTone(row.categoryName, row.categoryId);
       const badge = node('span'); badge.className = `record-icon tone-${tone.tone}`; badge.append(icon(tone.icon));
       const id = `budget-amount-${index}`;
       const label = node('label'); label.htmlFor = id; label.className = 'record-main';
-      const notes = [`今月 ${yen(row.spentYen)} 使用`, overridden ? 'この月だけ変更中' : ''].filter(Boolean).join(' · ');
-      label.append(Object.assign(node('span', row.categoryName), { className: 'record-title' }), Object.assign(node('span', notes), { className: 'record-note' }));
+      label.append(Object.assign(node('span', row.categoryName), { className: 'record-title' }), Object.assign(node('span', `今月 ${yen(row.spentYen)} 使用`), { className: 'record-note' }));
       const field = node('span'); field.className = 'budget-input';
-      const input = node('input'); input.id = id; input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1'; input.value = initial; input.className = 'num';
-      input.setAttribute('aria-label', `${row.categoryName}の予算`); input.placeholder = '予算なし';
+      const input = node('input'); input.id = id; input.type = 'number'; input.inputMode = 'numeric'; input.min = '0'; input.step = '1'; input.value = String(initialAmount); input.className = 'num';
+      input.setAttribute('aria-label', `${row.categoryName}の予算`); input.placeholder = '0';
       field.append(node('span', '¥'), input);
       item.append(badge, label, field);
-      if (overridden) {
-        const reset = button('基本に戻す', () => { void save([{ categoryId: row.categoryId, reset: true }]); });
-        reset.className = 'text-button'; reset.setAttribute('aria-label', `${row.categoryName}の変更を解除して基本予算へ戻す`);
-        item.append(reset);
-      }
       list.append(item);
-      inputs.push({ categoryId: row.categoryId, input, initial });
+      inputs.push({ categoryId: row.categoryId, input });
     });
-    const updateTotal = () => { totalValue.textContent = yen(inputs.reduce((sum, row) => sum + (row.input.value === '' ? 0 : Math.max(0, Math.trunc(Number(row.input.value)) || 0)), 0)); };
-    for (const row of inputs) row.input.addEventListener('input', updateTotal);
-    updateTotal();
+    const updateBreakdown = () => {
+      section.hidden = !breakdown.checked;
+      let sum = 0;
+      for (const row of inputs) {
+        const value = Number(row.input.value);
+        if (row.input.value !== '' && Number.isSafeInteger(value) && value >= 0) sum += value;
+      }
+      categorySum.hidden = !breakdown.checked;
+      categorySum.textContent = breakdown.checked ? `カテゴリ別の合計：${yen(sum)}` : '全体予算だけで管理します。';
+    };
+    for (const row of inputs) row.input.addEventListener('input', updateBreakdown);
+    breakdown.addEventListener('change', updateBreakdown);
+    updateBreakdown();
+
     const submit = node('button', mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'button';
-    submit.addEventListener('click', () => {
-      const changes = inputs.filter(row => row.input.value !== row.initial).map(row => ({ categoryId: row.categoryId, value: row.input.value }));
-      if (!changes.length) { status.textContent = '変更はありません。'; return; }
-      void save(changes);
-    });
+    submit.addEventListener('click', () => { void save(); });
     const actions = node('div'); actions.className = 'page-actions'; actions.append(submit);
-    options.view.append(total, section,
-      node('p', mode === 'default' ? '空欄は「予算なし」、0円は「使わない予定」として区別します。基本予算は毎月に適用されます。' : '空欄にすると基本予算に戻ります。0円もこの月の予算として保存できます。'),
+    options.view.append(totalCard, section,
+      node('p', 'カテゴリ別に設定する場合は、カテゴリ別予算の合計と全体予算が一致したときだけ保存できます。'),
       actions);
-    if (!saved) status.textContent = '金額を入力して保存してください。';
-    async function save(changes: Array<{ categoryId: string; value?: string; reset?: boolean }>) {
+    if (!saved) status.textContent = '全体予算を入力してください。';
+
+    async function save() {
       for (const row of inputs) row.input.disabled = true;
-      submit.disabled = true;
+      totalInput.disabled = true; breakdown.disabled = true; submit.disabled = true;
       try {
-        for (const change of changes) {
-          const amount = change.value === undefined || change.value === '' ? null : Number(change.value);
-          if (amount !== null && (!Number.isSafeInteger(amount) || amount < 0)) throw new Error('予算は0円以上の整数で入力してください。');
-          if (mode === 'default') await options.service.setDefault(change.categoryId, amount);
-          else if (change.reset || amount === null) await options.service.resetMonthlyOverride(month, change.categoryId);
-          else await options.service.setMonthlyOverride(month, change.categoryId, amount);
+        const totalYen = parseAmount(totalInput.value, '全体予算');
+        const allocations: Record<string, number> = {};
+        let allocationTotal = 0;
+        if (breakdown.checked) {
+          for (const row of inputs) {
+            const amount = row.input.value.trim() === '' ? 0 : parseAmount(row.input.value, 'カテゴリ別予算');
+            allocations[row.categoryId] = amount;
+            allocationTotal += amount;
+            if (!Number.isSafeInteger(allocationTotal)) throw new Error('カテゴリ別予算の合計額を安全に計算できません。');
+          }
+          if (allocationTotal !== totalYen) throw new Error(`カテゴリ別予算の合計（${yen(allocationTotal)}）を全体予算（${yen(totalYen)}）と一致させてください。`);
         }
+        if (mode === 'default') await options.service.setDefaultPlan(totalYen, breakdown.checked, allocations);
+        else await options.service.setMonthlyPlan(month, totalYen, breakdown.checked, allocations);
         if (options.view.contains(title)) await render(true);
       } catch (error) { report(error); }
-      finally { if (options.view.contains(title)) { for (const row of inputs) row.input.disabled = false; submit.disabled = false; } }
+      finally {
+        if (options.view.contains(title)) {
+          for (const row of inputs) row.input.disabled = false;
+          totalInput.disabled = false; breakdown.disabled = false; submit.disabled = false;
+        }
+      }
     }
     function report(error: unknown) { if (options.view.contains(title)) status.textContent = error instanceof Error ? error.message : '予算を保存できませんでした。'; }
   }
