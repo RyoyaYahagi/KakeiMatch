@@ -23,10 +23,11 @@ export type SyncDevice = { deviceId: string; generation: number; createdAt: stri
 type Fetch = typeof fetch;
 
 export class DeviceSyncApi {
-  constructor(private readonly fetchImpl: Fetch = (...args) => fetch(...args), private readonly credential: string | null = null) {}
+  constructor(private readonly fetchImpl: Fetch = (...args) => fetch(...args), private readonly credential: string | null = null,
+    private readonly signal?: AbortSignal) {}
 
   /** The same client, authenticating as this device for device-scoped requests. */
-  withCredential(credential: string): DeviceSyncApi { return new DeviceSyncApi(this.fetchImpl, credential); }
+  withCredential(credential: string, signal = this.signal): DeviceSyncApi { return new DeviceSyncApi(this.fetchImpl, credential, signal); }
 
   createHousehold(householdId: string) { return this.json<DeviceRegistration>('POST', '/households', { householdId }, false); }
   joinHousehold() { return this.json<DeviceRegistration>('POST', '/devices', undefined, false); }
@@ -68,16 +69,19 @@ export class DeviceSyncApi {
   }
 
   private async send(method: string, path: string, init: { body?: BodyInit; headers?: Record<string, string> } = {}, withDevice = true): Promise<Response> {
+    this.signal?.throwIfAborted();
     const headers: Record<string, string> = { ...init.headers };
     const credential = withDevice ? this.credential : null;
     // Joining or deleting authenticates with the session; the device credential is not sent.
     if (credential) headers['x-sync-device-credential'] = credential;
     let response: Response;
     try {
-      response = await this.fetchImpl(`/api/sync${path}`, { method, body: init.body, headers, credentials: 'same-origin', cache: 'no-store' });
+      response = await this.fetchImpl(`/api/sync${path}`, { method, body: init.body, headers, credentials: 'same-origin', cache: 'no-store', signal: this.signal });
     } catch {
-      throw new SyncApiError(0, navigator.onLine === false ? 'offline' : 'network_error');
+      this.signal?.throwIfAborted();
+      throw new SyncApiError(0, typeof navigator !== 'undefined' && navigator.onLine === false ? 'offline' : 'network_error');
     }
+    this.signal?.throwIfAborted();
     if (response.ok) return response;
     const error = await response.json().catch(() => null) as { error?: unknown } & Record<string, unknown> | null;
     const { error: code, ...details } = error ?? {};

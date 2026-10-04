@@ -48,6 +48,7 @@ export class DeviceSyncEngine {
   private readonly storage: SyncStorage;
   private readonly makeId: () => string;
   private running: Promise<SyncOutcome> | null = null;
+  private controller = new AbortController();
 
   constructor(private readonly deps: DeviceSyncDependencies) {
     this.storage = deps.storage ?? localStorage;
@@ -58,15 +59,38 @@ export class DeviceSyncEngine {
 
   /** Turns sync on for this household. Returns the recovery code the user must store elsewhere. */
   async enable(): Promise<{ recoveryCode: string }> {
-    if (await this.deps.secrets.load()) throw new Error('この端末では同期が有効です。');
-    const householdId = this.makeId();
-    const registration = await this.deps.api.createHousehold(householdId);
-    const { key, recoveryCode, protectedKey } = await createHouseholdEncryptionKey(householdId, registration.generation);
-    // Keep the key before telling the server about it, so a lost response never loses the key.
-    const secrets = { householdId, generation: registration.generation, deviceId: registration.deviceId, credential: registration.credential, key };
-    await this.deps.secrets.save(secrets);
-    await this.api(secrets).putKey(registration.generation, protectedKey);
-    return { recoveryCode };
+    let secrets = await this.deps.secrets.load();
+    if (secrets && !secrets.pendingSetup) throw new Error('この端末では同期が有効です。');
+    if (this.controller.signal.aborted) this.controller = new AbortController();
+    const signal = this.controller.signal;
+    if (!secrets) {
+      const householdId = this.makeId();
+      const registration = await this.deps.api.withCredential('', signal).createHousehold(householdId);
+      const { key, recoveryCode, protectedKey } = await createHouseholdEncryptionKey(householdId, registration.generation);
+      signal.throwIfAborted();
+      // Retain the same code and wrapped key across failed requests and page reloads.
+      secrets = { householdId, generation: registration.generation, deviceId: registration.deviceId, credential: registration.credential, key,
+        pendingSetup: { recoveryCode, protectedKey } };
+      await this.deps.secrets.save(secrets);
+    }
+    signal.throwIfAborted();
+    const pending = secrets.pendingSetup!;
+    await this.api(secrets, signal).putKey(secrets.generation, pending.protectedKey);
+    signal.throwIfAborted();
+    return { recoveryCode: pending.recoveryCode };
+  }
+
+  /** Called only after the user confirms saving the recovery code outside this device. */
+  async completeSetup(): Promise<void> {
+    const signal = this.controller.signal;
+    const secrets = await this.requireSecrets();
+    signal.throwIfAborted();
+    if (!secrets.pendingSetup) return;
+    await this.api(secrets, signal).putKey(secrets.generation, secrets.pendingSetup.protectedKey);
+    signal.throwIfAborted();
+    const ready = { ...secrets };
+    delete ready.pendingSetup;
+    await this.deps.secrets.save(ready);
   }
 
   /**
@@ -77,8 +101,10 @@ export class DeviceSyncEngine {
    */
   async join(recoveryCode: string): Promise<SyncOutcome> {
     let secrets = await this.deps.secrets.load();
+    if (secrets?.pendingSetup) throw new Error('復旧コードの保存を確認して、同期の初期設定を完了してください。');
     if (!secrets) {
-      const registration = await this.deps.api.joinHousehold();
+      if (this.controller.signal.aborted) this.controller = new AbortController();
+      const registration = await this.deps.api.withCredential('', this.controller.signal).joinHousehold();
       secrets = { householdId: registration.householdId, generation: registration.generation, deviceId: registration.deviceId, credential: registration.credential, key: null };
       await this.deps.secrets.save(secrets);
     }
@@ -95,7 +121,12 @@ export class DeviceSyncEngine {
 
   /** Runs one sync. Concurrent calls share the same run. */
   sync(): Promise<SyncOutcome> {
-    this.running ??= this.syncOnce().catch(error => outcomeOf(error)).finally(() => { this.running = null; });
+    if (!this.running) {
+      const running = this.syncOnce().catch(error => outcomeOf(error)).finally(() => {
+        if (this.running === running) this.running = null;
+      });
+      this.running = running;
+    }
     return this.running;
   }
 
@@ -134,6 +165,9 @@ export class DeviceSyncEngine {
 
   /** Stops sending and receiving on this device. Household data on this device is kept. */
   async stopOnThisDevice(): Promise<void> {
+    // Abort before clearing credentials: existing requests must not resume after this returns.
+    this.controller.abort();
+    this.running = null;
     await this.deps.secrets.clear();
     this.storage.removeItem(PENDING_PUBLISH_KEY);
     const state = readSyncState(this.profileId, this.storage);
@@ -152,15 +186,19 @@ export class DeviceSyncEngine {
   }
 
   private async syncOnce(): Promise<SyncOutcome> {
+    const signal = this.controller.signal;
     const secrets = await this.deps.secrets.load();
     if (!secrets) return { status: 'off' };
+    signal.throwIfAborted();
+    if (secrets.pendingSetup) return { status: 'off' };
     if (!secrets.key) return { status: 'recovery_code_required' };
     const pending = this.readPending();
     if (pending) {
       const resumed = await this.resumePublish(secrets, pending);
       if (resumed) return resumed;
     }
-    const current = await this.api(secrets).current();
+    const current = await this.api(secrets, signal).current();
+    signal.throwIfAborted();
     if (current.generation !== secrets.generation) return { status: 'rejoin_required' };
     const state = readSyncState(this.profileId, this.storage);
     const bound = state.householdId === secrets.householdId;
@@ -175,32 +213,39 @@ export class DeviceSyncEngine {
 
   /** Publishes this device's household with compare-and-swap on `baseVersionId`. */
   private async publish(secrets: DeviceSyncSecrets, baseVersionId: string | null): Promise<SyncOutcome> {
+    const signal = this.controller.signal;
+    signal.throwIfAborted();
+    if (secrets.pendingSetup) return { status: 'off' };
+    const api = this.api(secrets, signal);
     if (!secrets.key) return { status: 'recovery_code_required' };
     const snapshot = await createSyncSnapshot(this.deps.repository, this.deps.ledger, this.deps.guard, { storage: this.storage });
     if (snapshot.status === 'deferred') return { status: 'waiting', retryAfterMs: snapshot.retryAfterMs };
     const versionId = this.makeId();
     const context = { householdId: secrets.householdId, generation: secrets.generation, versionId, parentVersionId: baseVersionId };
     const { metadata, chunk } = await prepareEncryptedSyncVersion(snapshot.blob, secrets.key, context);
+    signal.throwIfAborted();
     const pending: PendingPublish = {
       profileId: this.profileId, requestId: this.makeId(), versionId, baseVersionId,
       changeCounter: snapshot.changeCounter, generation: secrets.generation,
     };
     // Recorded before the first request: a lost publish response is resolved by its request ID.
     this.storage.setItem(PENDING_PUBLISH_KEY, JSON.stringify(pending));
-    const api = this.api(secrets);
     await api.beginUpload({ requestId: this.makeId(), versionId, baseVersionId, generation: secrets.generation, chunkCount: metadata.chunks.length, totalBytes: metadata.totalBytes });
     for (const part of metadata.chunks) await api.putChunk(versionId, part.index, chunk(part.index), part.sha256);
     const result = await api.publish(versionId, pending.requestId);
+    signal.throwIfAborted();
     return this.finishPublish(secrets, pending, result.outcome, result.sequence);
   }
 
   private async resumePublish(secrets: DeviceSyncSecrets, pending: PendingPublish): Promise<SyncOutcome | null> {
+    const signal = this.controller.signal;
     if (pending.profileId !== this.profileId || pending.generation !== secrets.generation) {
       this.storage.removeItem(PENDING_PUBLISH_KEY);
       return null;
     }
     try {
-      const recorded = await this.api(secrets).request(pending.requestId);
+      const recorded = await this.api(secrets, signal).request(pending.requestId);
+      signal.throwIfAborted();
       return this.finishPublish(secrets, pending, recorded.outcome === 'published' ? 'published' : 'conflict', recorded.sequence);
     } catch (error) {
       // The publish never reached the server; the unfinished upload expires there on its own.
@@ -228,17 +273,22 @@ export class DeviceSyncEngine {
   }
 
   private async importVersion(secrets: DeviceSyncSecrets, version: SyncVersion): Promise<SyncOutcome> {
+    const signal = this.controller.signal;
+    signal.throwIfAborted();
+    if (secrets.pendingSetup) return { status: 'off' };
     if (!secrets.key) return { status: 'recovery_code_required' };
     if (version.generation !== secrets.generation) return { status: 'rejoin_required' };
-    const api = this.api(secrets);
+    // Take the expectation before the first network request, not after decrypting the download.
+    const state = readSyncState(this.profileId, this.storage);
+    const api = this.api(secrets, signal);
     const detail = await api.version(version.versionId);
     const context = { householdId: secrets.householdId, generation: detail.generation, versionId: detail.versionId, parentVersionId: detail.parentVersionId };
     const plain = await decryptPortableSyncVersion({ context, totalBytes: detail.totalBytes, chunks: detail.chunks }, context, secrets.key,
       index => api.chunk(detail.versionId, index));
-    const state = readSyncState(this.profileId, this.storage);
+    signal.throwIfAborted();
     const result = await applySyncSnapshot(plain, this.deps.ledger, this.deps.guard,
       { profileId: this.profileId, changeCounter: state.changeCounter, baseVersionId: state.baseVersionId },
-      { householdId: secrets.householdId, baseVersionId: detail.versionId, baseSequence: detail.sequence ?? 0 }, { ...this.deps.backup, storage: this.storage });
+      { householdId: secrets.householdId, baseVersionId: detail.versionId, baseSequence: detail.sequence ?? 0 }, { ...this.deps.backup, storage: this.storage, signal });
     return result.status === 'applied' ? { status: 'imported', profileId: result.profileId } : { status: 'waiting', retryAfterMs: 0 };
   }
 
@@ -252,8 +302,8 @@ export class DeviceSyncEngine {
     return secrets;
   }
 
-  private api(secrets: DeviceSyncSecrets): DeviceSyncApi {
-    return this.deps.api.withCredential(secrets.credential);
+  private api(secrets: DeviceSyncSecrets, signal = this.controller.signal): DeviceSyncApi {
+    return this.deps.api.withCredential(secrets.credential, signal);
   }
 
   private readPending(): PendingPublish | null {
@@ -265,6 +315,7 @@ export class DeviceSyncEngine {
 
 /** Maps failures to states the screen can explain. Unknown errors are reported, not hidden. */
 export function outcomeOf(error: unknown): SyncOutcome {
+  if (error instanceof Error && error.name === 'AbortError') return { status: 'off' };
   if (error instanceof SyncApiError) {
     if (error.status === 0) return { status: 'offline' };
     if (error.status === 401 || error.code === 'recent_sign_in_required') return { status: 'sign_in_required' };

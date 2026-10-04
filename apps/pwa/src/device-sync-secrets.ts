@@ -2,6 +2,8 @@
 // `.kmb` backups, sync versions and household wipes of the household stores never include them.
 // The key is a non-extractable CryptoKey: it can be used here but not read back out as bytes.
 
+import type { ProtectedHouseholdKey } from '../../../src/lib/encrypted-household-format';
+
 const DATABASE = 'kakeimatch-device-sync';
 const STORE = 'secrets';
 const RECORD = 'device';
@@ -13,6 +15,8 @@ export type DeviceSyncSecrets = {
   credential: string;
   /** Null after joining until the recovery code has been entered. */
   key: CryptoKey | null;
+  /** Kept only until the user confirms saving the recovery code outside this device. */
+  pendingSetup?: { recoveryCode: string; protectedKey: ProtectedHouseholdKey };
 };
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {

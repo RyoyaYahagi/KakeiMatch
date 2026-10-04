@@ -231,15 +231,18 @@ export type SyncImportResult = { status: 'applied'; profileId: string } | { stat
  * "切り替え前の家計データに戻る"; the one before it is removed so syncing does not pile up copies.
  */
 export async function applySyncSnapshot(file: Blob, ledger: BackupLedger, guard: HouseholdWriteGuard,
-  expected: SyncImportExpectation, next: SyncImportTarget, overrides: Partial<Dependencies> = {}): Promise<SyncImportResult> {
+  expected: SyncImportExpectation, next: SyncImportTarget, overrides: Partial<Dependencies> & { signal?: AbortSignal } = {}): Promise<SyncImportResult> {
   const deps = withDefaults(overrides);
+  overrides.signal?.throwIfAborted();
   if (guard.profileId !== expected.profileId) throw new Error('同期する家計データを確認できません。');
   const backup = await readPortableBackup(file);
+  overrides.signal?.throwIfAborted();
   const staged = await stageHouseholdBackup(backup, ledger, overrides);
   const superseded = deps.storage.getItem(PREVIOUS_PROFILE_KEY);
   let switched = false;
   try {
     switched = await guard.exclusive(async () => {
+      overrides.signal?.throwIfAborted();
       const state = readSyncState(expected.profileId, deps.storage);
       if (deps.storage.getItem(LOCAL_PROFILE_KEY) !== expected.profileId || readSwitchJournal(deps.storage) !== null
         || state.changeCounter !== expected.changeCounter || state.pendingWriteSince !== null || state.baseVersionId !== expected.baseVersionId) {
