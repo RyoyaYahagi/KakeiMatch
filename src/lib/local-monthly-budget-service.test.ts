@@ -57,6 +57,40 @@ describe('local monthly budget service', () => {
     expect((await service.getSummary('2026-10')).budgetYen).toBe(3000);
   });
 
+  it('supports an overall-only budget and counts all expense spending against it', async () => {
+    const { service } = await fixture();
+    await service.setDefaultPlan(5000, false, {});
+    expect(await service.getDefaultPlan()).toEqual({ totalYen: 5000, breakdownEnabled: false, allocations: {} });
+    const summary = await service.getSummary('2026-10');
+    expect(summary).toMatchObject({ budgetConfigured: true, breakdownEnabled: false, budgetYen: 5000, spentYen: 1200, remainingYen: 3800 });
+    expect(summary.categories.every(row => row.budgetYen === null)).toBe(true);
+  });
+
+  it('saves category allocations atomically only when they match the overall budget', async () => {
+    const { service, ledger } = await fixture();
+    await expect(service.setDefaultPlan(5000, true, { food: 3000, home: 1000 }))
+      .rejects.toThrow('カテゴリ別予算の合計を全体予算と一致させてください');
+    await service.setDefaultPlan(5000, true, { food: 3000, home: 2000 });
+    expect(await service.getDefaultPlan()).toEqual({
+      totalYen: 5000, breakdownEnabled: true, allocations: { food: 3000, home: 2000 },
+    });
+    await service.setMonthlyPlan('2026-10', 6000, true, { food: 4000, home: 2000 });
+    expect((await service.getSummary('2026-10'))).toMatchObject({
+      budgetConfigured: true, breakdownEnabled: true, budgetYen: 6000, spentYen: 1200,
+    });
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'food', budgetYen: 4000 });
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'home', budgetYen: 2000 });
+  });
+
+  it('clears category mirroring when a month switches to overall-only budgeting', async () => {
+    const { service, ledger } = await fixture({ '2026-10:food': 2500, '2026-10:home': 1000 });
+    await service.setMonthlyPlan('2026-10', 4500, false, {});
+    const summary = await service.getSummary('2026-10');
+    expect(summary).toMatchObject({ budgetConfigured: true, breakdownEnabled: false, budgetYen: 4500, spentYen: 1200 });
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'food', budgetYen: 0 });
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'home', budgetYen: 0 });
+  });
+
   it('preserves an untouched native month budget as an override without creating a default', async () => {
     const { repository, service } = await fixture({ '2026-10:food': 25000 });
     expect((await service.getSummary('2026-10')).categories.find(row => row.categoryId === 'food')?.budgetYen).toBe(25000);
