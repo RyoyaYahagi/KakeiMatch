@@ -50,6 +50,9 @@ export function effectiveMonthlyBudget(input: {
   if (typeof override === "number") return override;
   const defaultYen = input.settings.defaults[input.categoryId];
   if (override && "inherit" in override) return defaultYen ?? null;
+  // Once the new overall-budget model is explicitly saved, its category allocation is authoritative.
+  // Untouched Actual month budgets remain a fallback only for legacy settings without an overall total.
+  if (input.settings.defaultTotal !== undefined) return defaultYen ?? null;
   if (input.nativeBudgetYen !== 0) return input.nativeBudgetYen;
   return defaultYen ?? null;
 }
