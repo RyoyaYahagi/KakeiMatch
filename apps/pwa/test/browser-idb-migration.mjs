@@ -62,6 +62,9 @@ async function inspectDatabase(page, expectedVersion, expectOwnerIndex) {
     if (db.version !== expectedVersion) throw new Error(`expected database version ${expectedVersion}, received ${db.version}`);
     const transaction = db.transaction(['records', 'blobs'], 'readonly');
     const hasOwnerIndex = transaction.objectStore('blobs').indexNames.contains('owner');
+    if (expectOwnerIndex && JSON.stringify(transaction.objectStore('blobs').index('owner').keyPath) !== JSON.stringify(['profileId', 'ownerKind', 'ownerId'])) {
+      throw new Error('unexpected owner index key path');
+    }
     const records = await Promise.all(profiles.map(profileId => new Promise((resolve, reject) => {
       const request = transaction.objectStore('records').get(`${profileId}\u0000receipt`);
       request.onsuccess = () => resolve(request.result);
@@ -69,13 +72,29 @@ async function inspectDatabase(page, expectedVersion, expectOwnerIndex) {
     })));
     const blobs = await Promise.all(profiles.map(profileId => new Promise((resolve, reject) => {
       const request = transaction.objectStore('blobs').get(`${profileId}\u0000image`);
-      request.onsuccess = async () => resolve(request.result && { ...request.result, text: await request.result.blob.text() });
+      request.onsuccess = async () => {
+        if (!request.result) return resolve(null);
+        const { blob, ...metadata } = request.result;
+        resolve({ ...metadata, size: blob.size, type: blob.type, text: await blob.text() });
+      };
       request.onerror = () => reject(request.error);
     })));
     db.close();
     if (hasOwnerIndex !== expectOwnerIndex) throw new Error(`unexpected owner index state: ${hasOwnerIndex}`);
     return { records, blobs };
   }, { expectedVersion, expectOwnerIndex, profiles });
+}
+
+function assertPreserved(data) {
+  assert.deepEqual(data.records, profiles.map(profileId => ({
+    key: `${profileId}\u0000receipt`, profileId, id: 'receipt', kind: 'receipt-metadata',
+    value: { merchant: `Synthetic ${profileId}`, profileId }, updatedAt: timestamp,
+  })));
+  assert.deepEqual(data.blobs, profiles.map(profileId => ({
+    key: `${profileId}\u0000image`, profileId, id: 'image', ownerKind: 'receipt', ownerId: 'receipt',
+    contentType: 'image/jpeg', createdAt: timestamp, size: new TextEncoder().encode(`synthetic image for ${profileId}`).length,
+    type: 'image/jpeg', text: `synthetic image for ${profileId}`,
+  })));
 }
 
 async function waitForHome(page) {
@@ -91,8 +110,7 @@ try {
     await page.goto(url);
     await waitForHome(page);
     const data = await inspectDatabase(page, 2, true);
-    assert.deepEqual(data.records.map(row => row.value.profileId), profiles);
-    assert.deepEqual(data.blobs.map(row => row.text), profiles.map(profileId => `synthetic image for ${profileId}`));
+    assertPreserved(data);
     await context.close();
   }
 
@@ -119,14 +137,12 @@ try {
     await page.goto(url);
     await page.getByText('端末内データの更新に失敗しました。更新前のデータは保持されています。他の画面を閉じ、再読み込みしてください。', { exact: true }).waitFor({ timeout: 15000 });
     const rolledBack = await inspectDatabase(page, 1, false);
-    assert.deepEqual(rolledBack.records.map(row => row.value.profileId), profiles);
-    assert.deepEqual(rolledBack.blobs.map(row => row.text), profiles.map(profileId => `synthetic image for ${profileId}`));
+    assertPreserved(rolledBack);
 
     await page.reload();
     await waitForHome(page);
     const retried = await inspectDatabase(page, 2, true);
-    assert.deepEqual(retried.records.map(row => row.value.profileId), profiles);
-    assert.deepEqual(retried.blobs.map(row => row.text), profiles.map(profileId => `synthetic image for ${profileId}`));
+    assertPreserved(retried);
     await context.close();
   }
   console.log('PASS: Chromium production PWA migrates synthetic v1 IndexedDB across profiles, rolls back an interrupted upgrade without data loss, and retries successfully.');
