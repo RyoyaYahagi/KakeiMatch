@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
-import { scheduleAuditSchema } from "./recurring-schedule";
+import { recurringCatchUpAuditSchema, scheduleAuditSchema } from "./recurring-schedule";
 import { categoryLearningObservationSchema, normalizeLearningName } from "./category-learning";
 import { monthlyBudgetSettingsSchema } from "./monthly-budget-settings";
 import { accountMetadataRecordId, nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
@@ -69,7 +69,7 @@ const deletionAudit = z.object({
   status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
   deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
 }).strict();
-const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, recurringCatchUpAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   accountId: z.string().min(1).max(128).optional(),
