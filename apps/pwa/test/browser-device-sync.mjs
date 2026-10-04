@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright-core';
 import { handleSyncRequest } from '../../../workers/ai-gateway/src/device-sync-api.ts';
 import { InMemorySyncStorageProvider } from '../../../workers/ai-gateway/src/sync-storage-provider.ts';
+import { readPortableBackup } from '../../../src/lib/local-backup-format.ts';
 
 // Two browsers of one synthetic user sync through the real `/api/sync` handler, run in this
 // process with D1 on node:sqlite and an in-memory provider. Run with `node --import tsx`.
@@ -14,7 +15,7 @@ const base = new URL(url);
 
 const sqlite = new DatabaseSync(':memory:');
 sqlite.exec('PRAGMA foreign_keys = ON');
-for (const name of ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql']) {
+for (const name of ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql', '0013_sync_kept_versions.sql']) {
   sqlite.exec(readFileSync(new URL(`../../../workers/ai-gateway/migrations/${name}`, import.meta.url), 'utf8'));
 }
 sqlite.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Synthetic','synthetic@example.invalid',1,1)").run();
@@ -57,7 +58,7 @@ const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROW
 const errors = [];
 
 async function device(name) {
-  const context = await browser.newContext({ viewport: { width, height: 812 }, colorScheme });
+  const context = await browser.newContext({ viewport: { width, height: 812 }, colorScheme, acceptDownloads: true });
   const network = { offline: false };
   await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
   await context.route('**/api/sync/**', async route => {
@@ -171,6 +172,24 @@ try {
   await chosen;
   assert.deepEqual(await a.accounts(), ['Synthetic Offline B · 利用中', 'Synthetic Wallet A · 利用中', 'Synthetic Wallet B · 利用中']);
 
+  // A's version, which B did not choose, stays in the cloud and can be exported as a .kmb.
+  await a.openSync();
+  await a.page.locator('#sync-kept-versions summary').click();
+  const keptRows = a.page.locator('.sync-kept-list li');
+  await keptRows.filter({ hasText: 'この端末' }).waitFor();
+  assert.equal(await keptRows.count(), 1);
+  await shot(a.page, 'kept');
+  const download = a.page.waitForEvent('download');
+  await keptRows.getByRole('button', { name: '書き出す', exact: true }).click();
+  const file = await download;
+  assert.match(file.suggestedFilename(), /^KakeiMatch-unselected-.*\.kmb$/);
+  const exported = await readPortableBackup(new Blob([readFileSync(await file.path())]));
+  assert.ok(exported.actualBackup.byteLength > 0, 'the export is a readable household backup');
+  await a.page.getByText('選ばなかった版を書き出しました。', { exact: false }).waitFor();
+  assert.ok(await a.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no horizontal overflow with the kept list');
+  await keptRows.getByRole('button', { name: '削除', exact: true }).click();
+  await a.page.getByText('選ばなかった版はありません。', { exact: true }).waitFor();
+
   // Only ciphertext is stored.
   for (const key of provider.keys()) {
     const object = await provider.get(key);
@@ -189,7 +208,7 @@ try {
   assert.deepEqual(provider.keys(), []);
   assert.equal((await a.accounts()).length, 3);
   assert.deepEqual(errors, []);
-  console.log('PASS: two browsers enable, join with a recovery code, sync both ways, resolve an offline conflict without merging, stop, and delete cloud data. Only ciphertext reached storage.');
+  console.log('PASS: two browsers enable, join with a recovery code, sync both ways, resolve an offline conflict without merging, export and delete the version not chosen, stop, and delete cloud data. Only ciphertext reached storage.');
 } finally {
   await browser.close();
   sqlite.close();

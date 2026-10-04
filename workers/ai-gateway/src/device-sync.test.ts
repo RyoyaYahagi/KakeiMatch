@@ -6,7 +6,7 @@ import {
   DEFAULT_SYNC_LIMITS, SYNC_FORMAT_CHUNK_BYTES, SYNC_FORMAT_MAX_PLAIN_BYTES, collectSyncGarbage, sha256Hex, syncLimits,
   type SyncD1Database, type SyncLimitEnv,
 } from "./device-sync";
-import { handleSyncRequest } from "./device-sync-api";
+import { handleSyncRequest, runSyncMaintenance } from "./device-sync-api";
 import { InMemorySyncStorageProvider } from "./sync-storage-provider";
 
 // The encryption format module depends on zod, which this package does not install. Read its
@@ -34,7 +34,7 @@ vi.mock("./account-auth", async (importOriginal) => {
 
 const origin = "https://sync.example.test";
 const T0 = Date.parse("2026-10-03T12:00:00Z");
-const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0011_sync_household_keys.sql", "0012_sync_external_storage.sql"]
+const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0011_sync_household_keys.sql", "0012_sync_external_storage.sql", "0013_sync_kept_versions.sql"]
   .map((name) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8").replace(/^\s*--.*$/gm, "").replace(/\s+/g, " ").trim())
   .join("\n");
 
@@ -829,5 +829,90 @@ describe("storage the device writes itself (Google Drive)", () => {
     clock.now += 25 * 60 * 60 * 1000;
     expect((await publish("alice", credential, switching.versionId)).status).toBe(410);
     expect((await call("GET", "/current", { credential })).json).toMatchObject({ storage: "kakeimatch-cloud", current: { versionId: first.versionId } });
+  });
+});
+
+describe("versions the user did not choose", () => {
+  it("keeps a replaced version and conflict versions out of history cleanup until the user deletes them", async () => {
+    const a = await register();
+    const b = await join();
+    const first = await upload(a.credential, { base: null });
+    await publish("alice", a.credential, first.versionId);
+    const remote = await upload(b.credential);
+    await publish("alice", b.credential, remote.versionId);
+    // Device A resolves a conflict by keeping its own household: B's version is kept first.
+    const kept = await call("POST", `/versions/${remote.versionId}/keep`, { credential: a.credential });
+    expect(kept.status).toBe(200);
+    expect(kept.json.keptAt).not.toBeNull();
+    expect(kept.json.createdByDeviceId).toBe(b.deviceId);
+    expect((await call("POST", `/versions/${remote.versionId}/keep`, { credential: a.credential })).json.keptAt).toBe(kept.json.keptAt);
+    const stale = await upload(a.credential, { base: first.versionId });
+    expect((await publish("alice", a.credential, stale.versionId)).status).toBe(409); // a conflict version
+    for (let index = 0; index < 4; index += 1) await publish("alice", a.credential, (await upload(a.credential)).versionId);
+
+    const listed = await call("GET", "/versions?state=kept", { credential: b.credential });
+    expect(listed.json.versions.map((version: Json) => version.versionId).sort()).toEqual([remote.versionId, stale.versionId].sort());
+    expect(await row("SELECT id FROM sync_versions WHERE id = ?", first.versionId)).toBeNull(); // ordinary history was pruned
+    expect((await call("GET", `/versions/${remote.versionId}/chunks/0`, { credential: a.credential })).status).toBe(200);
+    expect((await runSyncMaintenance({ ACCOUNT_DB: db }, { provider, now: () => clock.now + 400 * 24 * 3600 * 1000 })).status).toBe("done");
+    expect((await call("GET", "/versions?state=kept", { credential: a.credential })).json.versions).toHaveLength(2);
+
+    const objects = provider.keys().length;
+    expect((await call("DELETE", `/versions/${remote.versionId}`, { credential: a.credential })).json).toEqual({ deleted: true });
+    expect(provider.keys().length).toBe(objects - 2);
+    expect((await call("DELETE", `/versions/${remote.versionId}`, { credential: a.credential })).status).toBe(404);
+    expect((await call("DELETE", `/versions/${stale.versionId}`, { credential: a.credential })).status).toBe(200);
+    expect((await call("GET", "/versions?state=kept", { credential: a.credential })).json.versions).toEqual([]);
+  });
+
+  it("refuses to delete the current version or ordinary history, and other users' versions", async () => {
+    const a = await register();
+    const first = await upload(a.credential, { base: null });
+    await publish("alice", a.credential, first.versionId);
+    const second = await upload(a.credential);
+    await publish("alice", a.credential, second.versionId);
+    expect((await call("DELETE", `/versions/${second.versionId}`, { credential: a.credential })).json.error).toBe("version_not_kept");
+    expect((await call("DELETE", `/versions/${first.versionId}`, { credential: a.credential })).json.error).toBe("version_not_kept");
+    // Kept, but the publish that should have replaced it never happened: still current, not listed or deletable.
+    expect((await call("POST", `/versions/${second.versionId}/keep`, { credential: a.credential })).status).toBe(200);
+    expect((await call("GET", "/versions?state=kept", { credential: a.credential })).json.versions).toEqual([]);
+    expect((await call("DELETE", `/versions/${second.versionId}`, { credential: a.credential })).json.error).toBe("version_not_kept");
+    const bob = await register("bob");
+    expect((await call("POST", `/versions/${first.versionId}/keep`, { user: "bob", credential: bob.credential })).status).toBe(404);
+    expect((await call("DELETE", `/versions/${first.versionId}`, { user: "bob", credential: bob.credential })).status).toBe(404);
+    expect((await call("DELETE", `/versions/${first.versionId}`, { user: "bob", credential: a.credential })).status).toBe(403);
+    expect(await row("SELECT id FROM sync_versions WHERE id = ?", first.versionId)).not.toBeNull();
+  });
+});
+
+describe("scheduled maintenance", () => {
+  it("does nothing until sync storage is configured", async () => {
+    expect(await runSyncMaintenance({ ACCOUNT_DB: db })).toEqual({ status: "not_configured" });
+  });
+
+  it("cleans every household, removes objects of deleted accounts, and finishes stopped deletions", async () => {
+    limitEnv = { SYNC_RETAINED_HISTORY: "10" };
+    const a = await register("alice");
+    for (let index = 0; index < 3; index += 1) await publish("alice", a.credential, (await upload(a.credential)).versionId);
+    const abandoned = await upload(a.credential);
+    const b = await register("bob");
+    await publish("bob", b.credential, (await upload(b.credential, { user: "bob" })).versionId);
+    const realDelete = provider.delete.bind(provider);
+    provider.delete = async () => { throw new Error("provider outage"); };
+    expect((await call("DELETE", "/household", { user: "bob" })).status).toBe(503);
+    provider.delete = realDelete;
+    await addUser("carol");
+    const c = await register("carol");
+    await publish("carol", c.credential, (await upload(c.credential, { user: "carol" })).versionId);
+    await deleteAccountData(db as never, "carol");
+
+    const result = await runSyncMaintenance({ ACCOUNT_DB: db, SYNC_RETAINED_HISTORY: "1" }, { provider, now: () => clock.now + DEFAULT_SYNC_LIMITS.unpublishedTtlSeconds * 1000 + 1 });
+    expect(result).toMatchObject({ status: "done", expiredUploads: 1, prunedVersions: 1, failedObjects: 0, finishedDeletions: 1, unfinishedDeletions: 0 });
+    expect(await row("SELECT id FROM sync_versions WHERE id = ?", abandoned.versionId)).toBeNull();
+    expect(await row("SELECT id FROM sync_households WHERE owner_user_id = 'bob'")).toBeNull();
+    expect(await row("SELECT COUNT(*) AS count FROM sync_object_deletions")).toEqual({ count: 0 });
+    const referenced = (await db.prepare("SELECT object_key FROM sync_chunks").all<{ object_key: string }>()).results.map((entry) => entry.object_key).sort();
+    expect(provider.keys().sort()).toEqual(referenced);
+    expect(referenced).toHaveLength(4); // alice: current + 1 retained, 2 chunks each
   });
 });

@@ -141,11 +141,17 @@ export class DeviceSyncEngine {
     return (await this.deps.secrets.load()) !== null;
   }
 
-  /** Keeps this device's household: publishes it on top of the other device's version. */
+  /**
+   * Keeps this device's household: publishes it on top of the other device's version. The other
+   * device's version stays in the cloud as a kept version the user can export (Issue #143 §4).
+   */
   async keepThisDevice(): Promise<SyncOutcome> {
     return this.withSecrets(async secrets => {
-      const current = await this.api(secrets).current();
-      return this.publish(secrets, current.current?.versionId ?? null, current.storage);
+      const api = this.api(secrets);
+      const current = await api.current();
+      const remoteId = current.current?.versionId ?? null;
+      if (remoteId && remoteId !== readSyncState(this.profileId, this.storage).baseVersionId) await api.keepVersion(remoteId);
+      return this.publish(secrets, remoteId, current.storage);
     });
   }
 
@@ -178,13 +184,53 @@ export class DeviceSyncEngine {
     await this.pruneExternal(current.storage === external.name ? await this.externalRefs(secrets) : new Set(), 0);
   }
 
-  /** Uses the other device's version. This device's household stays as "切り替え前の家計データ". */
+  /**
+   * Uses the other device's version. This device's household stays as "切り替え前の家計データ",
+   * and its unsent changes are first sent as a conflict version, so the side not chosen can still
+   * be exported after later syncs replace "切り替え前の家計データ" (Issue #143 §4).
+   */
   async useOtherDevice(): Promise<SyncOutcome> {
     return this.withSecrets(async secrets => {
       const current = await this.api(secrets).current();
       if (!current.current) return { status: 'synced' };
+      const state = readSyncState(this.profileId, this.storage);
+      const bound = state.householdId === secrets.householdId;
+      if ((!bound || hasUnsentChanges(state)) && state.baseVersionId !== current.current.versionId) {
+        // Compare-and-swap on the old base cannot succeed, so the server records it as a conflict version.
+        const preserved = await this.publish(secrets, bound ? state.baseVersionId : null, current.storage);
+        if (preserved.status !== 'conflict') return preserved;
+      }
       return this.importVersion(secrets, current.current);
     });
+  }
+
+  /** Versions the user did not choose when resolving conflicts, newest first. */
+  async keptVersions(): Promise<Array<SyncVersion & { fromThisDevice: boolean; exportable: boolean }>> {
+    const secrets = await this.requireSecrets();
+    const { versions } = await this.api(secrets).keptVersions();
+    // A version from before a device was removed used the previous key, which this device no longer has.
+    return versions.map(version => ({ ...version, fromThisDevice: version.createdByDeviceId === secrets.deviceId, exportable: secrets.key !== null && version.generation === secrets.generation }));
+  }
+
+  /** Decrypts a kept (or any retained) version into a `.kmb` backup file. Nothing local changes. */
+  async exportVersion(versionId: string): Promise<Blob> {
+    const secrets = await this.requireSecrets();
+    const detail = await this.api(secrets).version(versionId);
+    if (!secrets.key || detail.generation !== secrets.generation) throw new Error('version_key_unavailable');
+    return this.decrypt(secrets, secrets.key, detail);
+  }
+
+  /** Deletes one kept version from the cloud. Files in the user's own storage are removed when reachable. */
+  async deleteKeptVersion(versionId: string): Promise<void> {
+    const secrets = await this.requireSecrets();
+    const api = this.api(secrets);
+    const detail = await api.version(versionId);
+    await api.deleteVersion(versionId);
+    const external = detail.storage === 'kakeimatch-cloud' ? null : this.external(detail.storage);
+    if (!external?.isConnected()) return; // Unreferenced files are removed by a later cleanup.
+    for (const chunk of detail.chunks) {
+      if (chunk.ref) await external.delete(chunk.ref).catch(() => console.warn('sync_external_cleanup_failed'));
+    }
   }
 
   /**
@@ -325,14 +371,8 @@ export class DeviceSyncEngine {
   private async importVersion(secrets: DeviceSyncSecrets, version: SyncVersion): Promise<SyncOutcome> {
     if (!secrets.key) return { status: 'recovery_code_required' };
     if (version.generation !== secrets.generation) return { status: 'rejoin_required' };
-    const api = this.api(secrets);
-    const detail = await api.version(version.versionId);
-    const context = { householdId: secrets.householdId, generation: detail.generation, versionId: detail.versionId, parentVersionId: detail.parentVersionId };
-    const external = detail.storage === 'kakeimatch-cloud' ? null : this.external(detail.storage);
-    if (detail.storage !== 'kakeimatch-cloud' && !external?.isConnected()) return { status: 'storage_reconnect_required', storage: detail.storage };
-    const chunks = detail.chunks.map(({ index, size, sha256 }) => ({ index, size, sha256 }));
-    const plain = await decryptPortableSyncVersion({ context, totalBytes: detail.totalBytes, chunks }, context, secrets.key,
-      index => external ? external.get(chunkRef(detail, index)) : api.chunk(detail.versionId, index));
+    const detail = await this.api(secrets).version(version.versionId);
+    const plain = await this.decrypt(secrets, secrets.key, detail);
     const state = readSyncState(this.profileId, this.storage);
     const result = await applySyncSnapshot(plain, this.deps.ledger, this.deps.guard,
       { profileId: this.profileId, changeCounter: state.changeCounter, baseVersionId: state.baseVersionId },
@@ -342,20 +382,25 @@ export class DeviceSyncEngine {
     return { status: 'imported', profileId: result.profileId };
   }
 
+  /** Downloads and decrypts a version. Every chunk's size and SHA-256 are checked before decryption. */
+  private async decrypt(secrets: DeviceSyncSecrets, key: CryptoKey, detail: SyncVersionDetail): Promise<Blob> {
+    const external = detail.storage === 'kakeimatch-cloud' ? null : this.external(detail.storage);
+    if (detail.storage !== 'kakeimatch-cloud' && !external?.isConnected()) throw new ExternalStorageAuthError();
+    const api = this.api(secrets);
+    const context = { householdId: secrets.householdId, generation: detail.generation, versionId: detail.versionId, parentVersionId: detail.parentVersionId };
+    const chunks = detail.chunks.map(({ index, size, sha256 }) => ({ index, size, sha256 }));
+    return decryptPortableSyncVersion({ context, totalBytes: detail.totalBytes, chunks }, context, key,
+      index => external ? external.get(chunkRef(detail, index)) : api.chunk(detail.versionId, index));
+  }
+
   private external(storage: SyncStorageName): ExternalSyncStorage | null {
     const external = this.deps.externalStorage;
     return external && external.name === storage ? external : null;
   }
 
-  /** External file references of every version the server still keeps. */
+  /** External file references of every version the server still records, kept versions included. */
   private async externalRefs(secrets: DeviceSyncSecrets): Promise<Set<string>> {
-    const api = this.api(secrets);
-    const refs = new Set<string>();
-    for (const version of (await api.versions()).versions) {
-      if (version.storage === 'kakeimatch-cloud') continue;
-      for (const chunk of (await api.version(version.versionId)).chunks) if (chunk.ref) refs.add(chunk.ref);
-    }
-    return refs;
+    return new Set((await this.api(secrets).externalRefs()).refs);
   }
 
   /** Deletes this app's external files that no kept version refers to and that are at least `minAgeMs` old. */

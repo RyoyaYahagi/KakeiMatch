@@ -1,6 +1,7 @@
 import { hasUnsentChanges, readSyncState } from './household-sync-state';
 import type { HouseholdWriteGuard } from './household-write-guard';
 import type { DeviceSyncEngine, SyncOutcome } from './device-sync-engine';
+import type { SyncVersion } from './device-sync-api';
 import { SyncApiError, type SyncConfig, type SyncStorageName } from './device-sync-api';
 import { startGoogleDriveConnection, type GoogleDriveReturn, type GoogleDriveStorage } from './google-drive-storage';
 
@@ -55,6 +56,10 @@ function button(label: string, kind: 'primary' | 'secondary' | 'text' | 'danger'
 
 function tokyoTime(iso: string): string {
   return new Date(iso).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function megabytes(bytes: number): string {
+  return `${Math.max(0.1, Math.round(bytes / 1024 / 102.4) / 10)} MB`;
 }
 
 function readLastSync(): string | null {
@@ -127,7 +132,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     about.append(text('summary', '同期について'),
       text('p', '同じアカウントでログインした自分の端末どうしで、家計簿全体（取引・支払元・カテゴリ・予算・定期登録、レシートと明細、照合の判断、残っている画像とCSV原本）を交換します。'),
       text('p', '送る前にこの端末で暗号化し、KakeiMatch Cloudに保存します。復号に使う鍵と復旧コードは送りません。復旧コードを失い、同期している端末もすべて失うと、クラウドのデータは復号できません。'),
-      text('p', '変更は家計簿全体の単位で交換します。2台で同時に変更した場合は自動でまとめず、どちらの内容を使うかを選んでもらいます。選ばなかった側の変更は合流しません。'),
+      text('p', '変更は家計簿全体の単位で交換します。2台で同時に変更した場合は自動でまとめず、どちらの内容を使うかを選んでもらいます。選ばなかった側の変更は合流しませんが、「選ばなかった版」として残し、あとから書き出せます。'),
       text('p', '同期はアプリを開いている間に行います。オフラインやログインしていない間も、この端末の家計簿はそのまま使えます。'));
     return about;
   }
@@ -244,7 +249,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     const children: Node[] = [];
     if (outcome?.status === 'conflict') {
       children.push(text('p', '両方の端末で変更されています。内容を確認してください。', 'sync-conflict'),
-        text('p', 'どちらかの内容を選ぶと、それが新しい家計簿として同期されます。選ばなかった側の変更は合流しません。この端末の内容は、別の端末を選んでも「切り替え前の家計データ」としてこの端末に残ります。', 'muted'),
+        text('p', 'どちらかの内容を選ぶと、それが新しい家計簿として同期されます。選ばなかった側の変更は合流しませんが、同期データに「選ばなかった版」として残り、あとから書き出せます。', 'muted'),
         button('この端末の内容を使う', 'secondary', () => choose('this'), 'sync-keep-this'),
         button('別の端末の内容を使う', 'secondary', () => choose('other'), 'sync-use-other'));
     } else if (outcome?.status === 'remote_changes') {
@@ -285,8 +290,62 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     manage.append(text('p', `${deleteLabel.replace('を削除', '')}を削除しても、各端末に保存済みの家計データは消えません。他の端末のデータを遠隔で消すことはできません。`, 'muted'),
       button(deleteLabel, 'danger', deleteCloud, 'sync-delete-cloud'));
     manage.addEventListener('toggle', () => { if (manage.open) void listDevices(deviceList); });
-    children.push(aboutSync(), manage);
+    children.push(aboutSync(), keptVersions(), manage);
     body.replaceChildren(...children);
+  }
+
+  /** Issue #143 §4: the side not chosen in a conflict can be exported as a `.kmb` and checked by restoring it. */
+  function keptVersions() {
+    const kept = document.createElement('details');
+    kept.className = 'settings-inner-disclosure';
+    kept.id = 'sync-kept-versions';
+    const list = document.createElement('ul'); list.className = 'sync-kept-list';
+    kept.append(text('summary', '選ばなかった版'),
+      text('p', '両方の端末で変更されたときに、選ばなかった側の家計簿です。自動では削除しません。書き出したファイルは「バックアップから復元」で開いて確認できます。', 'muted'),
+      text('p', '書き出したファイルは暗号化されていません。Filesなどへ保存し、他人に渡さないでください。', 'muted'),
+      list);
+    kept.addEventListener('toggle', () => { if (kept.open) void listKept(list); });
+    return kept;
+  }
+
+  async function listKept(list: HTMLUListElement) {
+    try {
+      const versions = await engine.keptVersions();
+      if (versions.length === 0) { list.replaceChildren(text('li', '選ばなかった版はありません。', 'muted')); return; }
+      list.replaceChildren(...versions.map(version => {
+        const row = document.createElement('li');
+        row.append(text('span', `${tokyoTime(version.createdAt)}・${version.fromThisDevice ? 'この端末' : '別の端末'}・${megabytes(version.totalBytes)}`));
+        if (version.exportable) row.append(button('書き出す', 'secondary', () => exportKept(version)));
+        else row.append(text('span', '端末を外す前の版のため、書き出せません。', 'muted'));
+        row.append(button('削除', 'danger', () => deleteKept(version, list)));
+        return row;
+      }));
+    } catch {
+      list.replaceChildren(text('li', '選ばなかった版の一覧を取得できません。オンラインで再度お試しください。'));
+    }
+  }
+
+  async function exportKept(version: SyncVersion) {
+    await run(async () => {
+      const blob = await engine.exportVersion(version.versionId);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `KakeiMatch-unselected-${version.createdAt.replace(/[:.]/g, '-')}.kmb`;
+      section.append(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      message.textContent = '選ばなかった版を書き出しました。Filesなどへの保存を確認してください。';
+    }, '書き出しています…', error => error instanceof Error && error.name === 'ExternalStorageAuthError'
+      ? 'Google Driveに接続してから書き出してください。' : '書き出せませんでした。この端末の家計データは変更していません。');
+  }
+
+  async function deleteKept(version: SyncVersion, list: HTMLUListElement) {
+    if (!window.confirm(`${tokyoTime(version.createdAt)}の選ばなかった版を同期データから削除しますか？\n\n元に戻せません。各端末の家計データは消えません。`)) return;
+    await run(async () => {
+      await engine.deleteKeptVersion(version.versionId);
+      message.textContent = '選ばなかった版を削除しました。';
+    }, '削除しています…', () => '削除を完了できませんでした。削除済みではありません。オンラインで再度お試しください。');
+    await listKept(list);
   }
 
   async function listDevices(list: HTMLUListElement) {
@@ -319,7 +378,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
   }
 
   async function deleteOtherStorage() {
-    if (!window.confirm('今使っていない保存先に残っている同期データを削除しますか？今の保存先と各端末の家計データは残ります。')) return;
+    if (!window.confirm('今使っていない保存先に残っている同期データ（選ばなかった版を含む）を削除しますか？今の保存先と各端末の家計データは残ります。')) return;
     await run(async () => {
       await engine.deleteOtherStorageData();
       message.textContent = '使っていない保存先のデータを削除しました。';
@@ -372,8 +431,8 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
 
   async function choose(side: 'this' | 'other') {
     const confirmText = side === 'this'
-      ? 'この端末の内容を同期しますか？別の端末だけで行った変更は合流しません。'
-      : '別の端末の内容に切り替えますか？この端末だけで行った変更は合流しません。この端末の今のデータは「切り替え前の家計データ」として残ります。';
+      ? 'この端末の内容を同期しますか？別の端末だけで行った変更は合流しません。別の端末の内容は「選ばなかった版」として残ります。'
+      : '別の端末の内容に切り替えますか？この端末だけで行った変更は合流しません。この端末の今の内容は「選ばなかった版」として残り、この端末にも「切り替え前の家計データ」として残ります。';
     if (!window.confirm(confirmText)) return;
     await run(async () => { await handle(side === 'this' ? await engine.keepThisDevice() : await engine.useOtherDevice(), true); }, '同期しています…');
   }
@@ -426,7 +485,11 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
       storage_reconnect_required: 'reconnect',
     }[outcome.status] as keyof typeof statuses;
     showStatus(key);
-    if (outcome.status === 'failed' && userAction) message.textContent = '同期できませんでした。この端末の家計簿はそのまま使えます。時間をおいて再度お試しください。';
+    if (outcome.status === 'failed' && outcome.code === 'storage_limit_exceeded') {
+      message.textContent = '同期データの保存容量が上限に達しました。「選ばなかった版」から不要な版を削除してください。この端末の家計簿はそのまま使えます。';
+    } else if (outcome.status === 'failed' && userAction) {
+      message.textContent = '同期できませんでした。この端末の家計簿はそのまま使えます。時間をおいて再度お試しください。';
+    }
     if (outcome.status === 'published' || outcome.status === 'synced') message.textContent = userAction ? '同期しました。' : message.textContent;
     renderOn(outcome);
   }

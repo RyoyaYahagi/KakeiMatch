@@ -124,7 +124,7 @@ Worker更新前に `0006_contact_submissions.sql` を適用し、`GITHUB_ISSUES_
 
 同期の画面は、保存先が設定されていない環境では開始操作がサーバーの `503 not_configured` で失敗し、端末内の家計は変わらない。
 
-- **KakeiMatch Cloud（R2）**: 非公開のR2バケットを用意し、build時の環境変数 `SYNC_R2_BUCKET_NAME` にバケット名を指定する。公開アクセスは有効にしない。D1に `0009_device_sync.sql`、`0011_sync_household_keys.sql`、`0012_sync_external_storage.sql` を適用する。
+- **KakeiMatch Cloud（R2）**: 非公開のR2バケットを用意し、build時の環境変数 `SYNC_R2_BUCKET_NAME` にバケット名を指定する。公開アクセスは有効にしない。D1に `0009_device_sync.sql`、`0011_sync_household_keys.sql`、`0012_sync_external_storage.sql`、`0013_sync_kept_versions.sql` を適用する。バケット名を指定したbuildでは、回収の定期実行（Cron Trigger `17 18 * * *`）も設定に加わる。
 - **Google Drive**: Google CloudでOAuth同意画面とWebアプリ用のOAuthクライアントIDを作成する。承認済みのJavaScript生成元とリダイレクトURIには本番の正規origin（`https://kakeimatch.yhgry.workers.dev` と、その末尾に `/` を付けたもの）だけを登録する。スコープは `https://www.googleapis.com/auth/drive.appdata` だけにする。build時の環境変数 `GOOGLE_OAUTH_CLIENT_ID` にクライアントIDを指定する。クライアントIDは公開値で、クライアントシークレットは使わない（KakeiMatchは保持しない）。Google Drive APIを有効にする。
 
 どちらも、作成・設定・deployは本人が行う。previewでは合成データだけで確認する。

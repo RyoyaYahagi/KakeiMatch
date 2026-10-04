@@ -131,6 +131,9 @@ export interface VersionRow {
   expires_at: number;
   /** Null: stored by the server's provider. Otherwise a storage location the device writes to itself. */
   storage: ExternalStorage | null;
+  created_by_device_id: string;
+  /** Set when the user chose another version over this published one. History cleanup skips it. */
+  kept_at: number | null;
 }
 export type ExternalStorage = "google-drive";
 export const EXTERNAL_STORAGES: readonly ExternalStorage[] = ["google-drive"];
@@ -147,7 +150,7 @@ interface RequestRow {
 }
 
 const HOUSEHOLD_COLUMNS = "id, owner_user_id, provider, generation, current_version_id, current_sequence, status";
-const VERSION_COLUMNS = "id, household_id, parent_version_id, generation, sequence, state, chunk_count, total_bytes, object_prefix, created_at, published_at, expires_at, storage";
+const VERSION_COLUMNS = "id, household_id, parent_version_id, generation, sequence, state, chunk_count, total_bytes, object_prefix, created_at, published_at, expires_at, storage, created_by_device_id, kept_at";
 
 export async function sha256Hex(value: string): Promise<string> {
   const bytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
@@ -263,7 +266,7 @@ export async function getVersion(db: SyncD1Database, householdId: string, versio
 export function versionJson(row: VersionRow, chunks?: Array<{ index: number; size: number; sha256: string; ref?: string }>) {
   return {
     versionId: row.id, parentVersionId: row.parent_version_id, generation: row.generation, sequence: row.sequence, state: row.state,
-    storage: row.storage ?? "kakeimatch-cloud",
+    storage: row.storage ?? "kakeimatch-cloud", createdByDeviceId: row.created_by_device_id, keptAt: iso(row.kept_at),
     chunkCount: row.chunk_count, totalBytes: row.total_bytes, createdAt: iso(row.created_at), publishedAt: iso(row.published_at),
     ...(chunks ? { chunks } : {}),
   };
@@ -278,11 +281,53 @@ export async function getCurrent(db: SyncD1Database, household: HouseholdRow) {
   };
 }
 
-export async function listVersions(db: SyncD1Database, household: HouseholdRow, state: "published" | "conflict" | null) {
-  const rows = await db.prepare(`SELECT ${VERSION_COLUMNS} FROM sync_versions
-    WHERE household_id = ? AND state IN ('published', 'conflict') AND (? IS NULL OR state = ?)
-    ORDER BY created_at DESC, id LIMIT 50`).bind(household.id, state, state).all<VersionRow>();
+/** A version the user did not choose: a conflict version, or a published one replaced by a choice. */
+const KEPT = "(state = 'conflict' OR kept_at IS NOT NULL)";
+
+/** `kept` lists the versions kept for the user to export; they are never cleaned up automatically. */
+export async function listVersions(db: SyncD1Database, household: HouseholdRow, state: "published" | "conflict" | "kept" | null) {
+  const statement = (filter: string) => db.prepare(`SELECT ${VERSION_COLUMNS} FROM sync_versions
+    WHERE household_id = ?1 AND state IN ('published', 'conflict') ${filter}
+    ORDER BY created_at DESC, id LIMIT 50`);
+  // The current version is never listed as not chosen, even if the publish after `keep` failed.
+  const rows = await (state === "kept" ? statement(`AND ${KEPT} AND id IS NOT (SELECT current_version_id FROM sync_households WHERE id = ?1)`).bind(household.id)
+    : statement("AND (?2 IS NULL OR state = ?2)").bind(household.id, state)).all<VersionRow>();
   return rows.results.map((row) => versionJson(row));
+}
+
+/**
+ * Keeps a published version that the user is about to replace when resolving a conflict, so
+ * history cleanup does not remove the side they did not choose. Repeating it changes nothing.
+ */
+export async function keepVersion(ctx: SyncContext, household: HouseholdRow, versionId: string) {
+  assertActive(household);
+  const { db, now } = ctx;
+  const version = await getVersion(db, household.id, versionId);
+  if (!version || version.state === "uploading") throw new SyncError(404, "version_not_found");
+  if (version.state === "published" && version.kept_at === null) {
+    await db.prepare("UPDATE sync_versions SET kept_at = ?1 WHERE id = ?2 AND household_id = ?3 AND state = 'published' AND kept_at IS NULL")
+      .bind(now, versionId, household.id).run();
+  }
+  return versionJson((await getVersion(db, household.id, versionId))!);
+}
+
+/**
+ * Deletes one kept version at the user's request. The current version and ordinary history are
+ * refused. External chunks only lose their records; the device deletes the files it can reach.
+ */
+export async function deleteKeptVersion(ctx: SyncContext, household: HouseholdRow, versionId: string) {
+  assertActive(household);
+  const { db } = ctx;
+  const version = await getVersion(db, household.id, versionId);
+  if (!version || version.state === "uploading") throw new SyncError(404, "version_not_found");
+  if (version.state !== "conflict" && version.kept_at === null) throw new SyncError(409, "version_not_kept");
+  // If the publish after `keep` failed, the kept version is still current; it is never deleted then.
+  const deleted = await db.prepare(`DELETE FROM sync_versions WHERE id = ?1 AND household_id = ?2 AND ${KEPT}
+      AND id IS NOT (SELECT current_version_id FROM sync_households WHERE id = ?2)`).bind(versionId, household.id).run();
+  if (!deleted.meta?.changes) throw new SyncError(409, "version_not_kept");
+  const drained = await drainObjectDeletions(ctx, { householdId: household.id });
+  if (drained.failed > 0) throw new SyncError(503, "deletion_incomplete");
+  return { deleted: true };
 }
 
 export async function versionWithChunks(db: SyncD1Database, household: HouseholdRow, versionId: string) {
@@ -620,8 +665,9 @@ export interface GarbageResult extends DrainResult { expiredUploads: number; pru
 /**
  * Removes expired unpublished uploads, history beyond the retention count, and
  * old request records, then deletes the queued provider objects. The current
- * version, conflict versions, retained history, and unexpired uploads are never
- * selected. Not scheduled in this change; callers invoke it explicitly.
+ * version, conflict and kept versions, retained history, and unexpired uploads
+ * are never selected. Runs after each publish (one household) and on a schedule
+ * (all households, see `runSyncMaintenance`).
  */
 export async function collectSyncGarbage(ctx: SyncContext, options: { householdId?: string } = {}): Promise<GarbageResult> {
   const { db, now, limits } = ctx;
@@ -630,6 +676,7 @@ export async function collectSyncGarbage(ctx: SyncContext, options: { householdI
   // is no longer uploading) or is rejected by its `expires_at > now` guard.
   const expiredWhere = "state = 'uploading' AND expires_at <= ?1 AND (?2 IS NULL OR household_id = ?2)";
   const prunedWhere = `state = 'published' AND sequence IS NOT NULL AND (?2 IS NULL OR household_id = ?2)
+      AND kept_at IS NULL
       AND sequence < (SELECT current_sequence FROM sync_households h WHERE h.id = sync_versions.household_id) - ?1
       AND id IS NOT (SELECT current_version_id FROM sync_households h WHERE h.id = sync_versions.household_id)`;
   // Counts are informational; the DELETE statements below decide what is removed.
@@ -643,6 +690,21 @@ export async function collectSyncGarbage(ctx: SyncContext, options: { householdI
     .bind(now - limits.requestResultTtlSeconds * 1000, scope).run();
   const drained = await drainObjectDeletions(ctx, { householdId: options.householdId });
   return { ...drained, expiredUploads, prunedVersions };
+}
+
+/**
+ * Every external file reference the household still records, including unfinished uploads.
+ * The device removes files in its own storage that are not listed here.
+ */
+export async function listExternalRefs(db: SyncD1Database, household: HouseholdRow) {
+  const rows = await db.prepare("SELECT external_ref FROM sync_chunks WHERE household_id = ? AND external_ref IS NOT NULL")
+    .bind(household.id).all<{ external_ref: string }>();
+  return { refs: rows.results.map((row) => row.external_ref) };
+}
+
+/** Households whose cloud deletion stopped part way, for the scheduled run to finish. */
+export async function listDeletingHouseholds(db: SyncD1Database, limit: number): Promise<HouseholdRow[]> {
+  return (await db.prepare(`SELECT ${HOUSEHOLD_COLUMNS} FROM sync_households WHERE status = 'deleting' ORDER BY updated_at LIMIT ?`).bind(limit).all<HouseholdRow>()).results;
 }
 
 /**

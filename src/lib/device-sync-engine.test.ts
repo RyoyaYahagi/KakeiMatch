@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
 import { LocalDataRepository, LOCAL_PROFILE_KEY, type LocalDataRecord } from './local-data';
 import { PREVIOUS_PROFILE_KEY } from '../../apps/pwa/src/local-backup';
+import { readPortableBackup } from './local-backup-format';
 import { readSyncState } from '../../apps/pwa/src/household-sync-state';
 import { HouseholdWriteGuard } from '../../apps/pwa/src/household-write-guard';
 import { DeviceSyncApi } from '../../apps/pwa/src/device-sync-api';
@@ -22,7 +23,7 @@ vi.mock('../../workers/ai-gateway/src/account-auth', async (importOriginal) => (
 
 const origin = 'https://sync.example.test';
 const at = '2026-10-04T00:00:00.000Z';
-const migrations = ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql']
+const migrations = ['0001_auth.sql', '0007_account_deletion.sql', '0009_device_sync.sql', '0011_sync_household_keys.sql', '0012_sync_external_storage.sql', '0013_sync_kept_versions.sql']
   .map(name => readFileSync(new URL(`../../workers/ai-gateway/migrations/${name}`, import.meta.url), 'utf8'));
 
 function d1(sqlite: DatabaseSync) {
@@ -214,6 +215,46 @@ describe('device sync engine', () => {
     a.close(); b.close();
   });
 
+  it('keeps the side not chosen in the cloud, exportable after later syncs replace the previous household', async () => {
+    const { a, b } = await pair();
+    const keptIds = async (blob: Blob) => (await readPortableBackup(blob)).localData.records.filter(r => r.kind === 'receipt-metadata').map(r => r.id).sort();
+    await a.write('receipt:a2');
+    await b.write('receipt:b2');
+    expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+    expect(await b.engine.sync()).toMatchObject({ status: 'conflict' });
+    expect(await b.engine.keepThisDevice()).toMatchObject({ status: 'published' });
+    // A's version, not chosen by B, is kept and can be exported by either device.
+    const [fromA] = await b.engine.keptVersions();
+    expect(fromA).toMatchObject({ fromThisDevice: false, exportable: true, state: 'published' });
+    expect(await keptIds(await a.engine.exportVersion(fromA.versionId))).toEqual(['receipt:a1', 'receipt:a2']);
+    await a.engine.sync(); await a.reload();
+
+    await a.write('receipt:a3');
+    await b.write('receipt:b3');
+    expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+    expect(await b.engine.sync()).toMatchObject({ status: 'conflict' });
+    // Choosing the other device first sends this device's household as a conflict version.
+    expect(await b.engine.useOtherDevice()).toMatchObject({ status: 'imported' });
+    await b.reload();
+    for (let round = 0; round < 4; round += 1) {
+      await a.write(`receipt:later-${round}`);
+      expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+      expect(await b.engine.sync()).toMatchObject({ status: 'imported' });
+      await b.reload();
+    }
+    const kept = await b.engine.keptVersions();
+    expect(kept.map(version => version.state).sort()).toEqual(['conflict', 'published']);
+    const fromB = kept.find(version => version.state === 'conflict')!;
+    expect(fromB.fromThisDevice).toBe(true);
+    expect(await keptIds(await b.engine.exportVersion(fromB.versionId))).toEqual(['receipt:a1', 'receipt:b2', 'receipt:b3']);
+    // Exporting changes nothing locally.
+    expect(await b.engine.sync()).toEqual({ status: 'synced' });
+
+    await b.engine.deleteKeptVersion(fromB.versionId);
+    expect((await b.engine.keptVersions()).map(version => version.versionId)).toEqual([fromA.versionId]);
+    a.close(); b.close();
+  });
+
   it('resolves a lost publish response by its request ID without publishing twice', async () => {
     const { a, b } = await pair();
     await b.write('receipt:b1');
@@ -306,6 +347,34 @@ describe('device sync with Google Drive', () => {
     expect(await a.engine.sync()).toMatchObject({ status: 'imported' });
     await a.reload();
     expect(await a.ids()).toEqual(['receipt:a1', 'receipt:b1']);
+    expect(provider.keys()).toEqual([]);
+    a.close(); b.close();
+  });
+
+  it('leaves the Drive files of kept versions alone during cleanup and removes them when the version is deleted', async () => {
+    const drive = new FakeDrive();
+    const a = await device('a', drive.connection());
+    await a.write('receipt:a1');
+    const { recoveryCode } = await a.engine.enable('google-drive');
+    await a.engine.sync();
+    const b = await device('b', drive.connection());
+    expect(await b.engine.join(recoveryCode)).toMatchObject({ status: 'imported' });
+    await b.reload();
+    await a.write('receipt:a2');
+    await b.write('receipt:b2');
+    await a.engine.sync();
+    expect(await b.engine.sync()).toMatchObject({ status: 'conflict' });
+    expect(await b.engine.keepThisDevice()).toMatchObject({ status: 'published' });
+    for (let round = 0; round < 4; round += 1) {
+      await b.write(`receipt:b-later-${round}`);
+      expect(await b.engine.sync()).toMatchObject({ status: 'published' }); // each publish cleans up old Drive files
+    }
+    const [kept] = await b.engine.keptVersions();
+    const exported = await a.engine.exportVersion(kept.versionId);
+    expect((await readPortableBackup(exported)).localData.records.map(r => r.id)).toContain('receipt:a2');
+    const before = drive.files.size;
+    await a.engine.deleteKeptVersion(kept.versionId);
+    expect(drive.files.size).toBe(before - kept.chunkCount);
     expect(provider.keys()).toEqual([]);
     a.close(); b.close();
   });
