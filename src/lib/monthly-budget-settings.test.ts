@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clearDefaultPlan,
   effectiveBreakdownEnabled,
   effectiveMonthlyBudget,
   effectiveOverallBudget,
   emptyMonthlyBudgetSettings,
+  hasExplicitMonthlyPlan,
   monthlyBudgetSettingsSchema,
+  resetMonthlyPlan,
   withDefaultBudget,
   withDefaultPlan,
   withMonthlyBudget,
@@ -47,6 +50,18 @@ describe('monthly budget settings', () => {
     const october = withMonthlyPlan(defaults, '2026-10', 60_000, true, { food: 40_000, home: 20_000 });
     expect(effectiveOverallBudget(october, '2026-10')).toBe(60_000);
     expect(effectiveBreakdownEnabled(october, '2026-10', true)).toBe(true);
+  });
+
+  it('can clear a default plan and reset a month back to the default plan', () => {
+    const defaults = withDefaultPlan(emptyMonthlyBudgetSettings('budget-a'), 50_000, true, { food: 30_000, home: 20_000 });
+    const monthly = withMonthlyPlan(defaults, '2026-10', 60_000, true, { food: 40_000, home: 20_000 });
+    expect(hasExplicitMonthlyPlan(monthly, '2026-10')).toBe(true);
+    const reset = resetMonthlyPlan(monthly, '2026-10', ['food', 'home']);
+    expect(hasExplicitMonthlyPlan(reset, '2026-10')).toBe(false);
+    expect(effectiveOverallBudget(reset, '2026-10')).toBe(50_000);
+    expect(effectiveMonthlyBudget({ settings: reset, yearMonth: '2026-10', categoryId: 'food', nativeBudgetYen: 99_000 })).toBe(30_000);
+    expect(clearDefaultPlan(defaults)).toMatchObject({ defaults: {} });
+    expect(effectiveOverallBudget(clearDefaultPlan(defaults), '2026-11')).toBeNull();
   });
 
   it('treats untouched nonzero Actual month budgets as legacy overrides without inferring a default', () => {
