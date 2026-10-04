@@ -36,8 +36,6 @@ async function createMappedCardAccount(name) {
 async function addNativeExpense(account) {
   await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
-  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await page.locator('#home-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
