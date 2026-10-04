@@ -135,6 +135,18 @@ describe("durable recurring operations", () => {
     expect(ledger.deleteTransactionTree).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts the native rule attaching the originating schedule to a new catch-up transaction", async () => {
+    const { service, ledger, transactions } = await setup();
+    await service.save(input);
+    const readTree = ledger.getTransactionTree.getMockImplementation()!;
+    ledger.getTransactionTree.mockImplementation(async id => (await readTree(id)).map(row => ({ ...row, schedule: "native-schedule" })));
+    const [operationId] = await service.catchUp("native-schedule", input, ["2026-10-01"]);
+    expect((await service.listCatchUps("native-schedule"))[0]?.audit.occurrences[0]?.snapshot?.[0]?.schedule).toBe("native-schedule");
+    await service.undoCatchUp(operationId!);
+    expect(transactions).toHaveLength(0);
+    expect(await service.pending()).toBeNull();
+  });
+
   it("recognizes native schedule rows by schedule identity even after the rule inputs change", async () => {
     const { service, ledger, transactions, scheduledTransactions } = await setup();
     transactions.push({ id: "actual-native-old-rule", date: "2026-10-01", amountYen: -12345, kind: "expense", payeeName: "Old Name", categoryName: "Synthetic", accountId: "old-account", cleared: false });
@@ -196,6 +208,25 @@ describe("durable recurring operations", () => {
     expect(transactions.map(row => row.date)).toEqual(["2026-10-08"]);
     expect((await service.listCatchUps("native-schedule"))[0]?.audit.occurrences.map(row => row.status)).toEqual(["deleted", "retained", "deleted", "deleted"]);
     expect(await service.pending()).toBeNull();
+  });
+
+  it("completes selective deletion when an external edit happens after its preflight", async () => {
+    const { service, ledger, transactions, repository } = await setup();
+    await service.save(input);
+    const [operationId] = await service.catchUp("native-schedule", input, ["2026-10-01"]);
+    const nativeDelete = ledger.deleteTransactionTree.getMockImplementation()!;
+    ledger.deleteTransactionTree.mockImplementationOnce(async snapshot => {
+      transactions[0]!.amountYen -= 1;
+      await nativeDelete(snapshot);
+    });
+    await service.deleteCatchUpOccurrences(operationId!, ["2026-10-01"]);
+    expect(transactions).toHaveLength(1);
+    expect(await service.pending()).toBeNull();
+    expect((await service.listCatchUps("native-schedule"))[0]?.retainedDates.has("2026-10-01")).toBe(true);
+    const deletion = (await repository.list("correction-audit")).map(row => row.value as { operation?: string; status?: string }).find(row => row.operation === "delete");
+    expect(deletion).toMatchObject({ status: "applied" });
+    await service.retry();
+    expect(transactions).toHaveLength(1);
   });
 
   it("allows later bulk undo after selective deletion and keeps an edited occurrence", async () => {

@@ -79,9 +79,6 @@ export const recurringCatchUpAuditSchema = z.object({
       value.status === "applied" && value.occurrences.some(row => row.status !== "deleted" && row.status !== "retained")) {
       context.addIssue({ code: "custom", message: "削除記録の状態が不正です。" });
     }
-    if (value.status === "applied" && value.occurrences.some(row => row.status !== "deleted")) {
-      context.addIssue({ code: "custom", message: "完了した削除記録に残った取引があります。" });
-    }
   }
 });
 

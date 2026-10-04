@@ -236,8 +236,22 @@ export async function showRecurringSchedules(options: {
           status.textContent = '過去分を記録しています。';
           const operationIds = await service.catchUp(scheduleId, input, selectedDates);
           if (operationIds.length) {
-            const saved = (await ledger.listRecurringSchedules()).find(row => row.id === scheduleId);
-            if (saved) { await detail(saved); const result = view.querySelector<HTMLElement>('[role="status"]'); if (result) result.textContent = '過去分を記録しました。取り消す場合は生成履歴をご利用ください。'; return; }
+            const generated = (await service.listCatchUps(scheduleId)).filter(({ audit }) => operationIds.includes(audit.operationId));
+            const count = generated.reduce((total, { audit }) => total + audit.occurrences.length, 0);
+            await overview('定期登録を保存しました。');
+            const notice = node('div'); notice.className = 'notice'; notice.dataset.catchUpResult = '';
+            notice.append(node('p', `${count.toLocaleString('ja-JP')}件の${input.kind === 'expense' ? '支出' : '収入'}を記録しました。`));
+            const undo = button('元に戻す', async () => {
+              try {
+                for (const operationId of operationIds) await service.undoCatchUp(operationId);
+                const histories = (await service.listCatchUps(scheduleId)).filter(({ audit }) => operationIds.includes(audit.operationId));
+                const retained = histories.reduce((total, { audit }) => total + audit.occurrences.filter(row => row.status === 'retained').length, 0);
+                await overview(retained ? `過去分を取り消しました。編集済みの${retained.toLocaleString('ja-JP')}件は残しました。` : '今回の過去分を取り消しました。');
+              } catch (error) { await overview(errorText(error)); }
+            });
+            undo.dataset.catchUpImmediateUndo = ''; notice.append(undo);
+            view.querySelector('[role="status"]')?.after(notice);
+            return;
           }
         }
         await overview('定期登録を保存しました。');

@@ -258,7 +258,9 @@ function matchesGeneratedSnapshot(snapshot: NativeTransactionSnapshot[], audit: 
   const root = snapshot[0];
   const amount = audit.input.kind === "expense" ? -audit.input.amountYen : audit.input.amountYen;
   return snapshot.length === 1 && Boolean(root) && root!.date === date && root!.amount === amount && root!.account === audit.input.accountId &&
-    root!.imported_id === `kakeimatch:schedule:${audit.scheduleId}:${date}` && root!.schedule == null && !root!.is_parent && !root!.is_child && !root!.parent_id && !root!.transfer_id;
+    // Actual's native rules may attach the originating schedule to a newly added row.
+    root!.imported_id === `kakeimatch:schedule:${audit.scheduleId}:${date}` && (root!.schedule == null || root!.schedule === audit.scheduleId) &&
+    !root!.is_parent && !root!.is_child && !root!.parent_id && !root!.transfer_id;
 }
 function sameSchedule(schedule: Awaited<ReturnType<Ledger["listRecurringSchedules"]>>[number], input: RecurringScheduleInput): boolean {
   return schedule.name === input.name && schedule.kind === input.kind && schedule.amountYen === input.amountYen &&
