@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
           cache-dependency-path: workers/ai-gateway/package-lock.json
       - run: npm ci --prefix workers/ai-gateway
       - run: npm test --prefix workers/ai-gateway
