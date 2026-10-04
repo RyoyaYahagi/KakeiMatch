@@ -117,8 +117,6 @@ async function setupLedger() {
   await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
-  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
 }
 
 async function addReceipt(merchant, amount) {
