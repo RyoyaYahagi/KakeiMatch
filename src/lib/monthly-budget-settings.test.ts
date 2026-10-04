@@ -47,6 +47,7 @@ describe('monthly budget settings', () => {
       .toThrow('カテゴリ別予算の合計を全体予算と一致させてください');
     const defaults = withDefaultPlan(base, 50_000, true, { food: 30_000, home: 20_000 });
     expect(defaults.defaults).toEqual({ food: 30_000, home: 20_000 });
+    expect(effectiveMonthlyBudget({ settings: defaults, yearMonth: '2026-10', categoryId: 'food', nativeBudgetYen: 99_000 })).toBe(30_000);
     const october = withMonthlyPlan(defaults, '2026-10', 60_000, true, { food: 40_000, home: 20_000 });
     expect(effectiveOverallBudget(october, '2026-10')).toBe(60_000);
     expect(effectiveBreakdownEnabled(october, '2026-10', true)).toBe(true);
