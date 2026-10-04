@@ -428,6 +428,17 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
 .receipt-preview-frame { position: relative; width: fit-content; max-width: 100%; margin: var(--space-3) auto; overflow: hidden; border-radius: var(--radius-md); }
 .receipt-preview-frame .receipt-preview { margin: 0; }
+.receipt-preview-open { position: relative; display: block; min-height: 0; padding: 0; background: none; border-radius: var(--radius-md); }
+.receipt-preview-zoom { position: absolute; right: var(--space-2); bottom: var(--space-2); display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-full); background: color-mix(in srgb, var(--surface) 90%, transparent); color: var(--text); box-shadow: var(--shadow); }
+.receipt-preview-zoom .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.receipt-image-viewer { width: 100vw; max-width: none; height: 100dvh; max-height: none; margin: 0; padding: 0; border: 0; background: var(--bg); color: var(--text); }
+.receipt-image-viewer[open] { display: flex; flex-direction: column; }
+.receipt-image-viewer::backdrop { background: var(--bg); }
+.receipt-image-viewer-header { display: flex; align-items: center; gap: var(--space-2); padding: max(var(--space-2), env(safe-area-inset-top)) var(--space-4) var(--space-2); }
+.receipt-image-viewer-hint { flex: 1; margin: 0; color: var(--muted); font-size: .875rem; }
+.receipt-image-viewer-stage { flex: 1; overflow: auto; padding: 0 var(--space-4) max(var(--space-4), env(safe-area-inset-bottom)); }
+.receipt-image-viewer-stage img { display: block; width: 100%; max-width: none; height: auto; cursor: zoom-in; }
+.receipt-image-viewer.is-zoomed .receipt-image-viewer-stage img { cursor: zoom-out; }
 /* A light band moves down the photo while AI reads it. */
 .receipt-preview-frame.is-reading::after { content: ''; position: absolute; left: 0; right: 0; top: -35%; height: 35%; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary) 22%, transparent) 80%, color-mix(in srgb, var(--primary) 70%, transparent) 97%, transparent); animation: receipt-scan 1.6s ease-in-out infinite; pointer-events: none; }
 @keyframes receipt-scan { to { top: 100%; } }
@@ -478,6 +489,10 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .receipt-item label, .receipt-adjustment label { margin-top: var(--space-3); }
 .receipt-item button, .receipt-adjustment button { margin: var(--space-3) 0; }
 .receipt-difference { color: var(--warning); font-size: .875rem; }
+.receipt-total-check { margin: calc(var(--space-1) * -1) 0 var(--space-3); font-size: .875rem; }
+.receipt-total-check:empty { display: none; }
+.receipt-total-check.is-match { color: var(--success); }
+.receipt-total-check.is-mismatch { color: var(--warning); }
 .receipt-tax { margin-top: var(--space-3); }
 
 /* Deletion undo */
