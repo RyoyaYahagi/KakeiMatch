@@ -43,6 +43,7 @@ export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudget
       const row = node('li'); row.dataset.budgetCategory = category.categoryId;
       row.append(node('p', `${category.categoryName} · ${amountLine({ ...category, budgetYen: category.budgetYen! })}`));
       if (category.budgetYen! > 0) row.append(progress(category as { budgetYen: number; spentYen: number }, `${category.categoryName}の使用額`));
+      else if (category.budgetYen! < 0) row.append(node('p', 'この予算はマイナスの設定です。全体の予算合計には含めません。'));
       list.append(row);
     }
     details.append(list);
@@ -90,6 +91,7 @@ export async function showMonthlyBudgetEditor(options: {
     const loaded = await options.service.getSummary(month);
     const summary = { ...loaded, categories: [...loaded.categories].sort((a, b) => categoryRank(a.categoryName) - categoryRank(b.categoryName)) };
     const defaultPlan = mode === 'default' ? await options.service.getDefaultPlan() : null;
+    const monthlyPlanExplicit = mode === 'monthly' ? await options.service.hasMonthlyPlan(month) : false;
     if (current !== revision || !options.view.contains(title)) return;
     if (!summary.categories.length) { status.textContent = '先に支出カテゴリを追加してください。'; return; }
 
@@ -150,10 +152,31 @@ export async function showMonthlyBudgetEditor(options: {
     const submit = node('button', mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'button';
     submit.addEventListener('click', () => { void save(); });
     const actions = node('div'); actions.className = 'page-actions'; actions.append(submit);
+    let resetControl: HTMLButtonElement | null = null;
+    if (mode === 'default' && defaultPlan?.totalYen !== null) {
+      resetControl = button('予算を未設定に戻す', () => { void resetPlan(); });
+      resetControl.className = 'text-button';
+      actions.append(resetControl);
+    } else if (mode === 'monthly' && monthlyPlanExplicit) {
+      resetControl = button('基本予算に戻す', () => { void resetPlan(); });
+      resetControl.className = 'text-button';
+      actions.append(resetControl);
+    }
     options.view.append(totalCard, section,
       node('p', 'カテゴリ別に設定する場合は、カテゴリ別予算の合計と全体予算が一致したときだけ保存できます。'),
       actions);
     if (!saved) status.textContent = '全体予算を入力してください。';
+
+    async function resetPlan() {
+      if (!resetControl) return;
+      resetControl.disabled = true;
+      try {
+        if (mode === 'default') await options.service.clearDefaultPlan();
+        else await options.service.resetMonthlyPlan(month);
+        if (options.view.contains(title)) await render(true);
+      } catch (error) { report(error); }
+      finally { if (options.view.contains(title) && resetControl) resetControl.disabled = false; }
+    }
 
     async function save() {
       for (const row of inputs) row.input.disabled = true;
