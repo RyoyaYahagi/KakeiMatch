@@ -63,7 +63,7 @@ root.innerHTML = `
           <h4 id="storage-location-title">保存先</h4>
           <p class="storage-location-device">${iconMarkup('phone')}<strong>この端末</strong></p>
           <p>家計簿・レシート・明細・照合結果は、この端末に保存されています。</p>
-          <p class="muted">家計データはCloudflareに保存しません。AIアカウントの認証や利用枠の情報はCloudflareで管理します。AIを利用する場合だけ、処理に必要な情報をAIサービスへ送信します。</p>
+          <p class="muted storage-location-cloud">家計データはCloudflareに保存しません。AIアカウントの認証や利用枠の情報はCloudflareで管理します。AIを利用する場合だけ、処理に必要な情報をAIサービスへ送信します。</p>
           <p class="storage-location-risk">端末の紛失やブラウザーのデータ消去で、家計データが失われることがあります。バックアップを別の場所に保存してください。</p>
           <a class="storage-location-link" href="#backup-settings">バックアップと端末データ${iconMarkup('chevronRight')}</a>
         </section>
@@ -427,7 +427,12 @@ if ('serviceWorker' in navigator) {
   });
 }
 message.textContent = '家計簿を準備しています…';
-void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
+void initializeLocalUi({ openAccount: () => showTab('settings'), reauthenticate: async () => {
+  const result = await authClient.signIn.passkey();
+  if (result.error) return false;
+  await refreshAccount();
+  return true;
+} }).then(() => {
   recordLocalDiagnostic('startup');
 }).catch((error: unknown) => {
   recordLocalDiagnostic(error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema') ? 'migration' : 'startup', error);

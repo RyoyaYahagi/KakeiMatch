@@ -19,6 +19,8 @@ export interface SyncApiOptions {
   /** Replaces the R2 provider. Used by tests. */
   provider?: SyncStorageProvider;
   now?: () => number;
+  /** Replaces the Better Auth session lookup. Used by tests that run without Better Auth cookies. */
+  getSession?: (request: Request) => Promise<{ user: { id: string }; session: { id: string } } | null>;
 }
 
 const MAX_JSON_BYTES = 4 * 1024;
@@ -214,7 +216,7 @@ export async function handleSyncRequest(request: Request, env: SyncApiEnv, optio
 
   try {
     // The user comes only from the validated session, never from the URL, headers, or body.
-    const session = await getAccountSession(request, env as unknown as AccountEnv);
+    const session = options.getSession ? await options.getSession(request) : await getAccountSession(request, env as unknown as AccountEnv);
     if (!session) return json(401, { error: "unauthorized" });
     const ctx: SyncContext = { db: env.ACCOUNT_DB, provider, limits: syncLimits(env), now: (options.now ?? Date.now)() };
     const { route } = match;

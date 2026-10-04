@@ -21,6 +21,10 @@ import { initializeMasterUi, createMasterShortcut } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
 import { recoverHouseholdSwitch, restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { guardLedger, HouseholdWriteGuard } from './household-write-guard';
+import { DeviceSyncApi } from './device-sync-api';
+import { DeviceSyncEngine } from './device-sync-engine';
+import { DeviceSyncSecretStore } from './device-sync-secrets';
+import { initializeDeviceSyncUi } from './device-sync-ui';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { getOrCreateLocalProfileId, LOCAL_PROFILE_KEY, LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
@@ -77,7 +81,7 @@ function watchHouseholdSwitch(profileId: string) {
   });
 }
 
-export async function initializeLocalUi(options: { openAccount: () => void }) {
+export async function initializeLocalUi(options: { openAccount: () => void; reauthenticate: () => Promise<boolean> }) {
   // Every household write in this tab goes through one guard for device sync bookkeeping.
   const guard = new HouseholdWriteGuard(getOrCreateLocalProfileId());
   const repository = await LocalDataRepository.open(guard.profileId, indexedDB, { writeGate: guard.repositoryGate });
@@ -1067,7 +1071,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   // A user chooses a budget explicitly when multiple local budgets are available.
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
-  await initializeBackupUi(repository, ledger);
+  const sync = new DeviceSyncEngine({ api: new DeviceSyncApi(), secrets: new DeviceSyncSecretStore(), repository, ledger, guard });
+  await initializeBackupUi(repository, ledger, () => sync.stopOnThisDevice());
+  const syncUi = initializeDeviceSyncUi(el('data-settings'), { engine: sync, guard, reauthenticate: options.reauthenticate,
+    // Imports switch households, so they wait while a work screen or a field is in use.
+    isEditing: () => !view.hidden || document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement || document.activeElement instanceof HTMLSelectElement });
+  el('backup-settings').after(el('device-sync-settings'));
   const ledgerTools = document.createElement('details'); ledgerTools.className = 'surface-section settings-disclosure';
   ledgerTools.append(text('summary', '家計簿の読み込み・切り替え'), el('import-section'), el('budget-section'));
   el('data-settings').append(ledgerTools);
@@ -1098,4 +1107,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const latestDeletion = (await deletions.list()).filter(audit => audit.status === 'deleted' && Date.parse(audit.undoUntil) > Date.now()).sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
     if (latestDeletion) showDeletionToast(latestDeletion);
     if (!el('household-view').hidden) await home().catch((error: unknown) => { if (!(error instanceof StaleScreenError)) throw error; }); else el('message').textContent = ''; } else el('message').textContent = '使う家計簿を選択してください。';
+  // Sync starts after startup work, so its first snapshot includes due schedules.
+  await syncUi.refresh();
 }
