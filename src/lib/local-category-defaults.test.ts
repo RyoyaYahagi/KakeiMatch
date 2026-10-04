@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { BASIC_EXPENSE_CATEGORY_LABELS } from "./category";
+import type { LocalDataRecord } from "./local-data";
 import { basicCategorySettingsRecordId, ensureBasicExpenseCategories } from "../../apps/pwa/src/local-category-defaults";
 
 describe("automatic basic expense categories", () => {
   it("migrates legacy default names, adds missing defaults, and preserves custom categories", async () => {
-    const records = new Map<string, any>();
+    const records = new Map<string, LocalDataRecord>();
     const categories = [
       { id: "food", name: "食費", isIncome: false, hidden: false, groupName: "支出" },
       { id: "medical", name: "医療", isIncome: false, hidden: false, groupName: "支出" },
@@ -13,7 +14,7 @@ describe("automatic basic expense categories", () => {
     ];
     const repository = {
       get: vi.fn(async (id: string) => records.get(id) ?? null),
-      put: vi.fn(async (record: any) => { records.set(record.id, record); }),
+      put: vi.fn(async (record: LocalDataRecord) => { records.set(record.id, record); }),
     };
     const ledger = {
       listCategories: vi.fn(async () => categories),
@@ -41,7 +42,7 @@ describe("automatic basic expense categories", () => {
 
   it("does not recreate a default that the user deletes after initial provisioning", async () => {
     const markerId = basicCategorySettingsRecordId("budget-1");
-    const records = new Map([[markerId, { id: markerId, kind: "app-settings", value: { budgetId: "budget-1", version: 1 }, updatedAt: "2026-10-04T00:00:00.000Z" }]]);
+    const records = new Map<string, LocalDataRecord>([[markerId, { id: markerId, kind: "app-settings", value: { budgetId: "budget-1", version: 1 }, updatedAt: "2026-10-04T00:00:00.000Z" }]]);
     const repository = { get: vi.fn(async (id: string) => records.get(id) ?? null), put: vi.fn() };
     const ledger = { listCategories: vi.fn(), addCategory: vi.fn(), renameCategory: vi.fn() };
 
