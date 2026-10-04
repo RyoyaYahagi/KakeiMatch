@@ -384,9 +384,13 @@ form .category-picker button { margin: 0; }
 .settings-footnote { margin: var(--space-2) var(--space-1); }
 .master-settings .master-delete label { display: flex; align-items: center; gap: var(--space-2); }
 
-.budget-total-card { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); margin: var(--space-3) 0; padding: var(--space-3) var(--space-4); }
+.budget-total-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); margin: var(--space-3) 0; padding: var(--space-3) var(--space-4); }
 .budget-total-card span { font-size: .875rem; color: var(--muted); }
 .budget-total-card strong { font-size: 1.375rem; }
+.budget-total-card > label:first-child { font-weight: 700; }
+.budget-total-card .budget-breakdown-toggle { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-2); min-height: 44px; }
+.budget-total-card .budget-breakdown-toggle input { width: 20px; height: 20px; margin: 0; flex: none; }
+.budget-total-card > p { grid-column: 1 / -1; margin: 0; }
 .budget-month { margin: var(--space-3) 0 0; }
 .budget-rows li.budget-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); min-height: 64px; padding: var(--space-2) 0; }
 .budget-row label { margin: 0; flex: 1; min-width: 0; }
