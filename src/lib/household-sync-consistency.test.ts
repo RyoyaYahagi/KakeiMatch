@@ -246,6 +246,25 @@ describe('sync import and switch', () => {
     staged.close();
   });
 
+  it('discards a staged import when sync is stopped before the switch', async () => {
+    const controller = new AbortController();
+    const ledger = backupLedger();
+    ledger.restoreBackup.mockImplementation(async () => {
+      controller.abort();
+      return 'actual-budget';
+    });
+    await expect(applySyncSnapshot(await version(), ledger, guard,
+      { profileId: activeId, changeCounter: 0, baseVersionId: null }, next,
+      { ...deps(), signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(activeId);
+    expect(storage.getItem(PREVIOUS_PROFILE_KEY)).toBeNull();
+    expect(readSwitchJournal(storage)).toBeNull();
+    expect(ledger.discardDataDirectory).toHaveBeenCalledWith(`/kakeimatch-restore/${stagedId}`);
+    const staged = await openPlain(stagedId);
+    expect((await staged.serialize()).records).toEqual([]);
+    staged.close();
+  });
+
   it('stops importing after an incomplete Actual restore', async () => {
     storage.setItem(INCOMPLETE_RESTORE_KEY, '[]');
     const ledger = backupLedger();

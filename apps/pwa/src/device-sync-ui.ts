@@ -114,7 +114,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     const confirm = document.createElement('input'); confirm.type = 'checkbox'; confirm.id = 'sync-recovery-saved';
     const label = document.createElement('label'); label.htmlFor = confirm.id;
     label.append(confirm, ' 復旧コードを端末の外（パスワード管理アプリなど）に保存しました');
-    const proceed = button('続ける', 'primary', async () => { panel.remove(); await next(); }, 'sync-recovery-continue');
+    const proceed = button('続ける', 'primary', next, 'sync-recovery-continue');
     proceed.disabled = true;
     confirm.addEventListener('change', () => { proceed.disabled = !confirm.checked; });
     panel.append(text('p', intro), codeText,
@@ -122,7 +122,7 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
         try { await navigator.clipboard.writeText(code); message.textContent = '復旧コードをコピーしました。'; }
         catch { message.textContent = 'コピーできませんでした。コードを書き写してください。'; }
       }),
-      text('p', 'このコードは今だけ表示します。KakeiMatchも再発行できません。別の端末で参加するときに使います。', 'muted'),
+      text('p', 'このコードを端末の外に保存してください。別の端末で参加するときに使います。', 'muted'),
       label, proceed);
     body.replaceChildren(panel);
     codeText.focus();
@@ -179,9 +179,16 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     await run(async () => {
       const result = await withRecentSignIn(() => engine.enable());
       if (!result) return;
-      enabled = true;
+      enabled = false;
       updateStorageLocation();
-      showRecoveryCode(result.recoveryCode, '同期を始めました。この復旧コードを保存してください。', async () => { await syncNow(true); });
+      showRecoveryCode(result.recoveryCode, '同期の準備ができました。この復旧コードを保存してください。', async () => {
+        await run(async () => {
+          await engine.completeSetup();
+          enabled = true;
+          updateStorageLocation();
+          await handle(await engine.sync({ allowImport: true }), true);
+        }, '同期しています…');
+      });
     }, '同期の準備をしています…');
   }
 

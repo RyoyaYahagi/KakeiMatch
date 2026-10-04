@@ -50,7 +50,10 @@ const screenshots = process.env.PWA_SYNC_SCREENSHOT_DIR;
 const colorScheme = process.env.PWA_SYNC_COLOR_SCHEME === 'dark' ? 'dark' : 'light';
 const width = Number(process.env.PWA_SYNC_WIDTH ?? 375);
 const shot = async (page, name) => {
-  if (screenshots) await page.locator('#device-sync-settings').screenshot({ path: `${screenshots}/sync-${name}-${colorScheme}-${width}.png` });
+  if (screenshots) await page.locator('#device-sync-settings').screenshot({
+    path: `${screenshots}/sync-${name}-${colorScheme}-${width}.png`,
+    mask: [page.locator('#sync-recovery-code')],
+  });
 };
 
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
@@ -58,15 +61,21 @@ const errors = [];
 
 async function device(name) {
   const context = await browser.newContext({ viewport: { width, height: 812 }, colorScheme });
-  const network = { offline: false };
+  const network = { offline: false, dropNextKeyPutResponse: false };
   await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
   await context.route('**/api/sync/**', async route => {
     if (network.offline) return route.abort('internetdisconnected');
     const request = route.request();
+    const loseKeyResponse = network.dropNextKeyPutResponse && request.method() === 'PUT'
+      && new URL(request.url()).pathname === '/api/sync/key';
     const headers = new Headers(request.headers());
     const body = request.postDataBuffer();
     if (body) headers.set('content-length', String(body.byteLength));
     const response = await handleSyncRequest(new Request(request.url(), { method: request.method(), headers, body: body ?? undefined }), env, { provider, getSession });
+    if (loseKeyResponse) {
+      network.dropNextKeyPutResponse = false;
+      return route.abort('connectionreset');
+    }
     await route.fulfill({ status: response.status, headers: Object.fromEntries(response.headers), body: Buffer.from(await response.arrayBuffer()) });
   });
   await context.route(/\/api\/(?!sync\/)/, route => {
@@ -85,6 +94,7 @@ async function device(name) {
   return {
     page, context, click,
     async setOffline(offline) { network.offline = offline; await context.setOffline(offline); },
+    loseNextKeyPutResponse() { network.dropNextKeyPutResponse = true; },
     async addAccount(label) {
       await page.locator('#settings-tab').click();
       await click('支払元'); await click('支払元を追加する');
@@ -111,14 +121,37 @@ try {
   await a.openSync();
   assert.equal(await a.page.locator('#sync-status').isVisible(), false, 'sync is off by default');
   await shot(a.page, 'off');
+
+  // The server stores the protected key, then its first response is lost. Retrying setup must
+  // reuse the same device and recovery code while keeping sync off until the user confirms.
+  a.loseNextKeyPutResponse();
+  await a.click('この端末で同期を始める');
+  await a.page.getByText('オフラインのため完了できませんでした。', { exact: false }).waitFor();
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM sync_versions WHERE state = 'published'").get().count, 0, 'a failed setup has not published a household');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM sync_devices').get().count, 1, 'retry has one registered device');
+
+  await a.click('この端末で同期を始める');
+  const codeBeforeReload = await a.page.locator('#sync-recovery-code').innerText();
+  assert.ok(/^KM1-[0-9a-f]{8}(-[0-9a-f]{8}){7}$/.test(codeBeforeReload), 'the recovery code has the expected format');
+  assert.equal(await a.page.getByRole('button', { name: '続ける', exact: true }).isDisabled(), true, 'continuing requires confirming the code is stored');
+  await shot(a.page, 'recovery-code');
+
+  await a.page.evaluate(() => window.dispatchEvent(new Event('online')));
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM sync_versions WHERE state = 'published'").get().count, 0, 'online does not publish before setup confirmation');
+  await a.page.reload();
+  await a.page.getByText('今月の支出 ¥0', { exact: false }).waitFor();
+  await a.openSync();
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM sync_versions WHERE state = 'published'").get().count, 0, 'reload does not publish before setup confirmation');
+  assert.equal(sqlite.prepare('SELECT COUNT(*) AS count FROM sync_devices').get().count, 1, 'reload and retry do not register another device');
   await a.click('この端末で同期を始める');
   const code = await a.page.locator('#sync-recovery-code').innerText();
-  assert.match(code, /^KM1-[0-9a-f]{8}(-[0-9a-f]{8}){7}$/);
-  assert.equal(await a.page.getByRole('button', { name: '続ける', exact: true }).isDisabled(), true, 'continuing requires confirming the code is stored');
+  assert.ok(code === codeBeforeReload, 'retry after reload shows the same recovery code');
+  assert.equal(await a.page.getByRole('button', { name: '続ける', exact: true }).isDisabled(), true, 'continuing remains disabled until confirmation');
   await shot(a.page, 'recovery-code');
   await a.page.getByLabel('復旧コードを端末の外（パスワード管理アプリなど）に保存しました').check();
   await a.click('続ける');
   await a.status('同期済み');
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM sync_versions WHERE state = 'published'").get().count, 1, 'sync publishes after setup confirmation');
   await a.page.getByText('端末間の同期がオンです。', { exact: false }).waitFor();
   assert.ok(await a.page.locator('#sync-status').evaluate(node => node.textContent.includes('✓')), 'the status has a symbol and a label');
   await shot(a.page, 'synced');
