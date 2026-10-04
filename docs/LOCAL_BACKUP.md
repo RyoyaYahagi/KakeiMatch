@@ -36,7 +36,7 @@ KakeiMatch設定に保存しているActual `budgetId` と端末固有の `dataD
 
 書き出しは利用者が設定画面で明示的に開始します。PWAはActual ZIPと端末データを生成してから、最終書き出し生成日時を端末へ記録します。この日時はファイルをFilesなどへ保存できたことを示しません。生成した `.kmb` は利用者が端末外の安全な場所へ保存してください。ファイルは暗号化されていないため、他人に渡さないでください。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts)
 
-復元時はmanifest、checksum、version、entry名、件数、個別・合計サイズ、すべての端末record schemaを検証してから保存先を作ります。Actual Budgetは新しいActual `dataDir` へ読み込み、KakeiMatchのrecordと原本は新しいlocal profileへ一時復元します。両方の読み戻し確認後にだけlocal profile pointerを切り替えます。成功後も切替前のデータは端末に残り、設定画面から切替前の家計データへ戻せます。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts) [実装: `actual-browser-ledger.ts`](../src/lib/actual-browser-ledger.ts)
+復元時はmanifest、checksum、version、entry名、件数、個別・合計サイズ、すべての端末record schemaを検証してから保存先を作ります。Actual Budgetは新しいActual `dataDir` へ読み込み、KakeiMatchのrecordと原本は新しいlocal profileへ一時復元します。両方の読み戻し確認後にだけlocal profile pointerを切り替えます。成功後も切替前のデータは端末に残り、設定画面から切替前の家計データへ戻せます。切り替えると、同じ端末の別のタブはその後の書き込みを拒否し、再読み込みを促します（[端末側の一貫性](DEVICE_SYNC.md)）。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts) [実装: `actual-browser-ledger.ts`](../src/lib/actual-browser-ledger.ts)
 
 復元失敗時は、現在のprofile pointerを切り替えません。復元先の後片付けに失敗した場合は、その保存先を記録します。Actualの公開APIが認識できる家計簿は、設定画面の全消去で削除を再試行できます。取り込みが家計簿IDを返す前に失敗した場合は、列挙できない残存データの可能性を否定できないため、全消去を停止します。[実装: `local-backup.ts`](../apps/pwa/src/local-backup.ts)
 
