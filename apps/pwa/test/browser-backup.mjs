@@ -212,6 +212,9 @@ async function exportBackup() {
   assert.match(download.suggestedFilename(), /\.kmb$/i);
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
+  // The download event can fire before the export action clears its inert/running state.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('#backup-settings')?.hasAttribute('inert'));
   const { readFile } = await import('node:fs/promises');
   return readFile(path);
 }
