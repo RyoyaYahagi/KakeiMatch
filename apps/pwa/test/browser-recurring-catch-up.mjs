@@ -34,13 +34,13 @@ async function recurringList() {
 async function openCreate() {
   await recurringList(); await click('定期登録を追加する'); await page.locator('#recurring-name').waitFor();
 }
-async function fillSchedule({ name, startDate }) {
+async function fillSchedule({ name, startDate, frequency = 'monthly' }) {
   await page.locator('#recurring-name').fill(name);
   await page.locator('#recurring-kind').selectOption('expense');
   await page.locator('#recurring-amount').fill('1700');
   await page.locator('#recurring-category').selectOption({ label: 'Synthetic Catch-up Food' });
   await page.locator('#recurring-account').selectOption({ label: 'Synthetic Catch-up Wallet' });
-  await page.locator('#recurring-frequency').selectOption('monthly');
+  await page.locator('#recurring-frequency').selectOption(frequency);
   await page.locator('#recurring-start-date').fill(startDate);
   await page.locator('#recurring-auto').setChecked(false);
 }
@@ -86,6 +86,20 @@ try {
   await page.getByRole('button', { name: 'Synthetic Catch-up Single · 支出 ¥1,700', exact: true }).waitFor();
   let names = await recordNames();
   assert.equal(occurrencesOf(names, 'Synthetic Catch-up Single'), 1);
+
+  // A yearly rule with no due date this month can retain its past start without old records.
+  await openCreate();
+  await fillSchedule({ name: 'Synthetic Catch-up Yearly Future', startDate: '2024-01-01', frequency: 'yearly' });
+  await submitSchedule();
+  await page.locator('[data-catch-up-current-month]').waitFor();
+  assert.equal(await page.locator('[data-catch-up-current-month]').isEnabled(), true);
+  await chooseCatchUp('current-month');
+  await page.getByRole('button', { name: 'Synthetic Catch-up Yearly Future · 支出 ¥1,700', exact: true }).waitFor();
+  names = await recordNames();
+  assert.equal(occurrencesOf(names, 'Synthetic Catch-up Yearly Future'), 0);
+  await recurringList();
+  await click('Synthetic Catch-up Yearly Future · 支出 ¥1,700');
+  assert.match(await page.locator('.recurring-detail').innerText(), /2024-01-01/);
 
   // The immediate action removes just this new batch; saving again keeps the date claimed.
   await openCreate();

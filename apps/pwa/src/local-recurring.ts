@@ -1,5 +1,6 @@
 import type { createActualBrowserLedger, NativeTransactionSnapshot, RecurringScheduleInput } from "../../../src/lib/actual-browser-ledger";
 import type { LocalDataRepository } from "../../../src/lib/local-data";
+import { normalizeMerchant } from "../../../src/lib/category";
 import { recurringCatchUpAuditSchema, recurringOccurrenceDates, recurringScheduleInputSchema, type RecurringCatchUpAudit, type ScheduleAudit } from "../../../src/lib/recurring-schedule";
 export type { RecurringCatchUpAudit, ScheduleAudit } from "../../../src/lib/recurring-schedule";
 
@@ -171,9 +172,25 @@ export class LocalRecurringService {
   private async finishCatchUp(audit: RecurringCatchUpAudit) {
     let current = audit;
     if (audit.operation === "create" && audit.status !== "undoing") {
+      const existingRows = new Map((await this.ledger.getSearchTransactions()).map(({ transaction }) => [transaction.importedId, transaction]));
       for (let index = 0; index < current.occurrences.length; index += 1) {
         const occurrence = current.occurrences[index]!;
         if (occurrence.status !== "pending") continue;
+        const existing = existingRows.get(occurrence.importedId);
+        if (existing) {
+          const snapshot = await this.ledger.getTransactionTree(existing.id);
+          if (!snapshot.length) throw new Error("生成した定期取引を確認できません。保留中の処理から再試行してください。");
+          if (!matchesGeneratedSnapshot(snapshot, current, occurrence.date) ||
+            normalizeMerchant(existing.payeeName ?? "") !== normalizeMerchant(current.input.name)) {
+            // A prior write succeeded but its completion was lost, then the user edited it.
+            // Claim the original occurrence without overwriting or later undoing that edit.
+            const occurrences = current.occurrences.map(row => row.date === occurrence.date
+              ? { ...row, transactionId: existing.id, snapshot, status: "retained" as const } : row);
+            current = { ...current, occurrences };
+            await this.persistCatchUp(current);
+            continue;
+          }
+        }
         const transaction = await this.ledger.createTransaction({ kind: current.input.kind, amountYen: current.input.amountYen, date: occurrence.date,
           payeeName: current.input.name, categoryId: current.input.categoryId, accountId: current.input.accountId, memo: null, importedId: occurrence.importedId });
         const snapshot = await this.ledger.getTransactionTree(transaction.id);
@@ -258,6 +275,8 @@ function matchesGeneratedSnapshot(snapshot: NativeTransactionSnapshot[], audit: 
   const root = snapshot[0];
   const amount = audit.input.kind === "expense" ? -audit.input.amountYen : audit.input.amountYen;
   return snapshot.length === 1 && Boolean(root) && root!.date === date && root!.amount === amount && root!.account === audit.input.accountId &&
+    root!.category === audit.input.categoryId && (root!.notes ?? "") === "" &&
+    !root!.cleared && !root!.reconciled &&
     // Actual's native rules may attach the originating schedule to a newly added row.
     root!.imported_id === `kakeimatch:schedule:${audit.scheduleId}:${date}` && (root!.schedule == null || root!.schedule === audit.scheduleId) &&
     !root!.is_parent && !root!.is_child && !root!.parent_id && !root!.transfer_id;

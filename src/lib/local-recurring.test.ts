@@ -36,7 +36,7 @@ async function setup(now = "2026-10-04T12:00:00+09:00") {
     getTransactionTree: vi.fn(async (id: string) => {
       const row = transactions.find(transaction => transaction.id === id);
       if (!row) return [];
-      return [{ id: row.id, date: row.date, amount: row.amountYen, account: row.accountId, payee: "synthetic-payee", category: row.categoryId, notes: row.memo, imported_id: row.importedId, schedule: null } as NativeTransactionSnapshot];
+      return [{ id: row.id, date: row.date, amount: row.amountYen, account: row.accountId, payee: "synthetic-payee", category: row.categoryId, notes: row.memo, imported_id: row.importedId, schedule: null, cleared: row.cleared } as NativeTransactionSnapshot];
     }),
     deleteTransactionTree: vi.fn(async (snapshot: NativeTransactionSnapshot[]) => {
       const ids = new Set(snapshot.map(row => row.id));
@@ -184,6 +184,27 @@ describe("durable recurring operations", () => {
     expect(await service.pending()).toBeNull();
     expect((await repository.list("correction-audit")).map(row => (row.value as { status?: string }).status)).toContain("applied");
   });
+
+  it.each([{ amountYen: -49999 }, { date: "2026-11-01" }, { payeeName: "Edited Payee" }, { memo: "Edited memo" }, { categoryId: "edited-category" }, { cleared: true }])(
+    "recovers a lost result without overwriting or undoing an edited transaction: %j", async patch => {
+      const { service, ledger, transactions } = await setup();
+      await service.save(input);
+      const create = ledger.createTransaction.getMockImplementation()!;
+      ledger.createTransaction.mockImplementationOnce(async value => { await create(value); throw new Error("lost response after write"); });
+      await expect(service.catchUp("native-schedule", input, ["2026-10-01"])).rejects.toThrow("lost response");
+      Object.assign(transactions[0]!, patch);
+      await service.retry();
+      expect(await service.pending()).toBeNull();
+      expect(transactions).toHaveLength(1);
+      expect(transactions[0]).toMatchObject(patch);
+      const history = (await service.listCatchUps("native-schedule"))[0]!;
+      expect(history.audit).toMatchObject({ status: "applied", occurrences: [{ status: "retained" }] });
+      await service.undoCatchUp(history.audit.operationId);
+      expect(transactions).toHaveLength(1);
+      expect(transactions[0]).toMatchObject(patch);
+      expect((await service.previewCatchUp(input, "native-schedule")).dates).toEqual([]);
+    },
+  );
 
   it("retains an edited transaction during batch undo", async () => {
     const { service, transactions } = await setup();

@@ -66,8 +66,8 @@ export const recurringCatchUpAuditSchema = z.object({
   }
   if (value.operation === "create") {
     if (value.selectedDates !== null) context.addIssue({ code: "custom", message: "生成記録に削除対象日は指定できません。" });
-    if (value.status === "pending" && value.occurrences.some(row => row.status === "deleted" || row.status === "retained")) context.addIssue({ code: "custom", message: "生成中の記録に取り消し済みの行があります。" });
-    if (value.status === "applied" && value.occurrences.some(row => row.status !== "created")) context.addIssue({ code: "custom", message: "完了した生成記録に未処理の行があります。" });
+    if (value.status === "pending" && value.occurrences.some(row => row.status === "deleted")) context.addIssue({ code: "custom", message: "生成中の記録に取り消し済みの行があります。" });
+    if (value.status === "applied" && value.occurrences.some(row => row.status !== "created" && row.status !== "retained")) context.addIssue({ code: "custom", message: "完了した生成記録に未処理の行があります。" });
     if (value.status === "undoing" && value.occurrences.some(row => row.status === "pending")) context.addIssue({ code: "custom", message: "取り消し中の記録に未生成の行があります。" });
     if (value.status === "undone" && value.occurrences.some(row => row.status !== "deleted" && row.status !== "retained")) context.addIssue({ code: "custom", message: "取り消し済みの生成記録に未処理の行があります。" });
   } else {
