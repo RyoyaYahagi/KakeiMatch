@@ -185,7 +185,7 @@ function runtimeFor(api: ActualApi): RuntimeState {
   return state;
 }
 
-function mapTransaction(value: unknown, names: { payees: Map<string, string>; categories: Map<string, string> }, transferAccountId: string | null = null): ActualTransaction {
+function mapTransaction(value: unknown, names: { payees: Map<string, string>; categories: Map<string, string>; incomeCategoryIds: Set<string> }, transferAccountId: string | null = null): ActualTransaction {
   const parsed = actualTransactionSchema.safeParse(value);
   if (!parsed.success) throw new ActualBrowserUnavailableError("invalid_data");
   const row = parsed.data;
@@ -193,7 +193,8 @@ function mapTransaction(value: unknown, names: { payees: Map<string, string>; ca
     id: row.id,
     date: row.date,
     amountYen: row.amount,
-    kind: row.transfer_id ? "transfer" : row.amount < 0 ? "expense" : "income",
+    // A 0 yen row (a receipt paid entirely with points) takes its kind from the category.
+    kind: row.transfer_id ? "transfer" : row.amount < 0 ? "expense" : row.amount > 0 || (row.category && names.incomeCategoryIds.has(row.category)) ? "income" : "expense",
     payeeName: row.payee ? names.payees.get(row.payee) ?? null : null,
     categoryName: row.category ? names.categories.get(row.category) ?? null : null,
     accountId: row.account,
@@ -670,6 +671,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return {
       payees: new Map(payees.map((payee) => [payee.id, payee.name])),
       categories: new Map(categories.map((category) => [category.id, category.name])),
+      incomeCategoryIds: new Set(categories.filter((category) => category.is_income).map((category) => category.id)),
     };
   };
 
@@ -1432,7 +1434,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       const parsed = z.object({
         accountId: idSchema,
         date: dateSchema,
-        amountYen: z.number().int().safe().negative(),
+        amountYen: z.number().int().safe().nonpositive(),
         merchant: z.string().trim().min(1).max(200),
         memo: z.string().max(2000).nullable().optional(),
         categoryId: idSchema,
@@ -1478,7 +1480,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         id: idSchema,
         accountId: idSchema,
         date: dateSchema,
-        amountYen: z.number().int().safe().negative(),
+        amountYen: z.number().int().safe().nonpositive(),
         merchant: z.string().trim().min(1).max(200),
         memo: z.string().max(2000).nullable().optional(),
         categoryId: idSchema,

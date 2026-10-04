@@ -9,7 +9,14 @@ const page = await context.newPage();
 await page.clock.setFixedTime(new Date('2026-10-04T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 await context.route('**/api/ai/token', route => route.fulfill({ json: { token: 'synthetic-token', expiresAt: 9999999999 } }));
-await context.route('**/api/ai/gemini', route => route.fulfill({ json: {
+// The second read is a receipt paid entirely with points.
+const paidWithPoints = {
+  documentKind: 'receipt', merchant: 'Synthetic Points Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 0, taxAmountYen: null,
+  items: [{ name: 'Synthetic Bread', amountYen: 300 }, { name: 'Synthetic Soap', amountYen: 200 }],
+  adjustments: [{ label: 'ポイント利用', amountYen: -500 }], warnings: [],
+};
+let reads = 0;
+await context.route('**/api/ai/gemini', route => route.fulfill({ json: reads++ > 0 ? paidWithPoints : {
   documentKind: 'receipt', merchant: 'Synthetic Net Market', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 750, taxAmountYen: null,
   items: [{ name: 'Synthetic Rice', amountYen: 400 }, { name: 'Synthetic Lettuce', amountYen: 150 }, { name: 'Synthetic Chicken', amountYen: 600 }],
   adjustments: [{ label: 'Synthetic Coupon', amountYen: -100 }, { label: 'ポイント利用', amountYen: -300 }],
@@ -81,8 +88,24 @@ try {
   await click('登録する');
   await page.waitForFunction(() => document.querySelector('#message')?.textContent === '登録しました。' || [...document.querySelectorAll('button')].some(button => button.textContent === '登録を再試行する'));
   assert.equal(await page.locator('#message').textContent(), '登録しました。');
+  // A receipt paid entirely with points keeps a 0 yen total and can be registered as it is.
+  await click('記録を追加');
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await click('AIで読み取る');
+  await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Points Market');
+  assert.equal(await page.locator('#receipt-amount').inputValue(), '0');
+  await page.locator('#receipt-category').selectOption({ label: '食費' });
+  await page.locator('#receipt-account').selectOption({ label: 'Synthetic Wallet' });
+  await click('登録する');
+  await page.waitForFunction(() => document.querySelector('#message')?.textContent === '登録しました。' || [...document.querySelectorAll('button')].some(button => button.textContent === '登録を再試行する'));
+  assert.equal(await page.locator('#message').textContent(), '登録しました。');
+  // The 0 yen row is listed as an expense in its category, not as income.
+  const zeroRow = page.getByRole('button', { name: /^Synthetic Points Market · / });
+  await zeroRow.waitFor();
+  assert.match(await zeroRow.getAttribute('aria-label'), /食費/);
+  assert.doesNotMatch(await zeroRow.getAttribute('aria-label'), /収入/);
   assert.deepEqual(errors, []);
-  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, move to each place, hide checked or edited ones across reopening, and register the total after points like a coupon.');
+  console.log('PASS: read warnings name the place and reason, mark fields with words, replace non-Japanese messages, move to each place, hide checked or edited ones across reopening, and register totals after points like a coupon, including a 0 yen receipt paid entirely with points.');
 } finally {
   await browser.close();
 }

@@ -489,7 +489,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const merchant = document.createElement('input'); merchant.id = inputId('merchant'); merchant.required = true; merchant.maxLength = 200; merchant.value = initial.merchant;
     const date = document.createElement('input'); date.id = inputId('date'); date.type = 'date'; date.required = true; date.value = initial.purchasedDate;
     const time = document.createElement('input'); time.id = 'receipt-time'; time.type = 'time'; time.value = initial.purchasedTime ?? '';
-    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '1'; amount.step = '1'; amount.required = true; amount.value = initial.totalAmountYen ? String(initial.totalAmountYen) : '';
+    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = receipt.image ? '0' : '1'; amount.step = '1'; amount.required = true;
+    // A receipt paid entirely with points has a 0 yen total; an empty manual entry stays blank.
+    const zeroTotal = Boolean(receipt.image) && initial.totalAmountYen === 0 && (extraction?.totalAmountYen === 0 || confirmed?.totalAmountYen === 0);
+    amount.value = initial.totalAmountYen || zeroTotal ? String(initial.totalAmountYen) : '';
     const category = document.createElement('select'); category.id = inputId('category'); category.required = true;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
     category.value = actualCategoryId(initial.categoryId);
@@ -880,7 +883,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       void busy(submit, async () => {
         if (draftTimer) clearTimeout(draftTimer);
         const value = pendingEdit?.after ?? read();
-        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
+        const missingTotal = pendingEdit ? !receipt.image && !value.totalAmountYen : amount.value.trim() === '' || (!receipt.image && !value.totalAmountYen);
+        if (!value.merchant.trim() || !value.purchasedDate || missingTotal || !value.categoryId || !value.accountId) {
           setEditorPane('overview', false);
           // The category picker uses visible buttons instead of native validation.
           if (!value.categoryId) overviewFields.querySelector<HTMLButtonElement>('.category-choice')?.focus();

@@ -83,6 +83,19 @@ describe("LocalReceiptService", () => {
     expect((await service.get(receipt.id))?.reviewedWarnings).toBeUndefined();
   });
 
+  it("registers a receipt paid entirely with points as one 0 yen expense in the overall category", async () => {
+    const fetchImpl = vi.fn(async () => Response.json(extraction));
+    const { ledger, service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.confirm(receipt.id, { merchant: "Synthetic Net Market", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 0,
+      categoryId: "actual-food", accountId: "cash",
+      items: [{ id: "item-1", name: "Synthetic Rice", amountYen: 400, categoryId: "actual-food" }, { id: "item-2", name: "Synthetic Soap", amountYen: 300, categoryId: "actual-household" }],
+      adjustments: [{ id: "adjustment-1", label: "ポイント利用", amountYen: -700, targetItemId: null }] });
+    await service.register(receipt.id);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ amountYen: 0, categoryId: "actual-food" }));
+    expect((ledger.importReceipt.mock.calls[0] as unknown[])[0]).not.toHaveProperty("splits");
+  });
+
   it("keeps a valid image larger than the AI gateway limit locally for manual entry", async () => {
     const fetchImpl = vi.fn();
     const { repository, service } = await setup(fetchImpl);
