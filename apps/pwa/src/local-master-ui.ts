@@ -1,7 +1,6 @@
 import { accountTypeField, accountTypeLabels, accountBalanceLabel, type AccountType } from './local-account-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
-import { CATEGORY_LABELS } from '../../../src/lib/category';
 import type { StatementProvider } from './statement-parser';
 import { categoryRank, categoryTone } from './category-tone';
 import { recordRow } from './record-row';
@@ -259,17 +258,6 @@ export function initializeMasterUi(
     });
     if (rows.length) section.append(rowList(rows, 'master-list'));
     else section.append(element('p', 'カテゴリがありません。', 'muted'));
-    if (kind === false) {
-      const starter = quietAction('基本カテゴリを用意する', async () => {
-        const existing = await ledger.listCategories();
-        const names = new Set(existing.filter(row => !row.isIncome).map(row => row.name));
-        for (const name of Object.values(CATEGORY_LABELS)) if (!names.has(name)) await ledger.addCategory(name, false);
-        await categoriesPage(false);
-        const status = section.querySelector<HTMLElement>('[data-master-status]');
-        if (status) status.textContent = '基本カテゴリを用意しました。';
-      });
-      section.append(starter);
-    }
     section.append(element('p', '記録が多い順に並びます。入力画面のボタンも同じ順です。', 'muted settings-footnote'));
     section.append(pageActions(primaryAction('カテゴリを追加', 'add', () => categoryCreatePage(kind), 'カテゴリを追加する')));
   }
