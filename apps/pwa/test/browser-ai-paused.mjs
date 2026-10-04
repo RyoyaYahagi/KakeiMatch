@@ -62,8 +62,6 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await click('カテゴリ');
-  await click('基本カテゴリを用意する');
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
 
   // Gemini pause: the image stays on the device and the user can complete registration by hand.
   await chooseReceiptEntry();
