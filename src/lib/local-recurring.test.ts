@@ -3,14 +3,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { LocalDataRepository } from "./local-data";
 import { LocalRecurringService } from "../../apps/pwa/src/local-recurring";
 import { recurringOccurrenceDates, recurringCatchUpAuditSchema, scheduleAuditSchema } from "./recurring-schedule";
-import type { RecurringSchedule, RecurringScheduleInput } from "./actual-browser-ledger";
+import type { NativeTransactionSnapshot, RecurringSchedule, RecurringScheduleInput } from "./actual-browser-ledger";
+import type { ActualTransaction } from "./actual-ledger";
 
 const input: RecurringScheduleInput = { name: "Synthetic Rent", kind: "expense", amountYen: 50000, categoryId: "rent", accountId: "bank", frequency: "monthly", startDate: "2026-10-01", postsTransaction: true };
 const repositories: LocalDataRepository[] = [];
 afterEach(() => { for (const repository of repositories.splice(0)) repository.close(); });
-async function setup() {
+async function setup(now = "2026-10-04T12:00:00+09:00") {
   const repository = await LocalDataRepository.open(crypto.randomUUID()); repositories.push(repository);
   const schedules: RecurringSchedule[] = [];
+  const transactions: ActualTransaction[] = [];
+  const scheduledTransactions = new Set<string>();
   const ledger = {
     listCategories: vi.fn(async () => [{ id: "rent", name: "Synthetic Rent", isIncome: false, hidden: false, groupName: "Synthetic" }]),
     listAccounts: vi.fn(async () => [{ id: "bank", name: "Synthetic Bank", closed: false, accountType: "bank" as const }]),
@@ -22,9 +25,30 @@ async function setup() {
     }),
     updateRecurringSchedule: vi.fn(async (id: string, value: RecurringScheduleInput) => ({ ...value, id, nextDate: value.startDate, completed: false, editable: true })),
     deleteRecurringSchedule: vi.fn(async (id: string) => { const index = schedules.findIndex(row => row.id === id); if (index >= 0) schedules.splice(index, 1); }),
+    getSearchTransactions: vi.fn(async () => transactions.map(transaction => ({ transaction, recurringScheduleId: scheduledTransactions.has(transaction.id) ? "native-schedule" : null, categoryIds: [], keywordValues: [] }))),
+    createTransaction: vi.fn(async (value: { kind: "expense" | "income"; amountYen: number; date: string; payeeName: string; categoryId: string; accountId: string; memo: string | null; importedId: string }) => {
+      const existing = transactions.find(row => row.importedId === value.importedId);
+      if (existing) return existing;
+      const transaction: ActualTransaction = { id: `transaction-${transactions.length + 1}`, date: value.date, amountYen: value.kind === "expense" ? -value.amountYen : value.amountYen,
+        kind: value.kind, payeeName: value.payeeName, categoryName: "Synthetic", accountId: value.accountId, categoryId: value.categoryId, memo: value.memo, importedId: value.importedId, cleared: false };
+      transactions.push(transaction); return transaction;
+    }),
+    getTransactionTree: vi.fn(async (id: string) => {
+      const row = transactions.find(transaction => transaction.id === id);
+      if (!row) return [];
+      return [{ id: row.id, date: row.date, amount: row.amountYen, account: row.accountId, payee: "synthetic-payee", category: row.categoryId, notes: row.memo, imported_id: row.importedId, schedule: null } as NativeTransactionSnapshot];
+    }),
+    deleteTransactionTree: vi.fn(async (snapshot: NativeTransactionSnapshot[]) => {
+      const ids = new Set(snapshot.map(row => row.id));
+      for (const saved of snapshot) {
+        const current = transactions.find(row => row.id === saved.id);
+        if (!current || current.date !== saved.date || current.amountYen !== saved.amount || current.importedId !== saved.imported_id) throw new Error("取引が変更されています。");
+      }
+      for (let index = transactions.length - 1; index >= 0; index -= 1) if (ids.has(transactions[index]!.id)) transactions.splice(index, 1);
+    }),
   };
-  const service = new LocalRecurringService(repository, ledger, action => action());
-  return { repository, schedules, ledger, service };
+  const service = new LocalRecurringService(repository, ledger, action => action(), () => new Date(now));
+  return { repository, schedules, transactions, scheduledTransactions, ledger, service };
 }
 
 describe("durable recurring operations", () => {
@@ -33,6 +57,8 @@ describe("durable recurring operations", () => {
       .toEqual(["2026-01-31", "2026-03-31", "2026-05-31"]);
     expect(recurringOccurrenceDates({ frequency: "yearly", startDate: "2024-02-29" }, "2032-03-01"))
       .toEqual(["2024-02-29", "2028-02-29", "2032-02-29"]);
+    expect(recurringOccurrenceDates({ frequency: "monthly", startDate: "0099-01-31" }, "0100-03-31"))
+      .toEqual(["0099-01-31", "0099-03-31", "0099-05-31", "0099-07-31", "0099-08-31", "0099-10-31", "0099-12-31", "0100-01-31", "0100-03-31"]);
     expect(recurringOccurrenceDates({ frequency: "weekly", startDate: "2026-10-02" }, "2026-10-23"))
       .toEqual(["2026-10-02", "2026-10-09", "2026-10-16", "2026-10-23"]);
     expect(recurringOccurrenceDates({ frequency: "weekly", startDate: "1900-01-06" }, "2026-10-01")).toHaveLength(6613);
@@ -93,6 +119,99 @@ describe("durable recurring operations", () => {
     await expect(service.save(input)).rejects.toThrow("利用中");
     expect(await repository.list("correction-audit")).toHaveLength(0);
     expect(ledger.createRecurringSchedule).not.toHaveBeenCalled();
+  });
+
+  it("generates missing past occurrences idempotently and undoes only its own unchanged rows", async () => {
+    const { service, ledger, transactions } = await setup();
+    await service.save(input);
+    const preview = await service.previewCatchUp(input, "native-schedule");
+    expect(preview).toMatchObject({ dates: ["2026-10-01"], startDate: "2026-10-01", endDate: "2026-10-01", totalAmountYen: BigInt(50000) });
+    const [operationId] = await service.catchUp("native-schedule", input, preview.dates);
+    expect(transactions.map(row => row.importedId)).toEqual(preview.dates.map(date => `kakeimatch:schedule:native-schedule:${date}`));
+    expect((await service.listCatchUps("native-schedule"))[0]?.audit.occurrences.map(row => row.status)).toEqual(["created"]);
+    await service.undoCatchUp(operationId!);
+    expect(transactions).toHaveLength(0);
+    expect(await service.previewCatchUp(input, "native-schedule")).toMatchObject({ dates: [], totalAmountYen: BigInt(0) });
+    expect(ledger.deleteTransactionTree).toHaveBeenCalledTimes(1);
+  });
+
+  it("recognizes native schedule rows by schedule identity even after the rule inputs change", async () => {
+    const { service, ledger, transactions, scheduledTransactions } = await setup();
+    transactions.push({ id: "actual-native-old-rule", date: "2026-10-01", amountYen: -12345, kind: "expense", payeeName: "Old Name", categoryName: "Synthetic", accountId: "old-account", cleared: false });
+    scheduledTransactions.add("actual-native-old-rule");
+    await service.save(input);
+    const changed = { ...input, frequency: "weekly" as const, startDate: "2026-09-10", amountYen: 12345, name: "New Name", accountId: "changed-account" };
+    await expect(service.previewCatchUp(changed, "native-schedule")).resolves.toMatchObject({ dates: ["2026-09-10", "2026-09-17", "2026-09-24"] });
+    expect(ledger.getTransactionTree).not.toHaveBeenCalled();
+  });
+
+  it("does not mistake an independent matching transaction for a native schedule occurrence", async () => {
+    const { service, transactions } = await setup();
+    transactions.push({ id: "manual-lookalike", date: "2026-10-01", amountYen: -50000, kind: "expense", payeeName: input.name, categoryName: "Synthetic", accountId: input.accountId, cleared: false });
+    await service.save(input);
+    await expect(service.previewCatchUp(input, "native-schedule")).resolves.toMatchObject({ dates: ["2026-10-01"] });
+  });
+
+  it("does not re-create a stable catch-up ID whose transaction was moved to another date", async () => {
+    const { service, transactions } = await setup();
+    transactions.push({ id: "moved-catch-up", date: "2026-10-02", amountYen: -50000, kind: "expense", payeeName: input.name, categoryName: "Synthetic", accountId: input.accountId, cleared: false,
+      importedId: "kakeimatch:schedule:native-schedule:2026-10-01" });
+    await service.save(input);
+    await expect(service.previewCatchUp(input, "native-schedule")).resolves.toMatchObject({ dates: [] });
+  });
+
+  it("recovers an unknown create result through its stable imported ID", async () => {
+    const { service, ledger, transactions, repository } = await setup();
+    await service.save(input);
+    const create = ledger.createTransaction.getMockImplementation()!;
+    ledger.createTransaction.mockImplementationOnce(async value => { await create(value); throw new Error("synthetic response loss after write"); });
+    await expect(service.catchUp("native-schedule", input, ["2026-10-01"])).rejects.toThrow("response loss");
+    expect(transactions).toHaveLength(1);
+    await service.retry();
+    expect(transactions).toHaveLength(1);
+    expect(await service.pending()).toBeNull();
+    expect((await repository.list("correction-audit")).map(row => (row.value as { status?: string }).status)).toContain("applied");
+  });
+
+  it("retains an edited transaction during batch undo", async () => {
+    const { service, transactions } = await setup();
+    await service.save(input);
+    const [operationId] = await service.catchUp("native-schedule", input, ["2026-10-01"]);
+    transactions[0]!.amountYen -= 1;
+    await service.undoCatchUp(operationId!);
+    expect(transactions).toHaveLength(1);
+    expect(await service.pending()).toBeNull();
+    expect((await service.listCatchUps("native-schedule"))[0]?.audit).toMatchObject({ status: "undone", occurrences: [{ status: "retained" }] });
+  });
+
+  it("undoes unchanged rows and retains an edited row without leaving a pending operation", async () => {
+    const { service, transactions } = await setup("2026-10-23T12:00:00+09:00");
+    const weekly = { ...input, frequency: "weekly" as const };
+    await service.save(weekly);
+    const preview = await service.previewCatchUp(weekly, "native-schedule");
+    expect(preview.dates).toEqual(["2026-10-01", "2026-10-08", "2026-10-15", "2026-10-22"]);
+    const [operationId] = await service.catchUp("native-schedule", weekly, preview.dates);
+    transactions.find(row => row.date === "2026-10-08")!.amountYen -= 1;
+    await service.undoCatchUp(operationId!);
+    expect(transactions.map(row => row.date)).toEqual(["2026-10-08"]);
+    expect((await service.listCatchUps("native-schedule"))[0]?.audit.occurrences.map(row => row.status)).toEqual(["deleted", "retained", "deleted", "deleted"]);
+    expect(await service.pending()).toBeNull();
+  });
+
+  it("allows later bulk undo after selective deletion and keeps an edited occurrence", async () => {
+    const { service, transactions } = await setup("2026-10-23T12:00:00+09:00");
+    const weekly = { ...input, frequency: "weekly" as const };
+    await service.save(weekly);
+    const preview = await service.previewCatchUp(weekly, "native-schedule");
+    const [operationId] = await service.catchUp("native-schedule", weekly, preview.dates);
+    await service.deleteCatchUpOccurrences(operationId!, ["2026-10-01"]);
+    transactions.find(row => row.date === "2026-10-08")!.amountYen -= 1;
+    await service.undoCatchUp(operationId!);
+    expect(transactions.map(row => row.date)).toEqual(["2026-10-08"]);
+    expect((await service.listCatchUps("native-schedule"))[0]?.audit).toMatchObject({ status: "undone" });
+    expect((await service.listCatchUps("native-schedule"))[0]?.deletedDates.has("2026-10-01")).toBe(true);
+    expect((await service.listCatchUps("native-schedule"))[0]?.retainedDates.has("2026-10-08")).toBe(true);
+    expect(await service.pending()).toBeNull();
   });
 
   it("validates portable pending intents including operation-specific fields", () => {
