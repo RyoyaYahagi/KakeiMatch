@@ -1,0 +1,206 @@
+{
+  "reviewedAt": "2026-10-04",
+  "findings": [
+    {
+      "audit": "pnpm-prod",
+      "package": "postcss",
+      "version": "8.4.31",
+      "advisoryId": "GHSA-6g55-p6wh-862q",
+      "path": "apps__pwa>better-auth>next>postcss",
+      "expiresAt": "2026-11-02",
+      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-prod",
+      "package": "postcss",
+      "version": "8.4.31",
+      "advisoryId": "GHSA-r28c-9q8g-f849",
+      "path": "apps__pwa>better-auth>next>postcss",
+      "expiresAt": "2026-11-02",
+      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-all",
+      "package": "postcss",
+      "version": "8.4.31",
+      "advisoryId": "GHSA-6g55-p6wh-862q",
+      "path": ".>next>postcss",
+      "expiresAt": "2026-11-02",
+      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-all",
+      "package": "postcss",
+      "version": "8.4.31",
+      "advisoryId": "GHSA-r28c-9q8g-f849",
+      "path": ".>next>postcss",
+      "expiresAt": "2026-11-02",
+      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-rfgv-xxqx-mfg5",
+      "path": "apps__pwa>@cloudflare/vite-plugin>miniflare>undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-w293-vg96-wgc3",
+      "path": "apps__pwa>@cloudflare/vite-plugin>miniflare>undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "pnpm-all",
+      "package": "braces",
+      "version": "3.0.3",
+      "advisoryId": "GHSA-vfj7-8cjw-p6xm",
+      "path": ".>eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces",
+      "expiresAt": "2026-11-02",
+      "reason": "Lint-only legacy eslint-config-next path is not imported by the production PWA/Worker. Only repository contributors control lint inputs; the production module-graph guard excludes this package. Deferred as legacy tooling with no remote user input path.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "@fastify/busboy",
+      "version": "2.1.1",
+      "advisoryId": "GHSA-x8mw-p69m-v3mx",
+      "path": "node_modules/@fastify/busboy",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Miniflare/Wrangler development tooling path is excluded from the deployable Worker bundle. CI inputs are synthetic and no production request reaches this package. Deferred pending compatible upstream tooling updates; production module-graph checks are the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-rfgv-xxqx-mfg5",
+      "path": "node_modules/@cloudflare/runtime-types/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-rfgv-xxqx-mfg5",
+      "path": "node_modules/@cloudflare/vite-plugin/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-rfgv-xxqx-mfg5",
+      "path": "node_modules/cf/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-rfgv-xxqx-mfg5",
+      "path": "node_modules/wrangler/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-w293-vg96-wgc3",
+      "path": "node_modules/@cloudflare/runtime-types/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-w293-vg96-wgc3",
+      "path": "node_modules/@cloudflare/vite-plugin/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-w293-vg96-wgc3",
+      "path": "node_modules/cf/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "7.29.0",
+      "advisoryId": "GHSA-w293-vg96-wgc3",
+      "path": "node_modules/wrangler/node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Cloudflare/Miniflare or Wrangler development tooling path is excluded from the deployable Worker bundle. Production users cannot reach this local dependency; CI uses synthetic requests. Deferred pending compatible upstream tooling updates; the production bundle boundary is the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "ws",
+      "version": "8.18.0",
+      "advisoryId": "GHSA-96hv-2xvq-fx4p",
+      "path": "node_modules/miniflare/node_modules/ws",
+      "expiresAt": "2026-11-02",
+      "reason": "Local Miniflare/Wrangler development tooling path is excluded from the deployable Worker bundle. CI inputs are synthetic and no production request reaches this package. Deferred pending compatible upstream tooling updates; production module-graph checks are the compensating control.",
+      "severity": "high"
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "5.29.0",
+      "advisoryId": "GHSA-vrm6-8vpv-qv8q",
+      "severity": "high",
+      "path": "node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "GHSA-vrm6/v9p9/vxpw affect Undici WebSocket-client DoS paths in miniflare@3.20250718.2 > undici ^5.28.5 (package-lock marks node_modules/undici dev:true). The D1 tests use synthetic Worker/localhost HTTP requests and do not call Undici WebSocket APIs; the deployable Worker bundle contains no Undici module. No production user input reaches this test-only dependency. Deferred to preserve Miniflare API compatibility while a separate upstream tooling update is assessed; CI runs synthetic tests only, exposes no Vitest/Miniflare UI, and production bundle graph checks exclude Undici. Rechecked 2026-10-04."
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "5.29.0",
+      "advisoryId": "GHSA-v9p9-hfj2-hcw8",
+      "severity": "high",
+      "path": "node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "GHSA-vrm6/v9p9/vxpw affect Undici WebSocket-client DoS paths in miniflare@3.20250718.2 > undici ^5.28.5 (package-lock marks node_modules/undici dev:true). The D1 tests use synthetic Worker/localhost HTTP requests and do not call Undici WebSocket APIs; the deployable Worker bundle contains no Undici module. No production user input reaches this test-only dependency. Deferred to preserve Miniflare API compatibility while a separate upstream tooling update is assessed; CI runs synthetic tests only, exposes no Vitest/Miniflare UI, and production bundle graph checks exclude Undici. Rechecked 2026-10-04."
+    },
+    {
+      "audit": "worker-all",
+      "package": "undici",
+      "version": "5.29.0",
+      "advisoryId": "GHSA-vxpw-j846-p89q",
+      "severity": "high",
+      "path": "node_modules/undici",
+      "expiresAt": "2026-11-02",
+      "reason": "GHSA-vrm6/v9p9/vxpw affect Undici WebSocket-client DoS paths in miniflare@3.20250718.2 > undici ^5.28.5 (package-lock marks node_modules/undici dev:true). The D1 tests use synthetic Worker/localhost HTTP requests and do not call Undici WebSocket APIs; the deployable Worker bundle contains no Undici module. No production user input reaches this test-only dependency. Deferred to preserve Miniflare API compatibility while a separate upstream tooling update is assessed; CI runs synthetic tests only, exposes no Vitest/Miniflare UI, and production bundle graph checks exclude Undici. Rechecked 2026-10-04."
+    }
+  ],
+  "owner": "repository maintainer"
+}

@@ -55,10 +55,10 @@ Boundary review for this change found that the browser has only same-origin appl
 For every dependency-lockfile change, run the audits below as part of CI review. Repeat them at least weekly, and after a security advisory affecting a deployed dependency. Keep the raw command output with the change record; the commands exit non-zero when they find advisories.
 
 ```sh
-corepack pnpm audit --prod
-corepack pnpm audit
-npm audit --omit=dev --prefix workers/ai-gateway
-npm audit --prefix workers/ai-gateway
+corepack pnpm audit --prod --json
+corepack pnpm audit --json
+npm audit --package-lock-only --omit=dev --json --prefix workers/ai-gateway
+npm audit --package-lock-only --json --prefix workers/ai-gateway
 ```
 
 Prioritize critical and high findings, but do not decide from severity or the audit dependency path alone. Verify the installed version and transitive path (`pnpm why` or `npm explain`), then check whether the affected code is imported into the deployable PWA/Worker graph, whether an attacker can control the relevant input, and whether the path is instead development tooling, a test fixture, or retained legacy code. Cross-check `npm audit --omit=dev` results against `npm ls --all --omit=dev` and the production build: lockfiles can include optional development peers in the audit report. A reachable critical/high finding blocks release until it is patched or has a recorded, time-limited exception. Do not run broad automatic upgrades; select a compatible patched version, update the lockfile, and rerun build and tests.
@@ -73,6 +73,10 @@ Audit snapshot reviewed on 2026-10-03:
 - The AI Gateway's npm audit reported 3 high and 1 critical across its lockfile. The high paths (`@fastify/busboy`, `undici`, and `ws`) are nested under Miniflare/Wrangler development tooling. The critical Vitest finding is `vitest@3.2.4` from Better Auth's optional peer recorded as `devOptional`; `npm ls vitest @vitest/mocker --all --omit=dev` returned no production installation. No high or critical package was found in the production dependency tree. npm's `--omit=dev` audit still reports this optional Vitest peer, so it must be checked against the installed production tree and built Worker rather than treated as a runtime finding. These toolchain findings are tracked for reassessment by 2026-11-02.
 
 The AI Gateway dependency build could not be reproduced in the review worktree: `npm ci` failed while extracting the optional `@cloudflare/workerd-linux-64` binary with an I/O error (`EIO`, `-122`). Its lockfile audit and installed-tree checks completed, but this review did not verify a fresh Gateway bundle. The normal CI build remains required for changes to that Worker.
+
+The [weekly dependency audit workflow](.github/workflows/security-audit.yml) also supports manual runs and checks matching pull requests. It saves the JSON output and command exit codes for all four audits as a 90-day artifact. Exit code 1 is treated as an audit result only when valid JSON reports vulnerabilities; network errors, malformed output, new or changed high/critical findings, and expired exceptions fail the workflow. The exception baseline in `scripts/security-audit-baseline.json` matches the audit, package, exact version, advisory ID, severity, and dependency path, and gives every exception a review date and owner. npm's package-level grouped paths are filtered against each advisory's vulnerable semver range. The checker supports exact versions, comparator terms, OR branches, and hyphen ranges; unsupported range syntax fails closed and must be reviewed before extending the parser. It does not update dependencies or create issues. Re-review and update that file only after verifying the current dependency path and production reachability.
+
+Follow-up verification on 2026-10-04: read-only lockfile audits reported the previously documented PostCSS, Undici, and braces findings. A fresh `npm ci --omit=dev --ignore-scripts` and `npm ls --omit=dev` reproduced Vitest 3.2.4 and `@vitest/mocker` in the production dependency tree, superseding the 2026-10-03 note that they were absent. This surfaced `GHSA-5xrq-8626-4rwp` as critical in the production lockfile audit. Updating Vitest to 3.2.7 removed high/critical findings from the production dependency audit; two moderate Vitest advisories remain. The production Worker bundle check found no Vitest, `@vitest/mocker`, `@fastify/busboy`, or `ws` modules; the Worker invokes `vitest run` and does not expose the affected Vitest UI/API. The updated Worker bundle passed CI after this follow-up.
 
 ## Reporting
 
