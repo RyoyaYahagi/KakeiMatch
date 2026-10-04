@@ -50,6 +50,9 @@ try {
   assert.match(await page.locator('.receipt-reading-hint').textContent(), /通常5秒ほどかかります/);
   assert.equal(await page.getByRole('status').filter({ hasText: '内容を読み取っています' }).count(), 1);
   assert.equal(await page.locator('.receipt-preview-frame.is-reading').count(), 1);
+  // The robot follows the step and is hidden from screen readers.
+  assert.equal(await page.locator('.receipt-reading').getAttribute('data-step'), 'reading');
+  assert.equal(await page.locator('.receipt-reading .reading-robot').getAttribute('aria-hidden'), 'true');
   assert.ok(await page.getByRole('button', { name: 'AIで読み取る', exact: true }).isHidden(), 'The read button is hidden while reading');
   for (const id of ['#receipt-amount', '#receipt-merchant', '#receipt-date']) {
     assert.ok(await page.locator(id).isDisabled(), `${id} waits for the read`);
@@ -67,6 +70,8 @@ try {
   held.gemini();
   await jevArrived;
   await page.locator('.receipt-reading-title').filter({ hasText: /^カテゴリを提案しています（\d+秒）$/ }).waitFor();
+  assert.equal(await page.locator('.receipt-reading').getAttribute('data-step'), 'categorizing');
+  if (process.env.PWA_RECEIPT_AI_CATEGORIZING_SCREENSHOT_PATH) await page.locator('.receipt-reading').screenshot({ path: process.env.PWA_RECEIPT_AI_CATEGORIZING_SCREENSHOT_PATH });
   held.jev();
   await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('.receipt-reading').count(), 0);
@@ -76,7 +81,7 @@ try {
   // The payment source chosen while waiting is kept after the read.
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Wallet');
   assert.deepEqual(errors, []);
-  console.log('PASS: reading shows the step with elapsed seconds, motion and placeholder bands, keeps the payment source selectable and kept, and clears when done.');
+  console.log('PASS: reading shows the step with elapsed seconds, the robot, motion and placeholder bands, keeps the payment source selectable and kept, and clears when done.');
 } finally {
   await browser.close();
 }
