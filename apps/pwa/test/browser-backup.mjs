@@ -212,6 +212,10 @@ async function exportBackup() {
     throw new Error(`Backup export did not download: ${status || 'no status message'}`, { cause: error });
   }
   assert.match(download.suggestedFilename(), /\.kmb$/i);
+  // The download fires before the export action finishes refresh(); until it does, the UI's
+  // single-flight guard silently drops the next backup action (e.g. a #backup-file change).
+  await page.waitForFunction(() => !document.querySelector('#backup-settings')?.hasAttribute('inert'));
+  assert.match(await page.locator('#backup-settings [role=status]').innerText(), /バックアップを生成しました/);
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
   const { readFile } = await import('node:fs/promises');
