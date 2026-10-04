@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CATEGORY_IDS, CATEGORY_LABELS, isCategoryId, normalizeMerchant } from "./category";
+import { BASIC_EXPENSE_CATEGORY_LABELS, CATEGORY_IDS, CATEGORY_LABELS, isCategoryId, normalizeMerchant } from "./category";
 
 describe("category definitions", () => {
   it("keeps the fixed IDs separate from their Japanese labels", () => {
@@ -15,6 +15,14 @@ describe("category definitions", () => {
       communications: "通信",
       other: "その他",
     });
+  });
+
+  it("defines the default expense categories by use rather than payment form", () => {
+    expect(BASIC_EXPENSE_CATEGORY_LABELS).toEqual([
+      "食費", "外食", "日用品", "衣服・美容", "交通", "医療・健康", "家電・デジタル", "趣味・娯楽",
+      "AI・ソフトウェア", "通信", "教育・学習", "交際費", "住居", "水道・光熱", "その他",
+    ]);
+    expect(BASIC_EXPENSE_CATEGORY_LABELS).not.toContain("サブスク");
   });
 
   it("accepts only known category IDs", () => {
