@@ -50,8 +50,8 @@ async function readHouseholdSnapshot() {
       const currentProfile = localStorage.getItem('kakeimatch.local-profile.v1');
       const ownedRecords = records.filter(row => row.profileId === currentProfile)
         .map(row => { const copy = { ...row }; delete copy.key; delete copy.profileId; return copy; })
-        // The selected Actual directory is local operational state, not portable.
-        .filter(row => row.id !== 'settings:budget')
+        // Local bootstrap/selection metadata is operational state, not household content.
+        .filter(row => row.id !== 'settings:budget' && !row.id.startsWith('settings:basic-categories:'))
         .sort((a, b) => a.id.localeCompare(b.id));
       const ownedBlobs = await Promise.all(blobs.filter(row => row.profileId === currentProfile).map(async row => {
         const copy = { ...row };
