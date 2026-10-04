@@ -215,7 +215,10 @@ async function exportBackup() {
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
   const { readFile } = await import('node:fs/promises');
-  return readFile(path);
+  const bytes = await readFile(path);
+  // Download creation precedes refresh/cleanup; a restore while export is running is ignored.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
+  return bytes;
 }
 
 async function importBackup(buffer, filename = 'synthetic.kmb') {
