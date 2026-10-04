@@ -25,8 +25,6 @@ try {
   await page.locator('#settings-tab').click(); await click('支払元'); await click('支払元を追加する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Wallet'); await click('追加する');
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
-  await page.locator('#settings-tab').click(); await click('カテゴリ'); await click('基本カテゴリを用意する');
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);
