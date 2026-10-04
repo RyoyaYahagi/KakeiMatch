@@ -149,18 +149,20 @@ export class DeviceSyncEngine {
 
   /**
    * Revokes another device. The household moves to a new key generation, so this device creates
-   * a new key and recovery code and republishes. Other devices must join again with the new code.
+   * a new key and recovery code. Like `enable()`, sync stays paused until `completeSetup()`; the
+   * next `sync()` then republishes with the new key. Other devices must join again with the new code.
    */
-  async revokeDevice(deviceId: string): Promise<{ recoveryCode: string; outcome: SyncOutcome }> {
+  async revokeDevice(deviceId: string): Promise<{ recoveryCode: string }> {
     const secrets = await this.requireSecrets();
+    if (secrets.pendingSetup) throw new Error('復旧コードの保存を確認して、同期の初期設定を完了してください。');
     if (deviceId === secrets.deviceId) throw new Error('この端末は「この端末の同期を停止」で止めてください。');
     const { generation } = await this.api(secrets).revokeDevice(deviceId);
     const { key, recoveryCode, protectedKey } = await createHouseholdEncryptionKey(secrets.householdId, generation);
-    const rotated = { ...secrets, generation, key };
+    // Saved before sending the key, so a failed request is resumed by `enable()` with the same code.
+    const rotated = { ...secrets, generation, key, pendingSetup: { recoveryCode, protectedKey } };
     await this.deps.secrets.save(rotated);
     await this.api(rotated).putKey(generation, protectedKey);
-    const current = await this.api(rotated).current();
-    return { recoveryCode, outcome: await this.publish(rotated, current.current?.versionId ?? null).catch(error => outcomeOf(error)) };
+    return { recoveryCode };
   }
 
   /** Stops sending and receiving on this device. Household data on this device is kept. */
@@ -205,7 +207,9 @@ export class DeviceSyncEngine {
     // A household that never synced (or was restored from a backup) has changes to send.
     const local = !bound || hasUnsentChanges(state);
     const remoteId = current.current?.versionId ?? null;
-    if (bound && remoteId === state.baseVersionId) return local ? this.publish(secrets, remoteId) : { status: 'synced' };
+    // After a key rotation the current version is still encrypted with the previous generation's key.
+    const rotated = current.current !== null && current.current.generation !== secrets.generation;
+    if (bound && remoteId === state.baseVersionId) return local || rotated ? this.publish(secrets, remoteId) : { status: 'synced' };
     if (!current.current) return this.publish(secrets, null);
     if (!local) return this.importVersion(secrets, current.current);
     return { status: 'conflict', remote: current.current };
