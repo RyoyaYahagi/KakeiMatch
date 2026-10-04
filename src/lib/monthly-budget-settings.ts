@@ -118,6 +118,25 @@ export function withDefaultPlan(
   next.defaultTotal = parsed.total;
   next.defaultBreakdown = breakdownEnabled;
   next.defaults = breakdownEnabled ? parsed.allocations : {};
+
+  // Preserve legacy per-month category overrides without allowing them to drift from the new overall model.
+  // Once an overall default is introduced, promote any numeric legacy month override into a balanced
+  // month-specific plan whose total is derived from the effective category allocation for that month.
+  next.monthlyTotals ??= {};
+  next.monthlyBreakdown ??= {};
+  for (const [month, overrides] of Object.entries(next.monthlyOverrides)) {
+    if (next.monthlyTotals[month] !== undefined || !Object.values(overrides).some(value => typeof value === "number")) continue;
+    const categoryIds = new Set([...Object.keys(next.defaults), ...Object.keys(overrides)]);
+    let monthTotal = 0;
+    for (const categoryId of categoryIds) {
+      const override = overrides[categoryId];
+      const amount = typeof override === "number" ? override : (next.defaults[categoryId] ?? 0);
+      monthTotal += amount;
+      if (!Number.isSafeInteger(monthTotal)) throw new Error("カテゴリ別予算の合計額を安全に計算できません。");
+    }
+    next.monthlyTotals[month] = monthTotal;
+    next.monthlyBreakdown[month] = true;
+  }
   return monthlyBudgetSettingsSchema.parse(next);
 }
 
