@@ -245,7 +245,16 @@ export function initializeDeviceSyncUi(container: HTMLElement, options: Options)
     if (!window.confirm('この端末を同期から外しますか？\n\n外した端末に保存済みの家計データは消せません。新しい復旧コードを作るので、ほかの端末も参加し直しが必要です。')) return;
     await run(async () => {
       const result = await engine.revokeDevice(deviceId);
-      showRecoveryCode(result.recoveryCode, '端末を外し、新しい復旧コードを作りました。以前のコードは使えません。', async () => { await handle(result.outcome, false); });
+      enabled = false;
+      updateStorageLocation();
+      showRecoveryCode(result.recoveryCode, '端末を外し、新しい復旧コードを作りました。以前のコードは使えません。', async () => {
+        await run(async () => {
+          await engine.completeSetup();
+          enabled = true;
+          updateStorageLocation();
+          await handle(await engine.sync(), true);
+        }, '同期しています…');
+      });
     }, '端末を外しています…');
   }
 
