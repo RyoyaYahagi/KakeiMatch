@@ -110,4 +110,6 @@ AIエージェントは作業開始時に必ず以下を読んでください。
 - AI schema: 不正なAI応答のvalidation test
 - 主要ユーザーフロー: MVP安定後にE2Eを追加
 
+GitHub Actionsの実行時間には上限があります。push前に、変更範囲に応じた `pnpm lint` / `pnpm typecheck` / `pnpm test` / 関連する `pnpm --dir apps/pwa test:*-e2e` をローカルで実行し、CIを確認作業の代わりに繰り返し使わないでください。作業途中のPRはDraftにするとCIは実行されません。
+
 実データ・実レシート・実カード明細をfixtureとしてGitへコミットしないでください。匿名化した人工データを利用します。
