@@ -266,9 +266,11 @@ describe('device sync engine', () => {
   it('rotates the key when a device is revoked; the revoked device must join again', async () => {
     const { a, b } = await pair();
     const bDevice = (await b.engine.devices()).find(item => item.current)!.deviceId;
-    const { recoveryCode, outcome } = await a.engine.revokeDevice(bDevice);
+    const { recoveryCode } = await a.engine.revokeDevice(bDevice);
     expect(recoveryCode).toMatch(/^KM1-/);
-    expect(outcome).toMatchObject({ status: 'published' });
+    expect(await a.engine.sync()).toEqual({ status: 'off' });
+    await a.engine.completeSetup();
+    expect(await a.engine.sync()).toMatchObject({ status: 'published' });
     expect(await b.engine.sync()).toEqual({ status: 'rejoin_required' });
     const c = await device('c');
     expect(await c.engine.join(recoveryCode)).toMatchObject({ status: 'imported' });
@@ -317,6 +319,34 @@ describe('review regressions', () => {
       await b.reload();
       expect(await b.ids()).toEqual(['receipt:setup']);
       a.close(); b.close();
+    },
+  );
+
+  it.each(['before communication', 'after server saved the key'] as const)(
+    'resumes a revocation after the new key PUT fails %s with the same recovery code', async failurePoint => {
+      const { a, b } = await pair();
+      const bDevice = (await b.engine.devices()).find(item => item.current)!.deviceId;
+      keyPutAttempts = [];
+      if (failurePoint === 'before communication') failNextKeyPut = true;
+      else dropNextKeyPutResponse = true;
+
+      await expect(a.engine.revokeDevice(bDevice)).rejects.toThrow();
+      await a.reload();
+      expect(await a.engine.sync()).toEqual({ status: 'off' });
+      expect(await b.engine.sync()).toEqual({ status: 'rejoin_required' });
+
+      const { recoveryCode } = await a.engine.enable();
+      expect(recoveryCode).toMatch(/^KM1-/);
+      expect(keyPutAttempts).toHaveLength(2);
+      expect(keyPutAttempts[1]).toEqual(keyPutAttempts[0]);
+      await a.engine.completeSetup();
+      expect(await a.engine.sync()).toMatchObject({ status: 'published' });
+
+      const c = await device(`rejoin-${failurePoint}`);
+      expect(await c.engine.join(recoveryCode)).toMatchObject({ status: 'imported' });
+      await c.reload();
+      expect(await c.ids()).toEqual(['receipt:a1']);
+      a.close(); b.close(); c.close();
     },
   );
 
