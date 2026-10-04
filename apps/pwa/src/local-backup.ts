@@ -7,6 +7,8 @@ import {
   writeSwitchJournal, writeSyncState, initialSyncState, type HouseholdSwitchJournal,
 } from './household-sync-state';
 import type { HouseholdWriteGuard } from './household-write-guard';
+import { decryptPortableSyncVersion } from '../../../src/lib/encrypted-sync-version';
+import type { EncryptionContext } from '../../../src/lib/encrypted-household-format';
 
 export const PREVIOUS_PROFILE_KEY = 'kakeimatch.previous-local-profile.v1';
 export const INCOMPLETE_RESTORE_KEY = 'kakeimatch.incomplete-actual-restore.v1';
@@ -85,6 +87,13 @@ async function portableSnapshot(repository: LocalDataRepository, ledger: BackupL
 export async function restoreLocalBackup(file: Blob, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
   const backup = await readPortableBackup(file);
   return stageAndSwitch(backup, ledger, overrides);
+}
+
+/** The sync coordinator must also hold the household lock and guard profile/base-version publication. */
+export async function restoreEncryptedLocalBackup(metadata: unknown, expected: EncryptionContext, key: CryptoKey,
+  readChunk: (index: number) => Promise<Blob>, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
+  const plain = await decryptPortableSyncVersion(metadata, expected, key, readChunk);
+  return restoreLocalBackup(plain, ledger, overrides);
 }
 
 /** Initial standalone budget import also uses a new target, never an in-place Actual import. */
