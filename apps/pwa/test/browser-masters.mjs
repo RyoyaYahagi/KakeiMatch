@@ -153,6 +153,8 @@ try {
   const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const path = await download.path(); assert.ok(path);
   const buffer = await readFile(path);
+  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   const navigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-masters.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });

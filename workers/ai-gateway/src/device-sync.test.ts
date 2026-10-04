@@ -34,7 +34,7 @@ vi.mock("./account-auth", async (importOriginal) => {
 
 const origin = "https://sync.example.test";
 const T0 = Date.parse("2026-10-03T12:00:00Z");
-const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql"]
+const migrations = ["0001_auth.sql", "0007_account_deletion.sql", "0009_device_sync.sql", "0011_sync_household_keys.sql"]
   .map((name) => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8").replace(/^\s*--.*$/gm, "").replace(/\s+/g, " ").trim())
   .join("\n");
 
@@ -713,5 +713,53 @@ describe("deleting cloud sync data", () => {
     expect(result).toMatchObject({ deleted: 2, failed: 0 });
     expect(provider.keys()).toEqual([]);
     expect(await row("SELECT id FROM sync_households WHERE owner_user_id = 'bob'")).not.toBeNull();
+  });
+});
+
+describe("protected household keys", () => {
+  const protectedKey = (householdId: string, generation: number, fill = "a") => ({
+    formatVersion: 1, householdId, generation, salt: "1".repeat(64), encryptedKey: fill.repeat(96),
+  });
+
+  it("stores one key per generation, lets joined devices read it, and refuses other users", async () => {
+    const first = await register();
+    expect((await call("GET", "/key", { credential: first.credential })).json.error).toBe("key_not_found");
+    const stored = await call("PUT", "/key", { credential: first.credential, body: { generation: 1, protectedKey: protectedKey(first.householdId, 1) } });
+    expect(stored.status).toBe(200);
+    // Retrying the same key is fine; replacing it is not.
+    expect((await call("PUT", "/key", { credential: first.credential, body: { generation: 1, protectedKey: protectedKey(first.householdId, 1) } })).status).toBe(200);
+    expect((await call("PUT", "/key", { credential: first.credential, body: { generation: 1, protectedKey: protectedKey(first.householdId, 1, "b") } })).json.error).toBe("key_exists");
+
+    const second = await join();
+    const read = await call("GET", "/key", { credential: second.credential });
+    expect(read.json).toEqual({ generation: 1, protectedKey: protectedKey(first.householdId, 1) });
+    expect((await call("GET", "/key", { user: "bob", credential: first.credential })).status).toBe(404);
+    expect((await call("GET", "/key", { user: null, credential: first.credential })).status).toBe(401);
+  });
+
+  it("refuses keys for another household, another generation, or with extra fields", async () => {
+    const first = await register();
+    const other = fresh();
+    for (const body of [
+      { generation: 1, protectedKey: protectedKey(other, 1) },
+      { generation: 2, protectedKey: protectedKey(first.householdId, 2) },
+      { generation: 1, protectedKey: { ...protectedKey(first.householdId, 1), recoveryCode: "KM1-not-sent" } },
+      { generation: 1, protectedKey: { ...protectedKey(first.householdId, 1), encryptedKey: "z".repeat(96) } },
+    ]) {
+      const response = await call("PUT", "/key", { credential: first.credential, body });
+      expect([400, 409]).toContain(response.status);
+    }
+    expect((await call("GET", "/key", { credential: first.credential })).json.error).toBe("key_not_found");
+  });
+
+  it("requires a new key after a revocation moves the household to the next generation", async () => {
+    const first = await register();
+    await call("PUT", "/key", { credential: first.credential, body: { generation: 1, protectedKey: protectedKey(first.householdId, 1) } });
+    const second = await join();
+    expect((await call("POST", `/devices/${second.deviceId}/revoke`, { credential: first.credential })).json.generation).toBe(2);
+    expect((await call("GET", "/key", { credential: first.credential })).json.error).toBe("key_not_found");
+    expect((await call("PUT", "/key", { credential: first.credential, body: { generation: 2, protectedKey: protectedKey(first.householdId, 2, "c") } })).status).toBe(200);
+    expect((await call("GET", "/key", { credential: first.credential })).json.protectedKey.generation).toBe(2);
+    expect((await call("GET", "/key", { credential: second.credential })).json.error).toBe("device_revoked");
   });
 });

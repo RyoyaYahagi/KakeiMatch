@@ -13,11 +13,7 @@ import {
 
 export type HouseholdLocks = Pick<LockManager, 'request'>;
 type Dependencies = { storage: SyncStorage; locks: HouseholdLocks | undefined; now: () => Date };
-const defaults = (): Dependencies => ({
-  storage: localStorage,
-  locks: typeof navigator !== 'undefined' ? navigator.locks : undefined,
-  now: () => new Date(),
-});
+
 
 export class HouseholdLocksUnavailableError extends Error {
   constructor() {
@@ -32,7 +28,12 @@ export class HouseholdWriteGuard {
   private held: Promise<() => void> | null = null;
 
   constructor(readonly profileId: string, overrides: Partial<Dependencies> = {}) {
-    this.deps = { ...defaults(), ...overrides };
+    // Browser globals are read only when no override is given.
+    this.deps = {
+      storage: overrides.storage ?? localStorage,
+      locks: 'locks' in overrides ? overrides.locks : typeof navigator !== 'undefined' ? navigator.locks : undefined,
+      now: overrides.now ?? (() => new Date()),
+    };
   }
 
   get lockName(): string { return `kakeimatch-household:${this.profileId}`; }
