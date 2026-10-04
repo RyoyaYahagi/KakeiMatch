@@ -426,6 +426,22 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 .purchase-details.items-only { margin-top: 0; }
 .purchase-details.items-only > summary { display: none; }
 .receipt-preview { display: block; max-width: 100%; max-height: 280px; margin: var(--space-3) auto; object-fit: contain; border-radius: var(--radius-md); }
+.receipt-preview-frame { position: relative; width: fit-content; max-width: 100%; margin: var(--space-3) auto; overflow: hidden; border-radius: var(--radius-md); }
+.receipt-preview-frame .receipt-preview { margin: 0; }
+/* A light band moves down the photo while AI reads it. */
+.receipt-preview-frame.is-reading::after { content: ''; position: absolute; left: 0; right: 0; top: -35%; height: 35%; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary) 22%, transparent) 80%, color-mix(in srgb, var(--primary) 70%, transparent) 97%, transparent); animation: receipt-scan 1.6s ease-in-out infinite; pointer-events: none; }
+@keyframes receipt-scan { to { top: 100%; } }
+.receipt-reading { margin: var(--space-2) 0 var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--sunken); }
+.receipt-reading p { margin: 0; }
+.receipt-reading-title { font-weight: 700; font-variant-numeric: tabular-nums; }
+.receipt-reading-hint { margin-top: var(--space-1) !important; color: var(--muted); font-size: .875rem; }
+/* Fields AI will fill show a placeholder band instead of stale values. */
+input.ai-pending { color: transparent; background: linear-gradient(90deg, var(--sunken) 25%, var(--surface) 50%, var(--sunken) 75%); background-size: 200% 100%; animation: ai-pending 1.4s linear infinite; }
+@keyframes ai-pending { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .receipt-preview-frame.is-reading::after { animation: none; top: 0; height: 100%; background: color-mix(in srgb, var(--primary) 12%, transparent); }
+  input.ai-pending { animation: none; }
+}
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }
 .receipt-item-list li, .receipt-adjustment-list li { border-bottom: 1px solid var(--border); padding: 0; }
 .receipt-compact-summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto 16px; align-items: center; gap: var(--space-2); min-height: 44px; padding: var(--space-1) 0; list-style: none; font-size: .875rem; }
