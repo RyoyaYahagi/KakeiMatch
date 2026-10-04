@@ -91,6 +91,23 @@ describe('local monthly budget service', () => {
     expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'home', budgetYen: 0 });
   });
 
+  it('clears the default plan and restores a monthly plan to the default', async () => {
+    const { service, ledger } = await fixture();
+    await service.setDefaultPlan(5000, true, { food: 3000, home: 2000 });
+    await service.setMonthlyPlan('2026-10', 6000, true, { food: 4000, home: 2000 });
+    expect(await service.hasMonthlyPlan('2026-10')).toBe(true);
+
+    await service.resetMonthlyPlan('2026-10');
+    expect(await service.hasMonthlyPlan('2026-10')).toBe(false);
+    expect(await service.getSummary('2026-10')).toMatchObject({ budgetYen: 5000, breakdownEnabled: true });
+    expect((await service.getSummary('2026-10')).categories.find(row => row.categoryId === 'food')?.budgetYen).toBe(3000);
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'food', budgetYen: 0 });
+    expect(ledger.setMonthlyBudget).toHaveBeenCalledWith({ yearMonth: '2026-10', categoryId: 'home', budgetYen: 0 });
+
+    await service.clearDefaultPlan();
+    expect(await service.getDefaultPlan()).toEqual({ totalYen: null, breakdownEnabled: false, allocations: {} });
+  });
+
   it('preserves an untouched native month budget as an override without creating a default', async () => {
     const { repository, service } = await fixture({ '2026-10:food': 25000 });
     expect((await service.getSummary('2026-10')).categories.find(row => row.categoryId === 'food')?.budgetYen).toBe(25000);
