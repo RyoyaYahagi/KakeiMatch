@@ -5,6 +5,7 @@ import {
   openChunk, publishVersion, putChunk, revokeDevice, syncLimits, versionWithChunks,
   type DeviceRow, type HouseholdRow, type SyncContext, type SyncD1Database, type SyncLimitEnv,
 } from "./device-sync";
+import { getProtectedKey, putProtectedKey } from "./device-sync-keys";
 import { R2SyncStorageProvider, type SyncR2Bucket, type SyncStorageProvider } from "./sync-storage-provider";
 
 export interface SyncApiEnv extends SyncLimitEnv {
@@ -124,6 +125,13 @@ const routes: Array<{ method: string; pattern: RegExp; route: Route }> = [
     const targetId = uuid(call.params[0]);
     return json(200, await revokeDevice(call.ctx, requireHousehold(call), targetId, call.device?.id ?? null));
   } } },
+  { method: "PUT", pattern: /^\/key$/, route: { auth: "device", handle: async (call) => {
+    const { household, device } = requireDevice(call);
+    const body = await readJsonBody(call.request);
+    return json(200, await putProtectedKey(call.ctx, household, device, integer(body.generation, 1, Number.MAX_SAFE_INTEGER), body.protectedKey));
+  } } },
+  { method: "GET", pattern: /^\/key$/, route: { auth: "device", handle: async (call) =>
+    json(200, await getProtectedKey(call.ctx.db, requireDevice(call).household)) } },
   { method: "POST", pattern: /^\/uploads$/, route: { auth: "device", handle: async (call) => {
     const { household, device } = requireDevice(call);
     const body = await readJsonBody(call.request);

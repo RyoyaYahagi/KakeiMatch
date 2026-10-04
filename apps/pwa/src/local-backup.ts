@@ -20,13 +20,20 @@ export type BackupLedger = {
   discardDataDirectory(dataDir: string): Promise<void>;
 };
 
-type Dependencies = {
+export type BackupDependencies = {
   storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
   openRepository: (profileId: string) => Promise<LocalDataRepository>;
   makeId: () => string;
   now: () => Date;
 };
-const defaults = (): Dependencies => ({ storage: localStorage, openRepository: id => LocalDataRepository.open(id), makeId: () => crypto.randomUUID(), now: () => new Date() });
+type Dependencies = BackupDependencies;
+// Browser globals are read only when no override is given.
+const withDefaults = (overrides: Partial<Dependencies>): Dependencies => ({
+  storage: overrides.storage ?? localStorage,
+  openRepository: overrides.openRepository ?? (id => LocalDataRepository.open(id)),
+  makeId: overrides.makeId ?? (() => crypto.randomUUID()),
+  now: overrides.now ?? (() => new Date()),
+});
 
 function directories(storage: Dependencies['storage']): string[] {
   const raw = storage.getItem(RESTORE_DIRECTORIES_KEY);
@@ -106,7 +113,7 @@ export async function restoreStandaloneBudget(file: Blob, ledger: BackupLedger):
 type StagedProfile = { profileId: string; dataDir: string };
 
 async function stageAndSwitch(backup: {actualBackup: Uint8Array; localData: LocalDataBackupV2}, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   const staged = await stageHouseholdBackup(backup, ledger, overrides);
   const previous = deps.storage.getItem(LOCAL_PROFILE_KEY);
   try {
@@ -125,7 +132,7 @@ async function stageAndSwitch(backup: {actualBackup: Uint8Array; localData: Loca
 
 /** Fully restores a backup into a new profile and Actual data directory without switching to it. */
 async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData: LocalDataBackupV2}, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<StagedProfile> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   // An empty public budget list does not prove that an earlier partial import was removed.
   // Do not allocate further staging directories until the user has recovered the site data.
   if (deps.storage.getItem(INCOMPLETE_RESTORE_KEY) !== null) {
@@ -201,7 +208,7 @@ async function verifyLocalReadback(expected: LocalDataBackupV2, actual: LocalDat
 }
 
 export async function returnToPreviousProfile(overrides: Partial<Dependencies> = {}): Promise<void> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   const previous = deps.storage.getItem(PREVIOUS_PROFILE_KEY);
   if (!previous || !/^[0-9a-f-]{36}$/i.test(previous)) throw new Error('元の家計データが見つかりません。');
   const repository = await deps.openRepository(previous);
@@ -225,7 +232,7 @@ export type SyncImportResult = { status: 'applied'; profileId: string } | { stat
  */
 export async function applySyncSnapshot(file: Blob, ledger: BackupLedger, guard: HouseholdWriteGuard,
   expected: SyncImportExpectation, next: SyncImportTarget, overrides: Partial<Dependencies> = {}): Promise<SyncImportResult> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   if (guard.profileId !== expected.profileId) throw new Error('同期する家計データを確認できません。');
   const backup = await readPortableBackup(file);
   const staged = await stageHouseholdBackup(backup, ledger, overrides);
@@ -266,7 +273,7 @@ function completeSwitch(journal: HouseholdSwitchJournal, storage: Dependencies['
  * treated as one transaction: the active pointer alone decides the outcome.
  */
 export async function recoverHouseholdSwitch(repository: LocalDataRepository, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<'none' | 'completed' | 'rolled_back'> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   const journal = readSwitchJournal(deps.storage);
   if (!journal) return 'none';
   if (deps.storage.getItem(LOCAL_PROFILE_KEY) === journal.toProfileId) {
@@ -315,7 +322,7 @@ export function hasUnsyncedLocalChanges(profileId: string, storage: Dependencies
 
 /** The explicit full wipe uses only the household API/stores; it never calls an auth endpoint. */
 export async function wipeLocalHousehold(repository: LocalDataRepository, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<void> {
-  const deps = { ...defaults(), ...overrides };
+  const deps = withDefaults(overrides);
   if (deps.storage.getItem(INCOMPLETE_RESTORE_KEY) !== null) throw new Error('復元途中の家計簿データをアプリから完全に削除できるか確認できません。元のデータのバックアップを保存してから、ブラウザーのサイトデータ削除を利用してください。');
   for (const dir of new Set(['/documents', ...directories(deps.storage)])) await ledger.discardDataDirectory(dir);
   await repository.clearAllDeviceProfiles();
