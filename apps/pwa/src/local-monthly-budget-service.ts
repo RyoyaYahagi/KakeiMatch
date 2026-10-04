@@ -1,9 +1,12 @@
 import {
+  clearDefaultPlan as clearDefaultPlanSettings,
   effectiveBreakdownEnabled,
   effectiveMonthlyBudget,
   effectiveOverallBudget,
   emptyMonthlyBudgetSettings,
+  hasExplicitMonthlyPlan,
   monthlyBudgetSettingsRecordId,
+  resetMonthlyPlan as resetMonthlyPlanSettings,
   validateMonthlyBudgetSettings,
   withDefaultBudget,
   withDefaultPlan,
@@ -91,6 +94,29 @@ export class LocalMonthlyBudgetService {
       await this.ensureAllocationCategories(allocations);
       const current = await this.readSettings();
       await this.writeSettings(withDefaultPlan(current, totalYen, breakdownEnabled, breakdownEnabled ? allocations : {}));
+    });
+  }
+
+  async clearDefaultPlan(): Promise<void> {
+    await this.serialize(async () => {
+      const current = await this.readSettings();
+      await this.writeSettings(clearDefaultPlanSettings(current));
+    });
+  }
+
+  async hasMonthlyPlan(yearMonth: string): Promise<boolean> {
+    return hasExplicitMonthlyPlan(await this.readSettings(), yearMonth);
+  }
+
+  async resetMonthlyPlan(yearMonth: string): Promise<void> {
+    await this.serialize(async () => {
+      const expenseCategories = await this.expenseCategories();
+      const current = await this.readSettings();
+      const next = resetMonthlyPlanSettings(current, yearMonth, expenseCategories.map(category => category.id));
+      await this.writeSettings(next);
+      for (const category of expenseCategories) {
+        await this.ledger.setMonthlyBudget({ yearMonth, categoryId: category.id, budgetYen: 0 });
+      }
     });
   }
 
