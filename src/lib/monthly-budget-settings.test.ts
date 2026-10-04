@@ -53,6 +53,16 @@ describe('monthly budget settings', () => {
     expect(effectiveBreakdownEnabled(october, '2026-10', true)).toBe(true);
   });
 
+  it('promotes legacy month category overrides into a matching month total when the new overall model is saved', () => {
+    let legacy = withDefaultBudget(emptyMonthlyBudgetSettings('budget-a'), 'food', 2500);
+    legacy = withDefaultBudget(legacy, 'home', 1000);
+    legacy = withMonthlyBudget(legacy, '2026-10', 'food', 4000);
+    const migrated = withDefaultPlan(legacy, 5000, true, { food: 3000, home: 2000 });
+    expect(effectiveOverallBudget(migrated, '2026-10')).toBe(6000);
+    expect(effectiveMonthlyBudget({ settings: migrated, yearMonth: '2026-10', categoryId: 'food', nativeBudgetYen: 0 })).toBe(4000);
+    expect(effectiveMonthlyBudget({ settings: migrated, yearMonth: '2026-10', categoryId: 'home', nativeBudgetYen: 0 })).toBe(2000);
+  });
+
   it('can clear a default plan and reset a month back to the default plan', () => {
     const defaults = withDefaultPlan(emptyMonthlyBudgetSettings('budget-a'), 50_000, true, { food: 30_000, home: 20_000 });
     const monthly = withMonthlyPlan(defaults, '2026-10', 60_000, true, { food: 40_000, home: 20_000 });
