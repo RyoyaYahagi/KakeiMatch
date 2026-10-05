@@ -11,11 +11,13 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 const dialog = () => page.getByRole('dialog');
 const shortcut = field => page.locator(`[data-master-shortcut-for="${field}"]`).click();
 async function create(field, name, category = false) {
-  await shortcut(field); await dialog().waitFor();
+  const trigger = page.locator(`[data-master-shortcut-for="${field}"]`);
+  await trigger.click(); await dialog().waitFor();
   await dialog().getByLabel(category ? 'カテゴリ名' : '支払元の名前', { exact: true }).fill(name);
   await dialog().getByRole('button', { name: '追加する', exact: true }).click();
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
+  assert.equal(await trigger.evaluate(node => document.activeElement === node), true);
 }
 async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-amount').waitFor(); }
 async function fill(name, amount) {
@@ -38,6 +40,12 @@ try {
   await dialog().getByText('カテゴリ名を入力してください。', { exact: true }).waitFor();
   await dialog().getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Entry Food'); await dialog().getByRole('button', { name: '追加する', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Entry Food');
+  await assertDraft('Synthetic entry expense', '900');
+  const categoryShortcut = page.locator('[data-master-shortcut-for="manual-transaction-category"]');
+  const categoryId = await page.locator('#manual-transaction-category').inputValue();
+  await categoryShortcut.click(); await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
+  assert.equal(await page.locator('#manual-transaction-category').inputValue(), categoryId);
+  assert.equal(await categoryShortcut.evaluate(node => document.activeElement === node), true);
   await assertDraft('Synthetic entry expense', '900');
   await create('manual-transaction-account', 'Synthetic Entry Wallet'); await assertDraft('Synthetic entry expense', '900');
   const walletId = await page.locator('#manual-transaction-account').inputValue();

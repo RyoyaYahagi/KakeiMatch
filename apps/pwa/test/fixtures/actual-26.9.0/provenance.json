@@ -1,0 +1,16 @@
+{
+  "actualVersion": "26.9.0",
+  "sourceCommit": "f51b296b301d788a679eacacde4dbddba39495bd",
+  "sha256": "8defd35a27b712f6f080a722f8493ff74a945ce663b075958eeae57e23a76c80",
+  "sizeBytes": 41265,
+  "syntheticOnly": true,
+  "date": "2026-09-30",
+  "accounts": 2,
+  "categories": 2,
+  "transactions": "income, two expenses, paired transfer",
+  "expenseYen": 4000,
+  "balancesYen": {
+    "Compatibility Cash": 6500,
+    "Compatibility Bank": 189500
+  }
+}
