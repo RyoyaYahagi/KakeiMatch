@@ -50,6 +50,7 @@ export type RecurringSchedule = RecurringScheduleInput & {
 };
 export type ActualSearchTransaction = {
   transaction: ActualTransaction;
+  recurringScheduleId?: string | null;
   categoryIds: string[];
   keywordValues: string[];
 };
@@ -1013,7 +1014,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
             if (payeeName?.trim()) keywordValues.add(payeeName.trim());
             if (typeof part.notes === "string" && part.notes.trim()) keywordValues.add(part.notes.trim());
           }
-          return { transaction, categoryIds, keywordValues: [...keywordValues] };
+          return { transaction, recurringScheduleId: (row as NativeTransaction & { schedule?: string | null }).schedule ?? null, categoryIds, keywordValues: [...keywordValues] };
         });
       });
     },
@@ -1168,23 +1169,36 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       if (parsed.importedId.startsWith("kakeimatch:receipt:")) {
         throw new ActualMasterValidationError("この識別子はレシート登録に使われています。取引を作成し直してください。");
       }
+      const isRecurringCatchUp = parsed.importedId.startsWith("kakeimatch:schedule:");
+      if (isRecurringCatchUp && !/^kakeimatch:schedule:[A-Za-z0-9_-]{1,128}:\d{4}-\d{2}-\d{2}$/.test(parsed.importedId)) {
+        throw new ActualMasterValidationError("定期登録の生成識別子を確認してください。");
+      }
       return withBudget(async api => {
         let rows = await allRows(api, "0001-01-01", "9999-12-31");
         const existing = rows.find(row => row.imported_id === parsed.importedId && !row.is_child && !row.parent_id);
         if (existing) return verifyManualReadback(existing, parsed, parsed.importedId, api);
         await validateManualMasters(api, parsed);
         const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
-        const result = await api.importTransactions(parsed.accountId, [{
-          account: parsed.accountId,
-          date: parsed.date,
-          amount,
-          payee_name: parsed.payeeName,
-          category: parsed.categoryId,
-          notes: parsed.memo,
-          imported_id: parsed.importedId,
-          cleared: false,
-        }]);
-        if (result.errors.length > 0) throw new ActualBrowserUnavailableError("invalid_data");
+        if (isRecurringCatchUp) {
+          const payee = (await api.getPayees()).find(item => item.name === parsed.payeeName);
+          const payeeId = payee?.id ?? await api.createPayee({ name: parsed.payeeName });
+          await api.addTransactions(parsed.accountId, [{
+            date: parsed.date, amount, payee: payeeId, category: parsed.categoryId,
+            notes: parsed.memo, imported_id: parsed.importedId, cleared: false,
+          }], { learnCategories: false, runTransfers: false });
+        } else {
+          const result = await api.importTransactions(parsed.accountId, [{
+            account: parsed.accountId,
+            date: parsed.date,
+            amount,
+            payee_name: parsed.payeeName,
+            category: parsed.categoryId,
+            notes: parsed.memo,
+            imported_id: parsed.importedId,
+            cleared: false,
+          }]);
+          if (result.errors.length > 0) throw new ActualBrowserUnavailableError("invalid_data");
+        }
         rows = await allRows(api, "0001-01-01", "9999-12-31");
         const saved = rows.find(row => row.imported_id === parsed.importedId && !row.is_child && !row.parent_id);
         return verifyManualReadback(saved, parsed, parsed.importedId, api);

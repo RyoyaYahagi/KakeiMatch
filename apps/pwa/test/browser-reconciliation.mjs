@@ -72,7 +72,6 @@ try {
   await createAccount('Synthetic Rakuten Card', 'credit_card', 'rakuten_card');
   await createAccount('Synthetic Cash Wallet', 'cash', null);
   await page.locator('#settings-tab').click();
-  await click('カテゴリ'); await click('基本カテゴリを用意する'); await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
 
   await addExpense('Synthetic Auto Market', 1200, '食費', 'Synthetic PayPay Card');
