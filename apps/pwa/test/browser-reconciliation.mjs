@@ -92,6 +92,14 @@ try {
   // A record that is a candidate of a statement waiting for a decision is marked in the records list.
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Difference Shop · .*要確認 · −¥550$/ }).waitFor();
+  // docs/UX.md ホーム: the box lists what to review first, and what matched by itself is one line.
+  await page.locator('#home-tab').click();
+  const attention = page.locator('.attention-box');
+  await attention.getByRole('heading', { name: /^確認すること\s*3\s*件$/ }).waitFor();
+  assert.equal(await attention.locator('.record-row').count(), 3);
+  assert.match(await attention.locator('.record-row').first().getAttribute('aria-label'), /^Synthetic Difference Shop · 金額が¥\d[\d,]*違います · ¥/);
+  await page.getByText('2件 は自動で照合済みです', { exact: true }).waitFor();
+  if (process.env.PWA_HOME_ATTENTION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_HOME_ATTENTION_SCREENSHOT_PATH, fullPage: true });
   await page.locator('#reconciliation-tab').click();
   await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   await page.getByText(/明細待ち 0件/).waitFor();

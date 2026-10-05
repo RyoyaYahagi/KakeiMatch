@@ -88,9 +88,9 @@ try {
   await waitForMonth('2026年10月');
   await totals({ income: '200,000', expense: '2,900', balance: '+¥197,100' });
   const breakdown = page.locator('#home-categories');
-  await breakdown.locator('svg[role="img"][aria-label="支出の内訳：Synthetic Food 82.8%、Synthetic Home 17.2%"]').waitFor();
-  assert.deepEqual(await breakdown.locator('.donut-center').evaluate(center => Array.from(center.children).map(child => child.textContent)), ['Synthetic Food', '82.8%']);
-  assert.deepEqual(await breakdown.locator('.donut-legend li').evaluateAll(items => items.map(item => Array.from(item.children).map(child => child.textContent).filter(Boolean).join(' '))), ['Synthetic Food 82.8%', 'Synthetic Home 17.2%']);
+  await breakdown.locator('.breakdown-bar[role="img"][aria-label="支出の内訳：Synthetic Food 82.8%、Synthetic Home 17.2%"]').waitFor();
+  assert.equal(await breakdown.locator('.breakdown-bar > span').count(), 2);
+  assert.deepEqual(await breakdown.locator('.breakdown-legend li').evaluateAll(items => items.map(item => Array.from(item.children).map(child => child.textContent).filter(Boolean).join(' '))), ['Synthetic Food 82.8%', 'Synthetic Home 17.2%']);
   const details = breakdown.locator('details.monthly-category-details');
   assert.equal(await details.locator('summary').textContent(), 'すべてのカテゴリ');
   await details.locator('summary').click();
