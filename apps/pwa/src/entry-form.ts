@@ -66,3 +66,16 @@ export function compactAddButton(button: HTMLButtonElement) {
   button.textContent = '＋ 追加';
   return button;
 }
+
+export type Recurrence = '' | 'monthly' | 'weekly' | 'yearly';
+
+/** docs/UX.md 支出の入力: "くり返し" turns a new record into a schedule as well. Off by default. */
+export function recurrenceRow(id: string) {
+  const label = document.createElement('label'); label.htmlFor = id; label.textContent = 'くり返し';
+  const select = document.createElement('select'); select.id = id;
+  select.append(new Option('しない', ''), new Option('毎月', 'monthly'), new Option('毎週', 'weekly'), new Option('毎年', 'yearly'));
+  const hint = document.createElement('span'); hint.className = 'entry-row-hint';
+  const sync = () => { hint.textContent = select.value ? '定期登録も作ります' : ''; };
+  select.addEventListener('change', sync); sync();
+  return { row: entryRow(label, select, hint), select, value: () => select.value as Recurrence };
+}

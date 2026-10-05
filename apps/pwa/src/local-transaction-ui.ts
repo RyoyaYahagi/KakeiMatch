@@ -1,6 +1,8 @@
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
-import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, shortLabel } from './entry-form';
+import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
+import { scheduleFromEntry } from './entry-recurrence';
+import type { RecurringScheduleInput } from '../../../src/lib/recurring-schedule';
 import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
@@ -65,7 +67,9 @@ export function showManualTransactionEditor(options: {
   repository: LocalDataRepository;
   kind: TransactionKind;
   transaction?: ActualTransaction;
-  onSaved: () => Promise<void>;
+  /** Called with the schedule to create when "くり返し" was chosen. */
+  onSaved: (schedule?: RecurringScheduleInput) => Promise<void>;
+  recurringNames?: () => Promise<string[]>;
   onCancel: () => Promise<void>;
 }): void {
   const ledger = options.ledger;
@@ -184,6 +188,9 @@ export function showManualTransactionEditor(options: {
     const rows = document.createElement('div'); rows.className = 'entry-rows';
     rows.append(entryRow(amountLabel, amount), ...(transfer ? [] : [entryRow(payeeLabel, payee)]), entryRow(dateLabel, date, dateShortcuts(date, localToday())),
       ...(categoryUi ? [categoryUi.row] : []), entryRow(accountLabel, account), ...(transfer ? [entryRow(destinationLabel, destination)] : []), optional);
+    // Schedules hold expenses and incomes only; a transfer or an edit stays one record.
+    const recurrence = kind === 'income' && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
+    if (recurrence) rows.append(recurrence.row);
     form.append(rows, status, formActions(submit));
     const shortcuts: HTMLButtonElement[] = [];
     function addShortcut(field: HTMLSelectElement, request: { kind: 'category'; isIncome: boolean } | { kind: 'account' }) {
@@ -283,12 +290,21 @@ export function showManualTransactionEditor(options: {
       const value = frozenAfterUnknownFailure && submittedSnapshot ? submittedSnapshot : readValue();
       const validationError = validate(value);
       if (validationError) { status.textContent = validationError; return; }
+      const frequency = recurrence?.value() ?? '';
+      const schedule = frequency ? scheduleFromEntry({ name: value.payeeName, kind: 'income', amountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId, date: value.date }, frequency) ?? undefined : undefined;
       if (!navigator.locks) { status.textContent = 'この端末では安全に保存できません。対応ブラウザーで開き直してください。入力内容は残っています。'; return; }
       submittedSnapshot = { ...value };
       const wasFrozen = frozenAfterUnknownFailure;
       status.textContent = '';
       setBusy(true);
       inFlightOperation = (async () => {
+      // A schedule name must be unique; check before the record is saved so nothing is half done.
+      if (schedule && options.recurringNames && (await options.recurringNames()).includes(schedule.name)) {
+        submittedSnapshot = null;
+        if (heading.isConnected) status.textContent = '同じ名前の定期登録があります。内容を変えるか、「くり返し」を「しない」にしてください。';
+        setBusy(false);
+        return;
+      }
       const lockIds = editing && transfer ? (await ledger.getTransactionTree(transaction!.id)).map(row => row.id).sort() : [transaction?.id ?? 'create'];
       const withLocks = async (operation: () => Promise<void>, index = 0): Promise<void> => index >= lockIds.length ? operation() : navigator.locks.request(`kakeimatch-manual-transaction:${lockIds[index]}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
         if (!lock) throw new ActualMasterValidationError('別の画面で記録を保存中です。終わってからもう一度お試しください。');
@@ -387,7 +403,7 @@ export function showManualTransactionEditor(options: {
         }
         frozenAfterUnknownFailure = false;
         try {
-          await options.onSaved();
+          await options.onSaved(schedule);
         } catch (error) {
           if (heading.isConnected) {
             frozenAfterUnknownFailure = true;
