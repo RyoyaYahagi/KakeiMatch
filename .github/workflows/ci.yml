@@ -92,6 +92,13 @@ jobs:
             test:provider-only-reconciliation-e2e test:desktop-layout-e2e test:contact-e2e \
             test:diagnostics-e2e test:security-e2e test:encryption-e2e test:local-data-rescue-e2e test:receipt-total-check-e2e test:receipt-ai-reading-e2e test:recurring-catch-up-e2e test:idb-migration-e2e test:actual-compatibility-e2e \
             | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
+      # The self-hosted ChatGPT build is a separate bundle; build it after the E2E run used the normal one.
+      - name: Self-hosted ChatGPT plan build and flow
+        env:
+          KAKEIMATCH_SELF_HOSTED_CHATGPT: '1'
+        run: |
+          pnpm --dir apps/pwa exec cf build
+          pnpm exec tsx apps/pwa/test/browser-chatgpt-plan.ts
       - name: Upload E2E logs
         if: failure()
         uses: actions/upload-artifact@v4

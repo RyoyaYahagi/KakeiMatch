@@ -13,6 +13,7 @@ import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
+import { initializeChatGptPlanUi } from './chatgpt-plan-ui';
 import { downloadLocalDataRescue } from './local-data-rescue';
 import './style.css';
 
@@ -145,6 +146,7 @@ const element = <T extends HTMLElement>(id: string) => document.getElementById(i
 renderOssLicenses(element<HTMLElement>('oss-licenses'));
 initializeDiagnosticsUi(element<HTMLElement>('app-info'));
 initializeLocalScreenLock(element<HTMLElement>('app-shell'), element<HTMLElement>('settings-content'));
+initializeChatGptPlanUi(element<HTMLElement>('app-info'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');

@@ -39,7 +39,7 @@ const browserBundleSecrets: Plugin = {
     if (this.environment.name !== 'client') return;
     const secretBindingNames = [
       'BETTER_AUTH_SECRET', 'ACCOUNT_BOOTSTRAP_SECRET', 'AI_GATEWAY_AUTH_SECRET',
-      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'AI_EMERGENCY_STOP',
+      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'AI_EMERGENCY_STOP', 'CHATGPT_PLAN_STORE_KEY',
     ];
     const buildSecrets = secretBindingNames.flatMap(name => {
       const value = process.env[name];
@@ -55,7 +55,7 @@ const browserBundleSecrets: Plugin = {
 };
 
 export default defineConfig({
-  define: { __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
+  define: { __CHATGPT_PLAN_ENABLED__: JSON.stringify(process.env.KAKEIMATCH_SELF_HOSTED_CHATGPT === '1'), __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
   server: { host: '127.0.0.1', headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Content-Security-Policy': PWA_CONTENT_SECURITY_POLICY } },
   // Built assets are served from the app's own origin, as on Cloudflare.
   // Vite's default CORS adds Vary: Origin, unlike the deployed asset response.

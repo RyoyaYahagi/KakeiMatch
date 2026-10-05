@@ -23,7 +23,8 @@
     "legacy:db:migrate": "drizzle-kit migrate",
     "legacy:user:create": "tsx scripts/create-user.ts",
     "legacy:actual:link-user": "tsx scripts/link-actual-budget.ts",
-    "legacy:actual:map-categories": "node --conditions=react-server --import tsx scripts/map-actual-categories.ts"
+    "legacy:actual:map-categories": "node --conditions=react-server --import tsx scripts/map-actual-categories.ts",
+    "self-hosted:chatgpt": "tsx scripts/chatgpt-plan-server.ts"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",
@@ -48,6 +49,7 @@
     "eslint": "^9.35.0",
     "eslint-config-next": "^15.5.3",
     "fake-indexeddb": "^6.2.5",
+    "jose": "6.2.12",
     "server-only": "^0.0.1",
     "next": "^15.5.3",
     "react": "^19.1.1",
