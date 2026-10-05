@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node test/sw.test.mjs",
     "test:updates-e2e": "node test/browser-updates.mjs",
+    "test:local-data-rescue-e2e": "node test/browser-local-data-rescue.mjs",
     "test:idb-migration-e2e": "node test/browser-idb-migration.mjs",
     "test:diagnostics-e2e": "node test/browser-diagnostics.mjs",
     "test:encryption-e2e": "node test/browser-encryption.mjs",
