@@ -55,10 +55,10 @@ Boundary review for this change found that the browser has only same-origin appl
 For every dependency-lockfile change, run the audits below as part of CI review. Repeat them at least weekly, and after a security advisory affecting a deployed dependency. Keep the raw command output with the change record; the commands exit non-zero when they find advisories.
 
 ```sh
-corepack pnpm audit --prod
-corepack pnpm audit
-npm audit --omit=dev --prefix workers/ai-gateway
-npm audit --prefix workers/ai-gateway
+corepack pnpm audit --prod --json
+corepack pnpm audit --json
+npm audit --package-lock-only --omit=dev --json --prefix workers/ai-gateway
+npm audit --package-lock-only --json --prefix workers/ai-gateway
 ```
 
 Prioritize critical and high findings, but do not decide from severity or the audit dependency path alone. Verify the installed version and transitive path (`pnpm why` or `npm explain`), then check whether the affected code is imported into the deployable PWA/Worker graph, whether an attacker can control the relevant input, and whether the path is instead development tooling, a test fixture, or retained legacy code. Cross-check `npm audit --omit=dev` results against `npm ls --all --omit=dev` and the production build: lockfiles can include optional development peers in the audit report. A reachable critical/high finding blocks release until it is patched or has a recorded, time-limited exception. Do not run broad automatic upgrades; select a compatible patched version, update the lockfile, and rerun build and tests.
@@ -74,11 +74,15 @@ Audit snapshot reviewed on 2026-10-03:
 
 The AI Gateway dependency build could not be reproduced in the review worktree: `npm ci` failed while extracting the optional `@cloudflare/workerd-linux-64` binary with an I/O error (`EIO`, `-122`). Its lockfile audit and installed-tree checks completed, but this review did not verify a fresh Gateway bundle. The normal CI build remains required for changes to that Worker.
 
+The [weekly dependency audit workflow](.github/workflows/security-audit.yml) also supports manual runs and checks matching pull requests. It saves the JSON output and command exit codes for all four audits as a 90-day artifact. Exit code 1 is treated as an audit result only when valid JSON reports vulnerabilities; network errors, malformed output, new or changed high/critical findings, and expired exceptions fail the workflow. The exception baseline in `scripts/security-audit-baseline.json` matches the audit, package, exact version, advisory ID, severity, and dependency path, and gives every exception a review date and owner. npm's package-level grouped paths are filtered against each advisory's vulnerable semver range. The checker supports exact versions, comparator terms, OR branches, and hyphen ranges; unsupported range syntax fails closed and must be reviewed before extending the parser. It does not update dependencies or create issues. Re-review and update that file only after verifying the current dependency path and production reachability.
+
 Follow-up verified on 2026-10-04:
 
 A fresh `npm ci --omit=dev --ignore-scripts` installs `better-auth > vitest > @vitest/mocker`, despite the lockfile's `devOptional` marker. A missing module in an existing development tree is not evidence that a fresh production installation omits it. The deployed Cloudflare Worker is a bundle rather than this installed Node dependency tree; the rebuilt bundle contains no Vitest module, and test commands use `vitest run` without exposing its UI/API server.
 
 The Gateway now pins Vitest and its matching packages to 3.2.7. This removes the critical [GHSA-5xrq-8626-4rwp](https://github.com/advisories/GHSA-5xrq-8626-4rwp) finding; its affected entry points are a network-exposed Vitest UI/API or Windows UI/Browser Mode. Fresh installation and lockfile audit after the patch report zero high/critical findings with `--omit=dev`, and two moderate findings for Vitest and its mocker. The remaining development-tool findings still need the existing reachability and expiry review; this patch does not claim a clean full dependency audit.
+
+The 2026-10-04 review also identified `undici@5.29.0` at `node_modules/undici`, used by the development-only `miniflare@3.20250718.2`. Its three high advisories concern the Undici WebSocket client: [decompression memory exhaustion](https://github.com/advisories/GHSA-vrm6-8vpv-qv8q), [invalid compression parameter handling](https://github.com/advisories/GHSA-v9p9-hfj2-hcw8), and [fragment count bypass](https://github.com/advisories/GHSA-vxpw-j846-p89q). The D1 tests use synthetic local Workers and do not call that client; Miniflare's WebSocket connection path uses `ws`, and no Undici implementation is emitted in the deployable Worker bundle. These exact version/path/advisory exceptions retain the existing public Miniflare test API until a separately tested toolchain update. They are owned by the repository maintainer and expire on 2026-11-02. Do not expose test tools or connect them to untrusted servers.
 
 ## Reporting
 
