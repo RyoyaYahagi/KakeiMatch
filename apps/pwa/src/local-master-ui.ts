@@ -1,7 +1,6 @@
 import { accountTypeField, accountTypeLabels, accountBalanceLabel, type AccountType } from './local-account-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
-import { CATEGORY_LABELS } from '../../../src/lib/category';
 import type { StatementProvider } from './statement-parser';
 import { categoryRank, categoryTone } from './category-tone';
 import { recordRow } from './record-row';
@@ -91,7 +90,10 @@ export function createMasterShortcut(options: {
       const close = () => {
         dialog.close(); dialog.remove();
         if (itemDetails && itemWasOpen) itemDetails.open = true;
-        if (options.origin.field.isConnected) options.origin.field.focus();
+        // Return focus to the control that opened the dialog. Focusing a visually-hidden
+        // category <select> can open the native picker on iOS when the dialog closes.
+        if (launch.isConnected) launch.focus();
+        else if (options.origin.field.isConnected && options.origin.field.getAttribute('aria-hidden') !== 'true') options.origin.field.focus();
       };
       const form = masterCreationForm(options.ledger, options.request, async id => { await options.origin.onCreated(id); close(); }, showError);
       const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button';
@@ -259,17 +261,6 @@ export function initializeMasterUi(
     });
     if (rows.length) section.append(rowList(rows, 'master-list'));
     else section.append(element('p', 'カテゴリがありません。', 'muted'));
-    if (kind === false) {
-      const starter = quietAction('基本カテゴリを用意する', async () => {
-        const existing = await ledger.listCategories();
-        const names = new Set(existing.filter(row => !row.isIncome).map(row => row.name));
-        for (const name of Object.values(CATEGORY_LABELS)) if (!names.has(name)) await ledger.addCategory(name, false);
-        await categoriesPage(false);
-        const status = section.querySelector<HTMLElement>('[data-master-status]');
-        if (status) status.textContent = '基本カテゴリを用意しました。';
-      });
-      section.append(starter);
-    }
     section.append(element('p', '記録が多い順に並びます。入力画面のボタンも同じ順です。', 'muted settings-footnote'));
     section.append(pageActions(primaryAction('カテゴリを追加', 'add', () => categoryCreatePage(kind), 'カテゴリを追加する')));
   }
