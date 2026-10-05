@@ -14,6 +14,7 @@ import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
 import { initializeChatGptPlanUi } from './chatgpt-plan-ui';
+import { downloadLocalDataRescue } from './local-data-rescue';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -34,6 +35,14 @@ root.innerHTML = `
       <button id="settings-tab" class="nav-button" type="button" aria-pressed="false">${iconMarkup('settings')}<span>設定</span></button>
     </nav>
     <p class="status" id="message" role="status"></p>
+    <section id="migration-rescue" class="surface-section migration-rescue" aria-labelledby="migration-rescue-title" hidden>
+      <h2 id="migration-rescue-title">端末データの救出</h2>
+      <p>更新に失敗した場合や、新しい版のデータをこのアプリが開けない場合に、対応済みのKakeiMatch記録を読み取り専用で書き出せます。</p>
+      <p>このファイルを読み込んで復元することはできません。救出後はアプリを修正版へ更新し、再読み込みして開き直してください。</p>
+      <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿と未対応の新しい種類のデータは含まず、このファイルから復元できません。画面ロック設定、クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
+      <button id="migration-rescue-export" class="secondary" type="button">救出データを書き出す</button>
+      <p id="migration-rescue-status" role="status" aria-live="polite"></p>
+    </section>
     <section id="household-view">
     <section id="import-section" hidden>
       <p>既存の家計簿があれば、記録を始める前にZIPファイルを読み込めます。</p>
@@ -420,6 +429,19 @@ window.addEventListener('error', () => recordDiagnosticFailure(new Error('unhand
 window.addEventListener('unhandledrejection', () => recordDiagnosticFailure(new Error('unhandled_ui_rejection')));
 showNetwork();
 
+const migrationRescue = element<HTMLElement>('migration-rescue');
+const migrationRescueButton = element<HTMLButtonElement>('migration-rescue-export');
+const migrationRescueStatus = element<HTMLElement>('migration-rescue-status');
+migrationRescueButton.addEventListener('click', () => {
+  migrationRescueButton.disabled = true;
+  migrationRescueStatus.textContent = '既存の端末データを読み取っています…';
+  void downloadLocalDataRescue().then(() => {
+    migrationRescueStatus.textContent = '救出データを書き出しました。公開せず、安全な場所に保管してください。';
+  }).catch((error: unknown) => {
+    migrationRescueStatus.textContent = error instanceof Error ? error.message : '救出データを書き出せませんでした。端末内データは変更していません。';
+  }).finally(() => { migrationRescueButton.disabled = false; });
+});
+
 if ('serviceWorker' in navigator) {
   void navigator.serviceWorker.register('/sw.js').then(registration => {
     observeAppUpdates(registration, element<HTMLElement>('app-update-notice'));
@@ -434,4 +456,13 @@ void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
 }).catch((error: unknown) => {
   recordLocalDiagnostic(error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema') ? 'migration' : 'startup', error);
   message.textContent = error instanceof LocalDataStorageError ? error.message : '端末の家計簿を開けませんでした。保存状態を確認し、再読込してください。';
+  const canRescue = error instanceof LocalDataStorageError && (error.code === 'migration_failed' || error.code === 'future_schema');
+  migrationRescue.hidden = !canRescue;
+  if (canRescue) {
+    for (const id of ['home-tab', 'receipt-tab', 'add-record', 'reconciliation-tab']) {
+      element<HTMLElement>(id).hidden = true;
+    }
+    householdView.hidden = true;
+    element<HTMLElement>('local-view').hidden = true;
+  }
 });
