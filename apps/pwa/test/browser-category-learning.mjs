@@ -54,11 +54,12 @@ async function startReceipt() {
 async function addLearningItems() {
   let index = 0;
   for (const [name, amount, category] of [['Synthetic Same Milk', '500', 'Synthetic Learning Food'], ['Synthetic Same Soap', '1000', 'Synthetic Learning Home']]) {
-    await page.locator('#receipt-merchant').focus(); await click('品目を追加');
+    await click('品目一覧'); await click('品目を追加');
     const item = itemRow(index++); await item.waitFor(); if (await item.getAttribute('open') === null) await item.locator('summary').click();
     await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount);
     await item.locator('[data-item-category]').selectOption({ label: category });
   }
+  await click('全体');
 }
 async function register() { await click('登録する'); await page.waitForFunction(() => document.querySelector('#message')?.textContent === '登録しました。'); }
 async function analyze(scenario) {
@@ -164,6 +165,7 @@ try {
   await page.screenshot({ path: process.env.PWA_CATEGORY_LEARNING_SCREENSHOT_PATH ?? '/tmp/issue-79-category-learning.png', fullPage: true });
   // A one-receipt override makes Milk 3:1 (75%), below the 80% agreement threshold.
   await page.locator('#receipt-category').selectOption(learningIds.food);
+  await click('品目一覧');
   if (await itemRow(0).getAttribute('open') === null) await itemRow(0).locator('summary').click();
   await itemRow(0).locator('[data-item-category]').selectOption(learningIds.home);
   await register();
@@ -204,8 +206,8 @@ try {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
   await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await click('品目一覧');
   for (const [index, categoryId] of [learningIds.home, learningIds.food].entries()) {
-    await page.locator('#receipt-merchant').focus();
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
     await itemRow(index).locator('[data-item-category]').selectOption(categoryId);
   }
@@ -220,7 +222,7 @@ try {
   assert.equal((await readLearningAudits()).length, 4);
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
-  await click('編集する');
+  await click('編集する'); await click('品目一覧');
   for (let index = 0; index < 2; index++) {
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
   }

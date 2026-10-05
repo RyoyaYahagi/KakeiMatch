@@ -52,8 +52,7 @@ async function splitReceipt() {
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Wallet' });
   let index = 0;
   for (const [name, amount, categoryName] of [['Synthetic Apple', '900', 'Synthetic Food'], ['Synthetic Soap', '500', 'Synthetic Home']]) {
-    // Keep the fold from receiving focusout while its layout changes to preserve an entered item's state.
-    await page.locator('#receipt-merchant').focus();
+    await click('品目一覧');
     await click('品目を追加');
     const item = page.locator('[data-receipt-item]').nth(index++);
     await item.waitFor();
@@ -62,6 +61,7 @@ async function splitReceipt() {
     await item.locator('[data-item-amount]').fill(amount);
     await item.locator('[data-item-category]').selectOption({ label: categoryName });
   }
+  await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function waitForMonth(label) { await page.locator('#selected-month').getByText(label, { exact: true }).waitFor(); }
