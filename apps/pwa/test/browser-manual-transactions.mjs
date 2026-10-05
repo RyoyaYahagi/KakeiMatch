@@ -76,6 +76,13 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#transactions li').length === 2);
   assert.equal(await page.locator('#transactions li').count(), 2);
   assert.match(await page.locator('#transactions').innerText(), /収入[\s\S]*\+¥200,000/);
+  const expenseHomeRow = page.locator('#transactions .record-row').filter({ hasText: 'Synthetic Shop' });
+  assert.match(await expenseHomeRow.innerText(), /Synthetic Food[\s\S]*Synthetic expense memo/);
+  assert.doesNotMatch(await expenseHomeRow.innerText(), /Synthetic Wallet/);
+  await page.locator('#receipt-tab').click();
+  const expenseRecordRow = page.getByRole('button', { name: new RegExp('^Synthetic Shop ·') });
+  assert.match(await expenseRecordRow.innerText(), /Synthetic Food[\s\S]*Synthetic expense memo/);
+  assert.doesNotMatch(await expenseRecordRow.innerText(), /Synthetic Wallet/);
   await detail('Synthetic Shop');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic expense memo');
   await fill('Synthetic Shop Edited', 2000, 'Synthetic Food', 'Synthetic Bank', 'Synthetic edited expense');

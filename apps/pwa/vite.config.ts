@@ -16,6 +16,7 @@ const productionSharedModules = new Set([
   'lib/recurring-schedule.ts',
   'lib/category-learning.ts',
   'lib/monthly-budget-settings.ts',
+  'lib/encrypted-household-format.ts', 'lib/encrypted-sync-version.ts',
 ]);
 const runtimeBoundary: Plugin = {
   name: 'local-first-runtime-boundary',

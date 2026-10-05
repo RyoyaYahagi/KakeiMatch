@@ -3,12 +3,18 @@ import { categoryTone } from './category-tone';
 import { backLink, detailHero, detailList, entryRow, pageActions, pageTitle, rowList } from './settings-ui';
 import { icon } from './ui-icons';
 import type { createActualBrowserLedger, RecurringSchedule, RecurringScheduleInput } from '../../../src/lib/actual-browser-ledger';
+import type { RecurringCatchUpAudit } from './local-recurring';
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 type Service = {
   pending(): Promise<unknown | null>;
-  save(input: RecurringScheduleInput, id?: string): Promise<void>;
+  save(input: RecurringScheduleInput, id?: string): Promise<string>;
   remove(id: string): Promise<void>;
   retry(): Promise<void>;
+  previewCatchUp(input: RecurringScheduleInput, scheduleId?: string): Promise<{ dates: string[]; startDate: string | null; endDate: string | null; totalAmountYen: bigint }>;
+  catchUp(scheduleId: string, input: RecurringScheduleInput, dates: string[]): Promise<string[]>;
+  listCatchUps(scheduleId: string): Promise<Array<{ audit: RecurringCatchUpAudit; deletedDates: Set<string>; retainedDates: Set<string> }>>;
+  undoCatchUp(operationId: string): Promise<void>;
+  deleteCatchUpOccurrences(operationId: string, dates: string[]): Promise<void>;
 };
 type Account = Awaited<ReturnType<Ledger['listOpenAccounts']>>[number];
 type Category = Awaited<ReturnType<Ledger['listExpenseCategories']>>[number];
@@ -22,7 +28,33 @@ function button(label: string, action: () => void | Promise<void>, primary = fal
   }); return result;
 }
 function frequencyLabel(value: RecurringScheduleInput['frequency']) { return value === 'weekly' ? '毎週' : value === 'yearly' ? '毎年' : '毎月'; }
+function recurringTimingLabel(schedule: Pick<RecurringSchedule, 'frequency' | 'startDate'>) {
+  const [year, month, day] = schedule.startDate.split('-').map(Number);
+  if (schedule.frequency === 'monthly') return `毎月${day}日`;
+  if (schedule.frequency === 'yearly') return `毎年${month}月${day}日`;
+  const weekday = ['日', '月', '火', '水', '木', '金', '土'][new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `毎週${weekday}曜日`;
+}
 function errorText(error: unknown) { return error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '定期登録を保存できませんでした。入力内容を確認してください。'; }
+function yenBig(amount: bigint) { return `¥${amount.toLocaleString('ja-JP')}`; }
+function chooseCatchUp(preview: Awaited<ReturnType<Service['previewCatchUp']>>): Promise<string[] | null> {
+  return new Promise(resolve => {
+    const dialog = node('dialog') as HTMLDialogElement; dialog.className = 'recurring-catch-up-confirm';
+    const heading = node('h2', '過去分の記録'); heading.id = 'recurring-catch-up-heading'; dialog.setAttribute('aria-labelledby', heading.id);
+    dialog.append(heading, node('p', `${preview.startDate}〜${preview.endDate}の未登録分があります。`),
+      node('p', `${preview.dates.length.toLocaleString('ja-JP')}件 · 合計 ${yenBig(preview.totalAmountYen)}`));
+    const choose = (dates: string[] | null) => { dialog.close(); dialog.remove(); resolve(dates); };
+    const all = node('button', '全件を記録'); all.type = 'button'; all.dataset.catchUpAll = '';
+    all.addEventListener('click', () => choose(preview.dates));
+    const currentMonthDates = preview.dates.filter(date => date.slice(0, 7) === new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date()).slice(0, 7));
+    const month = node('button', '今月分から記録'); month.type = 'button'; month.dataset.catchUpCurrentMonth = '';
+    month.addEventListener('click', () => choose(currentMonthDates));
+    const cancel = node('button', 'キャンセル'); cancel.type = 'button'; cancel.className = 'secondary'; cancel.dataset.catchUpCancel = '';
+    cancel.addEventListener('click', () => choose(null));
+    dialog.append(all, month, cancel); document.body.append(dialog); dialog.showModal();
+    dialog.addEventListener('cancel', event => { event.preventDefault(); choose(null); }, { once: true });
+  });
+}
 
 export async function showRecurringSchedules(options: {
   view: HTMLElement;
@@ -58,7 +90,7 @@ export async function showRecurringSchedules(options: {
       const categoryName = categoryNames.get(schedule.categoryId) ?? 'カテゴリなし';
       const tone = schedule.kind === 'income' ? { icon: 'income' as const, tone: 'income' } : categoryTone(categoryName, schedule.categoryId);
       const note = schedule.editable
-        ? `${categoryName} · ${accountNames.get(schedule.accountId) ?? '口座なし'} · ${frequencyLabel(schedule.frequency)} · 次回 ${schedule.nextDate ?? '未定'} · 自動登録 ${schedule.postsTransaction ? 'オン' : 'オフ'}${schedule.completed ? ' · 終了済み' : ''}`
+        ? `${recurringTimingLabel(schedule)} · ${accountNames.get(schedule.accountId) ?? '口座なし'}${schedule.completed ? ' · 終了済み' : ''}`
         : `未対応の予定条件を含むため編集できません · ${schedule.completed ? '終了済み' : '継続中'}`;
       return entryRow({ icon: tone.icon, tone: tone.tone, title: schedule.name, note, dimmed: schedule.completed,
         value: schedule.editable ? `${schedule.kind === 'income' ? '+' : '−'}${yen(schedule.amountYen)}` : undefined, valueClass: schedule.kind === 'income' ? 'amount-income' : '',
@@ -85,6 +117,50 @@ export async function showRecurringSchedules(options: {
     if (schedule.editable) view.append(detailList([['金額', yen(schedule.amountYen)], ['カテゴリ', categoryName], ['口座', accountNames.get(schedule.accountId) ?? '利用できません'],
       ['頻度', frequencyLabel(schedule.frequency)], ['開始日', schedule.startDate], ['次回', schedule.nextDate ?? '未定'], ['自動登録', schedule.postsTransaction ? 'オン' : 'オフ']], 'recurring-detail'));
     else view.append(Object.assign(node('p', 'この定期登録には画面で扱えない予定条件があります。金額や頻度を正確に表示できません。金額や頻度などの条件は編集できません。削除して作り直してください。'), { className: 'muted' }));
+    const historySection = node('section'); historySection.className = 'recurring-catch-up-history'; historySection.dataset.catchUpHistory = '';
+    historySection.append(node('h3', '過去分の生成履歴'));
+    const histories = await service.listCatchUps(schedule.id);
+    if (!histories.length) historySection.append(Object.assign(node('p', '過去分の生成履歴はありません。'), { className: 'muted' }));
+    for (const { audit, deletedDates, retainedDates } of histories) {
+      const entry = node('div'); entry.className = 'recurring-catch-up-entry'; entry.dataset.catchUpOperationId = audit.operationId;
+      const live = audit.occurrences.filter(row => row.status === 'created' && !deletedDates.has(row.date) && !retainedDates.has(row.date));
+      entry.append(node('p', `${audit.occurrences[0]?.date ?? ''}〜${audit.occurrences.at(-1)?.date ?? ''} · ${audit.occurrences.length.toLocaleString('ja-JP')}件 · ${yenBig(BigInt(audit.input.amountYen) * BigInt(audit.occurrences.length))}`));
+      if (audit.status === 'undone') entry.append(Object.assign(node('p', '一括取り消し済みです。'), { className: 'muted' }));
+      for (const row of audit.occurrences) {
+        const deleted = row.status === 'deleted' || deletedDates.has(row.date);
+        const retained = row.status === 'retained' || retainedDates.has(row.date);
+        const label = node('label'); label.className = 'recurring-catch-up-row';
+        if (row.status === 'created' && !deleted && !retained) {
+          const checkbox = node('input'); checkbox.type = 'checkbox'; checkbox.value = row.date; checkbox.dataset.catchUpDate = '';
+          label.append(checkbox, node('span', `${row.date} · ${yen(audit.input.amountYen)}`));
+        } else {
+          const note = retained ? '編集済みのため残しました' : deleted ? '削除済み' : '生成できませんでした';
+          label.append(node('span', `${row.date} · ${yen(audit.input.amountYen)} · ${note}`));
+        }
+        entry.append(label);
+      }
+      if (live.length) {
+        const selection = node('p', ''); selection.className = 'muted';
+        if (live.length > 0) {
+          const undo = button(live.length === audit.occurrences.length ? 'この回を一括で取り消す' : '残りを一括で取り消す', async () => {
+            try { await service.undoCatchUp(audit.operationId); await detail(schedule); }
+            catch (error) { status.textContent = errorText(error); }
+          }); undo.dataset.catchUpUndo = ''; undo.className = 'secondary'; entry.append(undo);
+        }
+        const removeSelected = button('選択した記録を削除', async () => {
+          const dates = Array.from(entry.querySelectorAll<HTMLInputElement>('[data-catch-up-date]:checked')).map(input => input.value);
+          if (!dates.length) { status.textContent = '削除する日を選んでください。'; return; }
+          const start = dates[0]!, end = dates.at(-1)!;
+          const total = BigInt(audit.input.amountYen) * BigInt(dates.length);
+          if (!window.confirm(`${start}〜${end}の${dates.length.toLocaleString('ja-JP')}件（${yenBig(total)}）を削除しますか？編集済みの取引は削除できません。`)) return;
+          try { await service.deleteCatchUpOccurrences(audit.operationId, dates); await detail(schedule); }
+          catch (error) { status.textContent = errorText(error); }
+        }); removeSelected.dataset.catchUpDeleteSelected = ''; removeSelected.className = 'text-button destructive-text';
+        entry.append(selection, removeSelected);
+      }
+      historySection.append(entry);
+    }
+    view.append(historySection);
     const remove = button('削除する', async () => {
       if (!window.confirm('この定期登録を削除しますか？すでに作成された取引は残ります。')) return;
       try { await service.remove(schedule.id); await overview('定期登録を削除しました。生成済みの取引は残っています。'); }
@@ -151,12 +227,48 @@ export async function showRecurringSchedules(options: {
         accountId: account.value, frequency: frequency.value as RecurringScheduleInput['frequency'], startDate: start.value, postsTransaction: auto.checked };
       const controls = Array.from(form.elements).filter((control): control is HTMLInputElement | HTMLSelectElement | HTMLButtonElement => control instanceof HTMLInputElement || control instanceof HTMLSelectElement || control instanceof HTMLButtonElement);
       for (const control of controls) control.disabled = true;
-      status.textContent = '保存しています。';
-      void service.save(input, existing?.id).then(() => overview('定期登録を保存しました。')).catch(async error => {
+      status.textContent = '過去分を確認しています。';
+      void (async () => {
+        const preview = await service.previewCatchUp(input, existing?.id);
+        let selectedDates: string[] = [];
+        if (preview.dates.length === 1) selectedDates = preview.dates;
+        else if (preview.dates.length > 1) {
+          const choice = await chooseCatchUp(preview);
+          if (!choice) { status.textContent = '保存をキャンセルしました。'; return; }
+          selectedDates = choice;
+        }
+        status.textContent = '保存しています。';
+        const scheduleId = await service.save(input, existing?.id);
+        if (selectedDates.length) {
+          status.textContent = '過去分を記録しています。';
+          const operationIds = await service.catchUp(scheduleId, input, selectedDates);
+          if (operationIds.length) {
+            const generated = (await service.listCatchUps(scheduleId)).filter(({ audit }) => operationIds.includes(audit.operationId));
+            const count = generated.reduce((total, { audit }) => total + audit.occurrences.length, 0);
+            await overview('定期登録を保存しました。');
+            const notice = node('div'); notice.className = 'notice'; notice.dataset.catchUpResult = '';
+            notice.append(node('p', `${count.toLocaleString('ja-JP')}件の${input.kind === 'expense' ? '支出' : '収入'}を記録しました。`));
+            const undo = button('元に戻す', async () => {
+              try {
+                for (const operationId of operationIds) await service.undoCatchUp(operationId);
+                const histories = (await service.listCatchUps(scheduleId)).filter(({ audit }) => operationIds.includes(audit.operationId));
+                const retained = histories.reduce((total, { audit }) => total + audit.occurrences.filter(row => row.status === 'retained').length, 0);
+                await overview(retained ? `過去分を取り消しました。編集済みの${retained.toLocaleString('ja-JP')}件は残しました。` : '今回の過去分を取り消しました。');
+              } catch (error) { await overview(errorText(error)); }
+            });
+            undo.dataset.catchUpImmediateUndo = ''; notice.append(undo);
+            view.querySelector('[role="status"]')?.after(notice);
+            return;
+          }
+        }
+        await overview('定期登録を保存しました。');
+      })().catch(async error => {
         status.textContent = errorText(error);
         if (await service.pending()) {
           retry.hidden = false; retry.disabled = false;
-        } else for (const control of controls) control.disabled = control === retry;
+        }
+      }).finally(() => {
+        if (view.contains(form)) for (const control of controls) control.disabled = control === retry ? retry.hidden : false;
       });
     });
     view.append(form);
