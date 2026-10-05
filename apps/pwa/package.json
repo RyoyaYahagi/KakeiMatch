@@ -25,6 +25,7 @@
     "test:masters-e2e": "node test/browser-masters.mjs",
     "test:master-navigation-failure-e2e": "node test/browser-master-navigation-failure.mjs",
     "test:receipt-items-e2e": "node test/browser-receipt-items.mjs",
+    "test:receipt-ai-warnings-e2e": "node test/browser-receipt-ai-warnings.mjs",
     "test:receipt-total-check-e2e": "node test/browser-receipt-total-check.mjs",
     "test:receipt-ai-reading-e2e": "node test/browser-receipt-ai-reading.mjs",
     "test:manual-items-e2e": "node test/browser-manual-items.mjs",

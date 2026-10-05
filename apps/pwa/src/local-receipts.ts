@@ -40,6 +40,8 @@ export type LocalReceipt = {
   /** Usage flow for the latest successful extraction; older receipts may lack it. */
   aiFlowId?: string;
   itemCategories?: Array<string | null>;
+  /** Positions in extraction.warnings the user has checked; cleared by a new read. */
+  reviewedWarnings?: number[];
   classificationAttempt?: { flowId?: string; model: string; attemptedAt: string; itemCategories?: Array<string | null>; categoryId: string | null };
   aiSuggestion: { categoryId: string | null; source: "merchant_mapping" | "learned_rule" | "jev" | "unclassified"; probabilities: Record<CategoryId, number> | null; model: string | null; attemptedAt: string | null; flowId?: string; categoryRules?: AppliedCategoryRule[] };
   confirmedValue: ConfirmedReceiptValue | null;
@@ -78,8 +80,11 @@ export type LocalReceiptServiceOptions = {
 
 function nowIso(options: LocalReceiptServiceOptions): string { return (options.now ?? (() => new Date()))().toISOString(); }
 function newId(options: LocalReceiptServiceOptions): string { return `receipt:${(options.makeId ?? crypto.randomUUID.bind(crypto))()}`; }
+/** Expenses are negative in the ledger; a 0 yen total stays 0 rather than -0. */
+function expenseAmount(totalAmountYen: number): number { return totalAmountYen === 0 ? 0 : -totalAmountYen; }
 function isSafeYen(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0; }
-function validConfirmed(value: ConfirmedReceiptValue): boolean {
+/** A 0 yen total is allowed only for photographed receipts, such as one paid entirely with points. */
+function validConfirmed(value: ConfirmedReceiptValue, allowZeroTotal: boolean): boolean {
   const items = value.items ?? [], adjustments = value.adjustments ?? [];
   if ((value.memo != null && (typeof value.memo !== "string" || value.memo.length > 2000)) || items.length > 100 || adjustments.length > 100 ||
       new Set([...items, ...adjustments].map(row => row.id)).size !== items.length + adjustments.length ||
@@ -93,7 +98,7 @@ function validConfirmed(value: ConfirmedReceiptValue): boolean {
   return typeof value.merchant === "string" && value.merchant.trim().length > 0 &&
     date !== null && !Number.isNaN(date.valueOf()) && date.toISOString().slice(0, 10) === value.purchasedDate &&
     (value.purchasedTime === null || /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value.purchasedTime)) &&
-    isSafeYen(value.totalAmountYen) && value.totalAmountYen > 0 && typeof value.categoryId === "string" && value.categoryId.length > 0 &&
+    isSafeYen(value.totalAmountYen) && (value.totalAmountYen > 0 || allowZeroTotal) && typeof value.categoryId === "string" && value.categoryId.length > 0 &&
     typeof value.accountId === "string" && value.accountId.length > 0;
 }
 function safeError(error: unknown): LocalReceiptServiceError {
@@ -177,6 +182,18 @@ export class LocalReceiptService {
     return record?.kind === RECEIPT_KIND ? record.value : null;
   }
 
+  /** Records read warnings the user has compared with the image, so they are not shown again. */
+  async markWarningsReviewed(id: string, indexes: number[]): Promise<void> {
+    await this.withLock(id, async () => {
+      const receipt = await this.requireReceipt(id);
+      const count = receipt.extraction?.warnings.length ?? 0;
+      const reviewed = new Set(receipt.reviewedWarnings ?? []);
+      for (const index of indexes) if (Number.isSafeInteger(index) && index >= 0 && index < count) reviewed.add(index);
+      if (reviewed.size === (receipt.reviewedWarnings?.length ?? 0)) return;
+      await this.save({ ...receipt, reviewedWarnings: [...reviewed].sort((a, b) => a - b), updatedAt: nowIso(this.options) });
+    });
+  }
+
   async deletePending(id: string): Promise<void> {
     await this.withLock(id, async () => {
       try {
@@ -218,7 +235,7 @@ export class LocalReceiptService {
       const timestamp = nowIso(this.options);
       // Store the raw, schema-validated AI output before updating any suggestion state.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
-      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp,
+      const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp, reviewedWarnings: undefined,
         itemCategories: undefined, classificationAttempt: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;
@@ -386,8 +403,8 @@ export class LocalReceiptService {
 
   async confirm(id: string, confirmedValue: ConfirmedReceiptValue): Promise<LocalReceipt> {
     return this.withLock(id, async () => {
-    if (!validConfirmed(confirmedValue)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
     const receipt = await this.requireReceipt(id);
+    if (!validConfirmed(confirmedValue, receipt.image !== null)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
     if (receipt.registration.status !== "pending") throw new LocalReceiptServiceError("registration_locked", "登録処理中、登録済み、または結果確認中の内容は変更できません。登録を再試行して状態を確認してください。");
     const timestamp = nowIso(this.options);
     const updated = { ...receipt, confirmedValue: { ...confirmedValue, merchant: confirmedValue.merchant.trim() }, updatedAt: timestamp, registration: { status: "pending" as const, actualTransactionId: null, lastError: null } };
@@ -418,7 +435,7 @@ export class LocalReceiptService {
         }
         return this.applyEdit(receipt, pending);
       }
-      if (!validConfirmed(input)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
+      if (!validConfirmed(input, receipt.image !== null)) throw new LocalReceiptServiceError("invalid_confirmation", "店舗、日付、金額、カテゴリ、口座を確認してください。");
       if (expectedUpdatedAt !== undefined && expectedUpdatedAt !== receipt.updatedAt) {
         throw new LocalReceiptServiceError("receipt_changed", "別の画面で内容が変更されています。最新の内容を開き直してください。");
       }
@@ -474,7 +491,7 @@ export class LocalReceiptService {
     if (!categoryId || !receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_state_invalid", "登録済み取引を確認できませんでした。");
     try {
       const transaction = await this.ledger.editReceipt(receipt.registration.actualTransactionId, {
-        accountId: audit.after.accountId, date: audit.after.purchasedDate, amountYen: -audit.after.totalAmountYen,
+        accountId: audit.after.accountId, date: audit.after.purchasedDate, amountYen: expenseAmount(audit.after.totalAmountYen),
         merchant: audit.after.merchant, ...(audit.after.memo !== undefined ? { memo: audit.after.memo } : {}), categoryId, importedId: `kakeimatch:${receipt.id}`,
         ...(splits.length > 1 ? { splits } : {}),
       });
@@ -523,7 +540,7 @@ export class LocalReceiptService {
       try {
         const transaction = await this.ledger.importReceipt({
           accountId: receipt.confirmedValue.accountId, date: receipt.confirmedValue.purchasedDate,
-          amountYen: -receipt.confirmedValue.totalAmountYen, merchant: receipt.confirmedValue.merchant,
+          amountYen: expenseAmount(receipt.confirmedValue.totalAmountYen), merchant: receipt.confirmedValue.merchant,
           ...(receipt.confirmedValue.memo !== undefined ? { memo: receipt.confirmedValue.memo } : {}), categoryId: splits[0]?.categoryId ?? category.id, ...(splits.length > 1 ? { splits } : {}), importedId: `kakeimatch:${id}`,
         });
         const applied = { ...processing, registration: { status: "applied" as const, actualTransactionId: transaction.id, lastError: null }, updatedAt: nowIso(this.options) };
@@ -557,6 +574,8 @@ export class LocalReceiptService {
 
 /** Printed total is authoritative. Multiple categories require a complete, exact allocation. */
 export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ categoryId: string; amountYen: number }> {
+  // A receipt paid entirely with points is recorded as one 0 yen expense in the overall category.
+  if (value.totalAmountYen === 0) return [{ categoryId: value.categoryId, amountYen: 0 }];
   const items = value.items ?? [];
   const categories = new Set(items.map(item => item.categoryId ?? value.categoryId));
   if (categories.size <= 1) return [{ categoryId: [...categories][0] ?? value.categoryId, amountYen: value.totalAmountYen }];

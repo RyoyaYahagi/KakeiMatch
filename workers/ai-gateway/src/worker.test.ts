@@ -531,6 +531,33 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ purchasedDate: "2026-09-30", purchasedTime: "09:05", items: [{ name: "Synthetic Item", amountYen: 3284 }] });
   });
+  it("keeps a warning's item position and drops a position that points at no entry", async () => {
+    const warned = { ...receipt, warnings: [
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 0 },
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 5 },
+      { field: "totalAmountYen", code: "points", message: "ポイント利用で支払額が0円です。", index: 0 },
+    ] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(warned) }));
+    expect(response.status).toBe(200);
+    expect((await response.json() as { warnings: unknown[] }).warnings).toEqual([
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 0 },
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: null },
+      { field: "totalAmountYen", code: "points", message: "ポイント利用で支払額が0円です。", index: null },
+    ]);
+  });
+  it("accepts a zero total paid with points and drops warnings about the time and zero-amount lines", async () => {
+    const paidWithPoints = { ...receipt, totalAmountYen: 0, adjustments: [{ label: "ポイント利用", amountYen: -3284 }],
+      items: [{ name: "Synthetic Item", amountYen: 3284 }, { name: "Synthetic Out Of Stock", amountYen: 0 }],
+      warnings: [
+        { field: "items", code: "out_of_stock", message: "欠品のため金額が0円です。", index: 1 },
+        { field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null },
+        { field: "purchasedTime", code: "missing", message: "時刻が印字されていません。", index: null },
+      ] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(paidWithPoints) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ totalAmountYen: 0, adjustments: [{ label: "ポイント利用", amountYen: -3284 }],
+      warnings: [{ field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null }] });
+  });
   it("logs only the rejected field name for an invalid extraction", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     try {

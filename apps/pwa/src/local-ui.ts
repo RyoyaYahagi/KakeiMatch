@@ -14,6 +14,7 @@ import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { dateShortcuts, formActions, optionalFields } from './entry-form';
 import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
+import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
 import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
@@ -487,14 +488,25 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       open.append(img, badge); open.addEventListener('click', () => openReceiptImage(src));
       previewFrame.append(open); overviewExtras.append(previewFrame);
     }
-    if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
+    // Read warnings say where to compare with the image; they are drawn once the fields exist.
+    const reviewedWarnings = new Set(receipt.reviewedWarnings ?? []);
+    const reviewWarnings = (receipt.extraction ? describeReceiptWarnings(receipt.extraction) : [])
+      .map((review, warningIndex) => ({ ...review, warningIndex })).filter(review => !reviewedWarnings.has(review.warningIndex));
+    const reviewArea = document.createElement('div');
+    overviewExtras.append(reviewArea);
+    const entryId = (target: ReceiptWarningTarget) => target.kind === 'item' && target.index !== null ? `receipt-item:${receipt.id}:${target.index}`
+      : target.kind === 'adjustment' && target.index !== null ? `receipt-adjustment:${receipt.id}:${target.index}` : null;
+    const flaggedEntryIds = new Set(reviewWarnings.flatMap(({ target }) => entryId(target) ?? []));
 
     const form = document.createElement('form');
     const inputId = (field: string) => !receipt.image ? `manual-transaction-${field === 'merchant' ? 'payee' : field}` : `receipt-${field}`;
     const merchant = document.createElement('input'); merchant.id = inputId('merchant'); merchant.required = true; merchant.maxLength = 200; merchant.value = initial.merchant;
     const date = document.createElement('input'); date.id = inputId('date'); date.type = 'date'; date.required = true; date.value = initial.purchasedDate;
     const time = document.createElement('input'); time.id = 'receipt-time'; time.type = 'time'; time.value = initial.purchasedTime ?? '';
-    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '1'; amount.step = '1'; amount.required = true; amount.value = initial.totalAmountYen ? String(initial.totalAmountYen) : '';
+    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = receipt.image ? '0' : '1'; amount.step = '1'; amount.required = true;
+    // A receipt paid entirely with points has a 0 yen total; an empty manual entry stays blank.
+    const zeroTotal = Boolean(receipt.image) && initial.totalAmountYen === 0 && (extraction?.totalAmountYen === 0 || confirmed?.totalAmountYen === 0);
+    amount.value = initial.totalAmountYen || zeroTotal ? String(initial.totalAmountYen) : '';
     const category = document.createElement('select'); category.id = inputId('category'); category.required = true;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
     category.value = actualCategoryId(initial.categoryId);
@@ -582,6 +594,92 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     overviewFields.append(amountLabel, amount, totalCheck, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
       categoryLabel, category, accountLabel, account, optional);
     form.append(overviewFields, purchaseDetails, warning, status);
+    const reviewFields = { merchant: [merchantLabel, merchant], purchasedDate: [dateLabel, date], purchasedTime: [timeLabel, time], totalAmountYen: [amountLabel, amount], taxAmountYen: [taxLabel, tax] } as const;
+    const fieldFlags = new Map<keyof typeof reviewFields, HTMLElement>();
+    for (const field of new Set(reviewWarnings.flatMap(({ target }) => target.kind === 'field' ? [target.field] : []))) {
+      const [label, input] = reviewFields[field];
+      const flag = text('span', '△ 要確認', 'review-flag'); flag.id = `${input.id}-review`;
+      label.after(flag); input.setAttribute('aria-describedby', flag.id);
+      fieldFlags.set(field, flag);
+      if (field === 'purchasedTime') optional.open = true;
+      if (field === 'taxAmountYen') taxDetails.open = true;
+      // Editing the field is itself a check against the image.
+      input.addEventListener('input', () => { void resolveReviews(review => review.target.kind === 'field' && review.target.field === field).catch(report); }, { once: true });
+    }
+    for (const list of [itemsList, adjustmentsList]) list.addEventListener('input', event => {
+      const entry = (event.target as HTMLElement).closest<HTMLElement>('[data-receipt-item],[data-receipt-adjustment]');
+      const id = entry?.dataset.receiptItem ?? entry?.dataset.receiptAdjustment;
+      if (id && flaggedEntryIds.has(id)) void resolveReviews(review => entryId(review.target) === id).catch(report);
+    });
+    const reviewBand = document.createElement('section'); reviewBand.className = 'notice notice-warning receipt-review';
+    const reviewTitle = text('p', '', 'receipt-review-title'); reviewTitle.id = 'receipt-review-title';
+    reviewBand.setAttribute('aria-labelledby', reviewTitle.id);
+    const reviewList = document.createElement('ul'); reviewList.className = 'receipt-review-list';
+    const reviewRows = new Map<number, HTMLLIElement>();
+    for (const review of reviewWarnings) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'text-button receipt-review-row';
+      const body = document.createElement('span'); body.className = 'receipt-review-text';
+      body.append(text('strong', review.label), text('span', review.message));
+      row.append(body, icon('chevronRight'));
+      row.addEventListener('click', () => showReviewTarget(review.target));
+      const done = button('確認した', () => resolveReviews(other => other.warningIndex === review.warningIndex));
+      done.className = 'text-button receipt-review-done'; done.setAttribute('aria-label', `${review.label}を確認した`);
+      const item = document.createElement('li'); item.append(row, done); reviewList.append(item);
+      reviewRows.set(review.warningIndex, item);
+    }
+    reviewBand.append(icon('warning'), reviewTitle, reviewList);
+    const refreshReviewBand = () => {
+      reviewTitle.textContent = `画像と照らし合わせてほしいところが${reviewRows.size}件あります`;
+      if (!reviewRows.size) reviewBand.remove();
+    };
+    if (reviewWarnings.length) { refreshReviewBand(); reviewArea.append(reviewBand); }
+    /** Hides checked warnings now and remembers them for this read. */
+    async function resolveReviews(matches: (review: typeof reviewWarnings[number]) => boolean) {
+      const resolved = reviewWarnings.filter(review => reviewRows.has(review.warningIndex) && matches(review));
+      if (!resolved.length) return;
+      for (const review of resolved) {
+        reviewRows.get(review.warningIndex)?.remove(); reviewRows.delete(review.warningIndex);
+        const id = entryId(review.target);
+        if (id && !reviewWarnings.some(other => reviewRows.has(other.warningIndex) && entryId(other.target) === id)) {
+          flaggedEntryIds.delete(id);
+          const meta = (itemsList.querySelector(`[data-receipt-item="${CSS.escape(id)}"]`) ?? adjustmentsList.querySelector(`[data-receipt-adjustment="${CSS.escape(id)}"]`))?.querySelector('.receipt-compact-meta');
+          if (meta?.textContent?.startsWith('△ 要確認 · ')) meta.textContent = meta.textContent.slice('△ 要確認 · '.length);
+        }
+        if (review.target.kind === 'field') {
+          const field = review.target.field;
+          if (!reviewWarnings.some(other => reviewRows.has(other.warningIndex) && other.target.kind === 'field' && other.target.field === field)) {
+            fieldFlags.get(field)?.remove(); reviewFields[field][1].removeAttribute('aria-describedby');
+          }
+        }
+      }
+      refreshReviewBand();
+      await receipts.markWarningsReviewed(receipt.id, resolved.map(review => review.warningIndex));
+    }
+    /** Moves to the place a read warning is about, so the user can compare it with the image. */
+    function showReviewTarget(target: ReceiptWarningTarget) {
+      if (target.kind === 'image') {
+        setEditorPane('overview', false);
+        overviewExtras.querySelector('img')?.scrollIntoView({ block: 'center' });
+        return;
+      }
+      if (target.kind === 'field') {
+        setEditorPane('overview', false);
+        if (target.field === 'taxAmountYen') { purchaseDetails.open = true; taxDetails.open = true; }
+        if (target.field === 'purchasedTime') optional.open = true;
+        const input = reviewFields[target.field][1];
+        input.scrollIntoView({ block: 'center' }); input.focus({ preventScroll: true });
+        return;
+      }
+      setEditorPane('items', false);
+      const list = target.kind === 'item' ? itemsList : adjustmentsList;
+      const id = `${target.kind === 'item' ? 'receipt-item' : 'receipt-adjustment'}:${receipt.id}:${target.index}`;
+      const entry = target.index === null ? null : list.querySelector<HTMLElement>(`[data-receipt-${target.kind}="${CSS.escape(id)}"]`);
+      const details = entry instanceof HTMLDetailsElement ? entry : entry?.querySelector('details');
+      if (!details) { (target.kind === 'item' ? itemsHeading : adjustmentsHeading).scrollIntoView({ block: 'start' }); return; }
+      details.open = true;
+      details.scrollIntoView({ block: 'center' });
+      details.querySelector<HTMLElement>('input')?.focus({ preventScroll: true });
+    }
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
       const itemsOnly = pane === 'items';
@@ -695,7 +793,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const refreshSummary = () => {
           summaryTitle.textContent = item.name.trim() || '品目を入力';
           summaryAmount.textContent = item.amountYen == null ? '金額未入力' : yen(item.amountYen);
-          summaryMeta.textContent = categoryName(item.categoryId);
+          summaryMeta.textContent = `${flaggedEntryIds.has(item.id) ? '△ 要確認 · ' : ''}${categoryName(item.categoryId)}`;
         };
         refreshSummary();
         summary.append(summaryTitle, summaryAmount, summaryMeta);
@@ -763,7 +861,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const refreshSummary = () => {
           summaryTitle.textContent = adjustment.label || (adjustment.amountYen > 0 ? '調整' : '値引き');
           summaryAmount.textContent = `${adjustment.amountYen < 0 ? '−' : '+'}${yen(adjustment.amountYen)}`;
-          summaryMeta.textContent = adjustment.amountYen > 0 ? 'その他の調整' : '値引き';
+          summaryMeta.textContent = `${flaggedEntryIds.has(adjustment.id) ? '△ 要確認 · ' : ''}${adjustment.amountYen > 0 ? 'その他の調整' : '値引き'}`;
         };
         refreshSummary();
         summary.append(summaryTitle, summaryAmount, summaryMeta);
@@ -820,7 +918,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       void busy(submit, async () => {
         if (draftTimer) clearTimeout(draftTimer);
         const value = pendingEdit?.after ?? read();
-        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
+        const missingTotal = pendingEdit ? !receipt.image && !value.totalAmountYen : amount.value.trim() === '' || (!receipt.image && !value.totalAmountYen);
+        if (!value.merchant.trim() || !value.purchasedDate || missingTotal || !value.categoryId || !value.accountId) {
           setEditorPane('overview', false);
           // The category picker uses visible buttons instead of native validation.
           if (!value.categoryId) overviewFields.querySelector<HTMLButtonElement>('.category-choice')?.focus();
