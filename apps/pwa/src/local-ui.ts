@@ -26,6 +26,7 @@ import { LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
+import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
 import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
 import { initializeCategoryRulesUi } from './local-category-rules-ui';
@@ -841,15 +842,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     section.append(text('p', 'PayPayカード、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。'));
     const providerLabel = fieldLabel('label', '明細サービス', 'statement-provider');
     const provider = document.createElement('select'); provider.id = 'statement-provider';
-    provider.append(new Option('PayPayカード', 'paypay_card'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'));
+    provider.append(new Option('PayPayカード', 'paypay_card'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'), new Option('イオンカード', 'aeon_card'));
     provider.value = selectedStatementProvider;
-    provider.addEventListener('change', () => { selectedStatementProvider = provider.value as StatementProvider; });
+    const downloadHelp = document.createElement('div'); downloadHelp.className = 'statement-download';
+    const downloadLink = document.createElement('a'); downloadLink.id = 'statement-download-link';
+    downloadLink.textContent = '公式サイトで明細CSVを取得 ↗'; downloadLink.target = '_blank';
+    downloadLink.rel = 'noopener noreferrer'; downloadLink.referrerPolicy = 'no-referrer';
+    const downloadNote = text('p', ''); downloadNote.id = 'statement-download-note';
+    downloadHelp.append(text('p', 'CSVをお持ちでない場合'), downloadLink, downloadNote);
+    const importAvailability = text('p', ''); importAvailability.id = 'statement-import-availability';
+    importAvailability.setAttribute('role', 'status');
     const fileLabel = fieldLabel('label', 'CSVファイル', 'statement-file');
     const file = document.createElement('input'); file.id = 'statement-file'; file.type = 'file'; file.accept = '.csv,text/csv';
     const submit = button('取り込んで照合', async () => {
+      const chosenProvider = provider.value as StatementProvider;
+      if (!STATEMENT_DOWNLOAD_HELP[chosenProvider]?.importAvailable) throw new Error('この明細サービスのCSVは現在取り込めません。');
       const selectedFile = file.files?.[0];
       if (!selectedFile) throw new Error('CSVファイルを選択してください。');
-      const chosenProvider = provider.value as StatementProvider;
       selectedStatementProvider = chosenProvider;
       recordDiagnosticAction('statement_import_started', 'statements');
       provider.disabled = true; file.disabled = true;
@@ -861,10 +870,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
         el('message').textContent = `${result.added}件を取り込み、照合しました。重複 ${result.duplicates}件。対象外 ${result.excluded}件、要確認 ${result.needsReviewRows.length}件。${reasons}`;
       } finally {
-        provider.disabled = false; file.disabled = false;
+        provider.disabled = false; updateDownloadHelp();
       }
     }, false);
-    section.append(providerLabel, provider, fileLabel, file, submit);
+    function updateDownloadHelp() {
+      const help = STATEMENT_DOWNLOAD_HELP[provider.value as StatementProvider];
+      downloadHelp.hidden = !help;
+      if (help) { downloadLink.href = help.downloadUrl; downloadNote.textContent = help.note; }
+      else downloadLink.removeAttribute('href');
+      file.disabled = submit.disabled = !help?.importAvailable;
+      importAvailability.hidden = help?.importAvailable === true;
+      importAvailability.textContent = provider.value === 'aeon_card'
+        ? 'イオンカードのCSV形式を確認中です。現在、KakeiMatchへの取り込みには対応していません。'
+        : '明細サービスを選択してください。';
+    }
+    provider.addEventListener('change', () => { selectedStatementProvider = provider.value as StatementProvider; updateDownloadHelp(); });
+    updateDownloadHelp();
+    section.append(providerLabel, provider, downloadHelp, importAvailability, fileLabel, file, submit);
 
     const imports = await statements.imports();
     const rows = await statements.list();

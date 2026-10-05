@@ -64,6 +64,38 @@ describe("account metadata backup", () => {
     });
   });
 
+  it("roundtrips both legacy schedule audits and recurring catch-up intents", async () => {
+    const data = fixture();
+    const scheduleInput = { name: "Synthetic Rent", kind: "expense", amountYen: 50000, categoryId: "rent", accountId: "synthetic-account", frequency: "monthly", startDate: "2026-09-01", postsTransaction: true };
+    data.records.push(
+      { id: "schedule-operation:legacy", kind: "correction-audit", updatedAt: time, value: {
+        targetType: "schedule", operationId: "legacy", operation: "create", scheduleId: "synthetic-schedule", input: scheduleInput,
+        status: "applied", createdAt: time, appliedAt: time,
+      } },
+      { id: "recurring-catch-up:synthetic-operation", kind: "correction-audit", updatedAt: time, value: {
+        targetType: "recurring-catch-up", operationId: "synthetic-operation", operation: "create", scheduleId: "synthetic-schedule", input: scheduleInput,
+        occurrences: [{ date: "2026-09-01", importedId: "kakeimatch:schedule:synthetic-schedule:2026-09-01", transactionId: null, snapshot: null, status: "pending" }],
+        selectedDates: null, status: "pending", createdAt: time, appliedAt: null,
+      } },
+    );
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.slice(-2)).toEqual(data.records.slice(-2));
+  });
+
+  it("rejects catch-up audit key mismatches and partial delete intent records", async () => {
+    const data = fixture();
+    const input = { name: "Synthetic Rent", kind: "expense", amountYen: 50000, categoryId: "rent", accountId: "synthetic-account", frequency: "monthly", startDate: "2026-09-01", postsTransaction: true };
+    const baseAudit = { targetType: "recurring-catch-up", operationId: "synthetic-operation", operation: "create", scheduleId: "synthetic-schedule", input,
+      occurrences: [{ date: "2026-09-01", importedId: "kakeimatch:schedule:synthetic-schedule:2026-09-01", transactionId: null, snapshot: null, status: "pending" }],
+      selectedDates: null, status: "pending", createdAt: time, appliedAt: null };
+    data.records.push({ id: "wrong-key", kind: "correction-audit", updatedAt: time, value: baseAudit });
+    await expect(create(data)).rejects.toThrow(/監査記録IDが一致/);
+    data.records.pop();
+    data.records.push({ id: "recurring-catch-up-delete:synthetic-operation", kind: "correction-audit", updatedAt: time, value: { ...baseAudit,
+      operation: "delete", selectedDates: ["2026-09-01"], occurrences: [...baseAudit.occurrences, { ...baseAudit.occurrences[0], date: "2026-10-01", importedId: "kakeimatch:schedule:synthetic-schedule:2026-10-01" }] } });
+    await expect(create(data)).rejects.toThrow(/記録内容が不正/);
+  });
+
   it("preserves a budget-scoped account type and accepts backups without account metadata", async () => {
     const oldBackup = await readPortableBackup(await create());
     expect(oldBackup.localData.records.some(record => record.kind === "account-metadata")).toBe(false);
