@@ -35,11 +35,13 @@ try {
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Check Shop');
   // Items and adjustments add up to the total, so only the total needs comparing.
   const check = page.locator('#receipt-total-check');
-  assert.equal(await check.textContent(), '✓ 品目と値引きの合計と一致しています。合計金額だけ画像と照らし合わせてください。');
+  assert.equal(await check.textContent(), '✓ 一致');
+  assert.equal(await check.getAttribute('aria-label'), '品目と値引きの合計と一致');
   assert.match(await check.getAttribute('class'), /is-match/);
   if (process.env.PWA_RECEIPT_TOTAL_CHECK_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_TOTAL_CHECK_SCREENSHOT_PATH });
   await page.locator('#receipt-amount').fill('950');
-  assert.equal(await check.textContent(), '△ 品目と値引きの合計と¥50違います。品目一覧で確認してください。');
+  assert.equal(await check.textContent(), '△ 要確認');
+  assert.equal(await check.getAttribute('aria-label'), '品目と値引きの合計と¥50違います');
   assert.match(await check.getAttribute('class'), /is-mismatch/);
   await page.locator('#receipt-amount').fill('900');
   // The photo opens full screen; a tap zooms into that spot and another tap fits it again.

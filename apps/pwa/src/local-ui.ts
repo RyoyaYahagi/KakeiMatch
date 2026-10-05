@@ -11,8 +11,8 @@ import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem }
 import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
-import { dateShortcuts, formActions, optionalFields } from './entry-form';
-import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
+import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, shortLabel } from './entry-form';
+import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import { createReadingProgress } from './receipt-reading-progress';
 import { openReceiptImage } from './receipt-image-viewer';
@@ -467,6 +467,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       adjustments: useExtraction ? extractionAdjustments : base?.adjustments ?? extractionAdjustments,
       taxAmountYen: useExtraction ? extraction?.taxAmountYen ?? null : base?.taxAmountYen ?? extraction?.taxAmountYen ?? null,
     };
+    // docs/UX.md 支出の入力: a new expense typed by hand starts with the category used last time.
+    const lastUsed = !receipt.image && !editing && !initial.categoryId
+      ? await lastUsedCategory(ledger, 'expense', categories.map(entry => entry.id)).catch(() => '') : '';
+    if (lastUsed) initial.categoryId = lastUsed;
     let items = initial.items.map(item => ({ ...item }));
     let adjustments = initial.adjustments.map(item => ({ ...item }));
     const blob = await repository.getBlob(receipt.image?.blobId ?? 'missing');
@@ -512,13 +516,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const adjustmentsList = document.createElement('ul'); adjustmentsList.className = 'receipt-adjustment-list';
     const warning = text('p', '', 'receipt-difference'); warning.id = 'receipt-difference'; warning.setAttribute('role', 'status');
     // When items and adjustments add up to the total, only the total needs comparing with the photo.
-    const totalCheck = text('p', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
+    const totalCheck = text('span', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
     const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
     let expandItemId: string | null = null;
     let expandAdjustmentId: string | null = null;
     const addItem = button('品目を追加', () => { items = readItems(); expandItemId = crypto.randomUUID(); items.push({ id: expandItemId, name: '', amountYen: null, categoryId: null }); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
     const addAdjustment = button('値引きを追加', () => { adjustments = readAdjustments(); expandAdjustmentId = crypto.randomUUID(); adjustments.push({ id: expandAdjustmentId, label: '', amountYen: 0, targetItemId: null }); drawAdjustments(); updateDifference(); scheduleDraft(); });
-    const applyCategory = button('全品目にこのカテゴリを適用', () => { items = readItems().map(item => ({ ...item, categoryId: category.value || null })); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
+    // Chooses one category in the sheet and gives it to every item.
+    let applyToAllItems = false;
+    const applyCategory = button('全品目を同じカテゴリにする', () => { applyToAllItems = true; categoryUi.open(); });
     const taxDetails = document.createElement('details'); taxDetails.className = 'receipt-tax';
     const taxLabel = fieldLabel('label', '税額（円・任意）', 'receipt-tax');
     const tax = document.createElement('input'); tax.id = 'receipt-tax'; tax.type = 'number'; tax.inputMode = 'numeric'; tax.min = '0'; tax.step = '1'; tax.value = initial.taxAmountYen == null ? '' : String(initial.taxAmountYen);
@@ -570,20 +576,31 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     });
     if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
     if (editing) aiArea.replaceChildren();
-    const merchantLabel = fieldLabel('label', receipt.image ? '店名' : '店名・支払先', merchant.id);
-    const dateLabel = fieldLabel('label', receipt.image ? '購入日' : '日付', date.id);
+    const merchantLabel = shortLabel(merchant.id, '店名', receipt.image ? '' : '・支払先');
+    const dateLabel = shortLabel(date.id, '日付');
     const timeLabel = fieldLabel('label', '時刻（任意）', time.id);
-    const amountLabel = fieldLabel('label', receipt.image ? '合計金額（円）' : '金額（円）', amount.id);
-    const categoryLabel = fieldLabel('label', receipt.image ? '全体カテゴリ' : '支出カテゴリ', category.id);
-    const accountLabel = fieldLabel('label', '支払元', account.id);
+    const amountLabel = shortLabel(amount.id, '金額', '（円）');
+    const categoryLabel = shortLabel(category.id, 'カテゴリ');
+    const accountLabel = shortLabel(account.id, '支払元');
     const purchaseDetails = document.createElement('details'); purchaseDetails.className = 'purchase-details';
     purchaseDetails.open = Boolean(receipt.image) || items.length > 0 || adjustments.length > 0;
-    purchaseDetails.append(text('summary', '購入内容（任意）'), applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
+    const purchaseSummary = document.createElement('summary');
+    const purchaseHint = text('span', '', 'entry-row-hint');
+    purchaseSummary.append(text('span', '品目', 'entry-row-key'), purchaseHint);
+    purchaseDetails.append(purchaseSummary, applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
     amount.classList.add('amount-input');
-    const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
-    const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields';
-    overviewFields.append(amountLabel, amount, totalCheck, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
-      categoryLabel, category, accountLabel, account, optional);
+    const optional = optionalFields('時刻・メモ', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
+    // docs/DESIGN.md 帳簿の行で組む入力: one ruled row per field.
+    const categoryUi = categoryRow({ select: category, label: categoryLabel, usageReady: recentCategoryUsage(ledger),
+      hint: lastUsed ? { value: lastUsed, text: '前回と同じ' } : receipt.aiSuggestion.source === 'learned_rule' && category.value ? { value: category.value, text: 'いつもの分類' } : null });
+    // With items, the category comes from them: the row shows the split and leads to the item list.
+    // The category chosen in the sheet then only fills items that have none.
+    const derivedValue = document.createElement('button'); derivedValue.type = 'button'; derivedValue.className = 'derived-category';
+    derivedValue.addEventListener('click', () => setEditorPane('items'));
+    categoryUi.row.querySelector('.entry-row-value')?.append(derivedValue);
+    const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields entry-rows';
+    overviewFields.append(entryRow(amountLabel, amount, totalCheck), entryRow(merchantLabel, merchant), entryRow(dateLabel, date, dateShortcuts(date, today())),
+      categoryUi.row, entryRow(accountLabel, account), optional);
     form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
@@ -615,7 +632,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           categories = await ledger.listExpenseCategories();
           for (const select of [category, ...Array.from(itemsList.querySelectorAll<HTMLSelectElement>('[data-item-category]'))]) {
             const previous = select.value;
-            select.replaceChildren(new Option(select === category ? '選択してください' : '全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+            select.replaceChildren(new Option(select === category ? '選択してください' : '未選択', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
             if (previous && !categories.some(entry => entry.id === previous)) select.append(new Option('カテゴリを選び直してください（利用不可）', previous));
             select.value = previous;
           }
@@ -625,16 +642,21 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         },
       } });
     }
-    category.after(addCategoryShortcut(category));
-    enhanceCategorySelect(category, categoryLabel, recentCategoryUsage(ledger));
-    account.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
+    categoryUi.sheet.querySelector('.sheet-body')?.append(addCategoryShortcut(category));
+    category.addEventListener('change', () => {
+      if (!applyToAllItems) return;
+      applyToAllItems = false;
+      items = readItems().map(item => ({ ...item, categoryId: category.value || null })); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft();
+    });
+    categoryUi.sheet.addEventListener('close', () => { applyToAllItems = false; });
+    account.after(compactAddButton(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
       field: account, beforeOpen: saveDraft,
       onCreated: async id => {
         accounts = await ledger.listOpenAccounts();
         account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts));
         account.value = id; await saveDraft();
       },
-    } }));
+    } })));
 
     function readItems(): ReceiptItem[] {
       return Array.from(itemsList.querySelectorAll<HTMLElement>('[data-receipt-item]')).map(row => ({
@@ -676,14 +698,30 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (draftTimer) clearTimeout(draftTimer);
       draftTimer = setTimeout(() => { void saveDraft().catch(report); }, 350);
     }
-    function updateDifference() {
+    /** docs/UX.md 支出の入力: with items, the category row shows the split instead of asking for one category. */
+    function updateCategoryMode() {
       const currentItems = readItems(); const currentAdjustments = readAdjustments();
-      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.className = 'receipt-total-check'; return; }
+      const split = currentItems.length > 0;
+      categoryUi.row.classList.toggle('is-split', split); derivedValue.hidden = !split;
+      purchaseHint.textContent = split ? `${currentItems.length}品目${currentAdjustments.length ? ` · 値引き・調整${currentAdjustments.length}` : ''}` : '分けない（品目・値引き・税額）';
+      if (!split) return;
+      const totals = new Map<string, number>();
+      for (const item of currentItems) { const key = item.categoryId || category.value || ''; totals.set(key, (totals.get(key) ?? 0) + (item.amountYen ?? 0)); }
+      const parts = [...totals].sort((a, b) => b[1] - a[1]);
+      derivedValue.replaceChildren(text('span', '品目ごと', 'derived-tag'),
+        ...parts.map(([id, total]) => text('span', `${id ? categoryName(id) : '未選択'} ${yen(total)}`, `derived-part${id ? '' : ' is-empty'}`)));
+      derivedValue.setAttribute('aria-label', `カテゴリは品目ごと：${parts.map(([id, total]) => `${id ? categoryName(id) : '未選択'} ${yen(total)}`).join('、')}。品目一覧で見る`);
+    }
+    function updateDifference() {
+      updateCategoryMode();
+      const currentItems = readItems(); const currentAdjustments = readAdjustments();
+      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.removeAttribute('aria-label'); totalCheck.className = 'receipt-total-check'; return; }
       const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
       const difference = Number(amount.value) - knownTotal;
+      // docs/UX.md レシートの場合: only a short mark beside the total; the full sentence is its accessible name.
       totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
-      totalCheck.textContent = difference === 0 ? '✓ 品目と値引きの合計と一致しています。合計金額だけ画像と照らし合わせてください。'
-        : `△ 品目と値引きの合計と${yen(Math.abs(difference))}違います。品目一覧で確認してください。`;
+      totalCheck.textContent = difference === 0 ? '✓ 一致' : '△ 要確認';
+      totalCheck.setAttribute('aria-label', difference === 0 ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
     }
     function drawItems() {
@@ -723,7 +761,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const unit = document.createElement('input'); unit.id = unitLabel.htmlFor; unit.dataset.itemUnitPrice = ''; unit.type = 'number'; unit.inputMode = 'numeric'; unit.min = '0'; unit.step = '1'; unit.value = item.unitPriceYen == null ? '' : String(item.unitPriceYen);
         const itemCategoryLabel = fieldLabel('label', 'カテゴリ', `item-category-${item.id}`);
         const itemCategory = document.createElement('select'); itemCategory.id = itemCategoryLabel.htmlFor; itemCategory.dataset.itemCategory = '';
-        itemCategory.replaceChildren(new Option('全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+        itemCategory.replaceChildren(new Option('未選択', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
         const availableCategoryId = actualCategoryId(item.categoryId);
         if (item.categoryId && !availableCategoryId) itemCategory.append(new Option('カテゴリを選び直してください（利用不可）', item.categoryId));
         itemCategory.value = availableCategoryId || item.categoryId || '';
@@ -823,11 +861,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       void busy(submit, async () => {
         if (draftTimer) clearTimeout(draftTimer);
         const value = pendingEdit?.after ?? read();
+        // With items, the record's category is the first item's; items without one need a choice first.
+        if (!pendingEdit && value.items?.length) {
+          if (!value.categoryId && value.items.some(item => !item.categoryId)) { setEditorPane('items', false); throw new Error('品目のカテゴリを選んでください。'); }
+          if (!value.categoryId) { value.categoryId = value.items.find(item => item.categoryId)?.categoryId ?? ''; category.value = value.categoryId; }
+        }
         if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
           setEditorPane('overview', false);
-          // The category picker uses visible buttons instead of native validation.
-          if (!value.categoryId) overviewFields.querySelector<HTMLButtonElement>('.category-choice')?.focus();
-          throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
+          if (!value.categoryId) categoryUi.row.querySelector<HTMLButtonElement>('.entry-row-more')?.focus();
+          throw new Error('店名、日付、金額、カテゴリ、支払元を確認してください。');
         }
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
         recordDiagnosticAction('receipt_save_started', 'records');
