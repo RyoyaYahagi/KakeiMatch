@@ -1,4 +1,4 @@
-const DATABASE_NAME = "kakeimatch-local-data";
+export const LOCAL_DATABASE_NAME = "kakeimatch-local-data";
 // IndexedDB layout version; independent of the serialized backup schema below.
 export const LOCAL_DATABASE_VERSION = 2;
 const RECORDS_STORE = "records";
@@ -181,7 +181,7 @@ export class LocalDataRepository {
   static async open(profileId = getOrCreateLocalProfileId(), factory: IDBFactory = indexedDB, options: { writeGate?: LocalWriteGate } = {}): Promise<LocalDataRepository> {
     try {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = factory.open(DATABASE_NAME, LOCAL_DATABASE_VERSION);
+        const request = factory.open(LOCAL_DATABASE_NAME, LOCAL_DATABASE_VERSION);
         let failure: LocalDataStorageError | null = null;
         request.onupgradeneeded = (event) => {
           const transaction = request.transaction!;

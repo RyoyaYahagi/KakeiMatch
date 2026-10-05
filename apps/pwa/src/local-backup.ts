@@ -7,6 +7,7 @@ import {
   writeSwitchJournal, writeSyncState, initialSyncState, type HouseholdSwitchJournal,
 } from './household-sync-state';
 import type { HouseholdWriteGuard } from './household-write-guard';
+import { basicCategorySettingsRecordId } from './local-category-defaults';
 import { decryptPortableSyncVersion } from '../../../src/lib/encrypted-sync-version';
 import type { EncryptionContext } from '../../../src/lib/encrypted-household-format';
 
@@ -78,6 +79,7 @@ async function portableSnapshot(repository: LocalDataRepository, ledger: BackupL
   const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
   localData.records = localData.records.filter(record => record.id !== 'settings:budget'
+    && (!record.id.startsWith('settings:basic-categories:') || record.id === (budgetId ? basicCategorySettingsRecordId(budgetId) : ''))
     && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
     && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
   return createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
@@ -152,6 +154,10 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
         if (record.kind === 'account-metadata') {
           const metadata = record.value as { budgetId: string; accountId: string };
           return { ...record, id: accountMetadataRecordId(budgetId, metadata.accountId), value: { ...metadata, budgetId } };
+        }
+        // The completion marker travels with the household so deleted defaults stay deleted after restore.
+        if (record.id.startsWith('settings:basic-categories:')) {
+          return { ...record, id: basicCategorySettingsRecordId(budgetId), value: { ...(record.value as object), budgetId } };
         }
         if (record.id.startsWith('settings:monthly-budgets:')) {
           const oldBudgetId = record.id.slice('settings:monthly-budgets:'.length);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
@@ -42,10 +43,11 @@ try {
   await page.locator('#receipt-merchant').fill('Synthetic Split'); await page.locator('#receipt-amount').fill('1400'); await page.locator('#receipt-category').selectOption({ label: 'Synthetic Food' }); await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   let itemIndex = 0;
   for (const [name, amount, categoryName] of [['Synthetic Apple', '900', 'Synthetic Food'], ['Synthetic Soap', '500', 'Synthetic Household']]) {
-    await page.locator('#receipt-merchant').focus();
+    await click('品目一覧');
     await click('品目を追加'); const item = page.locator('[data-receipt-item]').nth(itemIndex++); await item.waitFor();
     if (await item.getAttribute('open') === null) await item.locator('summary').click(); await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount); await item.locator('[data-item-category]').selectOption({ label: categoryName });
   }
+  await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await detail('Synthetic Split'); const before = await records(); const splitRecord = before.records.find(row => row.kind === 'receipt-metadata' && row.value.confirmedValue?.merchant === 'Synthetic Split'); const original = splitRecord.value.registration.actualTransactionId;
   await remove(); let snapshot = await records(); assert.equal(snapshot.blobs.length, 1); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.status, 'deleted');
@@ -53,6 +55,7 @@ try {
   snapshot = await records(); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.actualTransactionId, original);
   await detail('Synthetic Split'); await remove(); await page.clock.fastForward(11000);
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click(); const download = await downloadPromise; const buffer = await readFile(await download.path());
+  await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept()); await page.locator('#backup-file').setInputFiles({ name: 'synthetic-deleted.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer }); await navigation;
   await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor(); await page.locator('#receipt-tab').click();
   assert.equal(await page.getByRole('button', { name: /^Synthetic Income ·/ }).count(), 0); assert.equal(await page.getByRole('button', { name: /^Synthetic Split ·/ }).count(), 0);

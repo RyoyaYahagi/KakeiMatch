@@ -10,9 +10,17 @@ import { chromium } from 'playwright-core';
 const directory = await mkdtemp(join(tmpdir(), 'kakeimatch-crypto-'));
 let browser;
 const server = createServer(async (request, response) => {
-  if (request.url === '/format.js') {
-    response.setHeader('Content-Type', 'text/javascript'); response.end(await readFile(join(directory, 'format.js')));
-  } else { response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><title>Synthetic encryption test</title>'); }
+  // An unhandled rejection here would crash the process and hide the real failure, e.g. when cleanup
+  // in `finally` removes the directory while a request is still in flight.
+  try {
+    if (request.url === '/format.js') {
+      const source = await readFile(join(directory, 'format.js'));
+      response.setHeader('Content-Type', 'text/javascript'); response.end(source);
+    } else { response.setHeader('Content-Type', 'text/html'); response.end('<!doctype html><title>Synthetic encryption test</title>'); }
+  } catch (error) {
+    console.error(`Synthetic server failed to serve ${request.url}:`, error);
+    response.statusCode = 500; response.end();
+  }
 });
 try {
   const entry = join(directory, 'entry.ts');

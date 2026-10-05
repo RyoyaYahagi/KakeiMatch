@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
@@ -25,8 +26,6 @@ try {
   await page.locator('#settings-tab').click(); await click('支払元'); await click('支払元を追加する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Wallet'); await click('追加する');
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
-  await page.locator('#settings-tab').click(); await click('カテゴリ'); await click('基本カテゴリを用意する');
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
   assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);
@@ -66,14 +65,18 @@ try {
   if (await item(2).getAttribute('open') === null) await item(2).locator('summary').click();
   const remove = item(2).getByRole('button', { name: '品目を削除', exact: true });
   assert.ok((await remove.boundingBox()).height >= 44);
-  // Returning to the full view keeps the opened purchase section and entered items.
+  // The full view hides item details; returning to the item pane keeps the opened item and entries.
   await click('全体');
   assert.equal(await page.locator('#manual-transaction-payee').isVisible(), true);
+  assert.equal(await item(2).isVisible(), false);
+  await click('品目一覧');
+  assert.equal(await item(2).getAttribute('open'), '');
   // Blur must not close the editor before a touch on the delete button.
-  await item(2).locator('[data-item-name]').focus(); await page.locator('#manual-transaction-amount').focus();
+  await item(2).locator('[data-item-name]').focus(); await discount.locator('[data-adjustment-label]').focus();
   assert.equal(await remove.isVisible(), true);
   if (process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH) { await remove.scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH }); }
   await remove.click(); assert.equal(await page.locator('[data-receipt-item]').count(), 2);
+  await click('全体');
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1400');
   // A missing basic field must be revealed when registering from the item pane.
   // Keep the items and memo intact throughout failed validation.
@@ -103,7 +106,7 @@ try {
   await page.locator('.category-list').getByText(/^食費 · ¥900 ·/).waitFor();
   await page.locator('.category-list').getByText(/^日用品 · ¥500 ·/).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click();
-  await click('編集する'); await item(0).locator('summary').click();
+  await click('編集する'); await click('品目一覧'); await item(0).locator('summary').click();
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   await item(0).getByRole('button', { name: '品目を削除', exact: true }).click();
@@ -113,6 +116,7 @@ try {
   await save(true);
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
+  await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-manual-items.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
@@ -120,7 +124,7 @@ try {
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-receipt-item]').count(), 1);
-  await context.setOffline(true); await item(0).locator('summary').click(); await item(0).locator('[data-item-name]').fill('Synthetic Offline Soap'); await save(true);
+  await context.setOffline(true); await click('品目一覧'); await item(0).locator('summary').click(); await item(0).locator('[data-item-name]').fill('Synthetic Offline Soap'); await save(true);
   assert.deepEqual(errors, []);
   console.log('PASS: manual items, positive discount, stable split/edit, touch deletion, backup compatibility, offline and 375px');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }
