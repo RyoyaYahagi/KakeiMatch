@@ -194,6 +194,9 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .statement-import-disclosure > summary .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .statement-import-disclosure[open] { padding-bottom: var(--space-4); }
 .statement-importer > p:first-child { margin-top: 0; color: var(--muted); font-size: .875rem; }
+.statement-download { margin: var(--space-3) 0; }
+.statement-download p { margin: var(--space-1) 0; color: var(--muted); font-size: .875rem; }
+.statement-download a { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); text-underline-offset: 3px; }
 .review-section { padding: 0 var(--space-4); margin-bottom: var(--space-3); }
 .review-section h3 { margin: 0; padding: var(--space-3) 0 var(--space-1); font-size: 1rem; }
 .review-list > li { padding: 0; border-bottom: 0; border-top: 1px solid var(--border); }
@@ -392,6 +395,8 @@ form .category-picker button { margin: 0; }
 .budget-row label { margin: 0; flex: 1; min-width: 0; }
 .budget-input { display: flex; align-items: center; gap: 2px; width: 128px; padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg); color: var(--muted); }
 .budget-input input { min-height: 44px; padding: 0; border: 0; background: transparent; text-align: right; font-weight: 700; }
+.budget-input input:focus-visible { outline: none; }
+.budget-input:focus-within { outline: 3px solid var(--warning); outline-offset: 2px; }
 .budget-row .text-button { margin: 0 0 0 auto; padding: 0 var(--space-1); font-size: .875rem; }
 
 .search-field { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); border: 2px solid var(--primary); border-radius: var(--radius-lg); background: var(--surface); color: var(--muted); }
@@ -612,6 +617,18 @@ progress.budget-meter.over::-moz-progress-bar { background: var(--danger); }
 .master-create-dialog { width: min(100% - 32px, 480px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
 .master-create-dialog::backdrop { background: var(--scrim); }
 .master-create-dialog h2 { margin-top: 0; }
+.recurring-catch-up-confirm { width: min(100% - 32px, 440px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: var(--text); background: var(--surface); }
+.recurring-catch-up-confirm::backdrop { background: var(--scrim); }
+.recurring-catch-up-confirm h2 { margin-top: 0; }
+.recurring-catch-up-confirm button { display: block; width: 100%; min-height: 48px; margin-top: var(--space-3); }
+.recurring-catch-up-confirm [data-catch-up-current-month], .recurring-catch-up-confirm [data-catch-up-cancel] { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.recurring-catch-up-history { margin: var(--space-5) 0; border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.recurring-catch-up-history h3 { font-size: 1rem; margin: 0 0 var(--space-3); }
+.recurring-catch-up-entry { border-top: 1px solid var(--border); padding: var(--space-3) 0; }
+.recurring-catch-up-entry > p { margin: var(--space-1) 0; }
+.recurring-catch-up-row { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; padding: var(--space-1) 0; }
+.recurring-catch-up-row input { width: 24px; height: 24px; flex: none; }
+.recurring-catch-up-entry > button { margin: var(--space-2) var(--space-2) 0 0; }
 
 /* PC: docs/UX.md PCでの表示, docs/DESIGN.md PC. The phone layout above stays the base. */
 @media (min-width: 1024px) {
