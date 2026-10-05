@@ -87,6 +87,15 @@ const openContact = async () => {
   await button('お問い合わせ').click();
 };
 const send = async () => button('送信する').click();
+// The click returns before the app issues its fetch, so wait for the fulfilled response (recorded before fulfill) of a new request.
+const sendAndCaptureContact = async () => {
+  const before = contactRequests.length;
+  const response = page.waitForResponse(value => value.request().method() === 'POST' && new URL(value.url()).pathname.endsWith('/api/contact'));
+  await send();
+  await response;
+  assert.equal(contactRequests.length, before + 1, 'each send issues exactly one contact request');
+  return contactRequests.at(-1);
+};
 
 try {
   await page.goto(process.env.PWA_E2E_URL);
@@ -109,8 +118,7 @@ try {
   assert.match(questionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   assert.deepEqual(Object.keys(contactRequests.at(-1).body).sort(), ['flowId', 'message']);
   assert.equal(contactRequests.at(-1).authorization, 'Bearer synthetic-contact-token');
-  await send();
-  assert.equal(contactRequests.at(-1).body.flowId, questionId, 'unchanged resubmission keeps its flow ID');
+  assert.equal((await sendAndCaptureContact()).body.flowId, questionId, 'unchanged resubmission keeps its flow ID');
 
   // Editing creates a new flow ID. Improvement reports can return a GitHub issue link.
   await page.locator('#contact-message').fill('改善の要望です');
@@ -184,8 +192,7 @@ try {
   await page.getByText('お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。', { exact: true }).waitFor();
   const retryId = contactRequests.at(-1).body.flowId;
   assert.equal(await page.locator('#contact-message').inputValue(), '不具合の報告です');
-  await send();
-  assert.equal(contactRequests.at(-1).body.flowId, retryId);
+  assert.equal((await sendAndCaptureContact()).body.flowId, retryId);
   await page.getByText('不具合の報告を受け付けました。', { exact: true }).waitFor();
 
   // Ambiguous GitHub results fail closed and require an edit to start a new flow.
@@ -197,8 +204,7 @@ try {
   assert.equal(await page.locator('#contact-issues-link').getAttribute('href'), 'https://github.com/RyoyaYahagi/KakeiMatch/issues');
   const blockedId = contactRequests.at(-1).body.flowId;
   await page.locator('#contact-message').fill('GitHubの登録結果が不明です。確認後に再送します');
-  await send();
-  assert.notEqual(contactRequests.at(-1).body.flowId, blockedId);
+  assert.notEqual((await sendAndCaptureContact()).body.flowId, blockedId);
 
   // Navigation keeps the draft. Stopping a recording automatically transcribes it; a failed transcription can retry the retained audio.
   await page.locator('#contact-message').fill('下書きは移動後も残ります');
