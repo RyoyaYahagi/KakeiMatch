@@ -1,4 +1,5 @@
 import { LocalCategoryLearning, type LocalCategoryRule } from './local-category-learning';
+import { backLink } from './settings-ui';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
@@ -18,9 +19,7 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
   status.setAttribute('role', 'status');
   let rows: LocalCategoryRule[] = [];
 
-  const back = node('button', '設定', 'text-button back-link');
-  back.type = 'button';
-  back.addEventListener('click', () => { page.hidden = true; options.settingsContent.hidden = false; });
+  const back = backLink('設定', '設定へ戻る', () => { page.hidden = true; options.settingsContent.hidden = false; });
   const title = node('h2', '分類ルール', 'page-title');
   const intro = node('p', '過去のレシートで確定した分類から、いつもの分類を自動で適用します。', 'muted');
   const list = node('section', undefined, 'surface-section settings-rows category-rule-list');

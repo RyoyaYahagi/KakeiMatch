@@ -50,8 +50,8 @@ async function readHouseholdSnapshot() {
       const currentProfile = localStorage.getItem('kakeimatch.local-profile.v1');
       const ownedRecords = records.filter(row => row.profileId === currentProfile)
         .map(row => { const copy = { ...row }; delete copy.key; delete copy.profileId; return copy; })
-        // The selected Actual directory is local operational state, not portable.
-        .filter(row => row.id !== 'settings:budget')
+        // These IDs are scoped to the device's Actual budget ID, which changes on restore.
+        .filter(row => row.id !== 'settings:budget' && !row.id.startsWith('settings:basic-categories:'))
         .sort((a, b) => a.id.localeCompare(b.id));
       const ownedBlobs = await Promise.all(blobs.filter(row => row.profileId === currentProfile).map(async row => {
         const copy = { ...row };
@@ -117,8 +117,21 @@ async function setupLedger() {
   await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
-  await page.getByRole('button', { name: '基本カテゴリを用意する', exact: true }).click();
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
+  // A default category deleted by the user must stay deleted after a restore.
+  await page.getByRole('button', { name: /^外食 ·/ }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'カテゴリを削除する', exact: true }).click();
+  await page.getByRole('button', { name: 'カテゴリを追加する', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^外食 ·/ }).count(), 0);
+}
+
+async function assertDeletedDefaultCategoryAbsent() {
+  await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
+  await page.getByRole('button', { name: /^食費 ·/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^外食 ·/ }).count(), 0, 'restore must not recreate a deleted default category');
+  await page.locator('#home-tab').click();
+  await waitForReady();
 }
 
 async function addReceipt(merchant, amount) {
@@ -211,10 +224,20 @@ async function exportBackup() {
     const status = await page.locator('#backup-settings [role=status]').innerText().catch(() => '');
     throw new Error(`Backup export did not download: ${status || 'no status message'}`, { cause: error });
   }
+  await page.waitForFunction(() => {
+    const section = document.querySelector('#backup-settings');
+    return !section?.hasAttribute('inert')
+      && section?.querySelector('[role="status"]')?.textContent === 'バックアップを生成しました。Filesなどへの保存を確認してください。';
+  });
   assert.match(download.suggestedFilename(), /\.kmb$/i);
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
+  // The download event can fire before the export action clears its inert/running state.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('#backup-settings')?.hasAttribute('inert'));
   const { readFile } = await import('node:fs/promises');
+  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   return readFile(path);
 }
 
@@ -306,6 +329,7 @@ try {
   const restoredSnapshot = await exportSnapshot();
   assertPayPayCardStatementMapping(restoredSnapshot);
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
+  await assertDeletedDefaultCategoryAbsent();
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
   await page.locator('#settings-tab').click();
   const returnNavigation = page.waitForNavigation({ waitUntil: 'load' });

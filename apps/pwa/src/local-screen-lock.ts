@@ -1,3 +1,11 @@
+import {
+  isBiometricUnlockAvailable,
+  parseLocalScreenLockBiometric,
+  registerBiometricUnlock,
+  verifyBiometricUnlock,
+  type LocalScreenLockBiometric,
+} from './local-screen-lock-biometric';
+
 const CONFIG_KEY = 'kakeimatch.screen-lock.v1';
 const ATTEMPT_KEY = `${CONFIG_KEY}.attempts`;
 const CHANNEL_NAME = 'kakeimatch.screen-lock';
@@ -11,6 +19,7 @@ export type LocalScreenLockConfig = {
   pinHash: string;
   recoverySalt: string;
   recoveryHash: string;
+  biometric?: LocalScreenLockBiometric;
 };
 
 function toBase64(value: Uint8Array): string {
@@ -48,7 +57,16 @@ export function readLocalScreenLock(): LocalScreenLockConfig | null {
     const row = value as Partial<LocalScreenLockConfig>;
     if (row.version !== 1 || typeof row.pinSalt !== 'string' || typeof row.pinHash !== 'string'
       || typeof row.recoverySalt !== 'string' || typeof row.recoveryHash !== 'string') return null;
-    return row as LocalScreenLockConfig;
+    // A malformed biometric entry is dropped; the PIN still guards the screen.
+    const biometric = parseLocalScreenLockBiometric(row.biometric);
+    return {
+      version: 1,
+      pinSalt: row.pinSalt,
+      pinHash: row.pinHash,
+      recoverySalt: row.recoverySalt,
+      recoveryHash: row.recoveryHash,
+      ...(biometric ? { biometric } : {}),
+    };
   } catch {
     return null;
   }
@@ -117,6 +135,7 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
   let config = readLocalScreenLock();
   let locked = config !== null;
   let backgroundedAt: number | null = null;
+  let biometricAvailable = false;
   const attemptState = (() => {
     try {
       const value = JSON.parse(localStorage.getItem(ATTEMPT_KEY) ?? '{}') as { failedAttempts?: unknown; cooldownUntil?: unknown };
@@ -140,13 +159,33 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
     content.className = 'screen-lock-content';
     content.append(text('h1', '画面をロックしています', 'page-title'));
     content.querySelector('h1')!.id = 'screen-lock-title';
-    content.append(text('p', '続けるには、この端末で設定したPINを入力してください。', 'muted'));
+    const biometric = config?.biometric;
+    content.append(text('p', biometric
+      ? '続けるには、生体認証かこの端末で設定したPINで解除してください。'
+      : '続けるには、この端末で設定したPINを入力してください。', 'muted'));
+    if (biometric) {
+      const biometricStatus = text('p', '', 'screen-lock-status');
+      biometricStatus.setAttribute('role', 'status');
+      const biometricButton = action('生体認証で解除', async () => {
+        biometricButton.disabled = true;
+        try {
+          if (await verifyBiometricUnlock(biometric)) { setLocked(false, true); return; }
+          biometricStatus.textContent = '生体認証を確認できませんでした。PINで解除できます。';
+        } catch {
+          biometricStatus.textContent = '生体認証を完了できませんでした。もう一度試すか、PINで解除してください。';
+        } finally {
+          biometricButton.disabled = false;
+        }
+      });
+      biometricButton.classList.add('screen-lock-biometric');
+      content.append(biometricButton, biometricStatus);
+    }
     const form = document.createElement('form');
     form.className = 'screen-lock-form';
     const pin = field('6桁のPIN', 'screen-lock-pin', 'current-password');
     pin.maxLength = 6;
     pin.required = true;
-    pin.autofocus = true;
+    pin.autofocus = !config?.biometric;
     const status = text('p', message, 'screen-lock-status');
     status.setAttribute('role', 'status');
     form.append(pin.parentElement!, action('ロックを解除', async () => {
@@ -164,7 +203,7 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
       localStorage.setItem(ATTEMPT_KEY, JSON.stringify(attemptState));
       pin.value = '';
       status.textContent = Date.now() < attemptState.cooldownUntil ? 'PINが違います。30秒後にお試しください。' : 'PINが違います。もう一度入力してください。';
-    }));
+    }, Boolean(biometric)));
     form.addEventListener('submit', event => { event.preventDefault(); form.querySelector('button')?.click(); });
     content.append(form);
     if (message) status.textContent = message;
@@ -200,7 +239,8 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
     recoveryDetails.append(recoveryForm);
     content.append(recoveryDetails);
     overlay.append(content);
-    window.setTimeout(() => pin.focus(), 0);
+    // With biometric unlock the primary action is a tap; do not raise the keyboard first.
+    if (!biometric) window.setTimeout(() => pin.focus(), 0);
   }
 
   function setLocked(value: boolean, broadcast = false) {
@@ -268,6 +308,23 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
     }, true);
   }
 
+  function enabledStatus(): string {
+    return config?.biometric
+      ? '有効です。生体認証またはPINで解除します。設定はこの端末だけに保存されています。'
+      : '有効です。PINはこの端末だけに保存されています。';
+  }
+
+  function saveConfiguration(nextConfig: LocalScreenLockConfig) {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(nextConfig));
+    config = nextConfig;
+    announce('configuration');
+  }
+
+  function settingsMessage(value: string) {
+    const node = settingsContent.querySelector('.screen-lock-settings-message');
+    if (node) node.textContent = value;
+  }
+
   function buildSettings() {
     settingsContent.querySelector('.screen-lock-settings')?.remove();
     const section = document.createElement('section');
@@ -275,8 +332,8 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
     section.setAttribute('aria-labelledby', 'screen-lock-settings-title');
     section.append(text('h3', '端末内の画面ロック'));
     section.querySelector('h3')!.id = 'screen-lock-settings-title';
-    section.append(text('p', '起動時と、1分以上アプリを離れた後にPINを求めます。オフラインで使えます。この機能は通常画面へのアクセスを防ぐもので、家計データの暗号化ではありません。', 'muted'));
-    const status = text('p', config ? '有効です。PINはこの端末だけに保存されています。' : '無効です。設定や復旧で家計データは削除されません。', 'screen-lock-settings-status');
+    section.append(text('p', '起動時と、1分以上アプリを離れた後に解除を求めます。オフラインで使えます。この機能は通常画面へのアクセスを防ぐもので、家計データの暗号化ではありません。', 'muted'));
+    const status = text('p', config ? enabledStatus() : '無効です。設定や復旧で家計データは削除されません。', 'screen-lock-settings-status');
     status.setAttribute('role', 'status');
     section.append(status);
     const message = text('p', '', 'screen-lock-settings-message');
@@ -312,13 +369,15 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
         if (first.value !== second.value) { message.textContent = 'PINが一致しません。'; return; }
         if (!checkbox.checked) { message.textContent = '復旧コードを控えたことを確認してください。'; return; }
         try {
-          const nextConfig = await createLocalScreenLock(first.value, recovery);
+          const created = await createLocalScreenLock(first.value, recovery);
+          // Changing the PIN keeps the biometric enrollment already confirmed on this device.
+          const nextConfig = mode === 'change' && config?.biometric ? { ...created, biometric: config.biometric } : created;
           localStorage.setItem(CONFIG_KEY, JSON.stringify(nextConfig));
           localStorage.removeItem(ATTEMPT_KEY);
           attemptState.failedAttempts = 0;
           attemptState.cooldownUntil = 0;
           config = nextConfig;
-          status.textContent = '有効です。PINはこの端末だけに保存されています。';
+          status.textContent = enabledStatus();
           message.textContent = mode === 'enable' ? '画面ロックを有効にしました。' : 'PINを変更しました。';
           enrollment.remove();
           buildSettings();
@@ -359,7 +418,35 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
       const manual = action('今すぐロック', () => { setLocked(true, true); }, true);
       const enable = action('画面ロックを有効にする', () => showEnrollment('enable'));
       enable.hidden = true;
-      section.append(currentPin.parentElement!, change, disable, manual, enable);
+      section.append(currentPin.parentElement!);
+      if (config.biometric) {
+        section.append(action('生体認証をやめる', async () => {
+          if (!config || !await verifyLocalScreenLockPin(config, currentPin.value)) { message.textContent = '現在のPINが違います。'; currentPin.value = ''; return; }
+          const withoutBiometric: LocalScreenLockConfig = { ...config };
+          delete withoutBiometric.biometric;
+          saveConfiguration(withoutBiometric);
+          buildSettings();
+          settingsMessage('生体認証での解除をやめました。PINで解除できます。');
+        }, true));
+      } else if (biometricAvailable) {
+        section.append(action('生体認証も使う', async () => {
+          if (!config || !await verifyLocalScreenLockPin(config, currentPin.value)) { message.textContent = '現在のPINが違います。'; currentPin.value = ''; return; }
+          try {
+            const biometric = await registerBiometricUnlock();
+            saveConfiguration({ ...config, biometric });
+            buildSettings();
+            settingsMessage('生体認証で解除できるようにしました。PINも引き続き使えます。');
+          } catch (error) {
+            // Cancellation and other platform errors arrive as DOMException; their text is not user-facing.
+            message.textContent = error instanceof Error && !(error instanceof DOMException)
+              ? error.message
+              : '生体認証の登録を完了できませんでした。もう一度お試しください。';
+          }
+        }, true));
+      } else {
+        section.append(text('p', 'この端末やブラウザーでは、生体認証での解除を使えません。', 'muted'));
+      }
+      section.append(change, disable, manual, enable);
     } else {
       const enable = action('画面ロックを有効にする', () => showEnrollment('enable'));
       section.append(enable);
@@ -370,4 +457,8 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
 
   setLocked(locked);
   buildSettings();
+  void isBiometricUnlockAvailable().then(available => {
+    biometricAvailable = available;
+    if (available) buildSettings();
+  });
 }

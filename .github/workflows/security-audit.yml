@@ -1,0 +1,67 @@
+name: Dependency security audit
+
+on:
+  schedule:
+    - cron: '23 9 * * 1'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/security-audit.yml'
+      - 'scripts/check-security-audit.mjs'
+      - 'scripts/check-security-audit.test.mjs'
+      - 'scripts/security-audit-baseline.json'
+      - 'pnpm-lock.yaml'
+      - 'workers/ai-gateway/package-lock.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test audit result classification
+        run: node --test scripts/check-security-audit.test.mjs
+      - name: Run four read-only audits and retain JSON
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p audit-results
+          run_audit() {
+            local name="$1"
+            shift
+            set +e
+            "$@" > "audit-results/${name}.json" 2> "audit-results/${name}.stderr"
+            local status=$?
+            set -e
+            printf '%s\n' "$status" > "audit-results/${name}.exit"
+          }
+          run_audit pnpm-prod corepack pnpm audit --prod --json
+          run_audit pnpm-all corepack pnpm audit --json
+          run_audit worker-prod npm audit --package-lock-only --omit=dev --json --prefix workers/ai-gateway
+          run_audit worker-all npm audit --package-lock-only --json --prefix workers/ai-gateway
+      - name: Classify findings and update job summary
+        if: always()
+        run: node scripts/check-security-audit.mjs --results-dir audit-results --baseline scripts/security-audit-baseline.json --package-lock workers/ai-gateway/package-lock.json
+      - name: Upload raw audit JSON and classification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-security-audit-${{ github.run_id }}
+          path: audit-results/
+          if-no-files-found: warn
+          retention-days: 90

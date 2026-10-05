@@ -39,8 +39,6 @@ try {
   await click('支払元'); await click('支払元を追加する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic XSS Wallet'); await click('追加する');
   await page.getByRole('button', { name: 'Synthetic XSS Wallet · 利用中', exact: true }).waitFor();
-  await page.locator('#settings-tab').click(); await click('カテゴリ'); await click('基本カテゴリを用意する');
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
 
   await page.locator('#receipt-tab').click(); await click('記録を追加');
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
@@ -49,9 +47,11 @@ try {
   await page.locator('#receipt-date').fill('2026-09-30');
   await page.locator('#receipt-amount').fill('1280');
   await page.locator('#receipt-category').selectOption({ label: '食費' });
+  await click('品目一覧');
   await page.getByRole('button', { name: '品目を追加', exact: true }).click();
   await page.locator('[data-item-name]').fill(itemName);
   await page.locator('[data-item-amount]').fill('1280');
+  await click('全体');
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click();
   await page.locator('#receipt-memo').fill(memo);
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
