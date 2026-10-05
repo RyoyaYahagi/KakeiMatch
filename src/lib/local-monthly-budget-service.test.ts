@@ -57,6 +57,17 @@ describe('local monthly budget service', () => {
     expect((await service.getSummary('2026-10')).budgetYen).toBe(3000);
   });
 
+  it('labels legacy category-only budgets separately from an explicit overall budget', async () => {
+    const { service } = await fixture({ '2026-10:home': 1000 });
+    expect(await service.getSummary('2026-10')).toMatchObject({
+      budgetConfigured: true, overallBudgetConfigured: false, budgetYen: 1000, spentYen: 0,
+    });
+    await service.setMonthlyPlan('2026-10', 1000, false, {});
+    expect(await service.getSummary('2026-10')).toMatchObject({
+      budgetConfigured: true, overallBudgetConfigured: true, budgetYen: 1000, spentYen: 1200,
+    });
+  });
+
   it('supports an overall-only budget and counts all expense spending against it', async () => {
     const { service } = await fixture();
     await service.setDefaultPlan(5000, false, {});

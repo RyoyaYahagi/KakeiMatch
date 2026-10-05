@@ -34,7 +34,7 @@ export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudget
   if (!summary.budgetConfigured) {
     details.append(node('p', 'この月の予算は未設定です。'));
   } else {
-    const total = node('p', `全体予算：${amountLine(summary)}`); total.id = 'budget-total'; details.append(total);
+    const total = node('p', `${summary.overallBudgetConfigured ? '全体予算' : '予算対象カテゴリの合計'}：${amountLine(summary)}`); total.id = 'budget-total'; details.append(total);
     if (!summary.breakdownEnabled) details.append(node('p', 'カテゴリ別の内訳は設定していません。'));
   }
   if (summary.breakdownEnabled) {
@@ -165,7 +165,8 @@ export async function showMonthlyBudgetEditor(options: {
     options.view.append(totalCard, section,
       node('p', 'カテゴリ別に設定する場合は、カテゴリ別予算の合計と全体予算が一致したときだけ保存できます。'),
       actions);
-    if (!saved) status.textContent = '全体予算を入力してください。';
+    if (!saved && totalInput.value === '') status.textContent = '全体予算を入力してください。';
+    else if (!saved) status.textContent = '';
 
     async function resetPlan() {
       if (!resetControl) return;

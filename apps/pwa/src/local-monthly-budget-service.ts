@@ -26,6 +26,8 @@ export type MonthlyBudgetSummary = Omit<NativeSummary, "categories" | "budgetYen
   remainingYen: number;
   usageRatio: number | null;
   budgetConfigured: boolean;
+  /** False for legacy category-only settings: spending then covers only the budgeted categories. */
+  overallBudgetConfigured: boolean;
   breakdownEnabled: boolean;
 };
 
@@ -74,7 +76,7 @@ export class LocalMonthlyBudgetService {
     return {
       yearMonth, categories, budgetYen, spentYen, remainingYen,
       usageRatio: !budgetConfigured || budgetYen === 0 ? null : spentYen / budgetYen,
-      budgetConfigured, breakdownEnabled,
+      budgetConfigured, overallBudgetConfigured: explicitOverall !== null, breakdownEnabled,
     };
   }
 
