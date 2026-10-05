@@ -50,7 +50,7 @@ async function readHouseholdSnapshot() {
       const currentProfile = localStorage.getItem('kakeimatch.local-profile.v1');
       const ownedRecords = records.filter(row => row.profileId === currentProfile)
         .map(row => { const copy = { ...row }; delete copy.key; delete copy.profileId; return copy; })
-        // Local bootstrap/selection metadata is operational state, not household content.
+        // These IDs are scoped to the device's Actual budget ID, which changes on restore.
         .filter(row => row.id !== 'settings:budget' && !row.id.startsWith('settings:basic-categories:'))
         .sort((a, b) => a.id.localeCompare(b.id));
       const ownedBlobs = await Promise.all(blobs.filter(row => row.profileId === currentProfile).map(async row => {
@@ -117,6 +117,21 @@ async function setupLedger() {
   await page.locator('[data-detail="明細サービス"] dd').getByText('PayPayカード', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
+  // A default category deleted by the user must stay deleted after a restore.
+  await page.getByRole('button', { name: /^外食 ·/ }).click();
+  page.once('dialog', dialog => dialog.accept());
+  await page.getByRole('button', { name: 'カテゴリを削除する', exact: true }).click();
+  await page.getByRole('button', { name: 'カテゴリを追加する', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^外食 ·/ }).count(), 0);
+}
+
+async function assertDeletedDefaultCategoryAbsent() {
+  await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: 'カテゴリ', exact: true }).click();
+  await page.getByRole('button', { name: /^食費 ·/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: /^外食 ·/ }).count(), 0, 'restore must not recreate a deleted default category');
+  await page.locator('#home-tab').click();
+  await waitForReady();
 }
 
 async function addReceipt(merchant, amount) {
@@ -314,6 +329,7 @@ try {
   const restoredSnapshot = await exportSnapshot();
   assertPayPayCardStatementMapping(restoredSnapshot);
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
+  await assertDeletedDefaultCategoryAbsent();
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
   await page.locator('#settings-tab').click();
   const returnNavigation = page.waitForNavigation({ waitUntil: 'load' });

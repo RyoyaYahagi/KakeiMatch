@@ -144,6 +144,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id.startsWith("settings:monthly-budgets:")) return monthlyBudgetSettingsSchema;
+      if (id.startsWith("settings:basic-categories:")) return z.object({ budgetId: z.string().min(1).max(128), version: z.number().int().positive() }).strict();
       if (id.startsWith("category-rule-override:")) return z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000).refine(value => normalizeLearningName(value) === value),
         disabled: z.boolean().optional(), deleted: z.boolean().optional(), categoryId: z.string().min(1).max(128).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();
@@ -173,6 +174,11 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
       fail("予算設定と家計簿の対応が一致しません。");
     }
     if (id.startsWith("settings:monthly-budgets:")) scopedBudgetIds.add((recordValue as { budgetId: string }).budgetId);
+    if (id.startsWith("settings:basic-categories:")) {
+      const budgetId = (recordValue as { budgetId: string }).budgetId;
+      if (id.slice("settings:basic-categories:".length) !== budgetId) fail("基本カテゴリの記録と家計簿の対応が一致しません。");
+      scopedBudgetIds.add(budgetId);
+    }
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
     if (kind === "account-metadata") {
       const metadata = recordValue as { budgetId: string; accountId: string };
