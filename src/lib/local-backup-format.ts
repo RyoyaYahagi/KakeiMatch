@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CATEGORY_IDS } from "./category";
-import { scheduleAuditSchema } from "./recurring-schedule";
+import { recurringCatchUpAuditSchema, scheduleAuditSchema } from "./recurring-schedule";
 import { categoryLearningObservationSchema, normalizeLearningName } from "./category-learning";
 import { monthlyBudgetSettingsSchema } from "./monthly-budget-settings";
 import { accountMetadataRecordId, nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
@@ -69,7 +69,7 @@ const deletionAudit = z.object({
   status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
   deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
 }).strict();
-const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, categoryLearningObservationSchema]);
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, recurringCatchUpAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   accountId: z.string().min(1).max(128).optional(),
@@ -144,6 +144,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
     case "app-settings":
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id.startsWith("settings:monthly-budgets:")) return monthlyBudgetSettingsSchema;
+      if (id.startsWith("settings:basic-categories:")) return z.object({ budgetId: z.string().min(1).max(128), version: z.number().int().positive() }).strict();
       if (id.startsWith("category-rule-override:")) return z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000).refine(value => normalizeLearningName(value) === value),
         disabled: z.boolean().optional(), deleted: z.boolean().optional(), categoryId: z.string().min(1).max(128).optional() }).strict();
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();
@@ -173,6 +174,11 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
       fail("予算設定と家計簿の対応が一致しません。");
     }
     if (id.startsWith("settings:monthly-budgets:")) scopedBudgetIds.add((recordValue as { budgetId: string }).budgetId);
+    if (id.startsWith("settings:basic-categories:")) {
+      const budgetId = (recordValue as { budgetId: string }).budgetId;
+      if (id.slice("settings:basic-categories:".length) !== budgetId) fail("基本カテゴリの記録と家計簿の対応が一致しません。");
+      scopedBudgetIds.add(budgetId);
+    }
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
     if (kind === "account-metadata") {
       const metadata = recordValue as { budgetId: string; accountId: string };
@@ -188,6 +194,16 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
     }
     return { id, kind, value: recordValue, updatedAt };
   });
+  const recurringCatchUps = records.filter(record => record.kind === "correction-audit" &&
+    (record.value as { targetType?: unknown }).targetType === "recurring-catch-up");
+  const catchUpOperationIds = new Set<string>();
+  for (const record of recurringCatchUps) {
+    const audit = record.value as { operationId: string; operation: "create" | "delete" };
+    const expectedId = `${audit.operation === "create" ? "recurring-catch-up" : "recurring-catch-up-delete"}:${audit.operationId}`;
+    if (record.id !== expectedId) fail("定期登録の監査記録IDが一致しません。");
+    if (catchUpOperationIds.has(audit.operationId)) fail("定期登録の監査記録IDが重複しています。");
+    catchUpOperationIds.add(audit.operationId);
+  }
   if (records.filter(record => record.id.startsWith("settings:monthly-budgets:")).length > 1) {
     fail("バックアップに複数の家計簿の予算設定があります。");
   }

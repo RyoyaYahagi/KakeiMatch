@@ -4,16 +4,23 @@ const budgetIdSchema = z.string().min(1).max(128);
 const categoryIdSchema = z.string().min(1).max(128);
 const yearMonthSchema = z.string().regex(/^(?:[1-9]\d{3})-(?:0[1-9]|1[0-2])$/);
 const amountSchema = z.number().int().safe().nonnegative();
-const monthlyValueSchema = z.union([amountSchema, z.object({ inherit: z.literal(true) }).strict()]);
+const inheritSchema = z.object({ inherit: z.literal(true) }).strict();
+const monthlyValueSchema = z.union([amountSchema, inheritSchema]);
+const monthlyBreakdownSchema = z.union([z.boolean(), inheritSchema]);
 
 export const monthlyBudgetSettingsSchema = z.object({
   budgetId: budgetIdSchema,
   defaults: z.record(categoryIdSchema, amountSchema),
   monthlyOverrides: z.record(yearMonthSchema, z.record(categoryIdSchema, monthlyValueSchema)),
+  defaultTotal: amountSchema.optional(),
+  monthlyTotals: z.record(yearMonthSchema, monthlyValueSchema).optional(),
+  defaultBreakdown: z.boolean().optional(),
+  monthlyBreakdown: z.record(yearMonthSchema, monthlyBreakdownSchema).optional(),
 }).strict();
 
 export type MonthlyBudgetSettings = z.infer<typeof monthlyBudgetSettingsSchema>;
 export type MonthlyBudgetValue = z.infer<typeof monthlyValueSchema>;
+export type MonthlyBudgetBreakdownValue = z.infer<typeof monthlyBreakdownSchema>;
 
 export function emptyMonthlyBudgetSettings(budgetId: string): MonthlyBudgetSettings {
   return monthlyBudgetSettingsSchema.parse({ budgetId, defaults: {}, monthlyOverrides: {} });
@@ -43,8 +50,25 @@ export function effectiveMonthlyBudget(input: {
   if (typeof override === "number") return override;
   const defaultYen = input.settings.defaults[input.categoryId];
   if (override && "inherit" in override) return defaultYen ?? null;
+  // Once the new overall-budget model is explicitly saved, its category allocation is authoritative.
+  // Untouched Actual month budgets remain a fallback only for legacy settings without an overall total.
+  if (input.settings.defaultTotal !== undefined) return defaultYen ?? null;
   if (input.nativeBudgetYen !== 0) return input.nativeBudgetYen;
   return defaultYen ?? null;
+}
+
+export function effectiveOverallBudget(settings: MonthlyBudgetSettings, yearMonth: string): number | null {
+  const override = settings.monthlyTotals?.[yearMonth];
+  if (typeof override === "number") return override;
+  if (override && "inherit" in override) return settings.defaultTotal ?? null;
+  return settings.defaultTotal ?? null;
+}
+
+export function effectiveBreakdownEnabled(settings: MonthlyBudgetSettings, yearMonth: string, legacyHasCategoryBudgets: boolean): boolean {
+  const override = settings.monthlyBreakdown?.[yearMonth];
+  if (typeof override === "boolean") return override;
+  if (override && "inherit" in override) return settings.defaultBreakdown ?? legacyHasCategoryBudgets;
+  return settings.defaultBreakdown ?? legacyHasCategoryBudgets;
 }
 
 export function withDefaultBudget(settings: MonthlyBudgetSettings, categoryId: string, budgetYen: number | null): MonthlyBudgetSettings {
@@ -66,4 +90,107 @@ export function withMonthlyBudget(settings: MonthlyBudgetSettings, yearMonth: st
     next.monthlyOverrides[month]![categoryId] = parsed;
   }
   return monthlyBudgetSettingsSchema.parse(next);
+}
+
+function parsePlan(totalYen: number, breakdownEnabled: boolean, allocations: Record<string, number>) {
+  const total = amountSchema.parse(totalYen);
+  const parsedAllocations: Record<string, number> = {};
+  let sum = 0;
+  for (const [categoryId, value] of Object.entries(allocations)) {
+    const id = categoryIdSchema.parse(categoryId);
+    const amount = amountSchema.parse(value);
+    parsedAllocations[id] = amount;
+    sum += amount;
+    if (!Number.isSafeInteger(sum)) throw new Error("カテゴリ別予算の合計額を安全に計算できません。");
+  }
+  if (breakdownEnabled && sum !== total) throw new Error("カテゴリ別予算の合計を全体予算と一致させてください。");
+  return { total, allocations: parsedAllocations };
+}
+
+export function withDefaultPlan(
+  settings: MonthlyBudgetSettings,
+  totalYen: number,
+  breakdownEnabled: boolean,
+  allocations: Record<string, number>,
+): MonthlyBudgetSettings {
+  const parsed = parsePlan(totalYen, breakdownEnabled, allocations);
+  const next = structuredClone(settings);
+  next.defaultTotal = parsed.total;
+  next.defaultBreakdown = breakdownEnabled;
+  next.defaults = breakdownEnabled ? parsed.allocations : {};
+
+  // Preserve legacy per-month category overrides without allowing them to drift from the new overall model.
+  // Once an overall default is introduced, promote any numeric legacy month override into a balanced
+  // month-specific plan whose total is derived from the effective category allocation for that month.
+  next.monthlyTotals ??= {};
+  next.monthlyBreakdown ??= {};
+  for (const [month, overrides] of Object.entries(next.monthlyOverrides)) {
+    if (next.monthlyTotals[month] !== undefined || !Object.values(overrides).some(value => typeof value === "number")) continue;
+    const categoryIds = new Set([...Object.keys(next.defaults), ...Object.keys(overrides)]);
+    let monthTotal = 0;
+    for (const categoryId of categoryIds) {
+      const override = overrides[categoryId];
+      const amount = typeof override === "number" ? override : (next.defaults[categoryId] ?? 0);
+      monthTotal += amount;
+      if (!Number.isSafeInteger(monthTotal)) throw new Error("カテゴリ別予算の合計額を安全に計算できません。");
+    }
+    next.monthlyTotals[month] = monthTotal;
+    next.monthlyBreakdown[month] = true;
+  }
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+export function withMonthlyPlan(
+  settings: MonthlyBudgetSettings,
+  yearMonth: string,
+  totalYen: number,
+  breakdownEnabled: boolean,
+  allocations: Record<string, number>,
+): MonthlyBudgetSettings {
+  const month = yearMonthSchema.parse(yearMonth);
+  const parsed = parsePlan(totalYen, breakdownEnabled, allocations);
+  const next = structuredClone(settings);
+  next.monthlyTotals ??= {};
+  next.monthlyBreakdown ??= {};
+  next.monthlyTotals[month] = parsed.total;
+  next.monthlyBreakdown[month] = breakdownEnabled;
+  if (breakdownEnabled) {
+    next.monthlyOverrides[month] = Object.fromEntries(
+      Object.entries(parsed.allocations).map(([categoryId, amount]) => [categoryId, amount]),
+    );
+  }
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+
+export function clearDefaultPlan(settings: MonthlyBudgetSettings): MonthlyBudgetSettings {
+  const next = structuredClone(settings);
+  delete next.defaultTotal;
+  delete next.defaultBreakdown;
+  next.defaults = {};
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+export function resetMonthlyPlan(
+  settings: MonthlyBudgetSettings,
+  yearMonth: string,
+  categoryIds: string[],
+): MonthlyBudgetSettings {
+  const month = yearMonthSchema.parse(yearMonth);
+  const next = structuredClone(settings);
+  next.monthlyTotals ??= {};
+  next.monthlyBreakdown ??= {};
+  next.monthlyTotals[month] = { inherit: true };
+  next.monthlyBreakdown[month] = { inherit: true };
+  next.monthlyOverrides[month] = Object.fromEntries(
+    categoryIds.map(categoryId => [categoryIdSchema.parse(categoryId), { inherit: true }]),
+  );
+  return monthlyBudgetSettingsSchema.parse(next);
+}
+
+export function hasExplicitMonthlyPlan(settings: MonthlyBudgetSettings, yearMonth: string): boolean {
+  const month = yearMonthSchema.parse(yearMonth);
+  if (typeof settings.monthlyTotals?.[month] === "number") return true;
+  if (typeof settings.monthlyBreakdown?.[month] === "boolean") return true;
+  return Object.values(settings.monthlyOverrides[month] ?? {}).some(value => typeof value === "number");
 }

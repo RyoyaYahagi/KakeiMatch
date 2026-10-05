@@ -1,0 +1,33 @@
+name: AI Gateway
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - 'workers/ai-gateway/**'
+      - '.github/workflows/ai-gateway.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-gateway-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-gateway:
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
+          cache-dependency-path: workers/ai-gateway/package-lock.json
+      - run: npm ci --prefix workers/ai-gateway
+      - run: npm test --prefix workers/ai-gateway
+      - run: npm run typecheck --prefix workers/ai-gateway
+      - run: npm run build --prefix workers/ai-gateway

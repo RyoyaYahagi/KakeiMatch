@@ -11,11 +11,13 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 const dialog = () => page.getByRole('dialog');
 const shortcut = field => page.locator(`[data-master-shortcut-for="${field}"]`).click();
 async function create(field, name, category = false) {
-  await shortcut(field); await dialog().waitFor();
+  const trigger = page.locator(`[data-master-shortcut-for="${field}"]`);
+  await trigger.click(); await dialog().waitFor();
   await dialog().getByLabel(category ? 'カテゴリ名' : '支払元の名前', { exact: true }).fill(name);
   await dialog().getByRole('button', { name: '追加する', exact: true }).click();
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
+  assert.equal(await trigger.evaluate(node => document.activeElement === node), true);
 }
 async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-amount').waitFor(); }
 async function fill(name, amount) {
@@ -38,6 +40,12 @@ try {
   await dialog().getByText('カテゴリ名を入力してください。', { exact: true }).waitFor();
   await dialog().getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Entry Food'); await dialog().getByRole('button', { name: '追加する', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Entry Food');
+  await assertDraft('Synthetic entry expense', '900');
+  const categoryShortcut = page.locator('[data-master-shortcut-for="manual-transaction-category"]');
+  const categoryId = await page.locator('#manual-transaction-category').inputValue();
+  await categoryShortcut.click(); await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
+  assert.equal(await page.locator('#manual-transaction-category').inputValue(), categoryId);
+  assert.equal(await categoryShortcut.evaluate(node => document.activeElement === node), true);
   await assertDraft('Synthetic entry expense', '900');
   await create('manual-transaction-account', 'Synthetic Entry Wallet'); await assertDraft('Synthetic entry expense', '900');
   const walletId = await page.locator('#manual-transaction-account').inputValue();
@@ -67,7 +75,7 @@ try {
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Entry Receipt'); assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-27'); assert.equal(await page.locator('#receipt-time').inputValue(), '13:15');
   for (const [name, amount] of [['Synthetic Apple', '400'], ['Synthetic Soap', '500']]) {
     const count = await page.locator('[data-receipt-item]').count();
-    await page.locator('#receipt-merchant').focus(); await click('品目を追加');
+    await click('品目一覧'); await click('品目を追加');
     await page.waitForFunction(expected => document.querySelectorAll('[data-receipt-item]').length === expected, count + 1);
     const item = page.locator('[data-receipt-item]').last(); if (await item.getAttribute('open') === null) await item.locator('summary').click(); await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount);
   }
@@ -76,6 +84,7 @@ try {
   await create(itemField, 'Synthetic Item Category', true);
   assert.equal(await firstItem.locator('[data-item-name]').inputValue(), 'Synthetic Apple'); assert.equal(await firstItem.locator('[data-item-amount]').inputValue(), '400'); assert.equal(await firstItem.getAttribute('open'), '');
   assert.equal(await page.locator('[data-receipt-item]').count(), 2); assert.equal(await page.locator('#receipt-amount').inputValue(), '900');
+  await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Entry Receipt ·/ }).click(); await click('編集する');
   await page.locator('#receipt-merchant').fill('Synthetic Receipt Edited');
