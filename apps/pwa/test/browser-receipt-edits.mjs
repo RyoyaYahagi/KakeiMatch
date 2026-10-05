@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated test preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
@@ -37,8 +38,6 @@ try {
   await page.locator('#settings-tab').click(); await click('支払元'); await click('支払元を追加する');
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Wallet'); await click('追加する');
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
-  await page.locator('#settings-tab').click(); await click('カテゴリ'); await click('基本カテゴリを用意する');
-  await page.getByText('基本カテゴリを用意しました。', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
@@ -51,19 +50,23 @@ try {
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
   await page.locator('#receipt-category').selectOption({ label: '食費' });
+  await click('品目一覧');
   await click('品目を追加'); await row(2).locator('[data-item-name]').fill('Temporary item');
   await row(2).locator('[data-item-amount]').fill('20'); await row(2).getByRole('button', { name: '品目を削除', exact: true }).click();
   assert.equal(await page.locator('[data-receipt-item]').count(), 2);
   await row(0).locator('summary').click(); await row(0).locator('[data-item-name]').fill('Synthetic Apple Edited');
   assert.equal(await row(0).locator('[data-item-quantity]').inputValue(), '2');
   assert.equal(await row(0).locator('[data-item-unit-price]').inputValue(), '500');
+  await click('全体');
   await page.locator('#receipt-amount').fill('1500'); await click('登録する');
   await page.getByText(/カテゴリ配分を確認してください/).waitFor();
   assert.equal(await page.getByRole('button', { name: '登録する', exact: true }).isEnabled(), true);
   await page.locator('#receipt-amount').fill('1400');
+  await click('品目一覧');
   await click('値引きを追加');
   const discount = page.locator('[data-receipt-adjustment]').nth(1);
   await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('10');
+  await click('全体');
   await page.locator('#receipt-amount').fill('1390');
   const invalidRegistrationForm = await page.locator('#local-view form').elementHandle();
   await click('登録する');
@@ -72,9 +75,11 @@ try {
   await page.waitForFunction(form => !form.isConnected, invalidRegistrationForm);
   await invalidRegistrationForm.dispose();
   await page.getByText(/カテゴリ配分を確認してください/).waitFor();
+  await click('品目一覧');
   const extraAdjustment = page.locator('[data-receipt-adjustment]').nth(1);
   if (await extraAdjustment.locator('details').getAttribute('open') === null) await extraAdjustment.locator('summary').click();
   await extraAdjustment.getByRole('button', { name: '値引きを削除', exact: true }).click();
+  await click('全体');
   await page.locator('#receipt-amount').fill('1400');
   await click('キャンセル'); await click('閉じる'); await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple Edited');
@@ -95,8 +100,10 @@ try {
   await page.locator('#receipt-merchant').fill('Synthetic Changed Shop');
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('13:15');
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
+  await click('品目一覧');
   await row(0).locator('summary').click(); await row(0).locator('[data-item-name]').fill('Synthetic Corrected Apple');
   await row(0).locator('[data-item-amount]').fill('1100');
+  await click('全体');
   await page.locator('#receipt-amount').fill('1500');
   await click('キャンセル'); await click('編集する'); await page.locator('#receipt-merchant').waitFor();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Changed Shop');
@@ -112,14 +119,16 @@ try {
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Bank');
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Corrected Apple');
   // Collapse the split to one category, preserving the parent Actual transaction ID.
-  await click('全品目にこのカテゴリを適用'); await click('変更を保存する');
+  await click('品目一覧'); await click('全品目にこのカテゴリを適用'); await click('変更を保存する');
   await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await click('品目一覧');
   await row(1).locator('summary').click(); await row(1).locator('[data-item-category]').selectOption({ label: '日用品' });
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
+  await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-edited.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();

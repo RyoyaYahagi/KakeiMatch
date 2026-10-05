@@ -49,12 +49,13 @@ async function splitReceipt() {
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Search Wallet' });
   let index = 0;
   for (const [name, amount, category] of [['Synthetic Search Item Alpha', '900', 'Synthetic Search Food'], ['Synthetic Search Item Beta', '500', 'Synthetic Search Home']]) {
-    await page.locator('#receipt-merchant').focus(); await click('品目を追加');
+    await click('品目一覧'); await click('品目を追加');
     const item = page.locator('[data-receipt-item]').nth(index++); await item.waitFor();
     if (await item.getAttribute('open') === null) await item.locator('summary').click();
     await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount);
     await item.locator('[data-item-category]').selectOption({ label: category });
   }
+  await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function transfer() {

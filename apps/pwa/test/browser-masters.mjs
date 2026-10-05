@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 
 const url = process.env.PWA_E2E_URL;
 if (!url) throw new Error('Set PWA_E2E_URL to a synthetic-only local or preview PWA.');
@@ -153,6 +154,7 @@ try {
   const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const path = await download.path(); assert.ok(path);
   const buffer = await readFile(path);
+  await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-masters.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
