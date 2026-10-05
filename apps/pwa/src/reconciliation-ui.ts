@@ -10,7 +10,7 @@ export function daysBetween(from: string, to: string) {
 }
 
 /** Collapsed row of a statement that needs a decision: status mark, merchant with the reason, and the amount. */
-export function reviewSummaryRow(merchant: string, amount: string, tone: 'warning' | 'danger') {
+export function reviewSummaryRow(merchant: string, amount: string, tone: 'warning' | 'missing') {
   const element = document.createElement('summary'); element.className = 'review-row';
   const mark = document.createElement('span'); mark.className = `record-icon tone-${tone}`; mark.append(icon(tone === 'warning' ? 'warning' : 'unmatched'));
   const main = document.createElement('span'); main.className = 'record-main';

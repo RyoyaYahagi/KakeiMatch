@@ -64,7 +64,7 @@ try {
   await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click();
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 
-  await chooser('口座間振替'); await page.locator('#manual-transaction-amount').fill('1500'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic transfer memo');
+  await chooser('口座間の振替'); await page.locator('#manual-transaction-amount').fill('1500'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic transfer memo');
   await create('manual-transaction-account', 'Synthetic New Source'); const source = await page.locator('#manual-transaction-account').inputValue();
   await create('manual-transaction-destination', 'Synthetic New Destination'); assert.equal(await page.locator('#manual-transaction-account').inputValue(), source);
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1500'); assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic transfer memo');

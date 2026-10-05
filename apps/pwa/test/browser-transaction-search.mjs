@@ -59,7 +59,7 @@ async function splitReceipt() {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function transfer() {
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間の振替');
   await page.getByLabel('金額（円）', { exact: true }).fill('8000');
   await page.getByLabel('日付', { exact: true }).fill('2026-10-03');
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: 'Synthetic Search Bank' });
