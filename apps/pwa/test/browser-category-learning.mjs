@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
@@ -133,19 +134,25 @@ try {
   await milkRule.locator('select').selectOption(learningIds.home);
   await milkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+  await milkRule.getByText('synthetic same milk → Synthetic Learning Home', { exact: true }).waitFor();
   await milkRule.locator('summary').click();
+  await milkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor();
   await milkRule.locator('input[role=switch]').uncheck();
+  await milkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
   await analyze('known');
   assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
   await cancelDraft();
   await settings('分類ルール');
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
   await updatedMilkRule.locator('summary').click();
+  await updatedMilkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('input[role=switch]').check();
+  await updatedMilkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('summary').click();
   await updatedMilkRule.locator('select').selectOption(learningIds.food);
   await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
+  await updatedMilkRule.getByText('synthetic same milk → Synthetic Learning Food', { exact: true }).waitFor();
 
   // A known item is omitted from Jev, but the unknown item receives native category IDs.
   await analyze('unknown');
@@ -183,6 +190,7 @@ try {
   await page.locator('#settings-tab').click();
   const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
+  await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-category-learning.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();

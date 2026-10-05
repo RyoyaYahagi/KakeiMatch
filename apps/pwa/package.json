@@ -19,6 +19,7 @@
     "test:auth-e2e": "node test/browser-account.mjs",
     "test:account-deletion-e2e": "node test/browser-account-deletion.mjs",
     "test:backup-e2e": "node test/browser-backup.mjs",
+    "test:actual-compatibility-e2e": "node test/browser-actual-compatibility.mjs",
     "test:masters-e2e": "node test/browser-masters.mjs",
     "test:master-navigation-failure-e2e": "node test/browser-master-navigation-failure.mjs",
     "test:receipt-items-e2e": "node test/browser-receipt-items.mjs",
