@@ -371,6 +371,15 @@ describe("LocalReceiptService", () => {
     expect(new Uint8Array(await (await repository.getBlob(receipt.image!.blobId))!.blob.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
   });
 
+  it.each([
+    ["a paused AI", { error: "ai_temporarily_paused" }, true],
+    ["an unavailable provider", { error: "provider_unavailable" }, false],
+  ])("tells whether trying again at once can help after %s", async (_name, body, retryAfterWait) => {
+    const { service } = await setup(vi.fn(async () => Response.json(body, { status: 503 })));
+    const receipt = await service.saveImage(pngBlob());
+    await expect(service.analyze(receipt.id)).rejects.toMatchObject({ code: "offline_or_unavailable", retryAfterWait });
+  });
+
   it("offers manual registration after an expired category flow", async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(extraction)).mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
     const { service, ledger } = await setup(fetchImpl);

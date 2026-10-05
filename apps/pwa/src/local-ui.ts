@@ -25,7 +25,7 @@ import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
-import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
+import { LocalReceiptService, LocalReceiptServiceError, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
 import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
@@ -548,48 +548,103 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const memo = document.createElement('textarea'); memo.id = memoLabel.htmlFor; memo.maxLength = 2000; memo.value = initial.memo ?? '';
     const aiArea = document.createElement('div'); aiArea.className = 'receipt-ai-area';
     aiArea.append(text('p', '画像から店名・日付・金額・品目を読み取り、カテゴリを設定します。', 'muted'));
-    const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', async () => {
+    // docs/UX.md 読み取り中: the steps as rows, a band moving over the photo, and a way to stop waiting.
+    const readingBadge = text('span', '読み取り中', 'reading-badge'); readingBadge.hidden = true; previewFrame.append(readingBadge);
+    const failure = document.createElement('div'); failure.className = 'reading-failure'; failure.hidden = true;
+    // Failed reads worth trying again with the same photo; quota, sign-in and image limits are not.
+    const retryable = (error: unknown) => !(error instanceof LocalReceiptServiceError) || (!error.retryAfterWait && ['offline_or_unavailable', 'invalid_ai_response', 'unavailable'].includes(error.code));
+    const retake = document.createElement('input'); retake.type = 'file'; retake.accept = 'image/jpeg,image/png,image/webp'; retake.setAttribute('capture', 'environment'); retake.hidden = true;
+    retake.addEventListener('change', () => {
+      const file = retake.files?.[0]; if (!file) return;
+      void (async () => {
+        const replacement = await receipts.saveImage(file);
+        // The new photo replaces this one; the old pending receipt goes away so it is not left waiting.
+        await receipts.deletePending(receipt.id);
+        await receiptEditor(replacement);
+      })().catch(report);
+    });
+    const readPhoto = async () => {
       if (receipt.extraction && !window.confirm('もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？')) return;
       if (receipt.registration.status === 'applied') return;
       recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
+      failure.hidden = true; failure.replaceChildren();
       // AI never fills the payment source, so it stays selectable while the read runs.
       const controls = form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button');
+      const waitButton = button('待たずに手で入力する', () => stopWaiting()); waitButton.className = 'text-button';
       controls.forEach(control => { control.disabled = control !== account; });
       const aiFilled = [amount, merchant, date];
       aiFilled.forEach(field => field.classList.add('ai-pending'));
-      previewFrame.classList.add('is-reading');
+      previewFrame.classList.add('is-reading'); readingBadge.hidden = false;
       aiButton.hidden = true;
       const progress = createReadingProgress();
       aiArea.append(progress.element);
+      const submitLabel = submit.textContent;
+      submit.textContent = '読み取り中…'; submit.hidden = false;
+      submit.after(waitButton);
+      let abandoned = false;
+      let stage: 'reading' | 'categorizing' = 'reading';
+      const finish = (keepProgress = false) => {
+        if (!keepProgress) progress.stop();
+        waitButton.remove();
+        aiButton.hidden = false;
+        previewFrame.classList.remove('is-reading'); readingBadge.hidden = true;
+        aiFilled.forEach(field => field.classList.remove('ai-pending'));
+        controls.forEach(control => { control.disabled = false; });
+        submit.textContent = submitLabel;
+      };
+      const stopWaiting = async () => {
+        abandoned = true; finish();
+        if (stage === 'categorizing') {
+          // The text is already read: show it and let the categories be chosen by hand.
+          const updated = await receipts.get(receipt.id);
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
+          el('message').textContent = '読み取った内容を表示しました。カテゴリは自分で選べます。';
+        } else el('message').textContent = '読み取りを待たずに入力できます。読み取りが終わっても、入力した内容はそのままです。';
+      };
       try {
         await receipts.analyze(receipt.id);
-        progress.setStep('categorizing');
+        if (abandoned) return;
+        stage = 'categorizing'; progress.setStep('categorizing');
+        submit.textContent = '分類を待っています…'; waitButton.textContent = '分類を待たずに自分で選ぶ';
         try {
           const suggested = await receipts.suggestCategory(receipt.id);
           recordLocalDiagnostic('ai');
+          if (abandoned) return;
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
           if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
         } catch (error) {
+          if (abandoned) return;
           report(error);
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
         }
+        if (!abandoned) finish();
       } catch (error) {
+        if (abandoned) return;
         report(error);
-        if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
-      } finally {
-        progress.stop();
-        aiButton.hidden = false;
-        previewFrame.classList.remove('is-reading');
-        aiFilled.forEach(field => field.classList.remove('ai-pending'));
-        controls.forEach(control => { control.disabled = false; });
+        finish(true); progress.fail(); aiButton.hidden = true;
+        // docs/UX.md 読み取り中: say what failed and what to do next; try again first when it may work.
+        const retakeButton = button('撮り直す', () => retake.click());
+        failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', 'ぼやけや反射があれば撮り直してください。'), retakeButton);
+        if (error instanceof Error && /アカウント|ログイン|認証|サインイン/.test(error.message)) failure.append(button('アカウントを確認する', options.openAccount));
+        failure.hidden = false;
+        if (retryable(error)) {
+          const retry = button('もう一度読み取る', async () => { clearFailure(); await readPhoto(); }, false);
+          const manual = button('手で入力して続ける', () => clearFailure()); manual.className = 'text-button';
+          const clearFailure = () => { retry.remove(); manual.remove(); submit.hidden = false; failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
+          submit.hidden = true; submit.after(retry, manual);
+        } else {
+          const close = () => { failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
+          const manual = button('手で入力して続ける', close); manual.className = 'text-button'; failure.append(manual);
+        }
       }
-    });
-    if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
+    };
+    const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', readPhoto);
+    if (blob && !editing) { aiArea.append(aiButton, failure, retake); overviewExtras.append(aiArea); }
     if (editing) aiArea.replaceChildren();
     const merchantLabel = shortLabel(merchant.id, '店名', receipt.image ? '' : '・支払先');
     const dateLabel = shortLabel(date.id, '日付');

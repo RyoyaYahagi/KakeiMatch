@@ -58,7 +58,8 @@ export type ReceiptEditAudit = {
 };
 
 export class LocalReceiptServiceError extends Error {
-  constructor(readonly code: string, message: string) {
+  /** retryAfterWait: trying again right away will not help (the AI is paused), so the screen offers typing instead. */
+  constructor(readonly code: string, message: string, readonly retryAfterWait = false) {
     super(message);
     this.name = "LocalReceiptServiceError";
   }
@@ -599,6 +600,6 @@ function gatewayError(code: string, status?: number): LocalReceiptServiceError {
   if (code === "rate_limited") return new LocalReceiptServiceError("rate_limited", "AIへの要求が集中しています。しばらく待つか、手動で入力してください。");
   if (code === "invalid_provider_response") return new LocalReceiptServiceError("invalid_ai_response", "AIの応答を確認できませんでした。もう一度お試しください。");
   if (code === "not_configured") return new LocalReceiptServiceError("not_configured", "AI機能を現在利用できません。後でもう一度お試しください。");
-  if (code === "ai_temporarily_paused" || status === 503) return new LocalReceiptServiceError("offline_or_unavailable", "AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。");
+  if (code === "ai_temporarily_paused" || status === 503) return new LocalReceiptServiceError("offline_or_unavailable", "AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。", code === "ai_temporarily_paused");
   return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
 }
