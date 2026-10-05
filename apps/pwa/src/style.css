@@ -392,6 +392,8 @@ form .category-picker button { margin: 0; }
 .budget-row label { margin: 0; flex: 1; min-width: 0; }
 .budget-input { display: flex; align-items: center; gap: 2px; width: 128px; padding: 0 var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg); color: var(--muted); }
 .budget-input input { min-height: 44px; padding: 0; border: 0; background: transparent; text-align: right; font-weight: 700; }
+.budget-input input:focus-visible { outline: none; }
+.budget-input:focus-within { outline: 3px solid var(--warning); outline-offset: 2px; }
 .budget-row .text-button { margin: 0 0 0 auto; padding: 0 var(--space-1); font-size: .875rem; }
 
 .search-field { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 0 var(--space-3); border: 2px solid var(--primary); border-radius: var(--radius-lg); background: var(--surface); color: var(--muted); }

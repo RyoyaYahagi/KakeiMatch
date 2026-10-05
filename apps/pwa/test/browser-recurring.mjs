@@ -11,6 +11,8 @@ const page = await context.newPage();
 // Use the same real Tokyo day so creating a due schedule never skips to next month.
 const now = new Date();
 const scheduleDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(now);
+const [scheduleYear, scheduleMonth, scheduleDay] = scheduleDate.split('-').map(Number);
+const scheduleWeekday = ['日', '月', '火', '水', '木', '金', '土'][new Date(Date.UTC(scheduleYear, scheduleMonth - 1, scheduleDay)).getUTCDay()];
 await page.clock.setFixedTime(now);
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
@@ -55,7 +57,7 @@ try {
   await fill({ name: 'Synthetic Monthly Expense', amount: 1500, category: 'Synthetic Schedule Food', account: 'Synthetic Schedule Wallet', auto: true });
   await save(); await page.getByText('定期登録を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Synthetic Monthly Expense · 支出 ¥1,500', exact: true }).waitFor();
-  await page.getByText(/毎月 · 次回 .* · 自動登録 オン/).waitFor();
+  await page.getByText(`毎月${scheduleDay}日 · Synthetic Schedule Wallet`, { exact: true }).waitFor();
 
   // A matching name is rejected before another native schedule is created.
   await click('定期登録を追加する');
@@ -73,13 +75,13 @@ try {
   await fill({ name: 'Synthetic Weekly Expense', amount: 700, category: 'Synthetic Schedule Food', account: 'Synthetic Schedule Wallet', frequency: 'weekly', auto: false });
   await save(); await page.getByText('定期登録を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Synthetic Weekly Expense · 支出 ¥700', exact: true }).waitFor();
-  await page.getByText(/毎週 · 次回 .* · 自動登録 オフ/).waitFor();
+  await page.getByText(`毎週${scheduleWeekday}曜日 · Synthetic Schedule Wallet`, { exact: true }).waitFor();
 
   await openCreate();
   await fill({ name: 'Synthetic Yearly Expense', amount: 5000, category: 'Synthetic Schedule Food', account: 'Synthetic Schedule Wallet', frequency: 'yearly', auto: false });
   await save(); await page.getByText('定期登録を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Synthetic Yearly Expense · 支出 ¥5,000', exact: true }).waitFor();
-  await page.getByText(/毎年 · 次回 .* · 自動登録 オフ/).waitFor();
+  await page.getByText(`毎年${scheduleMonth}月${scheduleDay}日 · Synthetic Schedule Wallet`, { exact: true }).waitFor();
   await page.screenshot({ path: '/tmp/issue-72-recurring.png', fullPage: true });
 
   const beforeEditRecords = await recordNames();
