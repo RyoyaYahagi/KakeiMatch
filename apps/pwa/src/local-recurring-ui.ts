@@ -28,6 +28,13 @@ function button(label: string, action: () => void | Promise<void>, primary = fal
   }); return result;
 }
 function frequencyLabel(value: RecurringScheduleInput['frequency']) { return value === 'weekly' ? '毎週' : value === 'yearly' ? '毎年' : '毎月'; }
+function recurringTimingLabel(schedule: Pick<RecurringSchedule, 'frequency' | 'startDate'>) {
+  const [year, month, day] = schedule.startDate.split('-').map(Number);
+  if (schedule.frequency === 'monthly') return `毎月${day}日`;
+  if (schedule.frequency === 'yearly') return `毎年${month}月${day}日`;
+  const weekday = ['日', '月', '火', '水', '木', '金', '土'][new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+  return `毎週${weekday}曜日`;
+}
 function errorText(error: unknown) { return error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '定期登録を保存できませんでした。入力内容を確認してください。'; }
 function yenBig(amount: bigint) { return `¥${amount.toLocaleString('ja-JP')}`; }
 function chooseCatchUp(preview: Awaited<ReturnType<Service['previewCatchUp']>>): Promise<string[] | null> {
@@ -83,7 +90,7 @@ export async function showRecurringSchedules(options: {
       const categoryName = categoryNames.get(schedule.categoryId) ?? 'カテゴリなし';
       const tone = schedule.kind === 'income' ? { icon: 'income' as const, tone: 'income' } : categoryTone(categoryName, schedule.categoryId);
       const note = schedule.editable
-        ? `${categoryName} · ${accountNames.get(schedule.accountId) ?? '口座なし'} · ${frequencyLabel(schedule.frequency)} · 次回 ${schedule.nextDate ?? '未定'} · 自動登録 ${schedule.postsTransaction ? 'オン' : 'オフ'}${schedule.completed ? ' · 終了済み' : ''}`
+        ? `${recurringTimingLabel(schedule)} · ${accountNames.get(schedule.accountId) ?? '口座なし'}${schedule.completed ? ' · 終了済み' : ''}`
         : `未対応の予定条件を含むため編集できません · ${schedule.completed ? '終了済み' : '継続中'}`;
       return entryRow({ icon: tone.icon, tone: tone.tone, title: schedule.name, note, dimmed: schedule.completed,
         value: schedule.editable ? `${schedule.kind === 'income' ? '+' : '−'}${yen(schedule.amountYen)}` : undefined, valueClass: schedule.kind === 'income' ? 'amount-income' : '',

@@ -1,29 +1,36 @@
 name: CI
 
+# Private-repository minutes are billed per job and rounded up to whole minutes,
+# so checks share one job instead of fanning out into many short jobs.
+# main is not re-checked on push: the merged PR has already passed this workflow.
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore:
       - 'docs/**'
       - '**/*.md'
+      - 'workers/ai-gateway/**'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # No Docker service, Actual Server, household SQLite, or legacy secret is provisioned.
 # Legacy integration tests create temporary synthetic fixtures only.
 jobs:
-  validate:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  ci:
+    if: ${{ !github.event.pull_request.draft }}
+    # The repository variable CI_RUNNER=self-hosted runs CI on the always-on host
+    # without billed minutes; when it is unset, GitHub-hosted runners are used.
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    env:
+      # Playwright has no Ubuntu 26.04 build yet; the 24.04 Chromium runs on the host.
+      PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu24.04-x64
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -32,44 +39,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
+          # A self-hosted host keeps its pnpm store; uploading it only costs time.
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
+      # Also covers apps/pwa, so the build below skips its own tsc pass.
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm eval:reconciliation
       - run: pnpm --dir apps/pwa test
-      - run: pnpm build
-
-  local-first:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        # Shards are balanced by measured duration. Each shard runs two scripts at a time.
-        include:
-          - shard: 1
-            scripts: test:backup-e2e test:actual-compatibility-e2e test:receipt-edits-e2e test:account-types-e2e test:ai-costs-e2e test:smbc-statements-e2e test:rakuten-statements-e2e test:updates-e2e
-          - shard: 2
-            scripts: test:e2e test:masters-e2e test:deletions-e2e test:pending-receipt-deletion-e2e test:recurring-e2e test:recurring-catch-up-e2e test:ai-paused-e2e test:entry-masters-e2e test:screen-lock-e2e
-          - shard: 3
-            scripts: test:manual-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e
-          - shard: 4
-            scripts: test:receipt-items-e2e test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e test:provider-only-reconciliation-e2e test:desktop-layout-e2e test:contact-e2e test:diagnostics-e2e test:security-e2e test:encryption-e2e
-    name: local-first (${{ matrix.shard }}/4)
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --dir apps/pwa build
-      - uses: actions/cache@v4
+      - run: pnpm --dir apps/pwa exec cf build
+      - if: runner.environment == 'github-hosted'
+        uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -77,18 +58,19 @@ jobs:
       - run: pnpm --dir apps/pwa exec playwright-core install chromium
       - name: Synthetic local-first flows without legacy runtime
         env:
-          SCRIPTS: ${{ matrix.scripts }}
+          # A dev server may already hold 5173 on the self-hosted host.
+          E2E_PORT: 5199
         run: |
           unset ACTUAL_SERVER_URL ACTUAL_SERVER_PASSWORD ACTUAL_CLI_DATA_DIR
           unset RECEIPT_STORAGE_DIR STATEMENT_STORAGE_DIR DATABASE_PATH
-          pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port 5173 > /tmp/kakeimatch-pwa-dev.log 2>&1 &
+          pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port "$E2E_PORT" --strictPort > "$RUNNER_TEMP/kakeimatch-pwa-dev.log" 2>&1 &
           pwa_pid=$!
           trap 'kill "$pwa_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 60); do
-            if curl --fail --silent http://127.0.0.1:5173/ > /dev/null; then break; fi
+            if curl --fail --silent "http://127.0.0.1:$E2E_PORT/" > /dev/null; then break; fi
             sleep 1
           done
-          export PWA_E2E_URL=http://127.0.0.1:5173
+          export PWA_E2E_URL="http://127.0.0.1:$E2E_PORT"
           mkdir -p e2e-logs
           # Keep each script's output separate so parallel logs stay readable.
           run_script() {
@@ -99,28 +81,23 @@ jobs:
             fi
           }
           export -f run_script
-          printf '%s\n' $SCRIPTS | xargs -P 2 -I {} bash -c 'run_script "$1"' _ {}
+          printf '%s\n' \
+            test:backup-e2e test:receipt-items-e2e test:e2e test:manual-e2e \
+            test:receipt-edits-e2e test:account-types-e2e test:ai-costs-e2e test:smbc-statements-e2e \
+            test:rakuten-statements-e2e test:updates-e2e test:masters-e2e test:deletions-e2e \
+            test:pending-receipt-deletion-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e \
+            test:screen-lock-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e \
+            test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e \
+            test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e \
+            test:provider-only-reconciliation-e2e test:desktop-layout-e2e test:contact-e2e \
+            test:diagnostics-e2e test:security-e2e test:encryption-e2e test:recurring-catch-up-e2e test:idb-migration-e2e test:actual-compatibility-e2e \
+            | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
       - name: Upload E2E logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs-${{ matrix.shard }}
+          name: e2e-logs
           path: |
             e2e-logs/
-            /tmp/kakeimatch-pwa-dev.log
+            ${{ runner.temp }}/kakeimatch-pwa-dev.log
           retention-days: 7
-
-  ai-gateway:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: workers/ai-gateway/package-lock.json
-      - run: npm ci --prefix workers/ai-gateway
-      - run: npm test --prefix workers/ai-gateway
-      - run: npm run typecheck --prefix workers/ai-gateway
-      - run: npm run build --prefix workers/ai-gateway
