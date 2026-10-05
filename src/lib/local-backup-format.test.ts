@@ -126,6 +126,17 @@ describe("account metadata backup", () => {
     await expect(create(data)).rejects.toThrow(/複数の家計簿/);
   });
 
+  it("round-trips the basic-category completion marker and rejects a mismatched scope", async () => {
+    const data = fixture();
+    data.records.push({ id: "settings:basic-categories:synthetic-budget", kind: "app-settings", updatedAt: time, value: { budgetId: "synthetic-budget", version: 1 } });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.find(({ id }) => id === "settings:basic-categories:synthetic-budget")?.value).toEqual({ budgetId: "synthetic-budget", version: 1 });
+    data.records[data.records.length - 1] = { id: "settings:basic-categories:other-budget", kind: "app-settings", updatedAt: time, value: { budgetId: "synthetic-budget", version: 1 } };
+    await expect(create(data)).rejects.toThrow(/基本カテゴリ/);
+    data.records[data.records.length - 1] = { id: "settings:basic-categories:synthetic-budget", kind: "app-settings", updatedAt: time, value: { budgetId: "synthetic-budget", version: 1, extra: true } };
+    await expect(create(data)).rejects.toThrow(/記録内容が不正/);
+  });
+
   it("rejects account metadata and monthly settings scoped to different budgets", async () => {
     const data = fixture();
     data.records.push(

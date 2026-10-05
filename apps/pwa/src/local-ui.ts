@@ -30,6 +30,7 @@ import type { StatementProvider } from './statement-parser';
 import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
 import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
+import { ensureBasicExpenseCategories } from './local-category-defaults';
 import { initializeCategoryRulesUi } from './local-category-rules-ui';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
@@ -1126,6 +1127,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   openAccountBalances = masterUi.openAccounts;
   el('settings-tab').addEventListener('click', () => { searchOrigin = false; closeCategoryRules(); el('message').textContent = ''; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
+    await ensureBasicExpenseCategories(repository, ledger, budgetId);
     await deletions.recoverPending();
     await recurring.retry();
     await ledger.runDueSchedules();
