@@ -2,6 +2,8 @@ import { accountMetadataRecordId, ActualRestoreIncompleteError, ActualRestoreTar
 import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
 import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '../../../src/lib/monthly-budget-settings';
+import { decryptPortableSyncVersion } from '../../../src/lib/encrypted-sync-version';
+import type { EncryptionContext } from '../../../src/lib/encrypted-household-format';
 
 export const PREVIOUS_PROFILE_KEY = 'kakeimatch.previous-local-profile.v1';
 export const INCOMPLETE_RESTORE_KEY = 'kakeimatch.incomplete-actual-restore.v1';
@@ -47,6 +49,13 @@ export async function exportLocalBackup(repository: LocalDataRepository, ledger:
 export async function restoreLocalBackup(file: Blob, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
   const backup = await readPortableBackup(file);
   return stageHouseholdBackup(backup, ledger, overrides);
+}
+
+/** The sync coordinator must also hold the household lock and guard profile/base-version publication. */
+export async function restoreEncryptedLocalBackup(metadata: unknown, expected: EncryptionContext, key: CryptoKey,
+  readChunk: (index: number) => Promise<Blob>, ledger: BackupLedger, overrides: Partial<Dependencies> = {}): Promise<string> {
+  const plain = await decryptPortableSyncVersion(metadata, expected, key, readChunk);
+  return restoreLocalBackup(plain, ledger, overrides);
 }
 
 /** Initial standalone budget import also uses a new target, never an in-place Actual import. */

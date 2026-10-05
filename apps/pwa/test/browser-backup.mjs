@@ -209,6 +209,11 @@ async function exportBackup() {
     const status = await page.locator('#backup-settings [role=status]').innerText().catch(() => '');
     throw new Error(`Backup export did not download: ${status || 'no status message'}`, { cause: error });
   }
+  await page.waitForFunction(() => {
+    const section = document.querySelector('#backup-settings');
+    return !section?.hasAttribute('inert')
+      && section?.querySelector('[role="status"]')?.textContent === 'バックアップを生成しました。Filesなどへの保存を確認してください。';
+  });
   assert.match(download.suggestedFilename(), /\.kmb$/i);
   const path = await download.path();
   if (!path) throw new Error('Backup download was not materialized.');
@@ -216,6 +221,8 @@ async function exportBackup() {
   await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   await page.waitForFunction(() => !document.querySelector('#backup-settings')?.hasAttribute('inert'));
   const { readFile } = await import('node:fs/promises');
+  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
+  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
   return readFile(path);
 }
 

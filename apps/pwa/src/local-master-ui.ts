@@ -90,7 +90,10 @@ export function createMasterShortcut(options: {
       const close = () => {
         dialog.close(); dialog.remove();
         if (itemDetails && itemWasOpen) itemDetails.open = true;
-        if (options.origin.field.isConnected) options.origin.field.focus();
+        // Return focus to the control that opened the dialog. Focusing a visually-hidden
+        // category <select> can open the native picker on iOS when the dialog closes.
+        if (launch.isConnected) launch.focus();
+        else if (options.origin.field.isConnected && options.origin.field.getAttribute('aria-hidden') !== 'true') options.origin.field.focus();
       };
       const form = masterCreationForm(options.ledger, options.request, async id => { await options.origin.onCreated(id); close(); }, showError);
       const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button';
