@@ -58,7 +58,7 @@ OCRの精度100%は目指していません。成功の基準は機能の数で�
 ### 家計を見る
 
 - 月ごとの収入・支出・収支と、カテゴリ別の内訳グラフ
-- カテゴリ別の月予算と進み具合
+- 月ごとの全体予算と進み具合。必要な場合だけカテゴリ別の内訳も設定できます
 - 口座ごとの残高
 - 全期間の記録の検索・絞り込み（店名、メモ、品目名、期間、金額）
 
@@ -169,7 +169,7 @@ flowchart TB
 - [登録した記録の編集](docs/LOCAL_RECEIPT_EDITS.md)と[取引削除と取り消し](docs/LOCAL_TRANSACTION_DELETION.md)
 - [口座間振替](docs/LOCAL_TRANSFERS.md)と[定期収入・定期支出](docs/LOCAL_RECURRING_TRANSACTIONS.md)
 - [記録の検索・絞り込み](docs/LOCAL_TRANSACTION_SEARCH.md)
-- [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)、[口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)、[カテゴリ別月予算](docs/LOCAL_MONTHLY_BUDGETS.md)
+- [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)、[口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)、[月予算（全体／カテゴリ別）](docs/LOCAL_MONTHLY_BUDGETS.md)
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [お問い合わせ](docs/CONTACT.md)と[端末内の診断](docs/LOCAL_DIAGNOSTICS.md)
 
