@@ -34,7 +34,9 @@ try {
   if (process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
   await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
-  // Categories are chosen with buttons; the hidden select keeps the value for drafts and saving.
+  // Categories are chosen with buttons; expand the defaults to reach a newly added custom category.
+  const showAllCategories = page.getByRole('button', { name: /^すべて表示（\d+）$/ });
+  if (await showAllCategories.count()) await showAllCategories.click();
   await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).click();
   assert.equal(await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).getAttribute('aria-checked'), 'true');
   assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Navigation Food');

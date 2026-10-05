@@ -38,6 +38,8 @@ KakeiMatchの端末内データは、IndexedDB（ブラウザーの端末内デ�
 - 新しい版、想定外の構造、別タブによる更新待ちを拒否し、既存データを維持すること。
 - 別タブの更新後、古い接続からの操作で再読み込みを案内すること。
 
-これはIndexedDBの模擬実装による検証です。世代別Service Workerの更新検証とは別に、iPhoneのホーム画面から起動したPWAの更新経路は未確認です。移行前バックアップの案内、読み取り専用の復旧画面、Actual Budget依存更新時の旧データ互換性確認はIssue #53で継続します。
+`pnpm --dir apps/pwa test:idb-migration-e2e` は、ビルド済みPWAをChromiumで開き、ブラウザー本物のIndexedDBにも合成した複数プロフィールのレコードと画像原本を入れて確認します。通常のv1→v2移行後に全プロフィールの行・blobとowner indexが残ること、移行途中に合成エラーを起こすと実際のversionchange transactionが中断され、データとv1の構造が保たれること、再読み込み後の再試行でv2へ移行できることを検証します。これは実家計情報やActual Budgetのデータを使わず、iPhoneのホーム画面から起動したPWAの更新経路も確認しません。
+
+このブラウザーテストは合成エラーでtransaction rollbackを通る検証です。OSや端末の強制終了、保存容量不足など、実端末のすべての障害条件を再現するものではありません。世代別Service Workerの更新検証とは別に、iPhoneのホーム画面から起動したPWAの更新経路は未確認です。移行前バックアップの案内、読み取り専用の復旧画面、Actual Budget依存更新時の異なる版への互換性確認はIssue #53で継続します。
 
 実装は [local-data.ts](../src/lib/local-data.ts)、起動時の案内は [main.ts](../apps/pwa/src/main.ts) にあります。
