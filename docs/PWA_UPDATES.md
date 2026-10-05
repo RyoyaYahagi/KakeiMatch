@@ -41,10 +41,13 @@ navigationと資材の検索は、そのWorkerのキャッシュだけを使い�
 
 - rootの `local-data` / `actual-browser-ledger` / `local-backup` / `local-backup-format` のunit tests
 - PWAの `test:e2e` と `test:backup-e2e` を実Actualブラウザー版で実行
+- `test:actual-compatibility-e2e` は、[Actual 26.9.0で作成した固定の合成家計簿](../apps/pwa/test/fixtures/actual-26.9.0/README.md)を取り込み、口座・カテゴリ・取引・残高、再起動後の閲覧、書き出しと再復元、元の保存先への切り替え、オフライン再起動を確認する。CIで毎回実行する
 - 旧版で作成したarchiveの新しい版への復元と、オンライン・オフライン再起動
 - iPhoneホーム画面PWAで旧版からの更新を別途確認
 
 依存変更時には、旧・新のActual版、合成データを作成したcommit、確認したcommit、結果をPRへ記録します。unit testが通るだけで既存家計簿との互換性を保証しません。
+
+固定fixtureは依存更新後も再生成しません。新しい版で作り直すと、旧版のデータを読めなくなった問題が隠れるためです。現在は26.9.0のexportを同じ26.9.0で検証する基準を追加しており、異なるActual版への更新を確認済みとは扱いません。また、旧版のIndexedDB領域を直接引き継ぐ更新経路とiPhone実機は、上記の別確認を引き続き必要とします。
 
 ## 検証と残件
 

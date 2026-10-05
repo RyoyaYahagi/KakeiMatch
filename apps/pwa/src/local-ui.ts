@@ -14,6 +14,8 @@ import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { dateShortcuts, formActions, optionalFields } from './entry-form';
 import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
+import { createReadingProgress } from './receipt-reading-progress';
+import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -25,8 +27,10 @@ import { LocalDataRepository } from '../../../src/lib/local-data';
 import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
+import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
 import { LocalReconciliationService } from './local-reconciliation';
 import { LocalCategoryLearning } from './local-category-learning';
+import { ensureBasicExpenseCategories } from './local-category-defaults';
 import { initializeCategoryRulesUi } from './local-category-rules-ui';
 import { CATEGORY_LABELS, isCategoryId } from '../../../src/lib/category';
 import { setNavActive } from './app-nav';
@@ -472,7 +476,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const overviewExtras = document.createElement('div'); overviewExtras.className = 'entry-overview-extras';
     view.append(editorTabs, overviewExtras);
     if (!blob && receipt.image) overviewExtras.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
-    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; overviewExtras.append(img); }
+    // The frame carries the reading motion over the photo while AI reads it.
+    const previewFrame = document.createElement('div'); previewFrame.className = 'receipt-preview-frame';
+    if (blob) {
+      imageUrl = URL.createObjectURL(blob.blob); const src = imageUrl;
+      const img = document.createElement('img'); img.src = src; img.alt = '保存したレシート'; img.className = 'receipt-preview';
+      // The photo opens full screen, so the printed total can be checked up close.
+      const open = document.createElement('button'); open.type = 'button'; open.className = 'receipt-preview-open'; open.setAttribute('aria-label', 'レシート画像を拡大して見る');
+      const badge = document.createElement('span'); badge.className = 'receipt-preview-zoom'; badge.append(icon('search'));
+      open.append(img, badge); open.addEventListener('click', () => openReceiptImage(src));
+      previewFrame.append(open); overviewExtras.append(previewFrame);
+    }
     if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
 
     const form = document.createElement('form');
@@ -494,6 +508,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const adjustmentsHeading = text('h3', '値引き・調整');
     const adjustmentsList = document.createElement('ul'); adjustmentsList.className = 'receipt-adjustment-list';
     const warning = text('p', '', 'receipt-difference'); warning.id = 'receipt-difference'; warning.setAttribute('role', 'status');
+    // When items and adjustments add up to the total, only the total needs comparing with the photo.
+    const totalCheck = text('p', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
     const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
     let expandItemId: string | null = null;
     let expandAdjustmentId: string | null = null;
@@ -513,28 +529,40 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (receipt.registration.status === 'applied') return;
       recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
-      const accountId = account.value;
-      form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
+      // AI never fills the payment source, so it stays selectable while the read runs.
+      const controls = form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button');
+      controls.forEach(control => { control.disabled = control !== account; });
+      const aiFilled = [amount, merchant, date];
+      aiFilled.forEach(field => field.classList.add('ai-pending'));
+      previewFrame.classList.add('is-reading');
+      aiButton.hidden = true;
+      const progress = createReadingProgress();
+      aiArea.append(progress.element);
       try {
         await receipts.analyze(receipt.id);
+        progress.setStep('categorizing');
         try {
           const suggested = await receipts.suggestCategory(receipt.id);
           recordLocalDiagnostic('ai');
           const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
           if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
         } catch (error) {
           report(error);
           const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
         }
       } catch (error) {
         report(error);
         if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
       } finally {
-        form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = false; });
+        progress.stop();
+        aiButton.hidden = false;
+        previewFrame.classList.remove('is-reading');
+        aiFilled.forEach(field => field.classList.remove('ai-pending'));
+        controls.forEach(control => { control.disabled = false; });
       }
     });
     if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
@@ -551,7 +579,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     amount.classList.add('amount-input');
     const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
     const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields';
-    overviewFields.append(amountLabel, amount, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
+    overviewFields.append(amountLabel, amount, totalCheck, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
       categoryLabel, category, accountLabel, account, optional);
     form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
@@ -561,6 +589,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       itemsTab.setAttribute('aria-pressed', String(itemsOnly));
       overviewExtras.hidden = itemsOnly;
       overviewFields.hidden = itemsOnly;
+      // Keep the overview focused on the fields needed to confirm and register.
+      // Item-level details, discounts, tax and item-total differences belong only to the items pane.
+      purchaseDetails.hidden = !itemsOnly;
+      warning.hidden = !itemsOnly;
       purchaseDetails.classList.toggle('items-only', itemsOnly);
       if (itemsOnly) purchaseDetails.open = true;
       if (scroll) editorTabs.scrollIntoView({ block: 'start' });
@@ -643,9 +675,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     function updateDifference() {
       const currentItems = readItems(); const currentAdjustments = readAdjustments();
-      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; return; }
+      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.className = 'receipt-total-check'; return; }
       const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
       const difference = Number(amount.value) - knownTotal;
+      totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
+      totalCheck.textContent = difference === 0 ? '✓ 品目と値引きの合計と一致しています。合計金額だけ画像と照らし合わせてください。'
+        : `△ 品目と値引きの合計と${yen(Math.abs(difference))}違います。品目一覧で確認してください。`;
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
     }
     function drawItems() {
@@ -826,15 +861,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     section.append(text('p', 'PayPayカード、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。'));
     const providerLabel = fieldLabel('label', '明細サービス', 'statement-provider');
     const provider = document.createElement('select'); provider.id = 'statement-provider';
-    provider.append(new Option('PayPayカード', 'paypay_card'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'));
+    provider.append(new Option('PayPayカード', 'paypay_card'), new Option('三井住友カード', 'smbc_card'), new Option('楽天カード', 'rakuten_card'), new Option('イオンカード', 'aeon_card'));
     provider.value = selectedStatementProvider;
-    provider.addEventListener('change', () => { selectedStatementProvider = provider.value as StatementProvider; });
+    const downloadHelp = document.createElement('div'); downloadHelp.className = 'statement-download';
+    const downloadLink = document.createElement('a'); downloadLink.id = 'statement-download-link';
+    downloadLink.textContent = '公式サイトで明細CSVを取得 ↗'; downloadLink.target = '_blank';
+    downloadLink.rel = 'noopener noreferrer'; downloadLink.referrerPolicy = 'no-referrer';
+    const downloadNote = text('p', ''); downloadNote.id = 'statement-download-note';
+    downloadHelp.append(text('p', 'CSVをお持ちでない場合'), downloadLink, downloadNote);
+    const importAvailability = text('p', ''); importAvailability.id = 'statement-import-availability';
+    importAvailability.setAttribute('role', 'status');
     const fileLabel = fieldLabel('label', 'CSVファイル', 'statement-file');
     const file = document.createElement('input'); file.id = 'statement-file'; file.type = 'file'; file.accept = '.csv,text/csv';
     const submit = button('取り込んで照合', async () => {
+      const chosenProvider = provider.value as StatementProvider;
+      if (!STATEMENT_DOWNLOAD_HELP[chosenProvider]?.importAvailable) throw new Error('この明細サービスのCSVは現在取り込めません。');
       const selectedFile = file.files?.[0];
       if (!selectedFile) throw new Error('CSVファイルを選択してください。');
-      const chosenProvider = provider.value as StatementProvider;
       selectedStatementProvider = chosenProvider;
       recordDiagnosticAction('statement_import_started', 'statements');
       provider.disabled = true; file.disabled = true;
@@ -846,10 +889,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const reasons = result.needsReviewRows.map(({ rowNumber, reason }) => `${rowNumber}行目: ${reason}`).join(' / ');
         el('message').textContent = `${result.added}件を取り込み、照合しました。重複 ${result.duplicates}件。対象外 ${result.excluded}件、要確認 ${result.needsReviewRows.length}件。${reasons}`;
       } finally {
-        provider.disabled = false; file.disabled = false;
+        provider.disabled = false; updateDownloadHelp();
       }
     }, false);
-    section.append(providerLabel, provider, fileLabel, file, submit);
+    function updateDownloadHelp() {
+      const help = STATEMENT_DOWNLOAD_HELP[provider.value as StatementProvider];
+      downloadHelp.hidden = !help;
+      if (help) { downloadLink.href = help.downloadUrl; downloadNote.textContent = help.note; }
+      else downloadLink.removeAttribute('href');
+      file.disabled = submit.disabled = !help?.importAvailable;
+      importAvailability.hidden = help?.importAvailable === true;
+      importAvailability.textContent = provider.value === 'aeon_card'
+        ? 'イオンカードのCSV形式を確認中です。現在、KakeiMatchへの取り込みには対応していません。'
+        : '明細サービスを選択してください。';
+    }
+    provider.addEventListener('change', () => { selectedStatementProvider = provider.value as StatementProvider; updateDownloadHelp(); });
+    updateDownloadHelp();
+    section.append(providerLabel, provider, downloadHelp, importAvailability, fileLabel, file, submit);
 
     const imports = await statements.imports();
     const rows = await statements.list();
@@ -1075,6 +1131,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   openAccountBalances = masterUi.openAccounts;
   el('settings-tab').addEventListener('click', () => { searchOrigin = false; closeCategoryRules(); el('message').textContent = ''; resetMasterUi(); const flush = flushReceiptDraft; flushReceiptDraft = () => Promise.resolve(); void flush().catch(report); });
   if (budgetId) {
+    await ensureBasicExpenseCategories(repository, ledger, budgetId);
     await deletions.recoverPending();
     await recurring.retry();
     await ledger.runDueSchedules();
