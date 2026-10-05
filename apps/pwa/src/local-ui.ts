@@ -8,7 +8,7 @@ import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFil
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
 import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem } from './home-attention';
-import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
+import { daysBetween, reviewSummaryRow, shortDay, slipPart, slipPerforation, slipSeal, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
@@ -1148,7 +1148,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (statement.kind === 'refund') { setReason('返金のため自動で処理できません'); body.append(text('p', '返金の記録です。現在は自動処理できません。')); }
       else {
         const statementSource = statementProviderLabels[statement.provider as StatementProvider] ?? '明細';
-        body.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${statementSource}`, 'compare-statement'));
+        // docs/DESIGN.md 突き合わせの伝票: the statement on top, each candidate record below a perforation.
+        // Each candidate gets its own slip, so the buttons stay with the pair they decide.
+        const statementHalf = () => slipPart('statement', statementSource, [
+          { label: '日付', value: shortDay(statement.usedDate) }, { label: '店名', value: statement.merchant }, { label: '金額', value: yen(statement.amountYen) }]);
         const candidates = run.candidates.filter(c => c.statementTransactionId === statement.id);
         const reasons: string[] = [];
         for (const candidate of candidates) {
@@ -1158,18 +1161,31 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           if (!actual || actual.kind !== 'expense') continue;
           const block = document.createElement('div'); block.className = 'compare-candidate';
           const actualAccount = accountsById.get(actual.accountId)?.name ?? '利用できない支払元';
-          block.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
           const amountGap = Math.abs(statement.amountYen - Math.abs(actual.amountYen));
           const dayGap = Math.abs(daysBetween(statement.usedDate, actual.date));
-          const differences = [
-            ...(actual.date !== statement.usedDate ? [`日付差 ${statement.usedDate} / ${actual.date}`] : []),
-            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(amountGap)}（明細 ${yen(Math.abs(statement.amountYen))} / 家計簿 ${yen(Math.abs(actual.amountYen))}）`] : []),
-          ];
-          reasons.push(actual.amountYen !== -statement.amountYen ? `金額が${yen(amountGap)}違います` : dayGap ? `日付が${dayGap}日ずれています` : '内容を確認してください');
-          if (differences.length) block.append(text('p', `差分：${differences.join(' · ')}`, 'compare-diff'));
+          const sameDate = actual.date === statement.usedDate, sameAmount = actual.amountYen === -statement.amountYen;
+          const record = slipPart('record', actualAccount, [
+            { label: '日付', value: shortDay(actual.date), same: sameDate, differs: !sameDate },
+            { label: '店名', value: actual.payeeName || '店名なし' },
+            { label: '金額', value: yen(Math.abs(actual.amountYen)), same: sameAmount, differs: !sameAmount }]);
+          const reason = !sameAmount ? `金額が${yen(amountGap)}違います` : dayGap ? `日付が${dayGap}日ずれています` : '内容を確認してください';
+          reasons.push(reason);
+          const seal = slipSeal();
+          const slip = document.createElement('div'); slip.className = 'review-slip';
+          slip.append(statementHalf(), slipPerforation(), record, seal);
+          block.append(slip);
+          // Why it is a candidate, in the warning color, right under the slip.
+          block.append(text('p', `△ ${reason}`, 'compare-why'));
+          if (!sameDate || !sameAmount) block.append(text('p', `「同じ支出」にすると、記録を明細の${[!sameDate ? `日付（${shortDay(statement.usedDate)}）` : '', !sameAmount ? `金額（${yen(statement.amountYen)}）` : ''].filter(Boolean).join('と')}に合わせます。`, 'muted'));
           const unsupportedSplitAmount = actual.isSplit === true && actual.amountYen !== -statement.amountYen;
           if (unsupportedSplitAmount) block.append(text('p', '分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。'));
-          const sameExpense = button('同じ支出', async () => { await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId); await rerun(); }, false);
+          const sameExpense = button('同じ支出', async () => {
+            await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId);
+            // The seal is pressed once the decision is saved, then the list is read again.
+            slip.classList.add('is-stamped'); seal.classList.add('is-pressed');
+            await new Promise(resolve => setTimeout(resolve, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350));
+            await rerun();
+          }, false);
           sameExpense.disabled = unsupportedSplitAmount;
           const otherExpense = button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await rerun(); }); otherExpense.className = 'text-button';
           block.append(sameExpense, otherExpense);
@@ -1177,6 +1193,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         }
         if (reasons.length > 1) setReason(`候補が${reasons.length}件あります`); else if (reasons.length === 1) setReason(reasons[0]);
         if (!candidates.length) {
+          const slip = document.createElement('div'); slip.className = 'review-slip'; slip.append(statementHalf()); body.append(slip);
           const category = document.createElement('select'); category.id = `category-${statement.id}`; category.required = true;
           const categoryLabel = fieldLabel('label', 'カテゴリ', category.id);
           category.append(new Option('カテゴリを選択してください', ''), ...expenseCategories.map(c => new Option(c.name, c.id)));
