@@ -15,6 +15,7 @@ import { dateShortcuts, formActions, optionalFields } from './entry-form';
 import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import { createReadingProgress } from './receipt-reading-progress';
+import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -476,7 +477,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (!blob && receipt.image) overviewExtras.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
     // The frame carries the reading motion over the photo while AI reads it.
     const previewFrame = document.createElement('div'); previewFrame.className = 'receipt-preview-frame';
-    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; previewFrame.append(img); overviewExtras.append(previewFrame); }
+    if (blob) {
+      imageUrl = URL.createObjectURL(blob.blob); const src = imageUrl;
+      const img = document.createElement('img'); img.src = src; img.alt = '保存したレシート'; img.className = 'receipt-preview';
+      // The photo opens full screen, so the printed total can be checked up close.
+      const open = document.createElement('button'); open.type = 'button'; open.className = 'receipt-preview-open'; open.setAttribute('aria-label', 'レシート画像を拡大して見る');
+      const badge = document.createElement('span'); badge.className = 'receipt-preview-zoom'; badge.append(icon('search'));
+      open.append(img, badge); open.addEventListener('click', () => openReceiptImage(src));
+      previewFrame.append(open); overviewExtras.append(previewFrame);
+    }
     if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
 
     const form = document.createElement('form');
@@ -498,6 +507,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const adjustmentsHeading = text('h3', '値引き・調整');
     const adjustmentsList = document.createElement('ul'); adjustmentsList.className = 'receipt-adjustment-list';
     const warning = text('p', '', 'receipt-difference'); warning.id = 'receipt-difference'; warning.setAttribute('role', 'status');
+    // When items and adjustments add up to the total, only the total needs comparing with the photo.
+    const totalCheck = text('p', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
     const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
     let expandItemId: string | null = null;
     let expandAdjustmentId: string | null = null;
@@ -567,7 +578,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     amount.classList.add('amount-input');
     const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
     const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields';
-    overviewFields.append(amountLabel, amount, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
+    overviewFields.append(amountLabel, amount, totalCheck, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
       categoryLabel, category, accountLabel, account, optional);
     form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
@@ -659,9 +670,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     function updateDifference() {
       const currentItems = readItems(); const currentAdjustments = readAdjustments();
-      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; return; }
+      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.className = 'receipt-total-check'; return; }
       const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
       const difference = Number(amount.value) - knownTotal;
+      totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
+      totalCheck.textContent = difference === 0 ? '✓ 品目と値引きの合計と一致しています。合計金額だけ画像と照らし合わせてください。'
+        : `△ 品目と値引きの合計と${yen(Math.abs(difference))}違います。品目一覧で確認してください。`;
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
     }
     function drawItems() {
