@@ -11,7 +11,7 @@ Cloud accountはAIなどのクラウド機能を使うためのアカウント�
 | 明細ファイルとcanonical rows | provider別の月間AI利用数 |
 | 照合状態と判断 | 必要最小限の認証metadata |
 
-D1には取引、店名・商品名などの履歴、レシート画像、明細CSVや明細行、照合結果、Actual Budgetのデータを保存しません。Cloudflareのuser IDを端末のprofile ID、Actual Budget ID、レシート所有者IDに使いません。
+D1には取引、店名・商品名などの履歴、レシート画像、明細CSVや明細行、照合結果、Actual Budgetのデータを保存しません。利用者が将来「端末間同期」を明示的に有効にした場合だけ、同期の制御情報（所有者、端末資格のハッシュ、世代、現在の版の参照など）をD1へ保存します。家計の平文は保存しません。詳細は[端末間同期](DEVICE_SYNC.md)を参照してください。Cloudflareのuser IDを端末のprofile ID、Actual Budget ID、レシート所有者IDに使いません。
 
 ## Passkeyとsession
 

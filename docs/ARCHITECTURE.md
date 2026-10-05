@@ -17,8 +17,11 @@ Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
 ├─ PWA配信
 ├─ /api/auth/* と /api/account/*（本人認証、招待、アカウント削除）
 ├─ /api/ai/* と /api/contact*
+├─ /api/sync/*（端末間同期。R2を設定した場合だけ有効。未提供）
+├─ R2（任意）: 端末で暗号化した同期用の版のチャンク
 └─ D1: 本人確認 / session / Passkey / 招待・回復 /
-       利用権限 / AI利用量・料金・制限 / 問い合わせ処理状態
+       利用権限 / AI利用量・料金・制限 / 問い合わせ処理状態 /
+       同期の制御情報（所有者・端末資格のハッシュ・世代・現在の版の参照）
 ```
 
 本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後にWorker名やoriginを変えると、保存済みデータが見えなくなることがあります。このoriginを安定して維持してください。previewは別originを使い、合成データ専用とします。家計データをpreviewで開かないでください。
@@ -34,6 +37,12 @@ Cloud accountは端末内の家計操作には不要です。Better AuthとPassk
 AI要求は同一originの `/api/ai/*` を通します。Workerは認証、利用枠、要求形式、provider応答を検証します。利用者が選んだ場合だけ、レシート画像をGeminiへ送ります。カテゴリ提案では、検証済みの店名、合計金額、最大30件の商品名と金額だけをJevへ送ります。provider秘密鍵はWorker secretに保管し、ブラウザーbundleへ含めません。Cloud accountやネットワークを利用できない場合も、手入力、明細取込、照合、Actual Budgetの端末内操作を続けられます。
 
 Service Workerは `/api/*` をcacheしません。Workerはブラウザー内のActualエンジンが必要とするCOOP/COEP response headerを維持します。いずれも本番構成の要件です。
+
+## 端末間同期の例外（Issue #143）
+
+家計データを端末外へ置くのは、利用者が明示的に端末間同期を有効にした場合だけです。このとき、端末で暗号化した家計簿全体の版を同期保存先Provider（初期はKakeiMatch Cloud）の非公開R2へ保存し、D1には同期の制御情報だけを保存します。D1が持つのは、所有者、端末資格のSHA-256、世代、現在の版の参照と順序番号、チャンクの長さとSHA-256、要求結果、削除予定のobject keyです。家計の平文、復旧コード、復号鍵、emailと氏名は同期の表に保存しません。
+
+同期エンジンはR2へ直接依存せず、暗号化済みの不変objectを保存する `SyncStorageProvider` 契約を使います。現在の版の更新は、D1の比較付き更新だけが決めます。Providerの更新日時や最後に書いた者の勝ちは使いません。認可は、検証済みsessionから決めた利用者と、サーバーが発行する端末資格で行い、URLやbodyのuser IDは使いません。設計と上限は[端末間同期](DEVICE_SYNC.md)を参照してください。現在はサーバー側の制御だけを実装しており、端末側の同期処理と画面は未実装です。
 
 ## 端末内データの移行
 

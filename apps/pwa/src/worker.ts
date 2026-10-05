@@ -1,8 +1,9 @@
 import { handleAccountRequest, handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
+import { handleSyncRequest, type SyncApiEnv } from '../../../workers/ai-gateway/src/device-sync-api';
 import { handleRequest as handleAiRequest } from '../../../workers/ai-gateway/src/worker';
 import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
 
-type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1];
+type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1] & SyncApiEnv;
 
 function secureApiResponse(response: Response): Response {
   const headers = new Headers(response.headers);
@@ -22,6 +23,9 @@ const appWorker = {
     }
     if (path.startsWith('/api/account/')) {
       return secureApiResponse(await handleAccountRequest(request, env));
+    }
+    if (path.startsWith('/api/sync/')) {
+      return secureApiResponse(await handleSyncRequest(request, env));
     }
     if (path.startsWith('/api/ai/') || path === '/api/contact' || path.startsWith('/api/contact/')) {
       return secureApiResponse(await handleAiRequest(request, env));
