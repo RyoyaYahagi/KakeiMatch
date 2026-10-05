@@ -47,9 +47,11 @@ try {
   await page.locator('#receipt-date').fill('2026-09-30');
   await page.locator('#receipt-amount').fill('1280');
   await page.locator('#receipt-category').selectOption({ label: '食費' });
+  await click('品目一覧');
   await page.getByRole('button', { name: '品目を追加', exact: true }).click();
   await page.locator('[data-item-name]').fill(itemName);
   await page.locator('[data-item-amount]').fill('1280');
+  await click('全体');
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click();
   await page.locator('#receipt-memo').fill(memo);
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();

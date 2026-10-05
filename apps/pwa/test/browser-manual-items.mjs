@@ -65,14 +65,18 @@ try {
   if (await item(2).getAttribute('open') === null) await item(2).locator('summary').click();
   const remove = item(2).getByRole('button', { name: '品目を削除', exact: true });
   assert.ok((await remove.boundingBox()).height >= 44);
-  // Returning to the full view keeps the opened purchase section and entered items.
+  // The full view hides item details; returning to the item pane keeps the opened item and entries.
   await click('全体');
   assert.equal(await page.locator('#manual-transaction-payee').isVisible(), true);
+  assert.equal(await item(2).isVisible(), false);
+  await click('品目一覧');
+  assert.equal(await item(2).getAttribute('open'), '');
   // Blur must not close the editor before a touch on the delete button.
-  await item(2).locator('[data-item-name]').focus(); await page.locator('#manual-transaction-amount').focus();
+  await item(2).locator('[data-item-name]').focus(); await discount.locator('[data-adjustment-label]').focus();
   assert.equal(await remove.isVisible(), true);
   if (process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH) { await remove.scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_ITEM_DELETE_SCREENSHOT_PATH }); }
   await remove.click(); assert.equal(await page.locator('[data-receipt-item]').count(), 2);
+  await click('全体');
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1400');
   // A missing basic field must be revealed when registering from the item pane.
   // Keep the items and memo intact throughout failed validation.
@@ -102,7 +106,7 @@ try {
   await page.locator('.category-list').getByText(/^食費 · ¥900 ·/).waitFor();
   await page.locator('.category-list').getByText(/^日用品 · ¥500 ·/).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click();
-  await click('編集する'); await item(0).locator('summary').click();
+  await click('編集する'); await click('品目一覧'); await item(0).locator('summary').click();
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   await item(0).getByRole('button', { name: '品目を削除', exact: true }).click();
@@ -120,7 +124,7 @@ try {
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-receipt-item]').count(), 1);
-  await context.setOffline(true); await item(0).locator('summary').click(); await item(0).locator('[data-item-name]').fill('Synthetic Offline Soap'); await save(true);
+  await context.setOffline(true); await click('品目一覧'); await item(0).locator('summary').click(); await item(0).locator('[data-item-name]').fill('Synthetic Offline Soap'); await save(true);
   assert.deepEqual(errors, []);
   console.log('PASS: manual items, positive discount, stable split/edit, touch deletion, backup compatibility, offline and 375px');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

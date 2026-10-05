@@ -43,10 +43,11 @@ try {
   await page.locator('#receipt-merchant').fill('Synthetic Split'); await page.locator('#receipt-amount').fill('1400'); await page.locator('#receipt-category').selectOption({ label: 'Synthetic Food' }); await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   let itemIndex = 0;
   for (const [name, amount, categoryName] of [['Synthetic Apple', '900', 'Synthetic Food'], ['Synthetic Soap', '500', 'Synthetic Household']]) {
-    await page.locator('#receipt-merchant').focus();
+    await click('品目一覧');
     await click('品目を追加'); const item = page.locator('[data-receipt-item]').nth(itemIndex++); await item.waitFor();
     if (await item.getAttribute('open') === null) await item.locator('summary').click(); await item.locator('[data-item-name]').fill(name); await item.locator('[data-item-amount]').fill(amount); await item.locator('[data-item-category]').selectOption({ label: categoryName });
   }
+  await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await detail('Synthetic Split'); const before = await records(); const splitRecord = before.records.find(row => row.kind === 'receipt-metadata' && row.value.confirmedValue?.merchant === 'Synthetic Split'); const original = splitRecord.value.registration.actualTransactionId;
   await remove(); let snapshot = await records(); assert.equal(snapshot.blobs.length, 1); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.status, 'deleted');
