@@ -87,9 +87,11 @@ try {
   const beforeEditRecords = await recordNames();
   assert.match(beforeEditRecords, /Synthetic Monthly Expense/);
   assert.match(beforeEditRecords, /Synthetic Monthly Income/);
-  assert.doesNotMatch(beforeEditRecords, /Synthetic Weekly Expense|Synthetic Yearly Expense/);
+  // Saving fills a due occurrence even when future automatic posting is off.
+  assert.match(beforeEditRecords, /Synthetic Weekly Expense/);
+  assert.match(beforeEditRecords, /Synthetic Yearly Expense/);
   const generatedTransactionCount = await page.locator('.record-groups li').count();
-  assert.equal(generatedTransactionCount, 2);
+  assert.equal(generatedTransactionCount, 4);
   await page.getByRole('button', { name: /Synthetic Monthly Expense · .*¥1,500/ }).click();
   await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
   assert.match(await page.locator('.transaction-detail').innerText(), /カテゴリ\s+Synthetic Schedule Food/);
@@ -112,7 +114,8 @@ try {
   await page.getByRole('button', { name: 'Synthetic Monthly Expense Edited · 支出 ¥1,700', exact: true }).waitFor();
   const editedRecords = await recordNames();
   assert.equal(await page.locator('.record-groups li').count(), generatedTransactionCount - 1);
-  assert.doesNotMatch(editedRecords, /Synthetic Weekly Expense|Synthetic Yearly Expense/);
+  assert.match(editedRecords, /Synthetic Weekly Expense/);
+  assert.match(editedRecords, /Synthetic Yearly Expense/);
   await page.getByRole('button', { name: /Synthetic Monthly Expense · .*¥1,500/ }).click();
   assert.match(await page.locator('.transaction-detail').innerText(), /カテゴリ\s+Synthetic Schedule Food/);
   assert.match(await page.locator('.transaction-detail').innerText(), /金額\s+¥1,500/);
