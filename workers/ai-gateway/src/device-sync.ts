@@ -395,8 +395,68 @@ export interface PutChunkInput {
   body: ReadableStream<Uint8Array> | null;
 }
 
-async function queueObjectDeletion(db: SyncD1Database, key: string, householdId: string): Promise<void> {
-  await db.prepare("INSERT OR IGNORE INTO sync_object_deletions(object_key, household_id) VALUES (?, ?)").bind(key, householdId).run();
+/** Atomically reserves an object key before crossing the D1/R2 boundary. */
+async function beginStorageOperation(ctx: SyncContext, household: HouseholdRow, key: string): Promise<string> {
+  const operationId = crypto.randomUUID();
+  const result = await ctx.db.prepare(`INSERT INTO sync_storage_operations(id, household_id, object_key, state, created_at)
+    SELECT ?1, ?2, ?3, 'pending', ?4
+    WHERE EXISTS (SELECT 1 FROM sync_households WHERE id = ?2 AND status = 'active')
+      AND NOT EXISTS (SELECT 1 FROM sync_households h JOIN account_deletion_tombstones t ON t.user_id = h.owner_user_id WHERE h.id = ?2)
+      AND NOT EXISTS (SELECT 1 FROM sync_storage_operations WHERE object_key = ?3)
+      AND NOT EXISTS (SELECT 1 FROM sync_retired_object_keys WHERE object_key = ?3)`)
+    .bind(operationId, household.id, key, ctx.now).run();
+  if (changes(result) === 1) return operationId;
+  const current = await ctx.db.prepare("SELECT status FROM sync_households WHERE id = ?").bind(household.id).first<{ status: string }>();
+  if (!current || current.status !== "active") throw new SyncError(409, "household_deleting");
+  const deletingAccount = await ctx.db.prepare(`SELECT 1 AS found FROM sync_households h
+    JOIN account_deletion_tombstones t ON t.user_id = h.owner_user_id WHERE h.id = ?`).bind(household.id).first();
+  if (deletingAccount) throw new SyncError(409, "account_deleting");
+  const retired = await ctx.db.prepare("SELECT object_key FROM sync_retired_object_keys WHERE object_key = ?").bind(key).first();
+  if (retired) throw new SyncError(410, "chunk_retired");
+  throw new SyncError(409, "storage_operation_pending");
+}
+
+/**
+ * Settles a provider write and either records the chunk or queues its object
+ * for deletion, all while the operation row still protects destructive work.
+ */
+async function finishChunkStorageOperation(
+  ctx: SyncContext,
+  operationId: string,
+  householdId: string,
+  versionId: string,
+  index: number,
+  key: string,
+  now: number,
+): Promise<boolean> {
+  const results = await ctx.db.batch([
+    ctx.db.prepare("UPDATE sync_storage_operations SET state = 'settled' WHERE id = ? AND state = 'pending'").bind(operationId),
+    ctx.db.prepare(`UPDATE sync_chunks SET state = 'stored'
+      WHERE version_id = ?1 AND chunk_index = ?2 AND object_key = ?3 AND state = 'pending'
+        AND EXISTS (SELECT 1 FROM sync_storage_operations WHERE id = ?4 AND state = 'settled')
+        AND EXISTS (SELECT 1 FROM sync_versions v JOIN sync_households h ON h.id = v.household_id
+          WHERE v.id = ?1 AND v.state = 'uploading' AND v.expires_at > ?5
+            AND h.id = ?6 AND h.status = 'active' AND h.generation = v.generation)
+        AND NOT EXISTS (SELECT 1 FROM sync_households h JOIN account_deletion_tombstones t ON t.user_id = h.owner_user_id WHERE h.id = ?6)`)
+      .bind(versionId, index, key, operationId, now, householdId),
+    ctx.db.prepare(`INSERT OR IGNORE INTO sync_object_deletions(object_key, household_id)
+      SELECT object_key, household_id FROM sync_storage_operations o
+      WHERE o.id = ?1 AND o.state = 'settled'
+        AND NOT EXISTS (SELECT 1 FROM sync_chunks c WHERE c.version_id = ?2 AND c.chunk_index = ?3 AND c.object_key = ?4 AND c.state = 'stored')`)
+      .bind(operationId, versionId, index, key),
+    ctx.db.prepare("DELETE FROM sync_storage_operations WHERE id = ? AND state = 'settled'").bind(operationId),
+  ]) as Array<{ meta?: { changes?: number } }>;
+  return changes(results[1] ?? {}) === 1;
+}
+
+/** A rejected provider call has ended; retain a durable delete before releasing the guard. */
+async function failStorageOperation(ctx: SyncContext, operationId: string): Promise<void> {
+  await ctx.db.batch([
+    ctx.db.prepare("UPDATE sync_storage_operations SET state = 'settled' WHERE id = ? AND state = 'pending'").bind(operationId),
+    ctx.db.prepare(`INSERT OR IGNORE INTO sync_object_deletions(object_key, household_id)
+      SELECT object_key, household_id FROM sync_storage_operations WHERE id = ? AND state = 'settled'`).bind(operationId),
+    ctx.db.prepare("DELETE FROM sync_storage_operations WHERE id = ? AND state = 'settled'").bind(operationId),
+  ]);
 }
 
 export async function putChunk(ctx: SyncContext, household: HouseholdRow, device: DeviceRow, input: PutChunkInput) {
@@ -445,17 +505,21 @@ export async function putChunk(ctx: SyncContext, household: HouseholdRow, device
   }
   if (!input.body) throw new SyncError(400, "invalid_request");
 
+  const operationId = await beginStorageOperation(ctx, household, key);
   try {
     await ctx.provider.put(key, input.body, { size: input.size, sha256: input.sha256 });
   } catch (error) {
+    if (error instanceof SyncStorageConflictError || error instanceof SyncStorageIntegrityError) await failStorageOperation(ctx, operationId);
+    // An unknown provider failure can leave the remote outcome undetermined.
+    // Keep its durable guard; time alone must never authorize deletion/retry.
     if (error instanceof SyncStorageConflictError) throw new SyncError(409, "chunk_conflict");
     if (error instanceof SyncStorageIntegrityError) throw new SyncError(400, "checksum_mismatch");
     throw error;
   }
-  const stored = await db.prepare("UPDATE sync_chunks SET state = 'stored' WHERE version_id = ? AND chunk_index = ?").bind(input.versionId, input.index).run();
-  if (changes(stored) !== 1) {
-    // The version was removed (expiry, pruning, or deletion) while the object was being written.
-    await queueObjectDeletion(db, key, household.id);
+  const stored = await finishChunkStorageOperation(ctx, operationId, household.id, input.versionId, input.index, key, now);
+  if (!stored) {
+    // The household/version changed while the write was in flight. The batch
+    // queued the provider object before releasing its deletion guard.
     throw new SyncError(409, "upload_aborted");
   }
   return { created: true, index: input.index, size: input.size, sha256: input.sha256 };
@@ -576,7 +640,7 @@ export async function drainObjectDeletions(ctx: Pick<SyncContext, "db" | "provid
   const result: DrainResult = { deleted: 0, failed: 0 };
   const maxObjects = options.maxObjects ?? 1000;
   while (result.deleted + result.failed < maxObjects) {
-    const page = await db.prepare("SELECT object_key FROM sync_object_deletions WHERE (? IS NULL OR household_id = ?) ORDER BY object_key LIMIT 50")
+    const page = await db.prepare("SELECT object_key FROM sync_object_deletions WHERE (? IS NULL OR household_id = ?) AND NOT EXISTS (SELECT 1 FROM sync_storage_operations o WHERE o.object_key = sync_object_deletions.object_key AND o.state = 'pending') ORDER BY object_key LIMIT 50")
       .bind(options.householdId ?? null, options.householdId ?? null).all<{ object_key: string }>();
     if (page.results.length === 0) break;
     const outcomes = await Promise.allSettled(page.results.map((row) => provider.delete(row.object_key)));
@@ -603,10 +667,14 @@ export async function collectSyncGarbage(ctx: SyncContext, options: { householdI
   const scope = options.householdId ?? null;
   // A publish that races with this statement either commits first (the version
   // is no longer uploading) or is rejected by its `expires_at > now` guard.
-  const expiredWhere = "state = 'uploading' AND expires_at <= ?1 AND (?2 IS NULL OR household_id = ?2)";
+  const expiredWhere = `state = 'uploading' AND expires_at <= ?1 AND (?2 IS NULL OR household_id = ?2)
+      AND NOT EXISTS (SELECT 1 FROM sync_chunks c JOIN sync_storage_operations o ON o.object_key = c.object_key
+        WHERE c.version_id = sync_versions.id AND o.state = 'pending')`;
   const prunedWhere = `state = 'published' AND sequence IS NOT NULL AND (?2 IS NULL OR household_id = ?2)
       AND sequence < (SELECT current_sequence FROM sync_households h WHERE h.id = sync_versions.household_id) - ?1
-      AND id IS NOT (SELECT current_version_id FROM sync_households h WHERE h.id = sync_versions.household_id)`;
+      AND id IS NOT (SELECT current_version_id FROM sync_households h WHERE h.id = sync_versions.household_id)
+      AND NOT EXISTS (SELECT 1 FROM sync_chunks c JOIN sync_storage_operations o ON o.object_key = c.object_key
+        WHERE c.version_id = sync_versions.id AND o.state = 'pending')`;
   // Counts are informational; the DELETE statements below decide what is removed.
   const countOf = async (where: string, first: number) =>
     (await db.prepare(`SELECT COUNT(*) AS count FROM sync_versions WHERE ${where}`).bind(first, scope).first<{ count: number }>())?.count ?? 0;
@@ -632,6 +700,9 @@ export async function deleteHouseholdData(ctx: SyncContext, household: Household
     db.prepare("UPDATE sync_households SET status = 'deleting', generation = generation + 1, updated_at = ?1 WHERE id = ?2 AND status = 'active'").bind(now, household.id),
     db.prepare("UPDATE sync_devices SET revoked_at = ?1 WHERE household_id = ?2 AND revoked_at IS NULL").bind(now, household.id),
   ]);
+  const pending = await db.prepare("SELECT id FROM sync_storage_operations WHERE household_id = ? AND state = 'pending' LIMIT 1")
+    .bind(household.id).first<{ id: string }>();
+  if (pending) throw new SyncError(409, "storage_operation_pending");
   // Deleting version rows cascades to chunks, whose trigger queues each object.
   await db.prepare("DELETE FROM sync_versions WHERE household_id = ?").bind(household.id).run();
   const drained = await drainObjectDeletions(ctx, { householdId: household.id, maxObjects: 100_000 });

@@ -15,23 +15,23 @@ function testDatabase(existingUserId: string | null = null) {
   let hasTombstone = false;
   const database: AccountD1Database = {
     prepare(query) {
-      return {
-        bind(...values) {
-          calls.push({ query, values });
-          const statement = {
-            async first<T>() {
-              if (query.includes("SELECT id FROM user")) return existingUserId ? { id: existingUserId } as T : null;
-              if (query.includes("account_deletion_tombstones")) return hasTombstone ? { user_id: "synthetic-user" } as T : null;
-              return null;
-            },
-            async run() { return { success: true, meta: { changes: 1 } }; },
-          };
-          return Object.assign(statement, { query, values });
+      let values: unknown[] = [];
+      const statement = {
+        query,
+        get values() { return values; },
+        bind(...nextValues: unknown[]) { values = nextValues; calls.push({ query, values }); return statement; },
+        async first<T>() {
+          if (query.includes("SELECT id FROM user")) return existingUserId ? { id: existingUserId } as T : null;
+          if (query.includes("account_deletion_tombstones")) return hasTombstone ? { user_id: "synthetic-user" } as T : null;
+          return null;
         },
+        async all<T>() { return { results: [] as T[] }; },
+        async run() { return { success: true, meta: { changes: 1 } }; },
       };
+      return statement;
     },
     async batch(statements) {
-      const queries = statements.map((statement) => (statement as { query: string }).query);
+      const queries = statements.map((statement) => "query" in statement ? String(statement.query) : "");
       batches.push(queries);
       if (queries.some((query) => query.includes("account_deletion_tombstones"))) hasTombstone = true;
       return statements.map(() => ({ success: true })) as never[];
