@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
+import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 375, height: 812 }, acceptDownloads: true });
@@ -58,8 +59,7 @@ try {
   await noOverflow();
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
   const download = await downloadPromise; const buffer = await readFile(await download.path());
-  // The download starts before the export finishes; a restore chosen meanwhile is ignored as a concurrent operation.
-  await page.getByText('バックアップを生成しました。Filesなどへの保存を確認してください。', { exact: true }).waitFor();
+  await waitForBackupExportReady(page);
   page.once('dialog', dialog => dialog.accept()); const navigation = page.waitForNavigation({ waitUntil: 'load' });
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-account-types.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥0').waitFor();
