@@ -1,0 +1,1121 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KakeiMatch 台帳と印鑑</title>
+<style>
+/* Layout: 説明を上に短く置き、10台のスマートフォン画面を「記録する→確かめる→管理する」の流れで並べ、最後に機能の対応表を置く */
+:root {
+  --paper: #F5F6F9;
+  --sheet: #FFFFFF;
+  --ink: #1B2240;
+  --ink-2: #596079;
+  --rule: #DCE0EA;
+  --ai: #2B3A8C;
+  --ai-soft: #E7EAF8;
+  --on-ai: #FFFFFF;
+  --income: #1F6E8C;
+  --shu: #B3361F;
+  --shu-soft: #FBE7E1;
+  --amber: #875600;
+  --amber-soft: #FFF0CC;
+  --plum: #7A3B7E;
+  --plum-soft: #F4E6F5;
+  --danger: #B3261E;
+  --fab: var(--ink);       /* 追加ボタン・レシートを撮る */
+  --on-fab: var(--paper);
+  --frame: #D3D8E4;
+  --scrim: rgb(15 18 32 / .45);
+  --shadow: 0 1px 2px rgb(27 34 64 / .06), 0 12px 32px rgb(27 34 64 / .08);
+  --c1: #2B3A8C; --c2: #3E8C7A; --c3: #B07A1E; --c4: #A9AFC2;
+
+  --f-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  --f-num: ui-monospace, "SF Mono", Menlo, "Roboto Mono", monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0F1220; --sheet: #181C2E; --ink: #E7E9F2; --ink-2: #9CA2BA; --rule: #2A2F45;
+    --ai: #A3B0FF; --ai-soft: #232A55; --on-ai: #10142B; --income: #7CCBE8;
+    --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #F2C46A; --amber-soft: #3A2C0E;
+    --plum: #E2A8E6; --plum-soft: #35203A; --danger: #FF8F84; --frame: #2E3450;
+    --scrim: rgb(0 0 0 / .6); --shadow: 0 0 0 1px rgb(255 255 255 / .03);
+    --c1: #A3B0FF; --c2: #6FCFB6; --c3: #E8B25A; --c4: #4A5070;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0F1220; --sheet: #181C2E; --ink: #E7E9F2; --ink-2: #9CA2BA; --rule: #2A2F45;
+  --ai: #A3B0FF; --ai-soft: #232A55; --on-ai: #10142B; --income: #7CCBE8;
+  --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #F2C46A; --amber-soft: #3A2C0E;
+  --plum: #E2A8E6; --plum-soft: #35203A; --danger: #FF8F84; --frame: #2E3450;
+  --scrim: rgb(0 0 0 / .6); --shadow: 0 0 0 1px rgb(255 255 255 / .03);
+  --c1: #A3B0FF; --c2: #6FCFB6; --c3: #E8B25A; --c4: #4A5070;
+  color-scheme: dark;
+}
+
+
+/* 配色の案：[data-palette] でトークンだけを差し替える */
+:root[data-palette="teal"] { --paper: #F3F7F5; --sheet: #FFFFFF; --ink: #17302A; --ink-2: #53665F; --rule: #DCE6E1; --frame: #CCD9D3; --ai: #0B7A68; --ai-soft: #E0F2EC; --on-ai: #FFFFFF; --income: #2D66B5; --shu: #B3361F; --shu-soft: #FBE7E1; --amber: #8A5200; --amber-soft: #FFEFD0; --plum: #7A3B7E; --plum-soft: #F4E6F5; --c1: #0B7A68; --c2: #D9661F; --c3: #2D66B5; --c4: #B4C2BC; }
+:root[data-palette="apricot"] { --fab: var(--ai); --on-fab: var(--on-ai); --danger: #9E1B32; --paper: #FAF6F1; --sheet: #FFFFFF; --ink: #2E2219; --ink-2: #6E5F52; --rule: #ECE2D7; --frame: #E0D3C4; --ai: #A94C16; --ai-soft: #FCE9DC; --on-ai: #FFFFFF; --income: #2D6FA8; --shu: #B3361F; --shu-soft: #FBE7E1; --amber: #3F55B5; --amber-soft: #E6EAFB; --plum: #8A3A78; --plum-soft: #F6E5F0; --c1: #B5531C; --c2: #2F7A4C; --c3: #8C7A2E; --c4: #D6CABB; }
+@media (prefers-color-scheme: dark) {
+  :root[data-palette="teal"]:not([data-theme="light"]) { --paper: #0E1513; --sheet: #17201D; --ink: #E4EEEA; --ink-2: #9DB0A9; --rule: #26332F; --frame: #2C3A35; --ai: #4FD1B0; --ai-soft: #173A32; --on-ai: #062019; --income: #8DB8F5; --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #F3B85A; --amber-soft: #3A2B10; --plum: #E2A8E6; --plum-soft: #35203A; --c1: #4FD1B0; --c2: #FFA766; --c3: #8DB8F5; --c4: #3E4B47; }
+  :root[data-palette="apricot"]:not([data-theme="light"]) { --fab: var(--ai); --on-fab: var(--on-ai); --danger: #FF8FA3; --paper: #17120E; --sheet: #221B15; --ink: #F2E9E0; --ink-2: #B3A493; --rule: #382D24; --frame: #40342A; --ai: #FFA56B; --ai-soft: #3D2414; --on-ai: #2A1205; --income: #8DC0F0; --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #AEB6FF; --amber-soft: #262C55; --plum: #F0A6DA; --plum-soft: #3A1E33; --c1: #FFA56B; --c2: #6FD69A; --c3: #D7C27A; --c4: #4A3E33; }
+}
+:root[data-palette="teal"][data-theme="dark"] { --paper: #0E1513; --sheet: #17201D; --ink: #E4EEEA; --ink-2: #9DB0A9; --rule: #26332F; --frame: #2C3A35; --ai: #4FD1B0; --ai-soft: #173A32; --on-ai: #062019; --income: #8DB8F5; --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #F3B85A; --amber-soft: #3A2B10; --plum: #E2A8E6; --plum-soft: #35203A; --c1: #4FD1B0; --c2: #FFA766; --c3: #8DB8F5; --c4: #3E4B47; }
+:root[data-palette="apricot"][data-theme="dark"] { --fab: var(--ai); --on-fab: var(--on-ai); --danger: #FF8FA3; --paper: #17120E; --sheet: #221B15; --ink: #F2E9E0; --ink-2: #B3A493; --rule: #382D24; --frame: #40342A; --ai: #FFA56B; --ai-soft: #3D2414; --on-ai: #2A1205; --income: #8DC0F0; --shu: #FF8C72; --shu-soft: #3B1D17; --amber: #AEB6FF; --amber-soft: #262C55; --plum: #F0A6DA; --plum-soft: #3A1E33; --c1: #FFA56B; --c2: #6FD69A; --c3: #D7C27A; --c4: #4A3E33; }
+
+/* 配色の切り替えバー */
+.switcher { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; max-width: 1240px; margin: -24px auto 32px;
+  background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--rule); border-radius: 18px; padding: 12px 14px; display: grid; gap: 10px; }
+.switcher .ctrls { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; }
+.switcher .grp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.switcher .grp > span { font-size: 12px; letter-spacing: .1em; color: var(--ink-2); font-weight: 700; }
+.switcher .seg { min-width: 0; }
+.switcher .seg button { padding-inline: 12px; min-height: 40px; }
+.pnote { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); font-size: 13.5px; }
+@media (min-width: 900px) { .pnote { grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; gap: 8px 24px; } }
+.pnote p { margin: 0; }
+.pnote .caution { color: var(--ink-2); }
+.swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+.sw { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 700; border-radius: 8px; padding: 3px 9px; }
+.sw.p { background: var(--ai); color: var(--on-ai); }
+.sw.ok { background: var(--shu-soft); color: var(--shu); }
+.sw.wa { background: var(--amber-soft); color: var(--amber); }
+.sw.mi { background: var(--plum-soft); color: var(--plum); }
+.sw.fa { background: color-mix(in srgb, var(--danger) 12%, var(--sheet)); color: var(--danger); }
+.sw.in { background: color-mix(in srgb, var(--income) 12%, var(--sheet)); color: var(--income); }
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { background: var(--paper); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.6;
+  padding-inline: 16px; padding-block: 40px 64px; }
+.num { font-family: var(--f-num); font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+button { font: inherit; color: inherit; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--ai); outline-offset: 2px; }
+svg.i { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------- 説明 ---------- */
+.intro { max-width: 1240px; margin: 0 auto 40px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .intro { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); align-items: end; } }
+.intro h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 900; line-height: 1.2; margin: 0; text-wrap: balance; }
+.intro h1 .seal-inline { display: inline-grid; place-items: center; width: 1.15em; height: 1.15em; border: 3px solid var(--shu); color: var(--shu); border-radius: 50%; font-size: .8em; transform: rotate(-8deg); vertical-align: .05em; margin-left: .1em; }
+.eyebrow { font-size: 12px; letter-spacing: .14em; color: var(--ink-2); margin: 0 0 8px; }
+.intro .lead { margin: 12px 0 0; color: var(--ink-2); max-width: 32em; }
+.principles { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.principles li { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 12px; padding-block: 10px; border-top: 1px solid var(--rule); }
+.principles span { color: var(--ink-2); }
+
+.chapter { max-width: 1640px; margin: 56px auto 20px; display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.chapter h2 { margin: 0; font-size: 22px; font-weight: 900; }
+.chapter span { color: var(--ink-2); font-size: 14px; }
+
+/* ---------- 画面の並び ---------- */
+.gallery { max-width: 1640px; margin: 0 auto; display: grid; gap: 48px 32px; justify-content: center;
+  grid-template-columns: repeat(auto-fit, minmax(min(372px, 100%), 372px)); }
+figure { margin: 0; display: grid; gap: 12px; min-width: 0; align-content: start; }
+figcaption { display: grid; gap: 2px; }
+figcaption b { font-size: 16px; }
+figcaption span { color: var(--ink-2); font-size: 13px; }
+figcaption .new { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700; color: var(--ai); border: 1px solid var(--ai); border-radius: 4px; padding: 0 5px; vertical-align: 2px; }
+
+.phone { width: 100%; height: 780px; border-radius: 40px; background: var(--paper); border: 1px solid var(--frame);
+  box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; position: relative; }
+.status { height: 40px; flex: none; display: flex; justify-content: space-between; align-items: center; padding-inline: 28px; font-size: 13px; font-weight: 700; }
+.status .dots { display: flex; gap: 4px; }
+.status .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink); }
+.screen { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 18px; }
+.screen > * { flex: none; }
+
+/* ---------- 共通部品 ---------- */
+.topbar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; min-height: 44px; }
+.topbar > :first-child { justify-self: start; }
+.topbar > :last-child { justify-self: end; }
+.topbar h2 { font-size: 17px; font-weight: 900; margin: 0; }
+.pagehead { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.pagehead h2 { font-size: 22px; font-weight: 900; margin: 0; }
+.iconbtn { width: 44px; height: 44px; display: grid; place-items: center; border: 0; background: none; border-radius: 50%; cursor: pointer; color: var(--ink-2); }
+.textbtn { border: 0; background: none; color: var(--ai); font-weight: 700; min-height: 44px; padding-inline: 4px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 4px; font-size: 14px; }
+.label { font-size: 12px; letter-spacing: .1em; color: var(--ink-2); font-weight: 500; }
+.sec-head { display: flex; justify-content: space-between; align-items: baseline; }
+.sec-head h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.sec-head a { color: var(--ai); font-size: 13px; font-weight: 700; text-decoration: none; }
+
+.ledger { border-top: 1px solid var(--rule); }
+.row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 58px; padding-block: 8px; border-bottom: 1px solid var(--rule); text-decoration: none; color: inherit; }
+.row.plain { grid-template-columns: minmax(0, 1fr) auto; }
+.row.nav-row { grid-template-columns: minmax(0, 1fr) auto 16px; min-height: 52px; }
+.row .who { min-width: 0; }
+.row .name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .sub { font-size: 12.5px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .amt { font-family: var(--f-num); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px; text-align: right; white-space: nowrap; }
+.row .amt.in { color: var(--income); }
+.row .val { font-size: 13px; color: var(--ink-2); text-align: right; }
+.row .chev { color: var(--ink-2); width: 16px; height: 16px; }
+.cat { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 13px; font-weight: 900; background: var(--ai-soft); color: var(--ai); }
+.cat.in { background: color-mix(in srgb, var(--income) 14%, var(--sheet)); color: var(--income); }
+.cat.tr { background: var(--paper); color: var(--ink-2); border: 1px solid var(--rule); }
+
+.state { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; }
+.state.warn { color: var(--amber); }
+.state.miss { color: var(--plum); }
+.state.ok { color: var(--shu); }
+.state .mark { width: 18px; height: 18px; display: inline-grid; place-items: center; border-radius: 50%; font-size: 11px; font-weight: 900; flex: none; }
+.state.warn .mark { background: var(--amber-soft); }
+.state.miss .mark { background: var(--plum-soft); }
+.seal { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1.5px solid var(--shu); color: var(--shu); border-radius: 50%; font-size: 12px; font-weight: 900; transform: rotate(-10deg); flex: none; }
+
+.cta { width: 100%; min-height: 54px; border: 0; border-radius: 14px; background: var(--ai); color: var(--on-ai); font-weight: 700; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.ghost { min-height: 44px; border: 1px solid var(--rule); border-radius: 12px; background: var(--sheet); padding-inline: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-weight: 700; font-size: 14px; cursor: pointer; }
+.dock { padding: 12px 16px; background: var(--sheet); border-top: 1px solid var(--rule); display: grid; gap: 4px; flex: none; }
+.dock .sub { display: flex; justify-content: center; }
+
+/* 切り替え */
+.seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; background: var(--rule); border-radius: 12px; padding: 3px; gap: 3px; }
+.seg button { min-height: 38px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); font-weight: 500; font-size: 14px; cursor: pointer; }
+.seg button[aria-selected="true"], .seg button[aria-pressed="true"] { background: var(--sheet); color: var(--ink); font-weight: 700; box-shadow: 0 1px 2px rgb(27 34 64 / .12); }
+
+/* 入力 */
+.form { display: grid; gap: 14px; }
+.fld { display: grid; gap: 6px; }
+.fld > label, .fld > .lbl { font-size: 13px; color: var(--ink-2); }
+.input { min-height: 48px; border: 1px solid var(--rule); border-radius: 12px; background: var(--sheet); padding-inline: 14px; display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 16px; min-width: 0; }
+.input.focus { border: 2px solid var(--ai); padding-inline: 13px; }
+.input .ph { color: var(--ink-2); }
+.input .caret { width: 2px; height: 1.2em; background: var(--ai); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.money { min-height: 68px; font-family: var(--f-num); font-weight: 700; font-size: 34px; justify-content: flex-start; }
+.money .yen { font-size: 22px; color: var(--ink-2); }
+.money.in { color: var(--income); }
+.quick { display: flex; gap: 8px; flex-wrap: wrap; }
+.pill { min-height: 36px; padding: 0 14px; border-radius: 18px; border: 1px solid var(--rule); background: var(--sheet); display: inline-flex; align-items: center; gap: 4px; font-size: 13.5px; cursor: pointer; }
+.pill[aria-checked="true"], .pill[aria-pressed="true"] { border: 2px solid var(--ai); padding-inline: 13px; background: var(--ai-soft); color: var(--ai); font-weight: 700; }
+.catgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.catbtn { min-height: 64px; border: 1px solid var(--rule); border-radius: 12px; background: var(--sheet); display: grid; justify-items: center; align-content: center; gap: 2px; font-size: 12px; padding: 6px 2px; cursor: pointer; text-align: center; }
+.catbtn .cat { width: 28px; height: 28px; font-size: 12px; border-radius: 8px; }
+.catbtn[aria-checked="true"] { border: 2px solid var(--ai); background: var(--ai-soft); font-weight: 700; color: var(--ai); }
+.catbtn.more { color: var(--ai); font-weight: 700; }
+.fold { min-height: 48px; display: flex; align-items: center; gap: 8px; border-top: 1px solid var(--rule); color: var(--ink); font-weight: 500; font-size: 14px; }
+.fold::before { content: "▸"; color: var(--ink-2); }
+.fold small { color: var(--ink-2); font-weight: 400; }
+.inline-add { display: flex; gap: 8px; }
+.inline-add .input { flex: 1; }
+
+/* 下部ナビ */
+.nav { flex: none; display: grid; grid-template-columns: repeat(5, 1fr); align-items: end; background: var(--sheet); border-top: 1px solid var(--rule); padding: 6px 4px 22px; position: relative; z-index: 1; }
+.nav a { display: grid; justify-items: center; gap: 2px; font-size: 11px; color: var(--ink-2); text-decoration: none; min-height: 48px; position: relative; padding-top: 4px; }
+.nav a[aria-current="page"] { color: var(--ai); font-weight: 700; }
+.nav a[aria-current="page"]::before { content: ""; position: absolute; top: -7px; width: 24px; height: 3px; border-radius: 0 0 3px 3px; background: var(--ai); }
+.nav .add { margin-top: -22px; }
+.nav .add .btn { width: 56px; height: 56px; border-radius: 18px; background: var(--fab); color: var(--on-fab); display: grid; place-items: center; box-shadow: 0 6px 16px rgb(27 34 64 / .25); }
+.nav .add .btn svg { width: 26px; height: 26px; }
+.nav .badge { position: absolute; top: 0; right: calc(50% - 22px); min-width: 18px; height: 18px; padding-inline: 5px; border-radius: 9px; background: var(--amber); color: var(--sheet); font: 700 11px/18px var(--f-num); text-align: center; }
+
+/* ---------- ホーム ---------- */
+.month { display: flex; align-items: center; justify-content: space-between; }
+.month strong { font-size: 17px; font-weight: 900; }
+.total { display: grid; gap: 6px; }
+.total .big { font-family: var(--f-num); font-weight: 700; font-size: 44px; line-height: 1; letter-spacing: -.04em; }
+.total .big small { font-size: 24px; margin-right: 2px; vertical-align: .3em; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; border-block: 1px solid var(--rule); }
+.pair div { padding: 8px 0; display: grid; }
+.pair div + div { border-left: 1px solid var(--rule); padding-left: 12px; }
+.pair span { font-size: 12px; color: var(--ink-2); }
+.pair b { font-family: var(--f-num); font-weight: 600; font-size: 16px; }
+.pair b.in { color: var(--income); }
+.days { display: grid; gap: 8px; }
+.days .top { display: flex; justify-content: space-between; font-size: 13px; color: var(--ink-2); }
+.days .top b { color: var(--ink); font-family: var(--f-num); font-weight: 600; }
+.ticks { position: relative; display: grid; grid-template-columns: repeat(31, 1fr); gap: 2px; height: 26px; }
+.ticks i { border-radius: 2px; background: var(--rule); }
+.ticks i.f { background: var(--ai); }
+.ticks i.over { background: var(--amber); }
+.ticks .today { position: absolute; top: -5px; bottom: -5px; width: 2px; background: var(--ink); left: calc(18 / 31 * 100% - 1px); border-radius: 1px; }
+.days .legend { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); gap: 8px; }
+.days .legend b { color: var(--amber); }
+.todo { background: var(--sheet); border-radius: 18px; padding: 4px 14px; border: 1px solid var(--rule); }
+.todo .head { display: flex; align-items: center; justify-content: space-between; min-height: 48px; }
+.todo .head h3 { margin: 0; font-size: 15px; font-weight: 900; display: flex; align-items: center; gap: 8px; }
+.count { font-family: var(--f-num); background: var(--amber-soft); color: var(--amber); border-radius: 8px; padding: 0 8px; font-size: 14px; }
+.todo .row:last-child { border-bottom: 0; }
+.done-line { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--ink-2); min-height: 44px; }
+.done-line b { color: var(--ink); font-family: var(--f-num); }
+.split { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; }
+.split i { display: block; }
+.split-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px; margin-top: 10px; font-size: 13px; }
+.split-legend div { display: flex; align-items: center; gap: 6px; }
+.split-legend .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.split-legend .p { margin-left: auto; font-family: var(--f-num); font-weight: 600; }
+
+/* ---------- 追加シート ---------- */
+.behind { filter: saturate(.6); }
+.overlay { position: absolute; inset: 0; background: var(--scrim); display: flex; flex-direction: column; justify-content: flex-end; z-index: 2; }
+.sheet { background: var(--sheet); border-radius: 24px 24px 0 0; padding: 8px 16px 30px; display: grid; gap: 12px; }
+.grab { width: 40px; height: 5px; border-radius: 3px; background: var(--rule); justify-self: center; }
+.sheet .sh { display: flex; justify-content: space-between; align-items: center; }
+.sheet .sh h3 { margin: 0; font-size: 18px; font-weight: 900; }
+.shoot-big { display: grid; grid-template-columns: 52px minmax(0, 1fr) 16px; gap: 14px; align-items: center; padding: 14px 16px; border-radius: 16px; background: var(--sheet); color: var(--ink); border: 1px solid var(--rule); text-decoration: none; }
+.shoot-big > .chev { color: var(--ink-2); }
+.shoot-big .ic { width: 52px; height: 52px; border-radius: 14px; background: var(--ai); color: var(--on-ai); display: grid; place-items: center; }
+.shoot-big b { font-size: 17px; display: block; }
+.shoot-big b + span { display: block; font-size: 12.5px; color: var(--ink-2); }
+.kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.kind { min-height: 64px; border: 1px solid var(--rule); border-radius: 14px; padding: 10px 12px; display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: center; text-decoration: none; }
+.kind b { font-size: 14.5px; display: block; }
+.kind span { font-size: 12px; color: var(--ink-2); }
+.kind svg { color: var(--ai); }
+
+
+/* ---------- 帳簿の行で組む入力 ---------- */
+.lf { border-top: 1px solid var(--rule); }
+.lr { display: grid; grid-template-columns: 4.6em minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 50px; padding-block: 6px;
+  border-bottom: 1px solid var(--rule); color: inherit; text-decoration: none; }
+.lr > .k { font-size: 13px; color: var(--ink-2); }
+.lr > .v { min-width: 0; font-size: 15.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lr > .v.ph { color: var(--ink-2); font-weight: 400; font-size: 14px; }
+.lr > .chev { color: var(--ink-2); width: 16px; height: 16px; }
+.lr.money { min-height: 62px; }
+.lr.money .v { font-family: var(--f-num); font-weight: 700; font-size: 30px; letter-spacing: -.03em; display: flex; align-items: center; gap: 2px; }
+.lr.money .yen { font-size: 18px; color: var(--ink-2); }
+.lr.money.in .v { color: var(--income); }
+.lr.active { box-shadow: inset 0 -2px 0 var(--ai); }
+.lr.warnrow { box-shadow: inset 0 -2px 0 var(--amber); }
+.lr .caret { width: 2px; height: 1.1em; background: var(--ai); margin-left: 2px; animation: blink 1s steps(1) infinite; }
+.lr.stack { grid-template-columns: 4.6em minmax(0, 1fr); padding-block: 8px; }
+.lr .opts { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.lr .more { color: var(--ai); font-weight: 700; font-size: 13.5px; text-decoration: none; min-height: 36px; display: inline-flex; align-items: center; padding-inline: 4px; }
+.lr.cat1 .v { display: flex; align-items: baseline; gap: 8px; }
+.lr.cat1 .hint { font-size: 12px; color: var(--ink-2); font-weight: 400; }
+.lr .hint { font-size: 12px; color: var(--ink-2); }
+.pill.sm { min-height: 36px; padding-inline: 12px; font-size: 13.5px; }
+.pill.sm[aria-checked="true"] { padding-inline: 11px; }
+.lr.photo { grid-template-columns: 4.6em minmax(0, 1fr) auto; min-height: 72px; }
+.lr.photo .v { white-space: normal; }
+.lr.photo .v b { display: block; font-size: 14px; }
+.lr.photo .v small { display: block; font-size: 12px; color: var(--ink-2); font-weight: 400; }
+.thumb { width: 42px; height: 56px; border: 1px solid var(--rule); border-radius: 4px; background: var(--sheet);
+  background-image: repeating-linear-gradient(var(--sheet) 0 7px, var(--rule) 7px 8px); background-clip: content-box; padding: 6px 5px; }
+.mini-split { display: grid; gap: 6px; min-width: 0; }
+.mini-split .split { height: 8px; }
+.mini-split .ml { display: flex; gap: 14px; flex-wrap: wrap; font-size: 13px; }
+.mini-split .ml > span { display: inline-flex; align-items: center; gap: 5px; }
+.mini-split .dot { width: 9px; height: 9px; border-radius: 3px; }
+
+/* ---------- 読み取り中 ---------- */
+.scanbox { position: relative; border-radius: 18px; background: repeating-linear-gradient(135deg, var(--rule) 0 1px, transparent 1px 9px), var(--ai-soft); padding: 18px 0 14px; display: grid; justify-items: center; overflow: hidden; }
+.receipt { width: 70%; background: var(--sheet); padding: 12px 14px 14px; font-family: var(--f-num); font-size: 10.5px; line-height: 1.65; position: relative; box-shadow: 0 2px 10px rgb(27 34 64 / .12); }
+.receipt .r-shop { font-family: var(--f-body); font-weight: 900; text-align: center; font-size: 13px; }
+.receipt .r-line { display: flex; justify-content: space-between; gap: 8px; }
+.receipt .r-sum { border-top: 1px dashed var(--ink-2); margin-top: 4px; padding-top: 4px; font-weight: 700; font-size: 12px; }
+.scan { position: absolute; left: 0; right: 0; height: 36px; top: 0; pointer-events: none;
+  background: linear-gradient(transparent, color-mix(in srgb, var(--ai) 22%, transparent) 85%, var(--ai) 85% 100%);
+  animation: scan 2.2s ease-in-out infinite alternate; }
+@keyframes scan { from { transform: translateY(0); } to { transform: translateY(240px); } }
+#rd:not([data-s="read"]) .scan { display: none; }
+#rd[data-s="fail"] .receipt { filter: blur(1.2px); }
+.badge-read { position: absolute; top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 6px; background: var(--ink); color: var(--paper); font-size: 12px; font-weight: 700; border-radius: 12px; padding: 3px 10px; }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; display: inline-block; flex: none; }
+.spin.ai { color: var(--ai); }
+@keyframes spin { to { transform: rotate(360deg); } }
+.steps { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+.steps li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 10px; align-items: center; min-height: 46px; padding-block: 6px; border-bottom: 1px solid var(--rule); font-size: 14px; color: var(--ink-2); }
+.steps li small { display: block; font-size: 12px; color: var(--ink-2); font-weight: 400; }
+.steps .sm { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 900; border: 1.5px dashed var(--frame); }
+.steps li.done { color: var(--ink); }
+.steps li.done .sm { border: 0; background: var(--ai-soft); color: var(--ai); }
+.steps li.now { color: var(--ink); font-weight: 700; }
+.steps li.now .sm { border: 0; }
+.steps li.fail { color: var(--danger); font-weight: 700; }
+.steps li.fail .sm { border: 0; background: color-mix(in srgb, var(--danger) 14%, var(--sheet)); color: var(--danger); }
+.sk { display: block; height: 14px; border-radius: 5px; background: linear-gradient(90deg, var(--rule) 0 40%, var(--paper) 50%, var(--rule) 60% 100%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
+.sk.tagsk { width: 54px; height: 22px; border-radius: 6px; }
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.failbox { display: grid; gap: 4px; padding: 12px 14px; border-radius: 14px; background: color-mix(in srgb, var(--danger) 10%, var(--sheet)); font-size: 13.5px; }
+.failbox b { color: var(--danger); }
+.cta:disabled { background: var(--rule); color: var(--ink-2); cursor: default; }
+.lr.derived .v { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; white-space: normal; font-size: 14px; }
+.lr.derived .tagline { font-size: 12px; font-weight: 700; color: var(--ai); background: var(--ai-soft); border-radius: 6px; padding: 0 6px; }
+.lr.derived .dc { display: inline-flex; align-items: center; gap: 5px; }
+.lr.derived .dot { width: 9px; height: 9px; border-radius: 3px; }
+#rd-seg { margin-bottom: 2px; }
+
+/* ---------- 品目一覧 ---------- */
+.items { border-top: 1px solid var(--rule); }
+.item { border-bottom: 1px solid var(--rule); }
+.item-row { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; min-height: 52px; padding: 6px 0; border: 0; background: none; text-align: left; cursor: pointer; }
+.item-row .nm { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14.5px; }
+.item-row .nm small { display: block; font-size: 12px; }
+.item-row .pr { font-family: var(--f-num); font-weight: 600; font-size: 14.5px; min-width: 4.6em; text-align: right; }
+.ctag { font-size: 12px; border-radius: 6px; padding: 2px 8px; border: 1px solid var(--rule); white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.ctag .dot { width: 8px; height: 8px; border-radius: 2px; }
+.ctag.sug { border-style: dashed; }
+.item-edit { display: grid; gap: 10px; padding: 4px 0 14px; }
+.item-edit[hidden] { display: none; }
+.item-edit .two { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+.item-edit .input { min-height: 44px; font-size: 15px; }
+.item-edit .why-cat { font-size: 12.5px; color: var(--ink-2); }
+.item-edit .del { color: var(--danger); font-weight: 700; font-size: 14px; border: 0; background: none; min-height: 44px; justify-self: start; padding: 0; cursor: pointer; }
+.item.adj .item-row .nm { color: var(--ink-2); }
+.item.adj .pr { color: var(--ink); }
+.addline { display: flex; gap: 16px; flex-wrap: wrap; }
+.item.open { background: linear-gradient(var(--ai-soft), var(--ai-soft)) 0 0 / 3px 100% no-repeat; padding-left: 10px; margin-left: -10px; }
+
+/* ---------- 記録一覧 ---------- */
+.pending { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 14px; border: 1px dashed var(--frame); background: var(--sheet); }
+.dayhead { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--ink-2); padding: 14px 0 4px; font-weight: 700; }
+.dayhead .num { font-weight: 600; }
+
+/* ---------- 照合 ---------- */
+.tally { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--rule); border-radius: 16px; background: var(--sheet); overflow: hidden; }
+.tally div { padding: 12px; display: grid; gap: 2px; }
+.tally div + div { border-left: 1px solid var(--rule); }
+.tally .n { font-family: var(--f-num); font-size: 26px; font-weight: 700; line-height: 1.1; }
+.tally .warn { background: var(--amber-soft); }
+.tally .miss { background: var(--plum-soft); }
+.tally .warn .n, .tally .warn .t { color: var(--amber); }
+.tally .miss .n, .tally .miss .t { color: var(--plum); }
+.tally .ok .n, .tally .ok .t { color: var(--shu); }
+.tally .t { font-size: 12px; font-weight: 700; }
+.group-title { font-size: 12px; letter-spacing: .1em; color: var(--ink-2); margin: 0 0 4px; }
+.row.match { grid-template-columns: minmax(0, 1fr) auto 16px; }
+.waiting { font-size: 13px; color: var(--ink-2); display: flex; gap: 8px; align-items: center; }
+.import { border: 1px solid var(--rule); border-radius: 14px; background: var(--sheet); padding: 12px 14px; display: grid; gap: 10px; }
+.import .ih { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+.import .note { font-size: 12px; color: var(--ink-2); }
+
+/* ---------- 突き合わせ ---------- */
+.compare { display: grid; position: relative; }
+.slip { background: var(--sheet); border: 1px solid var(--rule); padding: 12px 14px; display: grid; gap: 2px; }
+.slip.top { border-radius: 16px 16px 0 0; border-bottom: 0; }
+.slip.bottom { border-radius: 0 0 16px 16px; border-top: 0; }
+.perf { height: 0; border-top: 2px dashed var(--rule); margin-inline: 14px; position: relative; }
+.perf::before, .perf::after { content: ""; position: absolute; top: -9px; width: 16px; height: 16px; border-radius: 50%; background: var(--paper); border: 1px solid var(--rule); }
+.perf::before { left: -23px; clip-path: inset(0 0 0 50%); }
+.perf::after { right: -23px; clip-path: inset(0 50% 0 0); }
+.slip .src { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-2); letter-spacing: .06em; margin-bottom: 4px; }
+.slip dl { margin: 0; display: grid; grid-template-columns: 3.5em minmax(0, 1fr); row-gap: 4px; column-gap: 12px; }
+.slip dt { font-size: 12.5px; color: var(--ink-2); align-self: center; }
+.slip dd { margin: 0; font-weight: 500; min-width: 0; }
+.slip dd.num { font-size: 18px; font-weight: 700; }
+.slip dd.diff { background: var(--amber-soft); color: var(--amber); border-radius: 6px; padding: 0 6px; justify-self: start; }
+.slip dd .same { font-family: var(--f-body); font-size: 12px; color: var(--ink-2); font-weight: 500; margin-left: 6px; }
+.why { display: grid; gap: 6px; padding: 14px; border-radius: 14px; background: var(--amber-soft); }
+.why b { color: var(--amber); }
+.why ul { margin: 0; padding-left: 1.2em; font-size: 13.5px; }
+.big-seal { position: absolute; right: 18px; top: 50%; width: 96px; height: 96px; margin-top: -48px; border: 4px solid var(--shu); color: var(--shu); border-radius: 50%; display: grid; place-items: center; text-align: center; font-weight: 900; line-height: 1.1; pointer-events: none; opacity: 0; transform: rotate(-14deg) scale(1.6); background: color-mix(in srgb, var(--sheet) 70%, transparent); }
+.big-seal span { font-size: 34px; }
+.big-seal small { font-size: 11px; display: block; letter-spacing: .1em; }
+.compare.stamped .big-seal { opacity: .92; transform: rotate(-14deg) scale(1); transition: transform .22s cubic-bezier(.3,1.6,.5,1), opacity .12s; }
+
+/* ---------- 設定 ---------- */
+.setgroup { display: grid; gap: 4px; }
+.setgroup h3 { margin: 0; font-size: 12px; letter-spacing: .1em; color: var(--ink-2); font-weight: 700; }
+.backup { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+.backup .warnline { font-size: 12.5px; }
+.backup .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.backup .btns .ghost.primary { background: var(--ai); color: var(--on-ai); border-color: var(--ai); }
+.foot { font-size: 12px; color: var(--ink-2); }
+
+/* ---------- 対応表 ---------- */
+.coverage { max-width: 1100px; margin: 0 auto; }
+.coverage .wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 16px; background: var(--sheet); }
+.coverage table { width: 100%; border-collapse: collapse; min-width: 640px; font-size: 14px; }
+.coverage th, .coverage td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.coverage thead th { font-size: 12px; letter-spacing: .08em; color: var(--ink-2); font-weight: 700; background: var(--paper); }
+.coverage tbody th { font-weight: 700; white-space: nowrap; }
+.coverage tr.grp td { background: var(--paper); font-weight: 900; font-size: 13px; }
+.lv { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+.lv.full { color: var(--ai); }
+.lv.entry { color: var(--ink-2); }
+.lv.none { color: var(--amber); }
+.coverage td:last-child { color: var(--ink-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .input .caret, .lr .caret, .scan, .spin, .sk { animation: none; }
+  .compare.stamped .big-seal { transition: none; }
+}
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-7 8 7v9H4z"/><path d="M10 20v-5h4v5"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h12M8 12h12M8 18h12"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></symbol>
+  <symbol id="i-photo" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="M20 16l-5-5-8 8"/></symbol>
+  <symbol id="i-pen" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13 7l4 4"/></symbol>
+  <symbol id="i-in" viewBox="0 0 24 24"><path d="M12 4v12M7 11l5 5 5-5"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M7 4L4 7l3 3M4 7h13"/><path d="M17 14l3 3-3 3M20 17H7"/></symbol>
+  <symbol id="i-match" viewBox="0 0 24 24"><rect x="3" y="4" width="11" height="7" rx="1.5"/><rect x="10" y="13" width="11" height="7" rx="1.5"/><path d="M7 11v4h3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M5.6 18.4l1.8-1.8M16.6 7.4l1.8-1.8"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v4h16v-4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5"/></symbol>
+</svg>
+
+<header class="intro">
+  <div>
+    <p class="eyebrow">KAKEIMATCH ・ デザイン案 · あんずを採用</p>
+    <h1>台帳と印鑑<span class="seal-inline" aria-hidden="true">済</span></h1>
+    <p class="lead">入力画面も一覧と同じ帳簿の行で組みました。1項目が1行なので、登録に必要な欄がスクロールせずに収まります。今ある機能の置き場所は最後の表にまとめています。</p>
+  </div>
+  <ul class="principles">
+    <li><b>台帳の罫線</b><span>カードを並べず、紙の帳簿のように罫線で区切る。行が詰まっていても静かに読める。</span></li>
+    <li><b>印は1つだけ</b><span>照合が済んだ印にだけ専用の色を使う。済んだものは件数だけ見せる。</span></li>
+    <li><b>数字は伝票の字</b><span>金額は等幅の数字で揃え、レシートと明細の差を桁で見比べられるようにする。</span></li>
+    <li><b>見当たらない ≠ 危ない</b><span>記録なしは赤にしない。不正ではなく「まだ見つからない」だけなので。</span></li>
+  </ul>
+</header>
+
+<div class="switcher" aria-label="配色を比べる">
+  <div class="ctrls">
+    <div class="grp"><span>配色</span>
+      <div class="seg" id="pal-seg"><button aria-pressed="true" data-p="apricot">あんず（採用）</button><button aria-pressed="false" data-p="indigo">藍と朱</button><button aria-pressed="false" data-p="teal">青緑</button></div>
+    </div>
+    <div class="grp"><span>表示</span>
+      <div class="seg" id="theme-seg"><button aria-pressed="true" data-t="">端末に合わせる</button><button aria-pressed="false" data-t="light">ライト</button><button aria-pressed="false" data-t="dark">ダーク</button></div>
+    </div>
+  </div>
+  <div class="pnote">
+    <p><b id="pal-name">藍と朱</b> · <span id="pal-feel"></span></p>
+    <div class="swatches" aria-label="この配色での色の割り当て">
+      <span class="sw p">主要ボタン</span><span class="sw ok">✓ 照合済み</span><span class="sw wa">△ 要確認</span><span class="sw mi">! 記録なし</span><span class="sw fa">! 失敗</span><span class="sw in">+ 収入</span>
+    </div>
+    <p class="caution" id="pal-caution"></p>
+  </div>
+</div>
+
+<div class="chapter"><h2>記録する</h2><span>中央の「＋」からレシート・手入力・収入・振替のどれでも始められる</span></div>
+<main class="gallery">
+
+  <!-- ホーム -->
+  <figure>
+    <figcaption><b>ホーム</b><span>今月の残り・収入と収支・内訳・確認する3件</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:41</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="month">
+          <button class="iconbtn" aria-label="前の月"><svg class="i"><use href="#i-left"/></svg></button>
+          <strong>2026年10月</strong>
+          <button class="iconbtn" aria-label="次の月"><svg class="i"><use href="#i-right"/></svg></button>
+        </div>
+        <section class="total" aria-label="今月の支出">
+          <span class="label">今月使ったお金</span>
+          <div class="big"><small>¥</small>82,430</div>
+        </section>
+        <div class="pair"><div><span>収入</span><b class="in">+¥250,000</b></div><div><span>収支</span><b>+¥167,570</b></div></div>
+        <section class="days" aria-label="10月の予算。12万円のうち82,430円を使い、残り37,570円。今日は18日目で、目安より12,753円多く使っています">
+          <div class="top"><span>予算 <b>¥120,000</b></span><span>残り <b>¥37,570</b> ›</span></div>
+          <div class="ticks" aria-hidden="true">
+            <i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="f"></i><i class="over"></i><i class="over"></i><i class="over"></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+            <span class="today"></span>
+          </div>
+          <div class="legend"><span>1日</span><span>今日18日 · 目安より <b class="num">¥12,753</b> 多め</span><span>31日</span></div>
+        </section>
+        <section class="todo">
+          <div class="head"><h3>確認すること <span class="count">3</span></h3><a class="textbtn" href="#">照合へ</a></div>
+          <div class="ledger">
+            <div class="row"><div class="cat">食</div><div class="who"><div class="name">セブン-イレブン 本町店</div><span class="state warn"><span class="mark">△</span>金額が¥50違います</span></div><div class="amt">−¥1,280</div></div>
+            <div class="row"><div class="cat">他</div><div class="who"><div class="name">AMAZON.CO.JP</div><span class="state miss"><span class="mark">!</span>記録が見つかりません</span></div><div class="amt">−¥4,378</div></div>
+            <div class="row"><div class="cat">交</div><div class="who"><div class="name">ENEOS 中央通りSS</div><span class="state warn"><span class="mark">△</span>日付が2日ずれています</span></div><div class="amt">−¥5,600</div></div>
+          </div>
+        </section>
+        <div class="done-line"><span class="seal" aria-hidden="true">済</span><span>今月の <b>41件</b> は自動で照合済みです</span></div>
+        <section aria-label="支出の内訳：食費37%、日用品15%、交通12%、その他36%">
+          <div class="sec-head"><h3>支出の内訳</h3><a href="#">すべてのカテゴリ ›</a></div>
+          <div class="split" style="margin-top:10px" aria-hidden="true"><i style="width:37%;background:var(--c1)"></i><i style="width:15%;background:var(--c2)"></i><i style="width:12%;background:var(--c3)"></i><i style="width:36%;background:var(--c4)"></i></div>
+          <div class="split-legend" aria-hidden="true">
+            <div><span class="dot" style="background:var(--c1)"></span>食費<span class="p">37%</span></div>
+            <div><span class="dot" style="background:var(--c2)"></span>日用品<span class="p">15%</span></div>
+            <div><span class="dot" style="background:var(--c3)"></span>交通<span class="p">12%</span></div>
+            <div><span class="dot" style="background:var(--c4)"></span>その他<span class="p">36%</span></div>
+          </div>
+        </section>
+        <section>
+          <div class="sec-head"><h3>最近の記録</h3><a href="#">すべて ›</a></div>
+          <div class="ledger" style="margin-top:8px">
+            <div class="row"><div class="cat">食</div><div class="who"><div class="name">スーパーみどり</div><div class="sub">10/18 · 楽天カード · レシート</div></div><div class="amt">−¥3,284</div></div>
+            <div class="row"><div class="cat">外</div><div class="who"><div class="name">カフェこもれび</div><div class="sub">10/18 · PayPayカード</div></div><div class="amt">−¥1,080</div></div>
+            <div class="row"><div class="cat tr">振</div><div class="who"><div class="name">現金 → 銀行口座</div><div class="sub">10/17 · 振替</div></div><div class="amt">¥10,000</div></div>
+          </div>
+        </section>
+      </div>
+      <nav class="nav" aria-label="メイン">
+        <a href="#" aria-current="page"><svg class="i"><use href="#i-home"/></svg>ホーム</a>
+        <a href="#"><svg class="i"><use href="#i-list"/></svg>記録</a>
+        <a href="#" class="add" aria-label="記録を追加"><span class="btn"><svg class="i"><use href="#i-plus"/></svg></span>追加</a>
+        <a href="#" aria-label="照合（確認が必要 3件）"><svg class="i"><use href="#i-match"/></svg><span class="badge" aria-hidden="true">3</span>照合</a>
+        <a href="#"><svg class="i"><use href="#i-gear"/></svg>設定</a>
+      </nav>
+    </div>
+  </figure>
+
+  <!-- 追加シート -->
+  <figure>
+    <figcaption><b>＋ 追加<span class="new">修正</span></b><span>第1版の「撮る」だけのボタンをやめ、5つの入口を1枚に</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:41</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen behind" aria-hidden="true">
+        <div class="month"><span></span><strong>2026年10月</strong><span></span></div>
+        <section class="total"><span class="label">今月使ったお金</span><div class="big"><small>¥</small>82,430</div></section>
+        <div class="pair"><div><span>収入</span><b class="in">+¥250,000</b></div><div><span>収支</span><b>+¥167,570</b></div></div>
+      </div>
+      <div class="overlay">
+        <div class="sheet" role="dialog" aria-label="何を記録しますか">
+          <span class="grab" aria-hidden="true"></span>
+          <div class="sh"><h3>何を記録しますか？</h3><button class="iconbtn" aria-label="閉じる"><svg class="i"><use href="#i-x"/></svg></button></div>
+          <a class="shoot-big" href="#"><span class="ic"><svg class="i"><use href="#i-cam"/></svg></span><span><b>レシートを撮る</b><span>写真を残して、品目まで読み取れます</span></span><svg class="i chev" style="width:16px"><use href="#i-right"/></svg></a>
+          <div class="kinds">
+            <a class="kind" href="#"><svg class="i"><use href="#i-photo"/></svg><span><b>写真から</b><span>保存したレシート</span></span></a>
+            <a class="kind" href="#"><svg class="i"><use href="#i-pen"/></svg><span><b>支出を手入力</b><span>レシートなし</span></span></a>
+            <a class="kind" href="#"><svg class="i"><use href="#i-in"/></svg><span><b>収入</b><span>給与・臨時収入</span></span></a>
+            <a class="kind" href="#"><svg class="i"><use href="#i-swap"/></svg><span><b>口座間の振替</b><span>現金の引き出しなど</span></span></a>
+          </div>
+        </div>
+        <nav class="nav" aria-hidden="true">
+          <a><svg class="i"><use href="#i-home"/></svg>ホーム</a><a><svg class="i"><use href="#i-list"/></svg>記録</a>
+          <a class="add"><span class="btn"><svg class="i"><use href="#i-plus"/></svg></span>追加</a>
+          <a><svg class="i"><use href="#i-match"/></svg>照合</a><a><svg class="i"><use href="#i-gear"/></svg>設定</a>
+        </nav>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 支出の手入力 -->
+  <figure>
+    <figcaption><b>支出を手入力<span class="new">帳簿の行</span></b><span>1項目1行の罫線。カテゴリは前回使ったものが最初から入り、「すべて ›」で変える</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:42</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="topbar"><button class="textbtn">キャンセル</button><h2>支出を入力</h2><span></span></div>
+        <div class="seg" role="tablist"><button role="tab" aria-selected="true">全体</button><button role="tab" aria-selected="false">品目一覧</button></div>
+        <div class="lf">
+          <div class="lr money active"><span class="k">金額</span><span class="v"><span class="yen">¥</span>1,080<span class="caret"></span></span><span></span></div>
+          <div class="lr"><span class="k">店名</span><span class="v">カフェこもれび</span><span></span></div>
+          <div class="lr"><span class="k">日付</span><span class="v num">10/18（日）</span><span class="opts"><span class="pill sm" role="radio" aria-checked="true">今日</span><span class="pill sm" role="radio" aria-checked="false">昨日</span></span></div>
+          <a class="lr cat1" href="#" aria-label="カテゴリ：外食（前回と同じ）。すべてのカテゴリから選ぶ"><span class="k">カテゴリ</span><span class="v">外食<span class="hint">前回と同じ</span></span><span class="more">すべて ›</span></a>
+          <a class="lr" href="#"><span class="k">支払元</span><span class="v">PayPayカード</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">時刻・メモ</span><span class="v ph">任意</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">品目</span><span class="v ph">分けない（品目・値引き・税額）</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">くり返し</span><span class="v ph">しない（毎月・毎週・毎年にすると定期登録）</span><svg class="i chev"><use href="#i-right"/></svg></a>
+        </div>
+      </div>
+      <div class="dock"><button class="cta">登録する</button></div>
+    </div>
+  </figure>
+
+  <!-- 読み取り中 -->
+  <figure>
+    <figcaption><b>読み取り中<span class="new">追加</span></b><span>撮った写真を見せたまま、今どの段階かを行で示す。下の切り替えで状態を見られます</span></figcaption>
+    <div class="seg" id="rd-seg" aria-label="表示する状態">
+      <button aria-pressed="true" data-s="read">文字を読む</button><button aria-pressed="false" data-s="cls">分類する</button><button aria-pressed="false" data-s="fail">読めない時</button>
+    </div>
+    <div class="phone" id="rd" data-s="read">
+      <div class="status"><span class="num">9:43</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen" id="rd-screen" aria-busy="true">
+        <div class="topbar"><button class="textbtn">キャンセル</button><h2>レシート</h2><span></span></div>
+        <div class="scanbox">
+          <div class="receipt">
+            <div class="r-shop">スーパーみどり</div>
+            <div class="r-line"><span>2026/10/18 18:42</span><span>#0231</span></div>
+            <div class="r-line"><span>国産たまご 10個</span><span>¥268</span></div>
+            <div class="r-line"><span>牛乳 1000ml</span><span>¥228</span></div>
+            <div class="r-line"><span>鶏もも肉 2枚</span><span>¥1,096</span></div>
+            <div class="r-line"><span>　値引</span><span>−¥100</span></div>
+            <div class="r-line"><span>ほか 7点</span><span>¥1,792</span></div>
+            <div class="r-line r-sum"><span>合計</span><span>¥3,284</span></div>
+          </div>
+          <span class="scan" aria-hidden="true"></span>
+          <span class="badge-read" data-only="read"><span class="spin" aria-hidden="true"></span>読み取り中</span>
+        </div>
+
+        <ol class="steps">
+          <li class="done"><span class="sm" aria-hidden="true">✓</span><span>写真を保存しました<small>この端末に。読み取れなくても消えません</small></span></li>
+          <li class="s2"><span class="sm" aria-hidden="true"></span><span class="t2"></span></li>
+          <li class="s3"><span class="sm" aria-hidden="true"></span><span class="t3"></span></li>
+        </ol>
+
+        <div class="lf" data-only="read">
+          <div class="lr"><span class="k">金額</span><span class="sk" style="width:46%"></span><span></span></div>
+          <div class="lr"><span class="k">店名</span><span class="sk" style="width:62%"></span><span></span></div>
+          <div class="lr"><span class="k">日付</span><span class="sk" style="width:38%"></span><span></span></div>
+          <div class="lr"><span class="k">品目</span><span class="sk" style="width:54%"></span><span></span></div>
+        </div>
+
+        <div data-only="cls" hidden>
+          <div class="lf">
+            <div class="lr money"><span class="k">金額</span><span class="v"><span class="yen">¥</span>3,284</span><span></span></div>
+            <div class="lr"><span class="k">店名</span><span class="v">スーパーみどり</span><span></span></div>
+            <div class="lr"><span class="k">日付</span><span class="v num">10/18（日）18:42</span><span></span></div>
+          </div>
+          <div class="items" style="margin-top:12px">
+            <div class="item"><div class="item-row"><span class="nm">国産たまご 10個</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥268</span></div></div>
+            <div class="item"><div class="item-row"><span class="nm">牛乳 1000ml</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥228</span></div></div>
+            <div class="item"><div class="item-row"><span class="nm">鶏もも肉 2枚</span><span class="sk tagsk" aria-label="分類中"></span><span class="pr">¥1,096</span></div></div>
+            <div class="item"><div class="item-row"><span class="nm">食パン 6枚</span><span class="sk tagsk" aria-label="分類中"></span><span class="pr">¥178</span></div></div>
+            <div class="item"><div class="item-row"><span class="nm">ほか 6品目</span><span class="sk tagsk" aria-label="分類中"></span><span class="pr">¥1,614</span></div></div>
+          </div>
+        </div>
+
+        <div class="failbox" data-only="fail" hidden>
+          <b>! 写真から読み取れませんでした</b>
+          <span>文字が小さいか、光が反射しているようです。写真は保存してあるので、撮り直すか、このまま手で入力できます。</span>
+        </div>
+        <p class="sr" id="rd-live" aria-live="polite">文字を読み取っています</p>
+      </div>
+      <div class="dock">
+        <button class="cta" id="rd-cta" disabled>読み取り中…</button>
+        <div class="sub"><button class="textbtn" id="rd-sub">待たずに手で入力する</button></div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- レシート（全体） -->
+  <figure>
+    <figcaption><b>レシート（全体）<span class="new">帳簿の行</span></b><span>カテゴリは選ばない。品目ごとの分類から自動で決まり、直す時は品目一覧へ</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:43</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="topbar"><button class="textbtn">キャンセル</button><h2>レシート</h2><span></span></div>
+        <div class="seg" role="tablist"><button role="tab" aria-selected="true">全体</button><button role="tab" aria-selected="false">品目一覧</button></div>
+        <div class="lf">
+          <div class="lr photo"><span class="thumb" role="img" aria-label="レシートの写真。押すと大きく表示"></span><span class="v"><b>写真から読み取りました</b><small>違うところだけ直してください · AIで読み取り</small></span><button class="textbtn">再読み取り</button></div>
+          <div class="lr money warnrow"><span class="k">金額</span><span class="v"><span class="yen">¥</span>3,284</span><span class="state warn"><span class="mark">△</span>確認</span></div>
+          <div class="lr"><span class="k">店名</span><span class="v">スーパーみどり</span><span></span></div>
+          <div class="lr"><span class="k">日付</span><span class="v num">10/18（日）18:42</span><span></span></div>
+          <a class="lr derived" href="#" aria-label="カテゴリは品目ごと。食費2,324円、日用品960円。品目一覧で直す"><span class="k">カテゴリ</span><span class="v"><span class="tagline">品目ごと</span><span class="dc"><span class="dot" style="background:var(--c1)"></span>食費 <b class="num">¥2,324</b></span><span class="dc"><span class="dot" style="background:var(--c2)"></span>日用品 <b class="num">¥960</b></span></span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">支払元</span><span class="v">楽天カード</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">時刻・メモ</span><span class="v ph">任意</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">品目</span><span class="v">10品目 · 値引き1</span><svg class="i chev"><use href="#i-right"/></svg></a>
+        </div>
+      </div>
+      <div class="dock"><button class="cta">登録する</button></div>
+    </div>
+  </figure>
+
+  <!-- 品目一覧 -->
+  <figure>
+    <figcaption><b>品目一覧<span class="new">帳簿の行</span></b><span>品目ごとに読み取り・カテゴリ分け。行を押すと開いて直せます</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:43</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="topbar"><button class="textbtn">キャンセル</button><h2>レシート</h2><span></span></div>
+        <div class="seg" role="tablist"><button role="tab" aria-selected="false">全体</button><button role="tab" aria-selected="true">品目一覧</button></div>
+
+        <div class="lf" aria-label="合計の確認と、カテゴリ別：食費2,324円、日用品960円">
+          <div class="lr"><span class="k">合計</span><span class="v num" style="font-size:18px;font-weight:700">¥3,284</span><span class="state ok"><span aria-hidden="true">✓</span>品目と一致</span></div>
+          <div class="lr stack"><span class="k">内訳</span><span class="mini-split" aria-hidden="true"><span class="split"><i style="width:70.8%;background:var(--c1)"></i><i style="width:29.2%;background:var(--c2)"></i></span><span class="ml"><span><span class="dot" style="background:var(--c1)"></span>食費 <b class="num">¥2,324</b></span><span><span class="dot" style="background:var(--c2)"></span>日用品 <b class="num">¥960</b></span></span></span></div>
+        </div>
+
+        <div>
+          <div class="label" style="margin-bottom:6px">カテゴリは品目ごとに付けます。点線はAIの提案で、押すと確定・変更できます</div>
+          <div class="items" id="items">
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">国産たまご 10個</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥268</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">牛乳 1000ml</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥228</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item open"><button class="item-row" aria-expanded="true"><span class="nm">鶏もも肉 2枚</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥1,096</span></button>
+              <div class="item-edit">
+                <div class="two"><div class="input">鶏もも肉 2枚</div><div class="input num">¥1,096</div></div>
+                <div class="input">食費<svg class="i" style="width:18px;color:var(--ink-2)"><use href="#i-down"/></svg></div>
+                <span class="why-cat">いつもの分類 · この店の「肉」は食費（これまで8回）</span>
+                <button class="del">この品目を削除</button>
+              </div></div>
+            <div class="item adj"><button class="item-row" aria-expanded="false"><span class="nm">値引 · 鶏もも肉<small>値引き</small></span><span></span><span class="pr">−¥100</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">食パン 6枚</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥178</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">トマト 3個<small class="state warn"><span class="mark">△</span>品名が読みにくい</small></span><span class="ctag sug"><span class="dot" style="background:var(--c1)"></span>食費?</span><span class="pr">¥398</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">納豆 3P</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥98</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">ヨーグルト</span><span class="ctag"><span class="dot" style="background:var(--c1)"></span>食費</span><span class="pr">¥158</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">キッチンペーパー</span><span class="ctag"><span class="dot" style="background:var(--c2)"></span>日用品</span><span class="pr">¥398</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">食器用洗剤</span><span class="ctag sug"><span class="dot" style="background:var(--c2)"></span>日用品?</span><span class="pr">¥248</span></button>
+              <div class="item-edit" hidden></div></div>
+            <div class="item"><button class="item-row" aria-expanded="false"><span class="nm">ゴミ袋 45L</span><span class="ctag"><span class="dot" style="background:var(--c2)"></span>日用品</span><span class="pr">¥314</span></button>
+              <div class="item-edit" hidden></div></div>
+          </div>
+          <div class="addline"><button class="textbtn">＋ 品目を追加</button><button class="textbtn">＋ 値引き・調整</button><button class="textbtn">税額</button></div>
+        </div>
+      </div>
+      <div class="dock"><button class="cta">登録する</button></div>
+    </div>
+  </figure>
+
+  <!-- 収入・振替 -->
+  <figure>
+    <figcaption><b>収入・振替<span class="new">帳簿の行</span></b><span>支出と同じ形で項目だけ変わる（上の切り替えを押せます）</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:44</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="topbar"><button class="textbtn">キャンセル</button><h2 id="io-title">収入を入力</h2><span></span></div>
+        <div class="seg" id="io-seg"><button aria-pressed="true" data-k="in">収入</button><button aria-pressed="false" data-k="tr">振替</button></div>
+
+        <div class="lf" id="io-in">
+          <div class="lr money in active"><span class="k">金額</span><span class="v"><span class="yen">+¥</span>250,000<span class="caret"></span></span><span></span></div>
+          <div class="lr"><span class="k">内容</span><span class="v">10月分 給与</span><span></span></div>
+          <div class="lr"><span class="k">日付</span><span class="v num">10/25（日）</span><span class="opts"><span class="pill sm" role="radio" aria-checked="false">今日</span><span class="pill sm" role="radio" aria-checked="false">昨日</span></span></div>
+          <a class="lr cat1" href="#" aria-label="カテゴリ：給与（前回と同じ）。すべてのカテゴリから選ぶ"><span class="k">カテゴリ</span><span class="v">給与<span class="hint">前回と同じ</span></span><span class="more">すべて ›</span></a>
+          <a class="lr" href="#"><span class="k">入金先</span><span class="v">銀行口座</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">メモ</span><span class="v ph">任意</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <a class="lr" href="#"><span class="k">くり返し</span><span class="v ph">しない（毎月・毎週・毎年にすると定期登録）</span><svg class="i chev"><use href="#i-right"/></svg></a>
+        </div>
+        <div class="lf" id="io-tr" hidden>
+          <div class="lr money active"><span class="k">金額</span><span class="v"><span class="yen">¥</span>10,000<span class="caret"></span></span><span></span></div>
+          <div class="lr"><span class="k">日付</span><span class="v num">10/18（日）</span><span class="opts"><span class="pill sm" role="radio" aria-checked="true">今日</span><span class="pill sm" role="radio" aria-checked="false">昨日</span></span></div>
+          <a class="lr" href="#"><span class="k">振替元</span><span class="v">現金</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <div class="lr"><span class="k">振替先</span><span class="v">銀行口座</span><button class="iconbtn" aria-label="振替元と振替先を入れ替える"><svg class="i"><use href="#i-swap"/></svg></button></div>
+          <a class="lr" href="#"><span class="k">メモ</span><span class="v ph">任意</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          <p class="label" style="margin:8px 0 0">振替は収入・支出の合計に入りません</p>
+        </div>
+      </div>
+      <div class="dock"><button class="cta">登録する</button></div>
+    </div>
+  </figure>
+</main>
+
+<div class="chapter"><h2>確かめる</h2><span>記録一覧と、カード明細との照合</span></div>
+<section class="gallery">
+
+  <!-- 記録一覧 -->
+  <figure>
+    <figcaption><b>記録<span class="new">追加</span></b><span>収入・支出・振替を日ごとに。未入力のレシートは先頭に</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:45</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="pagehead"><h2>記録</h2><button class="iconbtn" aria-label="検索"><svg class="i"><use href="#i-search"/></svg></button></div>
+        <div class="seg"><button aria-pressed="true">すべて</button><button aria-pressed="false">支出</button><button aria-pressed="false">収入</button><button aria-pressed="false">振替</button></div>
+        <a class="row nav-row" href="#" style="min-height:44px;border-top:1px solid var(--rule)"><span class="name">口座・残高を見る</span><span class="val num">4口座</span><svg class="i chev"><use href="#i-right"/></svg></a>
+        <div class="pending"><span class="cat tr">レ</span><div><b style="font-size:14px">未入力のレシート 1枚</b><div class="label" style="letter-spacing:0">10/17 に撮影</div></div><a class="textbtn" href="#">確認する</a></div>
+        <div>
+          <div class="dayhead"><span>10月18日（日）</span><span class="num">−¥4,364</span></div>
+          <div class="ledger">
+            <div class="row"><div class="cat">食</div><div class="who"><div class="name">スーパーみどり</div><div class="sub">食費・日用品 · 楽天カード · レシート</div></div><div class="amt">−¥3,284</div></div>
+            <div class="row"><div class="cat">外</div><div class="who"><div class="name">カフェこもれび</div><div class="sub">外食 · PayPayカード</div></div><div class="amt">−¥1,080</div></div>
+          </div>
+          <div class="dayhead"><span>10月17日（土）</span><span class="num">−¥1,642</span></div>
+          <div class="ledger">
+            <div class="row"><div class="cat">日</div><div class="who"><div class="name">ドラッグストア さくら</div><div class="sub">日用品 · 現金</div></div><div class="amt">−¥1,642</div></div>
+            <div class="row"><div class="cat tr">振</div><div class="who"><div class="name">現金 → 銀行口座</div><div class="sub">振替</div></div><div class="amt">¥10,000</div></div>
+          </div>
+          <div class="dayhead"><span>10月16日（金）</span><span class="num">−¥1,230</span></div>
+          <div class="ledger">
+            <div class="row"><div class="cat">食</div><div class="who"><div class="name">セブン-イレブン 本町店</div><div class="sub"><span class="state warn">△ 要確認</span> · 食費 · 楽天カード</div></div><div class="amt">−¥1,230</div></div>
+          </div>
+          <div class="dayhead"><span>10月1日（木）</span><span class="num">+¥167,000</span></div>
+          <div class="ledger">
+            <div class="row"><div class="cat in">給</div><div class="who"><div class="name">9月分 給与</div><div class="sub">給与 · 銀行口座</div></div><div class="amt in">+¥250,000</div></div>
+            <div class="row"><div class="cat">住</div><div class="who"><div class="name">家賃</div><div class="sub">住居 · 銀行口座 · 毎月</div></div><div class="amt">−¥83,000</div></div>
+          </div>
+        </div>
+      </div>
+      <nav class="nav" aria-label="メイン">
+        <a href="#"><svg class="i"><use href="#i-home"/></svg>ホーム</a>
+        <a href="#" aria-current="page"><svg class="i"><use href="#i-list"/></svg>記録</a>
+        <a href="#" class="add" aria-label="記録を追加"><span class="btn"><svg class="i"><use href="#i-plus"/></svg></span>追加</a>
+        <a href="#" aria-label="照合（確認が必要 3件）"><svg class="i"><use href="#i-match"/></svg><span class="badge" aria-hidden="true">3</span>照合</a>
+        <a href="#"><svg class="i"><use href="#i-gear"/></svg>設定</a>
+      </nav>
+    </div>
+  </figure>
+
+  <!-- 照合 -->
+  <figure>
+    <figcaption><b>照合</b><span>済んだものは数だけ。明細CSVの取り込みもここから</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:46</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="pagehead"><h2>照合</h2><button class="textbtn"><svg class="i" style="width:18px"><use href="#i-refresh"/></svg>照合を更新</button></div>
+        <div class="tally" role="img" aria-label="照合の結果：要確認 2件、記録なし 1件、自動で一致 41件">
+          <div class="warn"><span class="t">△ 要確認</span><span class="n">2</span></div>
+          <div class="miss"><span class="t">! 記録なし</span><span class="n">1</span></div>
+          <div class="ok"><span class="t">✓ 自動で一致</span><span class="n">41</span></div>
+        </div>
+        <div class="waiting"><span class="seal" style="border-style:dashed;border-color:var(--ink-2);color:var(--ink-2)" aria-hidden="true">待</span>明細待ちの支出 3件（明細を取り込むと照合します）</div>
+
+        <section>
+          <p class="group-title">確認してください</p>
+          <div class="ledger">
+            <div class="row match"><div class="who"><div class="name">セブン-イレブン 本町店</div><span class="state warn"><span class="mark">△</span>10/16 · 金額が¥50違います</span></div><div class="amt">¥1,280</div><svg class="i chev"><use href="#i-right"/></svg></div>
+            <div class="row match"><div class="who"><div class="name">ENEOS 中央通りSS</div><span class="state warn"><span class="mark">△</span>10/14 · 日付が2日ずれています</span></div><div class="amt">¥5,600</div><svg class="i chev"><use href="#i-right"/></svg></div>
+            <div class="row match"><div class="who"><div class="name">AMAZON.CO.JP</div><span class="state miss"><span class="mark">!</span>10/12 · 記録が見つかりません</span></div><div class="amt">¥4,378</div><svg class="i chev"><use href="#i-right"/></svg></div>
+          </div>
+        </section>
+        <a class="row nav-row" href="#"><div class="who" style="display:flex;align-items:center;gap:10px"><span class="seal" aria-hidden="true">済</span><span>自動で一致した内容を見る（41件）</span></div><span></span><svg class="i chev"><use href="#i-right"/></svg></a>
+
+        <div class="import">
+          <div class="ih"><svg class="i"><use href="#i-upload"/></svg>明細CSVを取り込む</div>
+          <div class="quick"><span class="pill" aria-pressed="true">✓ 楽天カード</span><span class="pill" aria-pressed="false">三井住友カード</span><span class="pill" aria-pressed="false">PayPayカード</span></div>
+          <button class="ghost">ファイルを選んで照合</button>
+          <span class="note">CSVはこの端末の中だけで読みます。外へ送りません</span>
+        </div>
+      </div>
+      <nav class="nav" aria-label="メイン">
+        <a href="#"><svg class="i"><use href="#i-home"/></svg>ホーム</a>
+        <a href="#"><svg class="i"><use href="#i-list"/></svg>記録</a>
+        <a href="#" class="add" aria-label="記録を追加"><span class="btn"><svg class="i"><use href="#i-plus"/></svg></span>追加</a>
+        <a href="#" aria-current="page" aria-label="照合（確認が必要 3件）"><svg class="i"><use href="#i-match"/></svg><span class="badge" aria-hidden="true">3</span>照合</a>
+        <a href="#"><svg class="i"><use href="#i-gear"/></svg>設定</a>
+      </nav>
+    </div>
+  </figure>
+
+  <!-- 突き合わせ -->
+  <figure>
+    <figcaption><b>突き合わせ</b><span>明細と記録を1枚の伝票の上下に。ボタンで押印（押せます）</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:47</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="topbar"><button class="textbtn">‹ 照合</button><span></span><span class="state warn"><span class="mark">△</span>要確認</span></div>
+        <div class="compare" id="compare">
+          <div class="slip top">
+            <div class="src"><span>カード明細</span><span>楽天カード</span></div>
+            <dl><dt>日付</dt><dd class="num">10/16 <span class="same">同じ</span></dd><dt>店名</dt><dd>ｾﾌﾞﾝｲﾚﾌﾞﾝ ﾎﾝﾁｮｳ</dd><dt>金額</dt><dd class="num diff">¥1,280</dd></dl>
+          </div>
+          <div class="perf" aria-hidden="true"></div>
+          <div class="slip bottom">
+            <div class="src"><span>あなたの記録</span><span>レシートから</span></div>
+            <dl><dt>日付</dt><dd class="num">10/16 <span class="same">同じ</span></dd><dt>店名</dt><dd>セブン-イレブン 本町店</dd><dt>金額</dt><dd class="num diff">¥1,230</dd></dl>
+          </div>
+          <div class="big-seal" aria-hidden="true"><div><span>済</span><small>照合</small></div></div>
+        </div>
+        <div class="why">
+          <b>△ 金額が¥50違います</b>
+          <ul><li>同じ日に、同じお店で使っています</li><li>「同じ支出」にすると、記録の金額を ¥1,280 に直します</li></ul>
+        </div>
+        <p class="sr" id="stamp-status" aria-live="polite"></p>
+      </div>
+      <div class="dock">
+        <button class="cta" id="stamp">同じ支出として処理</button>
+        <div class="sub"><button class="textbtn" id="other">別の支出です</button></div>
+      </div>
+    </div>
+  </figure>
+
+  <!-- 設定 -->
+  <figure>
+    <figcaption><b>設定<span class="new">追加</span></b><span>日常で触らない管理はすべてここ。1行ずつの入口にする</span></figcaption>
+    <div class="phone">
+      <div class="status"><span class="num">9:48</span><span class="dots"><i></i><i></i><i></i></span></div>
+      <div class="screen">
+        <div class="pagehead"><h2>設定</h2></div>
+        <div class="setgroup"><h3>家計簿</h3>
+          <div class="ledger">
+            <a class="row nav-row" href="#"><span class="name">カテゴリ</span><span class="val">支出 12 · 収入 4</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">支払元・口座</span><span class="val">明細の種類もここ</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">予算</span><span class="val num">¥120,000/月</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">定期登録</span><span class="val">3件</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">いつもの分類</span><span class="val">覚えた分類 26</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          </div>
+        </div>
+        <div class="setgroup"><h3>データ</h3>
+          <div class="backup">
+            <span class="state warn warnline"><span class="mark">△</span>最後のバックアップから21日たっています</span>
+            <div class="btns"><button class="ghost primary">バックアップを書き出す</button><button class="ghost">読み込む</button></div>
+          </div>
+          <div class="ledger" style="border-top:0">
+            <a class="row nav-row" href="#"><span class="name">家計簿の読み込み・切り替え</span><span></span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">画面ロック</span><span class="val">PIN · Face ID</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name" style="color:var(--danger)">原本の整理・全削除</span><span></span><svg class="i chev"><use href="#i-right"/></svg></a>
+          </div>
+        </div>
+        <div class="setgroup"><h3>写真の読み取り</h3>
+          <div class="ledger">
+            <a class="row nav-row" href="#"><span class="name">ログイン・利用状況</span><span class="val num">今月 12/50回</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          </div>
+        </div>
+        <div class="setgroup"><h3>アプリ</h3>
+          <div class="ledger">
+            <a class="row nav-row" href="#"><span class="name">お問い合わせ</span><span class="val">声でも送れます</span><svg class="i chev"><use href="#i-right"/></svg></a>
+            <a class="row nav-row" href="#"><span class="name">アプリ情報</span><span class="val">診断・ライセンス</span><svg class="i chev"><use href="#i-right"/></svg></a>
+          </div>
+        </div>
+        <p class="foot">家計簿と画像はこの端末に保存されます。ログアウトしても消えません。</p>
+      </div>
+      <nav class="nav" aria-label="メイン">
+        <a href="#"><svg class="i"><use href="#i-home"/></svg>ホーム</a>
+        <a href="#"><svg class="i"><use href="#i-list"/></svg>記録</a>
+        <a href="#" class="add" aria-label="記録を追加"><span class="btn"><svg class="i"><use href="#i-plus"/></svg></span>追加</a>
+        <a href="#" aria-label="照合（確認が必要 3件）"><svg class="i"><use href="#i-match"/></svg><span class="badge" aria-hidden="true">3</span>照合</a>
+        <a href="#" aria-current="page"><svg class="i"><use href="#i-gear"/></svg>設定</a>
+      </nav>
+    </div>
+  </figure>
+</section>
+
+<div class="chapter"><h2>今ある機能の置き場所</h2><span>README・UX.md の機能をすべて洗い出し、このモックでの扱いを示した表</span></div>
+<section class="coverage">
+  <div class="wrap">
+    <table>
+      <thead><tr><th>機能</th><th>このモック</th><th>置き場所・メモ</th></tr></thead>
+      <tbody>
+        <tr class="grp"><td colspan="3">記録する</td></tr>
+        <tr><th>レシート撮影・写真から</th><td><span class="lv full">● 画面あり</span></td><td>＋追加のシート → レシート（全体）</td></tr>
+        <tr><th>AIで読み取り・再読み取り</th><td><span class="lv full">● 画面あり</span></td><td>読み取り中の画面で「文字を読む → 分類する」の段階を行で示す。読めない時は写真を残して手入力へ。読み取り済みなら「再読み取り」（利用枠の確認を挟む）</td></tr>
+        <tr><th>読み取り回数の上限・ログインが必要な時</th><td><span class="lv none">△ 画面なし</span></td><td>読めない時と同じ形で、写真を残して手入力へ進める</td></tr>
+        <tr><th>品目ごとの読み取り・カテゴリ</th><td><span class="lv full">● 画面あり</span></td><td>品目一覧タブ。全体のカテゴリは選ばず、品目の分類から決まる。提案は点線、確定は実線。合計との一致とカテゴリ別の小計を上に出す</td></tr>
+        <tr><th>値引き・調整・税額</th><td><span class="lv full">● 画面あり</span></td><td>品目一覧の中に1行で。追加は一覧の下から</td></tr>
+        <tr><th>支出の手入力</th><td><span class="lv full">● 画面あり</span></td><td>レシートと同じ入力画面。品目に分けることもできる</td></tr>
+        <tr><th>収入・口座間の振替</th><td><span class="lv full">● 画面あり</span></td><td>同じ形の入力画面。モックでは切り替えて両方見られる</td></tr>
+        <tr><th>入力中のカテゴリ・口座の追加</th><td><span class="lv entry">○ 入口のみ</span></td><td>カテゴリの「＋追加」、支払元の「＋」。中央の小さなダイアログで追加して元の入力へ戻る</td></tr>
+        <tr><th>定期登録</th><td><span class="lv entry">○ 入口のみ</span></td><td>支出・収入の入力の「くり返し」行から作れる。一覧と変更・停止は設定 › 定期登録</td></tr>
+        <tr><th>記録の詳細・編集・削除（10秒取り消し）</th><td><span class="lv none">△ 画面なし</span></td><td>記録の行から開く。入力画面と同じ部品で「変更を保存」、削除は文字だけのボタン</td></tr>
+        <tr><th>分類の理由・変更履歴</th><td><span class="lv none">△ 画面なし</span></td><td>記録の詳細で折りたたんで表示</td></tr>
+        <tr class="grp"><td colspan="3">照合する</td></tr>
+        <tr><th>明細CSVの取り込み（3社）</th><td><span class="lv full">● 画面あり</span></td><td>照合の下。対応外の行の「行番号と理由」の表示はモックにない</td></tr>
+        <tr><th>自動照合・要確認・記録なし・明細待ち</th><td><span class="lv full">● 画面あり</span></td><td>照合の件数と一覧</td></tr>
+        <tr><th>要確認の比較・同じ／別の支出</th><td><span class="lv full">● 画面あり</span></td><td>突き合わせ。UX.md は一覧の中で開く形なので、別画面にするかは要検討</td></tr>
+        <tr><th>候補が複数ある時</th><td><span class="lv none">△ 画面なし</span></td><td>突き合わせの下半分に候補を並べて1つ選ぶ形を想定</td></tr>
+        <tr><th>記録なしを支出として登録</th><td><span class="lv none">△ 画面なし</span></td><td>突き合わせの下半分を「支出として登録」（カテゴリと支払元だけ選ぶ）に置き換える</td></tr>
+        <tr><th>反映の失敗・再試行</th><td><span class="lv none">△ 画面なし</span></td><td>照合の件数より上に赤い帯（「! 反映できませんでした」）</td></tr>
+        <tr class="grp"><td colspan="3">家計を見る</td></tr>
+        <tr><th>月の収入・支出・収支、月の切り替え</th><td><span class="lv full">● 画面あり</span></td><td>ホーム</td></tr>
+        <tr><th>カテゴリ別の内訳</th><td><span class="lv full">● 画面あり</span></td><td>ホーム。円グラフをやめて横の帯グラフにした（第1版では入れ忘れていた）</td></tr>
+        <tr><th>予算と進み具合・カテゴリ別予算</th><td><span class="lv entry">○ 入口のみ</span></td><td>ホームの「残り ›」から予算の詳細へ。設定 › 予算</td></tr>
+        <tr><th>口座の残高</th><td><span class="lv entry">○ 入口のみ</span></td><td>記録 › 口座・残高を見る</td></tr>
+        <tr><th>検索・絞り込み</th><td><span class="lv entry">○ 入口のみ</span></td><td>記録の右上。店名・メモ・品目名・期間・金額</td></tr>
+        <tr class="grp"><td colspan="3">データ・アカウント</td></tr>
+        <tr><th>バックアップ書き出し・読み込み</th><td><span class="lv full">● 画面あり</span></td><td>設定 › データ。古い時は△で知らせる</td></tr>
+        <tr><th>家計簿の切り替え・原本の整理・全削除</th><td><span class="lv entry">○ 入口のみ</span></td><td>設定 › データ。消す操作は赤い文字</td></tr>
+        <tr><th>画面ロック（PIN・生体認証）</th><td><span class="lv entry">○ 入口のみ</span></td><td>設定 › 画面ロック。ロック画面そのものはモックにない</td></tr>
+        <tr><th>Passkeyログイン・AI利用枠・アカウント削除</th><td><span class="lv entry">○ 入口のみ</span></td><td>設定 › 写真の読み取り</td></tr>
+        <tr><th>お問い合わせ（音声入力）</th><td><span class="lv entry">○ 入口のみ</span></td><td>設定 › お問い合わせ</td></tr>
+        <tr><th>端末内の診断・ライセンス・開発者向け</th><td><span class="lv entry">○ 入口のみ</span></td><td>設定 › アプリ情報</td></tr>
+        <tr><th>アプリの更新・オフライン表示</th><td><span class="lv none">△ 画面なし</span></td><td>画面上部の細い帯で知らせる想定</td></tr>
+        <tr><th>PCでの表示</th><td><span class="lv none">△ 画面なし</span></td><td>左のサイドナビ＋ホーム2列。この案ではまだ描いていない</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+(() => {
+  // 配色と表示の切り替え
+  const root = document.documentElement;
+  const PAL = {
+    indigo: { name: '藍と朱', feel: '帳簿の墨と印鑑。落ち着いていて、照合済みの朱の印がいちばん目立つ。',
+      caution: '注意：青はお金のアプリでありふれていて、冷たく見えやすい。照合済みの朱と失敗の赤が近いので、記号と文言で区別する。' },
+    teal: { name: '青緑', feel: '今のDESIGN.mdに近い色。お金と安心の印象があり、家庭向けにも親しみやすい。',
+      caution: '注意：主要色を緑にしたので、「一致」を緑にすると押せるボタンと済んだものが同じ色になる。この案では照合済みを朱に分けている。' },
+    apricot: { name: 'あんず（採用）', feel: '温かい台所のような色。家族が毎日開く道具として、いちばん親しみやすい。',
+      caution: '注意：主要色が橙なので、要確認をいつもの黄色にすると見分けられない。この案では要確認を藍に移している（黄色＝注意という慣習から外れる）。照合済みの朱は主要色の橙と近いので、印の形と「済」の字で見分ける。' },
+  };
+  const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+  const setPal = (k) => {
+    if (!PAL[k]) k = 'apricot';
+    if (k === 'indigo') root.removeAttribute('data-palette'); else root.dataset.palette = k;
+    document.querySelectorAll('#pal-seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.p === k)));
+    document.getElementById('pal-name').textContent = PAL[k].name;
+    document.getElementById('pal-feel').textContent = PAL[k].feel;
+    document.getElementById('pal-caution').textContent = PAL[k].caution;
+    store.set('km-palette', k);
+  };
+  const setTheme = (t) => {
+    if (t) root.dataset.theme = t; else root.removeAttribute('data-theme');
+    document.querySelectorAll('#theme-seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.t === t)));
+  };
+  document.getElementById('pal-seg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setPal(b.dataset.p); });
+  document.getElementById('theme-seg').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setTheme(b.dataset.t); });
+  setPal(store.get('km-palette') || 'apricot');
+
+  // 押印
+  const compare = document.getElementById('compare');
+  const btn = document.getElementById('stamp');
+  const status = document.getElementById('stamp-status');
+  btn.addEventListener('click', () => {
+    const done = compare.classList.toggle('stamped');
+    btn.textContent = done ? '✓ 処理しました（もう一度押すと戻す）' : '同じ支出として処理';
+    status.textContent = done ? '照合済みにしました' : '処理を取り消しました';
+  });
+  document.getElementById('other').addEventListener('click', () => {
+    compare.classList.remove('stamped');
+    btn.textContent = '同じ支出として処理';
+    status.textContent = '別の支出として残しました';
+  });
+
+  // 品目：開けるのは1つだけ
+  const items = document.getElementById('items');
+  items.querySelectorAll('.item').forEach((item) => {
+    const edit = item.querySelector('.item-edit');
+    if (!edit.children.length) {
+      const nm = item.querySelector('.nm').firstChild.textContent.trim();
+      const pr = item.querySelector('.pr').textContent;
+      const tag = item.querySelector('.ctag');
+      const cat = tag ? tag.textContent.replace('?', '').trim() : '値引き';
+      const sug = tag && tag.classList.contains('sug');
+      edit.innerHTML = '<div class="two"><div class="input"></div><div class="input num"></div></div>' +
+        '<div class="input"><span></span><svg class="i" style="width:18px;color:var(--ink-2)"><use href="#i-down"/></svg></div>' +
+        '<span class="why-cat"></span><button class="del">この品目を削除</button>';
+      edit.querySelectorAll('.two .input')[0].textContent = nm;
+      edit.querySelectorAll('.two .input')[1].textContent = pr;
+      edit.querySelector('.input > span').textContent = cat;
+      edit.querySelector('.why-cat').textContent = sug ? 'AIの提案です。合っていればこのまま、違えば選び直してください' : (tag ? 'いつもの分類' : '値引きは正の数で入力します');
+    }
+    item.querySelector('.item-row').addEventListener('click', () => {
+      const willOpen = edit.hidden;
+      items.querySelectorAll('.item').forEach((o) => {
+        o.classList.remove('open');
+        o.querySelector('.item-edit').hidden = true;
+        o.querySelector('.item-row').setAttribute('aria-expanded', 'false');
+      });
+      if (willOpen) {
+        item.classList.add('open');
+        edit.hidden = false;
+        item.querySelector('.item-row').setAttribute('aria-expanded', 'true');
+      }
+    });
+  });
+
+  // 読み取り中の状態
+  const rd = document.getElementById('rd');
+  const rdSeg = document.getElementById('rd-seg');
+  const S = {
+    read: { s2: ['now', '文字を読み取っています', '10秒ほどかかります'], s3: ['', '品目をカテゴリに分けます', ''], cta: '読み取り中…', dis: true, sub: '待たずに手で入力する', live: '文字を読み取っています', busy: true },
+    cls:  { s2: ['done', '文字を読み取りました', '金額・店名・日付・10品目'], s3: ['now', '品目をカテゴリに分けています', '分かったものから表示します'], cta: '分類を待っています…', dis: true, sub: '分類を待たずに自分で選ぶ', live: '文字を読み取りました。品目をカテゴリに分けています', busy: true },
+    fail: { s2: ['fail', '読み取れませんでした', '写真は残っています'], s3: ['', '品目をカテゴリに分けます', ''], cta: '手で入力して続ける', dis: false, sub: '撮り直す', live: '写真から読み取れませんでした', busy: false },
+  };
+  const setStep = (li, [cls, t, small]) => {
+    li.className = li.classList.contains('s2') ? 's2 ' + cls : 's3 ' + cls;
+    const mark = li.querySelector('.sm');
+    mark.innerHTML = cls === 'done' ? '✓' : cls === 'fail' ? '!' : cls === 'now' ? '<span class="spin ai"></span>' : '';
+    const label = li.children[1];
+    label.textContent = t;
+    if (small) { const sm = document.createElement('small'); sm.textContent = small; label.appendChild(sm); }
+  };
+  const show = (k) => {
+    const st = S[k];
+    rd.dataset.s = k;
+    rdSeg.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.s === k)));
+    rd.querySelectorAll('[data-only]').forEach((el) => { el.hidden = el.dataset.only !== k; });
+    setStep(rd.querySelector('.steps .s2'), st.s2);
+    setStep(rd.querySelector('.steps .s3'), st.s3);
+    const cta = document.getElementById('rd-cta');
+    cta.textContent = st.cta; cta.disabled = st.dis;
+    document.getElementById('rd-sub').textContent = st.sub;
+    document.getElementById('rd-live').textContent = st.live;
+    document.getElementById('rd-screen').setAttribute('aria-busy', String(st.busy));
+  };
+  rdSeg.addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) show(b.dataset.s); });
+  show('read');
+
+  // 収入／振替
+  const seg = document.getElementById('io-seg');
+  seg.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    seg.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+    const tr = b.dataset.k === 'tr';
+    document.getElementById('io-in').hidden = tr;
+    document.getElementById('io-tr').hidden = !tr;
+    document.getElementById('io-title').textContent = tr ? '振替を入力' : '収入を入力';
+  });
+})();
+</script>
