@@ -14,6 +14,7 @@ import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { dateShortcuts, formActions, optionalFields } from './entry-form';
 import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
+import { createReadingProgress } from './receipt-reading-progress';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
@@ -473,7 +474,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const overviewExtras = document.createElement('div'); overviewExtras.className = 'entry-overview-extras';
     view.append(editorTabs, overviewExtras);
     if (!blob && receipt.image) overviewExtras.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
-    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; overviewExtras.append(img); }
+    // The frame carries the reading motion over the photo while AI reads it.
+    const previewFrame = document.createElement('div'); previewFrame.className = 'receipt-preview-frame';
+    if (blob) { imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; previewFrame.append(img); overviewExtras.append(previewFrame); }
     if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
 
     const form = document.createElement('form');
@@ -514,28 +517,40 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (receipt.registration.status === 'applied') return;
       recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
-      const accountId = account.value;
-      form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
+      // AI never fills the payment source, so it stays selectable while the read runs.
+      const controls = form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button');
+      controls.forEach(control => { control.disabled = control !== account; });
+      const aiFilled = [amount, merchant, date];
+      aiFilled.forEach(field => field.classList.add('ai-pending'));
+      previewFrame.classList.add('is-reading');
+      aiButton.hidden = true;
+      const progress = createReadingProgress();
+      aiArea.append(progress.element);
       try {
         await receipts.analyze(receipt.id);
+        progress.setStep('categorizing');
         try {
           const suggested = await receipts.suggestCategory(receipt.id);
           recordLocalDiagnostic('ai');
           const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
           if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
         } catch (error) {
           report(error);
           const updated = await receipts.get(receipt.id);
-          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: accountId });
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
         }
       } catch (error) {
         report(error);
         if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
       } finally {
-        form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = false; });
+        progress.stop();
+        aiButton.hidden = false;
+        previewFrame.classList.remove('is-reading');
+        aiFilled.forEach(field => field.classList.remove('ai-pending'));
+        controls.forEach(control => { control.disabled = false; });
       }
     });
     if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
