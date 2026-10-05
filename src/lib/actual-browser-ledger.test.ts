@@ -541,6 +541,7 @@ describe("Actual browser ledger", () => {
     rows.find(row => row.id === "parent")!.category = "food";
     rows.find(row => row.id === "parent")!.payee = "shop";
     rows.find(row => row.id === "parent")!.notes = "親メモ";
+    rows.find(row => row.id === "parent")!.schedule = "synthetic-schedule";
     rows.find(row => row.id === "split-a")!.payee = "market";
     rows.find(row => row.id === "split-a")!.notes = "子メモ米";
     rows.find(row => row.id === "split-b")!.notes = "子メモ日用品";
@@ -553,7 +554,7 @@ describe("Actual browser ledger", () => {
     const found = await ledger.getSearchTransactions();
     expect(found.find(row => row.transaction.id === "parent")).toMatchObject({
       categoryIds: ["food", "home"], keywordValues: ["Synthetic Store", "親メモ", "合成スーパー", "子メモ米", "子メモ日用品"],
-      transaction: { isSplit: true, memo: "親メモ" },
+      transaction: { isSplit: true, memo: "親メモ" }, recurringScheduleId: "synthetic-schedule",
     });
     expect(found.filter(row => row.transaction.kind === "transfer")).toHaveLength(1);
     expect(found.find(row => row.transaction.id === "transfer-out")?.transaction.transferAccountId).toBe("bank");
@@ -770,6 +771,23 @@ describe("Actual browser ledger", () => {
     rows.find(row => row.imported_id === input.importedId)!.amount = 64000;
     await expect(ledger.createTransaction(input)).rejects.toBeInstanceOf(ActualBrowserUnavailableError);
     expect(api.importTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds catch-up rows explicitly without adopting a same-day manual transaction", async () => {
+    const { ledger, api, rows, payees } = fixture([{ id: "budget", name: "Synthetic" }]);
+    payees.push({ id: "same-payee", name: "Synthetic Market" });
+    rows.push({ id: "manual-lookalike", account: "cash", date: "2026-09-29", amount: -1200, payee: "same-payee", category: "food", notes: null, imported_id: null });
+    const input = { kind: "expense" as const, amountYen: 1200, date: "2026-09-29", payeeName: "Synthetic Market", categoryId: "food", accountId: "cash", memo: null,
+      importedId: "kakeimatch:schedule:synthetic-schedule:2026-09-29" };
+    const created = await ledger.createTransaction(input);
+    expect(created.id).not.toBe("manual-lookalike");
+    expect(rows.find(row => row.id === "manual-lookalike")?.imported_id).toBeNull();
+    expect(rows.filter(row => row.imported_id === input.importedId)).toHaveLength(1);
+    expect(api.importTransactions).not.toHaveBeenCalled();
+    expect(api.addTransactions).toHaveBeenCalledWith("cash", [expect.objectContaining({ date: input.date, amount: -1200, payee: "same-payee", imported_id: input.importedId })],
+      { learnCategories: false, runTransfers: false });
+    await ledger.createTransaction(input);
+    expect(api.addTransactions).toHaveBeenCalledTimes(1);
   });
 
   it("creates one native linked transfer pair and deduplicates by imported ID", async () => {
