@@ -586,6 +586,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     purchaseDetails.open = Boolean(receipt.image) || items.length > 0 || adjustments.length > 0;
     const purchaseSummary = document.createElement('summary');
     const purchaseHint = text('span', '', 'entry-row-hint');
+    // docs/UX.md 支出の入力: items live only in the item list (#194); in the overview this row leads there.
+    const itemsEntry = document.createElement('button'); itemsEntry.type = 'button'; itemsEntry.className = 'entry-row entry-row-link';
+    const itemsEntryHint = text('span', '', 'entry-row-hint');
+    itemsEntry.append(text('span', '品目', 'entry-row-key'), itemsEntryHint, icon('chevronRight'));
+    itemsEntry.addEventListener('click', () => setEditorPane('items'));
     purchaseSummary.append(text('span', '品目', 'entry-row-key'), purchaseHint);
     purchaseDetails.append(purchaseSummary, applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
     amount.classList.add('amount-input');
@@ -600,7 +605,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     categoryUi.row.querySelector('.entry-row-value')?.append(derivedValue);
     const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields entry-rows';
     overviewFields.append(entryRow(amountLabel, amount, totalCheck), entryRow(merchantLabel, merchant), entryRow(dateLabel, date, dateShortcuts(date, today())),
-      categoryUi.row, entryRow(accountLabel, account), optional);
+      categoryUi.row, entryRow(accountLabel, account), optional, itemsEntry);
     form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
@@ -703,7 +708,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const currentItems = readItems(); const currentAdjustments = readAdjustments();
       const split = currentItems.length > 0;
       categoryUi.row.classList.toggle('is-split', split); derivedValue.hidden = !split;
-      purchaseHint.textContent = split ? `${currentItems.length}品目${currentAdjustments.length ? ` · 値引き・調整${currentAdjustments.length}` : ''}` : '分けない（品目・値引き・税額）';
+      itemsEntryHint.textContent = purchaseHint.textContent = split ? `${currentItems.length}品目${currentAdjustments.length ? ` · 値引き・調整${currentAdjustments.length}` : ''}` : '分けない（品目・値引き・税額）';
       if (!split) return;
       const totals = new Map<string, number>();
       for (const item of currentItems) { const key = item.categoryId || category.value || ''; totals.set(key, (totals.get(key) ?? 0) + (item.amountYen ?? 0)); }
@@ -720,7 +725,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const difference = Number(amount.value) - knownTotal;
       // docs/UX.md レシートの場合: only a short mark beside the total; the full sentence is its accessible name.
       totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
-      totalCheck.textContent = difference === 0 ? '✓ 一致' : '△ 要確認';
+      // "差額あり" keeps this apart from "写真と確認", the mark for fields AI was unsure of.
+      totalCheck.textContent = difference === 0 ? '✓ 一致' : '△ 差額あり';
       totalCheck.setAttribute('aria-label', difference === 0 ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
     }

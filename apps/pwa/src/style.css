@@ -289,6 +289,8 @@ form .entry-row .date-shortcuts button { min-height: 36px; padding: 0 var(--spac
 .optional-fields > summary::after, .purchase-details > summary::after { content: "›"; color: var(--muted); font-size: 1.25rem; transition: transform .15s ease; }
 .optional-fields[open] > summary::after, .purchase-details[open] > summary::after { transform: rotate(90deg); }
 .entry-rows .optional-fields { margin: 0; }
+button.entry-row-link { width: 100%; min-height: 52px; margin: 0; padding: var(--space-1) 0; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; color: var(--text); font-weight: 400; text-align: left; }
+button.entry-row-link .icon { width: 18px; height: 18px; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .receipt-total-check { flex: none; font-size: .8125rem; font-weight: 700; white-space: nowrap; }
 .category-sheet .category-picker { margin-bottom: var(--space-3); }
 

@@ -40,7 +40,7 @@ try {
   assert.match(await check.getAttribute('class'), /is-match/);
   if (process.env.PWA_RECEIPT_TOTAL_CHECK_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_TOTAL_CHECK_SCREENSHOT_PATH });
   await page.locator('#receipt-amount').fill('950');
-  assert.equal(await check.textContent(), '△ 要確認');
+  assert.equal(await check.textContent(), '△ 差額あり');
   assert.equal(await check.getAttribute('aria-label'), '品目と値引きの合計と¥50違います');
   assert.match(await check.getAttribute('class'), /is-mismatch/);
   await page.locator('#receipt-amount').fill('900');
