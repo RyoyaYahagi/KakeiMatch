@@ -79,8 +79,22 @@ try {
   // The previous household can still be restored on the device that was replaced.
   await b.locator('#settings-tab').click();
   assert.equal(await b.locator('#restore-previous').isDisabled(), false);
+
+  // When the reply never reaches the first device, the second stops waiting and says what to check.
+  await dialogA.getByRole('button', { name: '閉じる', exact: true }).click();
+  const retryA = await openLink(a);
+  await retryA.getByRole('button', { name: 'この端末から始める', exact: true }).click();
+  const unusedOffer = await textCode(retryA, '最初のコード');
+  const retryB = await openLink(b);
+  await retryB.getByRole('button', { name: '相手の端末のコードを読む', exact: true }).click();
+  await retryB.getByLabel('最初のコード', { exact: true }).fill(unusedOffer);
+  await retryB.getByRole('button', { name: '貼り付けたコードで続ける', exact: true }).click();
+  await retryB.getByText('つながるのを待っています…', { exact: true }).waitFor();
+  await retryB.getByText('つながりませんでした。家計簿は変えていません。次を確かめてから、はじめからやり直してください。', { exact: true }).waitFor({ timeout: 30_000 });
+  await retryB.getByText(/ローカルネットワーク/).waitFor();
+  if (process.env.PWA_DEVICE_LINK_UNREACHABLE_SCREENSHOT_PATH) await b.screenshot({ path: process.env.PWA_DEVICE_LINK_UNREACHABLE_SCREENSHOT_PATH });
   assert.deepEqual([...first.errors, ...second.errors], []);
-  console.log('PASS: two devices connect with text codes, explain a code read at the wrong step, compare households, and the replaced device confirms, adopts the other household, and can return to its previous one.');
+  console.log('PASS: two devices connect with text codes, explain a code read at the wrong step, compare households, and the replaced device confirms, adopts the other household, can return to its previous one, and a device that never connects stops waiting with what to check.');
 } catch (error) {
   for (const { page } of [first, second]) console.log(await page.locator('body').innerText());
   throw error;

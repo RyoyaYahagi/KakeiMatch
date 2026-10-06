@@ -12,6 +12,7 @@ type Message =
   | { t: 'snapshot'; size: number; sha256: string }
   | { t: 'received' }
   | { t: 'failed' };
+export type FailureReason = 'unreachable' | 'closed' | 'broken_transfer' | 'peer_failed';
 export type LinkEvents = {
   onPeerSummary(summary: HouseholdSummary): void;
   /** `source` is the side whose household is kept. `chosenHere` is false when the other device chose. */
@@ -19,7 +20,8 @@ export type LinkEvents = {
   onProgress(fraction: number): void;
   onSnapshot(snapshot: Blob): void;
   onPeerReceived(): void;
-  onFailed(reason: 'closed' | 'broken_transfer' | 'peer_failed'): void;
+  /** `unreachable`: the two devices never reached each other on the network. */
+  onFailed(reason: FailureReason): void;
 };
 
 const CHANNEL = 'kakeimatch-sync';
@@ -27,6 +29,8 @@ const CHUNK_BYTES = 16 * 1024;
 const MAX_SNAPSHOT_BYTES = 1024 * 1024 * 1024;
 // Without a server there are only local candidates, which gather within a moment.
 const ICE_GATHER_TIMEOUT_MS = 3_000;
+// On one network the devices find each other within seconds; longer means something blocks them.
+const CONNECT_TIMEOUT_MS = 20_000;
 
 async function gathered(connection: RTCPeerConnection): Promise<string> {
   if (connection.iceGatheringState !== 'complete') {
@@ -48,11 +52,13 @@ export class DeviceLink {
   private pending: LinkRole | null = null;
   private incoming: { size: number; sha256: string; bytes: Uint8Array; received: number } | null = null;
   private finished = false;
+  private opened = false;
+  private connectTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(private readonly connection: RTCPeerConnection, readonly role: LinkRole,
     private readonly summary: () => Promise<HouseholdSummary>, private readonly events: LinkEvents) {
     connection.addEventListener('connectionstatechange', () => {
-      if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) this.fail('closed');
+      if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) this.fail(this.opened ? 'closed' : 'unreachable');
     });
   }
 
@@ -65,7 +71,7 @@ export class DeviceLink {
     const code = await encodeLinkCode('offer', await gathered(connection));
     return {
       link, code,
-      accept: async answerCode => { await connection.setRemoteDescription({ type: 'answer', sdp: await decodeLinkCode(answerCode, 'answer') }); },
+      accept: async answerCode => { await connection.setRemoteDescription({ type: 'answer', sdp: await decodeLinkCode(answerCode, 'answer') }); link.waitForConnection(); },
     };
   }
 
@@ -77,21 +83,33 @@ export class DeviceLink {
     connection.addEventListener('datachannel', event => { if (event.channel.label === CHANNEL) link.attach(event.channel); });
     await connection.setRemoteDescription({ type: 'offer', sdp: offer });
     await connection.setLocalDescription(await connection.createAnswer());
-    return { link, code: await encodeLinkCode('answer', await gathered(connection)) };
+    const code = await encodeLinkCode('answer', await gathered(connection));
+    link.waitForConnection();
+    return { link, code };
+  }
+
+  /** Gives up when the channel has not opened in time, instead of waiting forever. */
+  private waitForConnection() {
+    if (this.connectTimer !== null) return;
+    this.connectTimer = setTimeout(() => {
+      if (this.opened) return;
+      this.fail('unreachable');
+      this.connection.close();
+    }, CONNECT_TIMEOUT_MS);
   }
 
   private attach(channel: RTCDataChannel) {
     this.channel = channel;
     channel.binaryType = 'arraybuffer';
     channel.bufferedAmountLowThreshold = CHUNK_BYTES * 8;
-    channel.addEventListener('open', () => { void this.summary().then(summary => this.send({ t: 'hello', version: 1, summary })).catch(() => this.fail('peer_failed')); });
+    channel.addEventListener('open', () => { this.opened = true; if (this.connectTimer !== null) clearTimeout(this.connectTimer); void this.summary().then(summary => this.send({ t: 'hello', version: 1, summary })).catch(() => this.fail('peer_failed')); });
     channel.addEventListener('message', event => { this.receive(event.data as string | ArrayBuffer); });
-    channel.addEventListener('close', () => this.fail('closed'));
+    channel.addEventListener('close', () => this.fail(this.opened ? 'closed' : 'unreachable'));
   }
 
   private send(message: Message) { this.channel?.send(JSON.stringify(message)); }
 
-  private fail(reason: 'closed' | 'broken_transfer' | 'peer_failed') {
+  private fail(reason: FailureReason) {
     if (this.finished) return;
     this.finished = true;
     this.events.onFailed(reason);
@@ -171,5 +189,5 @@ export class DeviceLink {
   /** The receiver says the household was switched, so the sender can stop waiting. */
   confirmReceived() { this.send({ t: 'received' }); this.finished = true; }
   reportFailure() { this.send({ t: 'failed' }); this.finished = true; }
-  close() { this.finished = true; this.channel?.close(); this.connection.close(); }
+  close() { this.finished = true; if (this.connectTimer !== null) clearTimeout(this.connectTimer); this.channel?.close(); this.connection.close(); }
 }

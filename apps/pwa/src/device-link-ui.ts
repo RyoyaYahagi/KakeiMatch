@@ -1,7 +1,7 @@
 // docs/UX.md 端末間の同期: two of the user's devices connect directly and settle on one household.
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import { createLocalSnapshot, restoreLocalBackup, type BackupLedger } from './local-backup';
-import { DeviceLink, type HouseholdSummary, type LinkRole } from './device-link';
+import { DeviceLink, type FailureReason, type HouseholdSummary, type LinkRole } from './device-link';
 import { LinkCodeError } from './device-link-code';
 import { qrSvg, scanQr } from './device-link-qr';
 import { recordLocalDiagnostic } from './local-diagnostics';
@@ -114,13 +114,24 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       onProgress: (fraction: number) => { status.textContent = `${Math.round(fraction * 100)}%`; },
       onSnapshot: (snapshot: Blob) => { if (pendingConfirm) confirmReplace(snapshot); else void replace(snapshot); },
       onPeerReceived: () => { show(text('p', '相手の端末の家計簿を、この端末の家計簿にそろえました。')); },
-      onFailed: (reason: 'closed' | 'broken_transfer' | 'peer_failed') => {
+      onFailed: (reason: FailureReason) => {
         if (restoring) return;
+        if (reason === 'unreachable') {
+          show(text('p', 'つながりませんでした。家計簿は変えていません。次を確かめてから、はじめからやり直してください。'), unreachableHelp());
+          return;
+        }
         status.textContent = reason === 'broken_transfer' ? '途中で家計簿が欠けました。家計簿は変えていません。はじめからやり直してください。'
           : '接続が切れました。家計簿は変えていません。はじめからやり直してください。';
       },
     };
     let pendingConfirm = false;
+    const unreachableHelp = () => {
+      const list = document.createElement('ul'); list.className = 'device-link-help';
+      for (const item of ['2台が同じWi-Fi（同じネットワーク名）につながっている',
+        'Macでは「システム設定」→「プライバシーとセキュリティ」→「ローカルネットワーク」で、使っているブラウザーがオンになっている（変えた後はMacの再起動が要ることがあります）',
+        'Wi-Fiルーターで、端末どうしの通信を止める設定（プライバシーセパレーター、AP隔離など）が切れている']) list.append(text('li', item));
+      return list;
+    };
 
     function choose(own: HouseholdSummary, peer: HouseholdSummary) {
       const rows = document.createElement('ul'); rows.className = 'device-link-households';
