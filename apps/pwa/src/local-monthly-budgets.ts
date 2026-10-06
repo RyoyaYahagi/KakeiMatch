@@ -1,5 +1,5 @@
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
-import { shiftMonth } from './local-monthly-dashboard';
+import { monthEnd, shiftMonth } from './local-monthly-dashboard';
 import { categoryRank, categoryTone } from './category-tone';
 import { backLink } from './settings-ui';
 import { icon } from './ui-icons';
@@ -14,19 +14,51 @@ function amountLine(value: { budgetYen: number; spentYen: number; remainingYen: 
 function progress(value: { budgetYen: number; spentYen: number }, label: string) {
   const result = node('progress'); result.max = Math.max(1, value.budgetYen); result.value = Math.max(0, Math.min(value.spentYen, result.max)); result.setAttribute('aria-label', label); return result;
 }
-export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudgetSummary, edit: () => void) {
+/**
+ * docs/DESIGN.md 予算の進み具合（日の目盛り）: one tick per day. Ticks are filled by the share of the budget used;
+ * the ones past today show spending ahead of the even pace, and every tick turns red once the budget is over.
+ */
+function dayTicks(summary: MonthlyBudgetSummary, today: string) {
+  const days = Number(monthEnd(summary.yearMonth).slice(8));
+  const month = today.slice(0, 7);
+  const elapsed = summary.yearMonth < month ? days : summary.yearMonth > month ? 0 : Number(today.slice(8));
+  const over = summary.remainingYen < 0;
+  const filled = over ? days : Math.min(days, Math.round(summary.spentYen / summary.budgetYen * days));
+  const ticks = node('span'); ticks.className = `budget-ticks${over ? ' over' : ''}`; ticks.setAttribute('aria-hidden', 'true');
+  for (let day = 1; day <= days; day++) {
+    const tick = node('i'); if (day <= filled) tick.className = day <= elapsed || over ? 'filled' : 'ahead';
+    ticks.append(tick);
+  }
+  if (elapsed > 0 && elapsed < days) { const mark = node('b'); mark.className = 'budget-today'; mark.style.setProperty('--day', String(elapsed)); mark.style.setProperty('--days', String(days)); ticks.append(mark); }
+  const legend = node('span'); legend.className = 'budget-pace';
+  let pace = '';
+  if (summary.yearMonth === month && !over) {
+    // Money stays in whole yen: the even pace is rounded to the yen before comparing.
+    const target = Math.round(summary.budgetYen * elapsed / days);
+    const gap = summary.spentYen - target;
+    pace = gap === 0 ? '目安どおり' : `目安より ${yen(Math.abs(gap))} ${gap > 0 ? '多め' : '少なめ'}`;
+    legend.append(node('span', '1日'), node('span', `今日${elapsed}日 · ${pace}`), node('span', `${days}日`));
+  }
+  return { ticks, legend, pace };
+}
+export function renderMonthlyBudgets(target: HTMLElement, summary: MonthlyBudgetSummary, edit: () => void, today: string) {
   const configured = summary.categories.filter(category => category.budgetYen !== null);
   const details = node('details'); details.className = 'monthly-budget-details';
   const heading = node('summary');
-  const headline = node('span', `${Number(summary.yearMonth.slice(5))}月の予算 · ${yen(summary.spentYen)} / ${yen(summary.budgetYen)}`); headline.className = 'budget-headline';
+  const headline = node('span', summary.budgetConfigured ? `予算 ${yen(summary.budgetYen)}` : '予算'); headline.className = 'budget-headline';
   heading.append(headline);
+  // docs/DESIGN.md 予算の進み具合: the whole-month budget decides whether a budget is set (#193).
   if (summary.budgetConfigured) {
-    if (summary.budgetYen > 0) {
-      const meter = progress(summary, '予算全体の使用額'); meter.classList.add('budget-meter'); meter.classList.toggle('over', summary.remainingYen < 0);
-      heading.append(meter);
-    }
     const remaining = node('span', summary.remainingYen < 0 ? `超過 ${yen(-summary.remainingYen)}` : `残り ${yen(summary.remainingYen)}`); remaining.className = `budget-remaining${summary.remainingYen < 0 ? ' over' : ''}`;
     heading.append(remaining);
+    let pace = '';
+    // A 0 yen budget has no scale to draw; the amounts in words are enough.
+    if (summary.budgetYen > 0) {
+      const ticked = dayTicks(summary, today); pace = ticked.pace;
+      heading.append(ticked.ticks);
+      if (ticked.legend.childElementCount) heading.append(ticked.legend);
+    }
+    heading.setAttribute('aria-label', `${Number(summary.yearMonth.slice(5))}月の予算 ${yen(summary.budgetYen)}、使用額 ${yen(summary.spentYen)}、${remaining.textContent}${pace ? `、${pace}` : ''}`);
   } else {
     const setup = node('span', '予算を設定する'); setup.className = 'budget-remaining'; heading.append(setup);
   }

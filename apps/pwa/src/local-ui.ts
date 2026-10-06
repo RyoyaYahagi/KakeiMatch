@@ -7,7 +7,7 @@ import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
-import { renderHomeAttention, type HomeAttentionCounts } from './home-attention';
+import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem } from './home-attention';
 import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
@@ -158,7 +158,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       selectedMonth = action.type === 'current' ? today().slice(0, 7) : shiftMonth(selectedMonth, action.offset);
       void home().catch(report);
     });
-    renderMonthlyBudgets(overview, budgetSummary, () => { void budgetEditor('monthly').catch(report); });
+    renderMonthlyBudgets(overview, budgetSummary, () => { void budgetEditor('monthly').catch(report); }, today());
     renderCategoryBreakdown(el('home-categories'), summary);
     const accountNames = new Map(accounts.map(account => [account.id, account.name]));
     const list = el('transactions'); list.replaceChildren();
@@ -169,9 +169,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。', 'empty'));
 
-    const { counts } = await reconciliationState();
+    const { run, decisions, pending, counts } = await reconciliationState();
+    const allStatements = run ? await statements.list() : [];
     ensureScreen(screen);
-    renderHomeAttention(el('home-attention'), counts, () => reviewPage().catch(report));
+    renderHomeAttention(el('home-attention'), counts, homeAttentionItems(run, decisions, pending, allStatements),
+      decisions.filter(d => d.source === 'automatic' && d.status === 'applied').length, () => reviewPage().catch(report));
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
@@ -925,6 +927,30 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const disclosureSummary = text('summary', '明細CSVを取り込む'); disclosureSummary.prepend(icon('upload'));
     disclosure.append(disclosureSummary, section);
     return disclosure;
+  }
+  /** docs/UX.md ホーム: failed decisions first, then statements to review, then ones without a record. */
+  function homeAttentionItems(run: Awaited<ReturnType<typeof reconciliationState>>['run'], decisions: Awaited<ReturnType<typeof reconciliationState>>['decisions'],
+    pending: Awaited<ReturnType<typeof reconciliationState>>['pending'], allStatements: Awaited<ReturnType<typeof statements.list>>): HomeAttentionItem[] {
+    if (!run) return [];
+    const byId = new Map(allStatements.map(statement => [statement.id, statement]));
+    const items: HomeAttentionItem[] = [];
+    for (const decision of decisions.filter(d => d.status !== 'applied')) {
+      const statement = byId.get(decision.statementId);
+      items.push({ merchant: statement?.merchant ?? '保存済みの照合', amountYen: statement?.amountYen ?? decision.statementAmountYen, tone: 'danger', reason: '反映できませんでした' });
+    }
+    for (const row of pending.filter(r => r.status === 'needs_review')) {
+      const statement = byId.get(row.statementTransactionId); if (!statement) continue;
+      const candidates = run.candidates.filter(c => c.statementTransactionId === row.statementTransactionId);
+      const reason = candidates.length > 1 ? `候補が${candidates.length}件あります`
+        : candidates[0]?.amountDeltaYen ? `金額が${yen(Math.abs(candidates[0].amountDeltaYen))}違います`
+        : candidates[0]?.dateDistanceDays ? `日付が${candidates[0].dateDistanceDays}日ずれています` : '内容を確認してください';
+      items.push({ merchant: statement.merchant, amountYen: statement.amountYen, tone: 'warning', reason });
+    }
+    for (const row of pending.filter(r => r.status !== 'needs_review')) {
+      const statement = byId.get(row.statementTransactionId); if (!statement) continue;
+      items.push({ merchant: statement.merchant, amountYen: statement.amountYen, tone: 'missing', reason: '記録が見つかりません' });
+    }
+    return items;
   }
   async function reconciliationState() {
     const [run, decisions] = await Promise.all([reconciliation.latest(), reconciliation.resolutions()]);
