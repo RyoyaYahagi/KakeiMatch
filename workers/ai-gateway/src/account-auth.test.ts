@@ -143,6 +143,20 @@ describe("Cloud account bootstrap and recovery", () => {
     expect(calls.some((call) => call.query.includes("DELETE FROM user") && call.values.includes("synthetic-self"))).toBe(true);
   });
 
+  it("accepts an empty request stream, as Cloudflare delivers a bodiless DELETE", async () => {
+    authState.session = {
+      user: { id: "synthetic-self", name: "Synthetic Self", email: "self@example.test" },
+      session: { id: "synthetic-session", expiresAt: new Date("2026-10-10T00:00:00Z") },
+    };
+    const { database, batches } = testDatabase();
+    const response = await handleAccountRequest(new Request("https://kakeimatch.example/api/account/delete", {
+      method: "DELETE", headers: { origin: "https://kakeimatch.example", cookie: "synthetic-session-cookie" }, body: new Uint8Array(0),
+    }), envFor(database));
+
+    expect(response.status).toBe(200);
+    expect(batches).toHaveLength(1);
+  });
+
   it("treats a repeated deletion attempt as successful and idempotent", async () => {
     authState.session = {
       user: { id: "synthetic-self", name: "Synthetic Self", email: "self@example.test" },
