@@ -15,6 +15,7 @@ import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields,
 import { scheduleFromEntry } from './entry-recurrence';
 import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
+import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
 import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
@@ -509,14 +510,25 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       open.append(img, badge); open.addEventListener('click', () => openReceiptImage(src));
       previewFrame.append(open); overviewExtras.append(previewFrame);
     }
-    if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
+    // Read warnings say where to compare with the image; they are drawn once the fields exist.
+    const reviewedWarnings = new Set(receipt.reviewedWarnings ?? []);
+    const reviewWarnings = (receipt.extraction ? describeReceiptWarnings(receipt.extraction) : [])
+      .map((review, warningIndex) => ({ ...review, warningIndex })).filter(review => !reviewedWarnings.has(review.warningIndex));
+    const reviewArea = document.createElement('div');
+    overviewExtras.append(reviewArea);
+    const entryId = (target: ReceiptWarningTarget) => target.kind === 'item' && target.index !== null ? `receipt-item:${receipt.id}:${target.index}`
+      : target.kind === 'adjustment' && target.index !== null ? `receipt-adjustment:${receipt.id}:${target.index}` : null;
+    const flaggedEntryIds = new Set(reviewWarnings.flatMap(({ target }) => entryId(target) ?? []));
 
     const form = document.createElement('form');
     const inputId = (field: string) => !receipt.image ? `manual-transaction-${field === 'merchant' ? 'payee' : field}` : `receipt-${field}`;
     const merchant = document.createElement('input'); merchant.id = inputId('merchant'); merchant.required = true; merchant.maxLength = 200; merchant.value = initial.merchant;
     const date = document.createElement('input'); date.id = inputId('date'); date.type = 'date'; date.required = true; date.value = initial.purchasedDate;
     const time = document.createElement('input'); time.id = 'receipt-time'; time.type = 'time'; time.value = initial.purchasedTime ?? '';
-    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '1'; amount.step = '1'; amount.required = true; amount.value = initial.totalAmountYen ? String(initial.totalAmountYen) : '';
+    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = receipt.image ? '0' : '1'; amount.step = '1'; amount.required = true;
+    // A receipt paid entirely with points has a 0 yen total; an empty manual entry stays blank.
+    const zeroTotal = Boolean(receipt.image) && initial.totalAmountYen === 0 && (extraction?.totalAmountYen === 0 || confirmed?.totalAmountYen === 0);
+    amount.value = initial.totalAmountYen || zeroTotal ? String(initial.totalAmountYen) : '';
     const category = document.createElement('select'); category.id = inputId('category'); category.required = true;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
     category.value = actualCategoryId(initial.categoryId);
@@ -680,6 +692,99 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const recurrence = !receipt.image && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
     if (recurrence) overviewFields.append(recurrence.row);
     form.append(overviewFields, purchaseDetails, warning, status);
+    const reviewFields = { merchant: [merchantLabel, merchant], purchasedDate: [dateLabel, date], purchasedTime: [timeLabel, time], totalAmountYen: [amountLabel, amount], taxAmountYen: [taxLabel, tax] } as const;
+    const fieldFlags = new Map<keyof typeof reviewFields, HTMLElement>();
+    for (const field of new Set(reviewWarnings.flatMap(({ target }) => target.kind === 'field' ? [target.field] : []))) {
+      const [label, input] = reviewFields[field];
+      // "写真と確認" (compare with the photo) is a different thing from the total's "差額あり".
+      const flag = text('span', '△ 写真と確認', 'review-flag'); flag.id = `${input.id}-review`;
+      // In a ledger row the mark goes to the right column, so the three columns stay aligned.
+      const row = label.closest('.entry-row');
+      if (row) {
+        let side = row.querySelector<HTMLElement>(':scope > .entry-row-side');
+        if (!side) { side = document.createElement('div'); side.className = 'entry-row-side'; row.append(side); }
+        side.prepend(flag);
+      } else label.after(flag);
+      input.setAttribute('aria-describedby', flag.id);
+      fieldFlags.set(field, flag);
+      if (field === 'purchasedTime') optional.open = true;
+      if (field === 'taxAmountYen') taxDetails.open = true;
+      // Editing the field is itself a check against the image.
+      input.addEventListener('input', () => { void resolveReviews(review => review.target.kind === 'field' && review.target.field === field).catch(report); }, { once: true });
+    }
+    for (const list of [itemsList, adjustmentsList]) list.addEventListener('input', event => {
+      const entry = (event.target as HTMLElement).closest<HTMLElement>('[data-receipt-item],[data-receipt-adjustment]');
+      const id = entry?.dataset.receiptItem ?? entry?.dataset.receiptAdjustment;
+      if (id && flaggedEntryIds.has(id)) void resolveReviews(review => entryId(review.target) === id).catch(report);
+    });
+    const reviewBand = document.createElement('section'); reviewBand.className = 'notice notice-warning receipt-review';
+    const reviewTitle = text('p', '', 'receipt-review-title'); reviewTitle.id = 'receipt-review-title';
+    reviewBand.setAttribute('aria-labelledby', reviewTitle.id);
+    const reviewList = document.createElement('ul'); reviewList.className = 'receipt-review-list';
+    const reviewRows = new Map<number, HTMLLIElement>();
+    for (const review of reviewWarnings) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'text-button receipt-review-row';
+      const body = document.createElement('span'); body.className = 'receipt-review-text';
+      body.append(text('strong', review.label), text('span', review.message));
+      row.append(body, icon('chevronRight'));
+      row.addEventListener('click', () => showReviewTarget(review.target));
+      const done = button('確認した', () => resolveReviews(other => other.warningIndex === review.warningIndex));
+      done.className = 'text-button receipt-review-done'; done.setAttribute('aria-label', `${review.label}を確認した`);
+      const item = document.createElement('li'); item.append(row, done); reviewList.append(item);
+      reviewRows.set(review.warningIndex, item);
+    }
+    reviewBand.append(icon('warning'), reviewTitle, reviewList);
+    const refreshReviewBand = () => {
+      reviewTitle.textContent = `画像と照らし合わせてほしいところが${reviewRows.size}件あります`;
+      if (!reviewRows.size) reviewBand.remove();
+    };
+    if (reviewWarnings.length) { refreshReviewBand(); reviewArea.append(reviewBand); }
+    /** Hides checked warnings now and remembers them for this read. */
+    async function resolveReviews(matches: (review: typeof reviewWarnings[number]) => boolean) {
+      const resolved = reviewWarnings.filter(review => reviewRows.has(review.warningIndex) && matches(review));
+      if (!resolved.length) return;
+      for (const review of resolved) {
+        reviewRows.get(review.warningIndex)?.remove(); reviewRows.delete(review.warningIndex);
+        const id = entryId(review.target);
+        if (id && !reviewWarnings.some(other => reviewRows.has(other.warningIndex) && entryId(other.target) === id)) {
+          flaggedEntryIds.delete(id);
+          (itemsList.querySelector(`[data-receipt-item="${CSS.escape(id)}"]`) ?? adjustmentsList.querySelector(`[data-receipt-adjustment="${CSS.escape(id)}"]`))?.querySelector('.receipt-review-note')?.remove();
+        }
+        if (review.target.kind === 'field') {
+          const field = review.target.field;
+          if (!reviewWarnings.some(other => reviewRows.has(other.warningIndex) && other.target.kind === 'field' && other.target.field === field)) {
+            fieldFlags.get(field)?.remove(); reviewFields[field][1].removeAttribute('aria-describedby');
+          }
+        }
+      }
+      refreshReviewBand();
+      await receipts.markWarningsReviewed(receipt.id, resolved.map(review => review.warningIndex));
+    }
+    /** Moves to the place a read warning is about, so the user can compare it with the image. */
+    function showReviewTarget(target: ReceiptWarningTarget) {
+      if (target.kind === 'image') {
+        setEditorPane('overview', false);
+        overviewExtras.querySelector('img')?.scrollIntoView({ block: 'center' });
+        return;
+      }
+      if (target.kind === 'field') {
+        setEditorPane('overview', false);
+        if (target.field === 'taxAmountYen') { purchaseDetails.open = true; taxDetails.open = true; }
+        if (target.field === 'purchasedTime') optional.open = true;
+        const input = reviewFields[target.field][1];
+        input.scrollIntoView({ block: 'center' }); input.focus({ preventScroll: true });
+        return;
+      }
+      setEditorPane('items', false);
+      const list = target.kind === 'item' ? itemsList : adjustmentsList;
+      const id = `${target.kind === 'item' ? 'receipt-item' : 'receipt-adjustment'}:${receipt.id}:${target.index}`;
+      const entry = target.index === null ? null : list.querySelector<HTMLElement>(`[data-receipt-${target.kind}="${CSS.escape(id)}"]`);
+      const details = entry instanceof HTMLDetailsElement ? entry : entry?.querySelector('details');
+      if (!details) { (target.kind === 'item' ? itemsHeading : adjustmentsHeading).scrollIntoView({ block: 'start' }); return; }
+      details.open = true;
+      details.scrollIntoView({ block: 'center' });
+      details.querySelector<HTMLElement>('input')?.focus({ preventScroll: true });
+    }
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
       const itemsOnly = pane === 'items';
@@ -806,6 +911,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       totalCheck.setAttribute('aria-label', difference === 0 ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
     }
+    /** docs/DESIGN.md 品目の行: a line the photo should confirm shows a small note under its name. */
+    function nameWithReviewNote(name: HTMLElement, flagged: boolean) {
+      const wrap = text('span', '', 'receipt-compact-name'); wrap.append(name);
+      if (flagged) wrap.append(text('small', '△ 写真と確認', 'receipt-review-note'));
+      return wrap;
+    }
     function drawItems() {
       itemsList.replaceChildren();
       for (const item of items) {
@@ -821,7 +932,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           summaryMeta.textContent = categoryName(item.categoryId);
         };
         refreshSummary();
-        summary.append(summaryTitle, summaryAmount, summaryMeta);
+        summary.append(nameWithReviewNote(summaryTitle, flaggedEntryIds.has(item.id)), summaryAmount, summaryMeta);
         details.open = expandItemId === item.id;
         details.addEventListener('toggle', () => {
           if (!details.open) {
@@ -889,7 +1000,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           summaryMeta.textContent = adjustment.amountYen > 0 ? 'その他の調整' : '値引き';
         };
         refreshSummary();
-        summary.append(summaryTitle, summaryAmount, summaryMeta);
+        summary.append(nameWithReviewNote(summaryTitle, flaggedEntryIds.has(adjustment.id)), summaryAmount, summaryMeta);
         details.open = expandAdjustmentId === adjustment.id;
         details.addEventListener('toggle', () => {
           if (!details.open) {
@@ -948,7 +1059,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           if (!value.categoryId && value.items.some(item => !item.categoryId)) { setEditorPane('items', false); throw new Error('品目のカテゴリを選んでください。'); }
           if (!value.categoryId) { value.categoryId = value.items.find(item => item.categoryId)?.categoryId ?? ''; category.value = value.categoryId; }
         }
-        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
+        // A photographed receipt paid entirely with points may total 0 yen; a typed expense needs 1 yen or more.
+        const missingTotal = pendingEdit ? !receipt.image && !value.totalAmountYen : amount.value.trim() === '' || (!receipt.image && !value.totalAmountYen);
+        if (!value.merchant.trim() || !value.purchasedDate || missingTotal || !value.categoryId || !value.accountId) {
           setEditorPane('overview', false);
           if (!value.categoryId) categoryUi.row.querySelector<HTMLButtonElement>('.entry-row-more')?.focus();
           throw new Error('店名、日付、金額、カテゴリ、支払元を確認してください。');
