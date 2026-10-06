@@ -9,6 +9,11 @@ export default defineConfig(({ mode, isPreview }) => {
   if (!databaseId || !databaseName) {
     throw new Error('Production requires explicit ACCOUNT_D1_ID and ACCOUNT_D1_NAME for the account-only D1 database.');
   }
+  // The Turnstile site key is public. Previews use Cloudflare's always-pass testing key with synthetic data only.
+  const turnstileSiteKey = production ? process.env.TURNSTILE_SITE_KEY : '1x00000000000000000000AA';
+  if (!turnstileSiteKey) {
+    throw new Error('Production requires TURNSTILE_SITE_KEY so guest AI use has bot protection.');
+  }
   return {
     worker: {
       name: production ? 'kakeimatch' : 'kakeimatch-issue-39-preview',
@@ -25,11 +30,16 @@ export default defineConfig(({ mode, isPreview }) => {
         AI_EMERGENCY_STOP: bindings.secret(),
         AI_GUARDRAILS_JSON: bindings.secret(),
         AI_FREE_MONTHLY_LIMIT: bindings.text('30'),
+        AI_GUEST_DAILY_LIMIT: bindings.text('5'),
         GEMINI_API_KEY: bindings.secret(),
         GITHUB_ISSUES_TOKEN: bindings.secret(),
         GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
         TYPESAFE_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
+        // Contact AI is not counted against a plan, so it gets its own tighter limit per identity and per address.
+        CONTACT_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600146' : '600147', simple: { limit: 5, period: 60 } }),
+        TURNSTILE_SITE_KEY: bindings.text(turnstileSiteKey),
+        TURNSTILE_SECRET_KEY: bindings.secret(),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),
         JEV_MODEL: bindings.text('jev-latest'),
         TYPESAFE_API_URL: bindings.text('https://api.typesafe.ai/v1/systemone'),

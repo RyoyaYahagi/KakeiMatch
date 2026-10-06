@@ -30,7 +30,8 @@ function request(stage: string, body: unknown, token = bearer(), headers = {}) {
   return new Request(`${origin}/api/ai/${stage}`, { method: "POST", headers: { origin, authorization: token, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
 const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async () => Response.json(value, { status })) as typeof fetch;
-const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0007_account_deletion.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
+const limits = (monthlyDefault: number) => ({ monthlyDefault, guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 });
+const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
@@ -62,16 +63,16 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
 
   it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
     const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
-    const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, 2)));
+    const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, limits(2), "receipt", "synthetic-address")));
     expect(reservations.filter(result => result === "reserved")).toHaveLength(2);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE user_id='synthetic-user' AND dispatched=0").bind().first<{ count: number }>())
       .toEqual({ count: 2 });
     expect(await flowUsage(db, "synthetic-user", "2026-09")).toBe(0);
     expect(reservations.filter(result => result !== "reserved")).toEqual(Array(6).fill("ai_quota_exceeded"));
     const admittedFlow = candidates[reservations.indexOf("reserved")]!;
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe("reserved");
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, 2)).toBe("invalid_flow");
-    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe("ai_quota_exceeded");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, limits(2), "receipt", "synthetic-address")).toBe("reserved");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, limits(2), "receipt", "synthetic-address")).toBe("invalid_flow");
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, limits(2), "receipt", "synthetic-address")).toBe("ai_quota_exceeded");
   });
 });
 
@@ -223,16 +224,24 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await handleRequest(request("jev", { ...category, flowId }, bearer("synthetic-user", expiry)), env, options(expiredProvider, expiry))).status).toBe(409);
     expect(expiredProvider).not.toHaveBeenCalled();
   });
-  it("counts provider failures once and permits the same-flow recovery", async () => {
+  it("does not count a provider error status, counts timeouts, and permits the same-flow recovery", async () => {
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId, now, fetchOk({ detail: "private provider error" }, 500))).status).toBe(503);
+    expect(await usage()).toMatchObject({ used: 0 });
     expect((await gemini(flowId)).status).toBe(200);
     expect(await usage()).toMatchObject({ used: 1 });
+    // A busy provider did no work; the cost event is still kept for the global caps.
+    expect((await gemini(crypto.randomUUID(), now, fetchOk({ error: "busy" }, 429))).status).toBe(429);
+    expect(await usage()).toMatchObject({ used: 1 });
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE provider='gemini'").bind().first<{ count: number }>()).toEqual({ count: 3 });
+    // A timeout status may follow work, so it counts.
+    expect((await gemini(crypto.randomUUID(), now, fetchOk({ error: "deadline" }, 504))).status).toBe(504);
+    expect(await usage()).toMatchObject({ used: 2 });
     const failedJev = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ private: true }, 500)));
     expect(failedJev.status).toBe(503);
     expect(await failedJev.text()).not.toContain("private");
     expect((await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk(jev)))).status).toBe(200);
-    expect(await usage()).toMatchObject({ used: 1 });
+    expect(await usage()).toMatchObject({ used: 2 });
   });
   it("persists one metering snapshot for every dispatched retry and keeps rejected requests out", async () => {
     const flowId = crypto.randomUUID();
@@ -486,7 +495,8 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const paused = await gemini(crypto.randomUUID());
     expect(paused.status).toBe(503);
     expect(await eventCount()).toBe(3);
-    expect(await usage()).toMatchObject({ used: 2 });
+    // The 500 opened the circuit but is not counted toward the plan.
+    expect(await usage()).toMatchObject({ used: 1 });
 
     await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='gemini') WHERE provider='gemini'").bind(now + 1).run();
     // A new failure at the same second as operator resume must be counted by rowid watermark.

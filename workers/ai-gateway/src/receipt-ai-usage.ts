@@ -13,18 +13,46 @@ export function monthKey(now: number): string {
   // Japan has a fixed UTC+09:00 offset, with no daylight saving time.
   return new Date((now + 9 * 60 * 60) * 1000).toISOString().slice(0, 7);
 }
+export function dayKey(now: number): string {
+  return new Date((now + 9 * 60 * 60) * 1000).toISOString().slice(0, 10);
+}
 export async function flowMac(secret: string, user: string, flow: string, stage: string, input: unknown): Promise<string> {
   const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   const bytes = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(JSON.stringify([user, flow, stage, input]))));
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 export async function flowUsage(db: Db, user: string, month: string): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND dispatched = 1").bind(user, month).first<{ used: number }>();
+  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt' AND counted = 1 AND dispatched = 1").bind(user, month).first<{ used: number }>();
   return row?.used ?? 0;
 }
+export async function guestDayUsage(db: Db, user: string, day: string): Promise<number> {
+  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND counted = 1 AND dispatched = 1").bind(user, day).first<{ used: number }>();
+  return row?.used ?? 0;
+}
+export type FlowKind = "receipt" | "contact-submit" | "contact-transcribe" | "contact-interview";
+/** Signed-in accounts count receipts per month; guests per Tokyo day and per address. */
+export type FlowLimits = { monthlyDefault: number; guestDaily: number; guestAddressDaily: number; contactSubmitAddressDaily: number };
 export type FlowReservation = "reserved" | "ai_quota_exceeded" | "invalid_flow";
+function quotaCondition(kind: FlowKind, user: string, now: number, ipDayMac: string, limits: FlowLimits): { sql: string; values: unknown[] } {
+  const day = dayKey(now);
+  if (kind === "receipt") return {
+    sql: `CASE WHEN guest THEN
+        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND counted = 1) < ?
+        AND (SELECT COUNT(*) FROM ai_receipt_flows WHERE ip_day_mac = ? AND day = ? AND kind = 'receipt' AND counted = 1) < ?
+      ELSE monthly_limit IS NULL OR
+        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt' AND counted = 1) < monthly_limit END`,
+    values: [user, day, limits.guestDaily, ipDayMac, day, limits.guestAddressDaily, user, monthKey(now)],
+  };
+  // Each submission opens a GitHub Issue, so a per-address daily cap stops floods.
+  if (kind === "contact-submit") return {
+    sql: "(SELECT COUNT(*) FROM ai_receipt_flows WHERE ip_day_mac = ? AND day = ? AND kind = 'contact-submit') < ?",
+    values: [ipDayMac, day, limits.contactSubmitAddressDaily],
+  };
+  return { sql: "1", values: [] };
+}
 /** Reserves the product flow and counts one image-stage attempt in a single D1 round trip. */
-export async function reserveFlow(db: Db, user: string, flow: string, imageMac: string, now: number, defaultLimit: number): Promise<FlowReservation> {
+export async function reserveFlow(db: Db, user: string, flow: string, imageMac: string, now: number, limits: FlowLimits, kind: FlowKind, ipDayMac: string): Promise<FlowReservation> {
+  const quota = quotaCondition(kind, user, now, ipDayMac, limits);
   const [released, , reservation, attempt] = await db.batch<AccountD1BatchResult>([
     // Reclaim interrupted reservations only when no provider event was admitted.
     // An old in-flight request cannot dispatch after deletion: event admission
@@ -32,15 +60,15 @@ export async function reserveFlow(db: Db, user: string, flow: string, imageMac: 
     releaseStatement(db, user, null, now - 120),
     // One INSERT is both the quota check and reservation. The unique key makes
     // concurrent retries idempotent; existing flows remain usable at quota.
-    db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, created_at, image_mac, dispatched)
-    SELECT ?, ?, ?, ?, ?, 0 FROM (
-      SELECT CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-        THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-        ELSE ? END AS monthly_limit
-    ) WHERE monthly_limit IS NULL OR
-      (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND month = ?) < monthly_limit
+    db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, day, kind, ip_day_mac, created_at, image_mac, dispatched)
+    SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0 FROM (
+      SELECT EXISTS (SELECT 1 FROM guest_devices WHERE user_id = ?) AS guest,
+        CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
+          THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
+          ELSE ? END AS monthly_limit
+    ) WHERE ${quota.sql}
     ON CONFLICT(user_id, flow_id) DO NOTHING`)
-      .bind(user, flow, monthKey(now), now, imageMac, user, user, defaultLimit, user, monthKey(now)),
+      .bind(user, flow, monthKey(now), dayKey(now), kind, ipDayMac, now, imageMac, user, user, user, limits.monthlyDefault, ...quota.values),
     db.prepare("SELECT flow_id FROM ai_receipt_flows WHERE user_id = ? AND flow_id = ?").bind(user, flow),
     // Without a reserved row this UPDATE matches nothing, so quota rejection has no side effect.
     attemptStatement(db, user, flow, "gemini", imageMac, now),
@@ -77,6 +105,11 @@ export async function releaseUndispatchedFlow(db: Db, user: string, flow: string
 }
 /** Marks the flow dispatched only when its cost event exists, so it can share a batch with the event INSERT. */
 export function markFlowDispatchedStatement(db: Db, user: string, flow: string, eventId: string): AccountD1Statement {
-  return db.prepare("UPDATE ai_receipt_flows SET dispatched=1 WHERE user_id=? AND flow_id=? AND EXISTS(SELECT 1 FROM ai_provider_cost_events WHERE id=?)")
+  // Each dispatch counts again, so a retry that reaches the provider is counted even after an uncounted error.
+  return db.prepare("UPDATE ai_receipt_flows SET dispatched=1, counted=1 WHERE user_id=? AND flow_id=? AND EXISTS(SELECT 1 FROM ai_provider_cost_events WHERE id=?)")
     .bind(user, flow, eventId);
+}
+/** The provider answered with an error status, so the user got nothing; the cost event stays for the global caps. */
+export async function uncountFlow(db: Db, user: string, flow: string): Promise<void> {
+  await db.prepare("UPDATE ai_receipt_flows SET counted=0 WHERE user_id=? AND flow_id=?").bind(user, flow).run();
 }
