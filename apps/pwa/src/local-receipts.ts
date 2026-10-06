@@ -2,7 +2,7 @@ import { CATEGORY_IDS, CATEGORY_LABELS, isCategoryId, normalizeMerchant, type Ca
 import { ReceiptExtractionError, validateReceiptExtraction, type ReceiptExtractionResult } from "../../../src/lib/receipt-extraction";
 import { LocalDataStorageError, type LocalDataRepository } from "../../../src/lib/local-data";
 import { ReceiptValidationError, validateReceiptImage, type ReceiptContentType } from "../../../src/lib/receipt-validation";
-import { getAiAccessToken } from "./ai-auth";
+import { currentAiIdentity, getAiAccessToken } from "./ai-auth";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
 import { LocalCategoryLearning, type AppliedCategoryRule } from "./local-category-learning";
 
@@ -109,8 +109,17 @@ function safeError(error: unknown): LocalReceiptServiceError {
   if (error instanceof ActualMasterValidationError) return new LocalReceiptServiceError("invalid_confirmation", error.message);
   if (error instanceof LocalDataStorageError) return new LocalReceiptServiceError("storage", error.message);
   if (error instanceof TypeError) return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
-  if (error instanceof Error && ["account_session_required", "ai_token_unavailable"].includes(error.message)) {
-    return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。");
+  if (error instanceof Error && error.message === "bot_check_cancelled") {
+    return new LocalReceiptServiceError("auth_required", "確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。手で入力するか、もう一度読み取ってください。");
+  }
+  if (error instanceof Error && error.message === "bot_check_failed") {
+    return new LocalReceiptServiceError("auth_required", "ロボットでないことを確かめられませんでした。もう一度読み取ってください。");
+  }
+  if (error instanceof Error && error.message === "guest_limit_reached") {
+    return new LocalReceiptServiceError("quota", "この接続からの登録なしの利用が多いため、今日はこれ以上始められません。手で入力するか、設定からログインしてください。", true);
+  }
+  if (error instanceof Error && ["account_session_required", "ai_token_unavailable", "guest_unavailable"].includes(error.message)) {
+    return new LocalReceiptServiceError("auth_required", "AI機能を準備できませんでした。レシートは端末に保存されています。設定からログインすると使えます。");
   }
   return new LocalReceiptServiceError("unavailable", "処理できませんでした。通信状態と端末の空き容量を確認して再試行してください。");
 }
@@ -615,7 +624,11 @@ async function readGatewayCode(response: Response): Promise<string> {
 function gatewayError(code: string, status?: number): LocalReceiptServiceError {
   if (code === "invalid_flow") return new LocalReceiptServiceError("invalid_flow", "この読み取りのカテゴリ提案は終了しました。手動で選ぶか、AIで読み取り直してください。");
   if (code === "unauthorized") return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。");
-  if (code === "ai_quota_exceeded") return new LocalReceiptServiceError("quota", "AI利用上限に達しました。手動で入力できます。");
+  if (code === "ai_quota_exceeded") {
+    return currentAiIdentity() === "guest"
+      ? new LocalReceiptServiceError("quota", "今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。手で入力して続けられます。", true)
+      : new LocalReceiptServiceError("quota", "AI利用上限に達しました。手動で入力できます。", true);
+  }
   if (code === "rate_limited") return new LocalReceiptServiceError("rate_limited", "AIへの要求が集中しています。しばらく待つか、手動で入力してください。");
   if (code === "invalid_provider_response") return new LocalReceiptServiceError("invalid_ai_response", "AIの応答を確認できませんでした。もう一度お試しください。");
   if (code === "not_configured") return new LocalReceiptServiceError("not_configured", "AI機能を現在利用できません。後でもう一度お試しください。");

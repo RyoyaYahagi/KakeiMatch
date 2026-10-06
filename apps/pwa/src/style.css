@@ -703,6 +703,10 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .master-create-dialog { width: min(100% - 32px, 480px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
 .master-create-dialog::backdrop { background: var(--scrim); }
 .master-create-dialog h2 { margin-top: 0; }
+.bot-check-dialog { width: min(100% - 32px, 420px); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
+.bot-check-dialog::backdrop { background: var(--scrim); }
+.bot-check-dialog h2 { margin-top: 0; }
+.bot-check-widget { min-height: 65px; margin-block: var(--space-4); }
 .recurring-catch-up-confirm { width: min(100% - 32px, 440px); max-height: calc(100dvh - 32px); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: var(--text); background: var(--surface); }
 .recurring-catch-up-confirm::backdrop { background: var(--scrim); }
 .recurring-catch-up-confirm h2 { margin-top: 0; }

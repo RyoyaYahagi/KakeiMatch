@@ -82,7 +82,7 @@ try {
   await page.getByText('未ログインです。', { exact: true }).waitFor();
   await page.reload();
   await page.locator('#settings-tab').click();
-  await page.getByText('ログインすると今月のAI利用回数を確認できます。', { exact: true }).waitFor();
+  await page.getByText('ログインしなくても、AIの読み取りを1日5回まで使えます。', { exact: true }).waitFor();
   assert.equal(await page.locator('#developer-options').isChecked(), true, 'developer preference stays on this browser after reload');
   assert.equal(await page.locator('#developer-costs').isVisible(), false, 'costs stay inside the signed-in AI account');
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
