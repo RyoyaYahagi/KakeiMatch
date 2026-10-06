@@ -1,8 +1,8 @@
 import { parseContactInput, parseClassification, parseContactInterviewInput, parseContactInterview, classificationPayload, transcriptionPayload, contactInterviewPayload, submitContact, type ContactEnv } from './contact';
-import { guardrailConfig, costAdmission, refreshCircuit, type CostAdmission } from "./ai-global-guardrails";
-import { beginCostEvent, completeCostEvent, monthlyCosts, monthBounds } from "./ai-provider-costs";
-import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatched } from "./receipt-ai-usage";
-import { getAccountSession, isAccountActive, type AccountEnv } from "./account-auth";
+import { guardrailConfig, costAdmission, refreshCircuitStatement, type CostAdmission } from "./ai-global-guardrails";
+import { assertCostEventCompleted, beginCostEventStatement, completeCostEventStatement, monthlyCosts, monthBounds } from "./ai-provider-costs";
+import { monthKey, flowMac, flowUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement } from "./receipt-ai-usage";
+import { getAccountSession, isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-auth";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -281,36 +281,46 @@ function dispatchError(error: unknown): Response {
   return code === "provider_timeout" ? json(504, { error: code }) : json(503, { error: "temporarily_unavailable" });
 }
 async function prepareDispatch(env: GatewayEnv, provider: "gemini" | "jev", model: string, payload: unknown, now: number): Promise<CostAdmission> {
-  const admission = await costAdmission(env.ACCOUNT_DB!, provider, model, JSON.stringify(payload), now, guardrailConfig(env.AI_GUARDRAILS_JSON), env.AI_EMERGENCY_STOP);
-  // Check before product-flow reservation for ordinary paused requests. The
-  // INSERT repeats these predicates atomically against concurrent admissions.
-  const check = await env.ACCOUNT_DB!.prepare(`SELECT CASE WHEN ${admission.predicate} THEN 1 ELSE 0 END AS allowed`).bind(...admission.parameters).first<{allowed:number}>();
-  if (check?.allowed !== 1) throw new Error("ai_temporarily_paused");
-  return admission;
+  return costAdmission(env.ACCOUNT_DB!, provider, model, JSON.stringify(payload), now, guardrailConfig(env.AI_GUARDRAILS_JSON), env.AI_EMERGENCY_STOP);
+}
+/** Records the provider outcome and refreshes its circuit in one D1 round trip. */
+async function completeDispatch(db: AccountD1Binding, env: GatewayEnv, id: string, provider: "gemini" | "jev", decoded: unknown, dispatchedAt: number, completedAt: number, error: string | null): Promise<void> {
+  const [completed, circuit] = await db.batch<AccountD1BatchResult>([
+    await completeCostEventStatement(db, id, provider, decoded, dispatchedAt, completedAt, error),
+    refreshCircuitStatement(db, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], completedAt),
+  ]);
+  assertCostEventCompleted(completed);
+  if (!circuit?.success) throw new Error("guardrail_unavailable");
 }
 async function invalidProviderResponse(env: GatewayEnv, eventId: string, provider: "gemini" | "jev", now: number): Promise<Response> {
   try {
-    const saved = await env.ACCOUNT_DB!.prepare("UPDATE ai_provider_cost_events SET safe_error_code='invalid_provider_response' WHERE id=?").bind(eventId).run();
-    if (!saved.success || saved.meta?.changes !== 1) throw new Error("metering_unavailable");
-    await refreshCircuit(env.ACCOUNT_DB!, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], now);
+    const [saved, circuit] = await env.ACCOUNT_DB!.batch<AccountD1BatchResult>([
+      env.ACCOUNT_DB!.prepare("UPDATE ai_provider_cost_events SET safe_error_code='invalid_provider_response' WHERE id=?").bind(eventId),
+      refreshCircuitStatement(env.ACCOUNT_DB!, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], now),
+    ]);
+    if (!saved?.success || saved.meta?.changes !== 1) throw new Error("metering_unavailable");
+    if (!circuit?.success) throw new Error("guardrail_unavailable");
     return json(502, { error: "invalid_provider_response" });
   } catch { return json(503, { error: "temporarily_unavailable" }); }
 }
 async function dispatchProvider(db: AccountD1Binding, user: string, flow: string, provider: "gemini" | "jev", model: string, now: number, url: string, init: RequestInit, timeoutMs: number, fetchImpl: typeof fetch, clock: () => number, admission: CostAdmission, env: GatewayEnv): Promise<{ response: Response; decoded: unknown; eventId: string }> {
   // Persist before dispatch: interrupted/failed completion stays visibly unknown.
-  let id: string;
-  try { id = await beginCostEvent(db, user, flow, provider, model, now, admission); }
-  catch (error) { await releaseUndispatchedFlow(db, user, flow); throw error; }
-  await markFlowDispatched(db, user, flow);
+  // The flow is marked dispatched in the same batch, only when the event was admitted.
+  const { id, statement } = beginCostEventStatement(db, user, flow, provider, model, now, admission);
+  let begun: AccountD1BatchResult | undefined, dispatched: AccountD1BatchResult | undefined;
+  try {
+    [begun, dispatched] = await db.batch<AccountD1BatchResult>([statement, markFlowDispatchedStatement(db, user, flow, id)]);
+    if (!begun?.success) throw new Error("metering_unavailable");
+    if (begun.meta?.changes !== 1) throw new Error("ai_temporarily_paused");
+  } catch (error) { await releaseUndispatchedFlow(db, user, flow); throw error; }
+  if (!dispatched?.success || dispatched.meta?.changes !== 1) throw new Error("flow_reservation_unavailable");
   let response: Response, decoded: unknown;
   try { ({ response, decoded } = await callProvider(url, init, timeoutMs, fetchImpl)); }
   catch {
-    await completeCostEvent(db, id, provider, null, now, clock(), "provider_timeout");
-    await refreshCircuit(db, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], clock());
+    await completeDispatch(db, env, id, provider, null, now, clock(), "provider_timeout");
     throw new Error("provider_timeout");
   }
-  await completeCostEvent(db, id, provider, decoded, now, clock(), response.ok ? (decoded === null ? "invalid_provider_response" : null) : `provider_http_${response.status}`);
-  await refreshCircuit(db, provider, guardrailConfig(env.AI_GUARDRAILS_JSON)[provider], clock());
+  await completeDispatch(db, env, id, provider, decoded, now, clock(), response.ok ? (decoded === null ? "invalid_provider_response" : null) : `provider_http_${response.status}`);
   return { response, decoded, eventId: id };
 }
 function geminiOutputText(value: unknown): string | null {
@@ -389,8 +399,8 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
       const callGemini = async (): Promise<string> => {
         const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
         const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, 'contact-interview', input);
-        if (!await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env))) throw new Error('ai_quota_exceeded');
-        if (!await attemptFlow(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', mac, now)) throw new Error('invalid_flow');
+        const reservation = await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env));
+        if (reservation !== 'reserved') throw new Error(reservation);
         const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
           'https://generativelanguage.googleapis.com/v1beta/interactions',
           { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
@@ -423,8 +433,8 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     const callGemini = async (): Promise<string> => {
       const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, transcribe ? 'contact-transcribe' : 'contact-classify', input);
-      if (!await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env))) throw new Error('ai_quota_exceeded');
-      if (!await attemptFlow(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', mac, now)) throw new Error('invalid_flow');
+      const reservation = await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, freeLimit(env));
+      if (reservation !== 'reserved') throw new Error(reservation);
       const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
         'https://generativelanguage.googleapis.com/v1beta/interactions',
         { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
@@ -472,8 +482,8 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     catch (error) { return dispatchError(error); }
     try {
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", image);
-      if (!await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, freeLimit(env))) return json(429, { error: "ai_quota_exceeded" });
-      if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "gemini", mac, now)) return json(409, { error: "invalid_flow" });
+      const reservation = await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, freeLimit(env));
+      if (reservation !== "reserved") return json(reservation === "ai_quota_exceeded" ? 429 : 409, { error: reservation });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
 
     let response: Response, decoded: unknown, eventId: string;
