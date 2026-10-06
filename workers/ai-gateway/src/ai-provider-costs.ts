@@ -1,5 +1,5 @@
 import type { CostAdmission } from "./ai-global-guardrails";
-import type { AccountEnv } from "./account-auth";
+import type { AccountD1Statement, AccountEnv } from "./account-auth";
 
 type Db = AccountEnv["ACCOUNT_DB"];
 export type Provider = "gemini" | "jev";
@@ -51,17 +51,17 @@ export function costUsdMicros(usage: TokenUsage, price: Pricing): number | null 
   const rounded = (numerator + BigInt(999_999)) / BigInt(1_000_000);
   return rounded <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(rounded) : null;
 }
-export async function beginCostEvent(db: Db, user: string, flow: string, provider: Provider, requestedModel: string, now: number, admission?: CostAdmission): Promise<string> {
+/** Builds the admitted cost-event INSERT; it inserts nothing when admission fails or the flow is gone. */
+export function beginCostEventStatement(db: Db, user: string, flow: string, provider: Provider, requestedModel: string, now: number, admission: CostAdmission): { id: string; statement: AccountD1Statement } {
   const id = crypto.randomUUID();
   const model = safeModel(requestedModel) ?? "unknown";
   const p = pricingFor(provider, model, now);
-  const result = await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,flow_id,provider,requested_model,model,pricing_version,billing_mode,input_usd_per_million_micros,output_usd_per_million_micros,metering_status,dispatched_at${admission ? ",reserved_cost_usd_micros" : ""})
-    SELECT ?,?,?,?,?,?,?,?,?,?,'unknown',?${admission ? ",? WHERE " + admission.predicate + " AND EXISTS(SELECT 1 FROM ai_receipt_flows WHERE user_id=? AND flow_id=?)" : ""}`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now,...(admission ? [admission.reservation,...admission.parameters,user,flow] : [])).run();
-  if (!result.success) throw new Error("metering_unavailable");
-  if (result.meta?.changes !== 1) throw new Error("ai_temporarily_paused");
-  return id;
+  const statement = db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,flow_id,provider,requested_model,model,pricing_version,billing_mode,input_usd_per_million_micros,output_usd_per_million_micros,metering_status,dispatched_at,reserved_cost_usd_micros)
+    SELECT ?,?,?,?,?,?,?,?,?,?,'unknown',?,? WHERE ${admission.predicate} AND EXISTS(SELECT 1 FROM ai_receipt_flows WHERE user_id=? AND flow_id=?)`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now,admission.reservation,...admission.parameters,user,flow);
+  return { id, statement };
 }
-export async function completeCostEvent(db: Db, id: string, provider: Provider, decoded: unknown, dispatchedAt: number, completedAt: number, error: string | null): Promise<void> {
+/** Builds the UPDATE that records the provider outcome; check it with `assertCostEventCompleted`. */
+export async function completeCostEventStatement(db: Db, id: string, provider: Provider, decoded: unknown, dispatchedAt: number, completedAt: number, error: string | null): Promise<AccountD1Statement> {
   const actualModel = record(decoded) ? safeModel(provider === "gemini" ? decoded.modelVersion ?? decoded.model : decoded.model) : null;
   const usage = tokenUsage(provider, decoded);
   const p = actualModel ? pricingFor(provider, actualModel, dispatchedAt) : null;
@@ -70,11 +70,13 @@ export async function completeCostEvent(db: Db, id: string, provider: Provider, 
   const requested = actualModel ? null : await db.prepare("SELECT requested_model AS model FROM ai_provider_cost_events WHERE id=?").bind(id).first<{model:string}>();
   const snapshot = p ?? (requested ? pricingFor(provider, requested.model, dispatchedAt) : null);
   const cost = usage && p ? costUsdMicros(usage, p) : null;
-  const result = await db.prepare(`UPDATE ai_provider_cost_events SET model=COALESCE(?,model), pricing_version=?, billing_mode=?,
+  return db.prepare(`UPDATE ai_provider_cost_events SET model=COALESCE(?,model), pricing_version=?, billing_mode=?,
     input_usd_per_million_micros=?, output_usd_per_million_micros=?,
     input_tokens=?,output_tokens=?,thinking_tokens=?,cached_input_tokens=?,total_tokens=?,estimated_cost_usd_micros=?,metering_status=?,safe_error_code=?,completed_at=? WHERE id=?`)
-    .bind(actualModel,snapshot?.version ?? null,snapshot?.billingMode ?? null,snapshot?.inputUsdPerMillionMicros ?? null,snapshot?.outputUsdPerMillionMicros ?? null,usage?.input ?? null,usage?.output ?? null,usage?.thinking ?? null,usage?.cached ?? null,usage?.total ?? null,cost,cost === null ? "unknown" : "metered",error ?? (cost === null ? "usage_or_pricing_unknown" : null),completedAt,id).run();
-  if (!result.success || result.meta?.changes !== 1) throw new Error("metering_unavailable");
+    .bind(actualModel,snapshot?.version ?? null,snapshot?.billingMode ?? null,snapshot?.inputUsdPerMillionMicros ?? null,snapshot?.outputUsdPerMillionMicros ?? null,usage?.input ?? null,usage?.output ?? null,usage?.thinking ?? null,usage?.cached ?? null,usage?.total ?? null,cost,cost === null ? "unknown" : "metered",error ?? (cost === null ? "usage_or_pricing_unknown" : null),completedAt,id);
+}
+export function assertCostEventCompleted(result: { success: boolean; meta?: { changes?: number } } | undefined): void {
+  if (!result?.success || result.meta?.changes !== 1) throw new Error("metering_unavailable");
 }
 export function monthBounds(month: string): { start: number; end: number } | null {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month) || month < "2000-01" || month > "9998-12") return null;

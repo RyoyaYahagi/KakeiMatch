@@ -1,11 +1,12 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { DatabaseSync } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flowUsage, monthKey, reserveFlow } from "./receipt-ai-usage";
 import { deleteAccountData } from "./account-auth";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { sqliteD1 } from "./test-support/sqlite-d1";
 
 const accountState = vi.hoisted(() => ({ session: true, userId: "synthetic-user" }));
 vi.mock("./account-auth", async (importOriginal) => {
@@ -34,34 +35,7 @@ function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
   for (const migration of migrations) sqlite.exec(migration);
-  const db: AccountD1Binding = {
-    async batch<T>(statements: Array<unknown>): Promise<T[]> {
-      sqlite.exec("BEGIN");
-      try {
-        const results = statements.map((value) => {
-          const statement = value as { query: string; values: SQLInputValue[] };
-          const result = sqlite.prepare(statement.query).run(...statement.values);
-          return { success: true, meta: { changes: Number(result.changes) } };
-        });
-        sqlite.exec("COMMIT");
-        return results as T[];
-      } catch (error) {
-        sqlite.exec("ROLLBACK");
-        throw error;
-      }
-    },
-    prepare(sql: string) {
-      let params: SQLInputValue[] = [];
-      const statement = {
-        query: sql,
-        get values() { return params; },
-        bind(...args: unknown[]) { params = args as SQLInputValue[]; return statement; },
-        async first<T>() { return sqlite.prepare(sql).get(...params) as T | undefined ?? null; },
-        async run() { return { success: true, meta: { changes: Number(sqlite.prepare(sql).run(...params).changes) } }; },
-      };
-      return statement;
-    },
-  };
+  const db = sqliteD1(sqlite);
   return { db, dispose: async () => sqlite.close() };
 }
 
@@ -89,13 +63,15 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
   it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
     const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
     const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, 2)));
-    expect(reservations.filter(Boolean)).toHaveLength(2);
+    expect(reservations.filter(result => result === "reserved")).toHaveLength(2);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE user_id='synthetic-user' AND dispatched=0").bind().first<{ count: number }>())
       .toEqual({ count: 2 });
     expect(await flowUsage(db, "synthetic-user", "2026-09")).toBe(0);
-    const admittedFlow = candidates[reservations.findIndex(Boolean)]!;
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe(true);
-    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe(false);
+    expect(reservations.filter(result => result !== "reserved")).toEqual(Array(6).fill("ai_quota_exceeded"));
+    const admittedFlow = candidates[reservations.indexOf("reserved")]!;
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, 2)).toBe("reserved");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, 2)).toBe("invalid_flow");
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, 2)).toBe("ai_quota_exceeded");
   });
 });
 
@@ -132,6 +108,30 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     for (let i = 0; i < 2; i++) expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(200);
     expect(await usage()).toMatchObject({ used: 1, remaining: 0, limit: 1, month: "2026-09" });
     expect((await gemini()).status).toBe(429);
+  });
+  // Miniflare D1 statements cannot be instrumented, so count round trips on SQLite.
+  it.skipIf(mode === "D1")("reads a receipt with six D1 round trips", async () => {
+    let roundTrips = 0;
+    const counted: AccountD1Binding = {
+      batch: async statements => { roundTrips++; return db.batch(statements); },
+      prepare: sql => {
+        const prepared = db.prepare(sql);
+        const bind = prepared.bind.bind(prepared);
+        prepared.bind = (...values) => {
+          const bound = bind(...values);
+          const first = bound.first.bind(bound), run = bound.run.bind(bound);
+          bound.first = async () => { roundTrips++; return first(); };
+          bound.run = async () => { roundTrips++; return run(); };
+          return bound;
+        };
+        return prepared;
+      },
+    };
+    env.ACCOUNT_DB = counted;
+    const response = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }), env, options(fetchOk({ model: "gemini-3.5-flash-lite", output_text: JSON.stringify(receipt) })));
+    expect(response.status).toBe(200);
+    // Account check, admission, reservation, dispatch, completion and the category grant.
+    expect(roundTrips).toBe(6);
   });
   it("counts an explicit reanalysis as a new flow and reports the default Free 30", async () => {
     expect((await gemini()).status).toBe(200);
@@ -533,6 +533,48 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const circuit = await db.prepare("SELECT reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ reason: string }>();
     expect(circuit).toEqual({ reason: "provider_failures" });
   });
+  it("accepts printed seconds, slash dates and zero quantities by normalizing only their notation", async () => {
+    const printed = { ...receipt, purchasedDate: "2026/9/30", purchasedTime: "9:05:42", items: [{ name: "Synthetic Item", amountYen: 3284, quantity: 0 }] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(printed) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ purchasedDate: "2026-09-30", purchasedTime: "09:05", items: [{ name: "Synthetic Item", amountYen: 3284 }] });
+  });
+  it("keeps a warning's item position and drops a position that points at no entry", async () => {
+    const warned = { ...receipt, warnings: [
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 0 },
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 5 },
+      { field: "totalAmountYen", code: "points", message: "ポイント利用で支払額が0円です。", index: 0 },
+    ] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(warned) }));
+    expect(response.status).toBe(200);
+    expect((await response.json() as { warnings: unknown[] }).warnings).toEqual([
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 0 },
+      { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: null },
+      { field: "totalAmountYen", code: "points", message: "ポイント利用で支払額が0円です。", index: null },
+    ]);
+  });
+  it("accepts a zero total paid with points and drops warnings about the time and zero-amount lines", async () => {
+    const paidWithPoints = { ...receipt, totalAmountYen: 0, adjustments: [{ label: "ポイント利用", amountYen: -3284 }],
+      items: [{ name: "Synthetic Item", amountYen: 3284 }, { name: "Synthetic Out Of Stock", amountYen: 0 }],
+      warnings: [
+        { field: "items", code: "out_of_stock", message: "欠品のため金額が0円です。", index: 1 },
+        { field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null },
+        { field: "purchasedTime", code: "missing", message: "時刻が印字されていません。", index: null },
+      ] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(paidWithPoints) }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ totalAmountYen: 0, adjustments: [{ label: "ポイント利用", amountYen: -3284 }],
+      warnings: [{ field: "purchasedDate", code: "missing", message: "購入日が印字されていません。", index: null }] });
+  });
+  it("logs only the rejected field name for an invalid extraction", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const discountAsItem = { ...receipt, items: [{ name: "Synthetic Secret Item", amountYen: 3384 }, { name: "Synthetic Discount", amountYen: -100 }] };
+      expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(discountAsItem) }))).status).toBe(502);
+      expect(warn).toHaveBeenCalledWith(JSON.stringify({ event: "receipt_extraction_rejected", field: "items.amountYen" }));
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("Synthetic");
+    } finally { warn.mockRestore(); }
+  });
   it("fails closed on emergency stop and invalid guard settings before quota or event writes", async () => {
     env.AI_EMERGENCY_STOP = "true";
     const stopped = await gemini();
@@ -545,6 +587,14 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(503);
     expect(await eventCount()).toBe(0);
     expect(await usage()).toMatchObject({ used: 0 });
+  });
+  it("accepts a phone-sized photo without overflowing the base64 check", async () => {
+    const large = Buffer.alloc(5 * 1024 * 1024, 1); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(large);
+    const provider = fetchOk({ output_text: JSON.stringify(receipt) });
+    const response = await handleRequest(request("gemini", { ...image, imageBase64: large.toString("base64"), flowId: crypto.randomUUID() }), env, options(provider));
+    expect(response.status).toBe(200);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect((await handleRequest(request("gemini", { ...image, imageBase64: `${image.imageBase64}=`, flowId: crypto.randomUUID() }), env, options())).status).toBe(400);
   });
   it("does not count malformed, missing-flow, unauthorized or unconfigured requests", async () => {
     expect((await handleRequest(request("gemini", image), env, options())).status).toBe(400);

@@ -16,6 +16,9 @@ export interface AccountD1Database {
   };
   batch<T = unknown>(statements: Array<unknown>): Promise<T[]>;
 }
+export type AccountD1Statement = ReturnType<ReturnType<AccountD1Database["prepare"]>["bind"]>;
+/** One statement's result from `batch`; `results` holds the rows of a SELECT. */
+export type AccountD1BatchResult = { success: boolean; meta?: { changes?: number }; results?: unknown[] };
 
 export interface AccountEnv {
   ACCOUNT_DB: AccountD1Database;
