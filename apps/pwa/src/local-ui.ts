@@ -11,7 +11,8 @@ import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem }
 import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
-import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, shortLabel } from './entry-form';
+import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
+import { scheduleFromEntry } from './entry-recurrence';
 import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import { createReadingProgress } from './receipt-reading-progress';
@@ -257,8 +258,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     await open('receipt');
     await showManualTransactionEditor({ view, ledger, repository, kind, transaction,
-      onSaved: async () => { ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
+      recurringNames: async () => (await ledger.listRecurringSchedules()).map(row => row.name.trim()),
+      onSaved: async schedule => {
+        ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords();
+        el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。';
+        if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
+      },
       onCancel: transaction ? () => transactionDetail(transaction) : newEntryReturn });
+  }
+  /** The record is already saved; a failed schedule is reported without hiding that. */
+  async function saveScheduleAfterEntry(schedule: NonNullable<ReturnType<typeof scheduleFromEntry>>) {
+    try {
+      await recurring.save(schedule);
+      return `登録しました。${schedule.startDate}から定期登録も作りました。`;
+    } catch (error) {
+      return `登録しました。定期登録は作れませんでした（${error instanceof Error ? error.message : '原因を確認できませんでした。'}）。設定の「定期登録」から作ってください。`;
+    }
   }
   async function returnToRecords() { if (searchOrigin) await searchPage(); else await recordsPage(); }
   async function searchPage() {
@@ -606,6 +621,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields entry-rows';
     overviewFields.append(entryRow(amountLabel, amount, totalCheck), entryRow(merchantLabel, merchant), entryRow(dateLabel, date, dateShortcuts(date, today())),
       categoryUi.row, entryRow(accountLabel, account), optional, itemsEntry);
+    // A new expense typed by hand can repeat (rent, subscriptions). Receipts and edits stay single records.
+    const recurrence = !receipt.image && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
+    if (recurrence) overviewFields.append(recurrence.row);
     form.append(overviewFields, purchaseDetails, warning, status);
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
@@ -618,6 +636,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       // Item-level details, discounts, tax and item-total differences belong only to the items pane.
       purchaseDetails.hidden = !itemsOnly;
       warning.hidden = !itemsOnly;
+      if (recurrence) recurrence.row.hidden = itemsOnly;
       purchaseDetails.classList.toggle('items-only', itemsOnly);
       if (itemsOnly) purchaseDetails.open = true;
       if (scroll) editorTabs.scrollIntoView({ block: 'start' });
@@ -880,6 +899,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           throw new Error('店名、日付、金額、カテゴリ、支払元を確認してください。');
         }
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
+        const frequency = recurrence?.value() ?? '';
+        const schedule = frequency ? scheduleFromEntry({ name: value.merchant, kind: 'expense', amountYen: value.totalAmountYen, categoryId: value.categoryId, accountId: value.accountId, date: value.purchasedDate }, frequency) : null;
+        if (schedule && (await ledger.listRecurringSchedules()).some(row => row.name.trim() === schedule.name)) throw new Error('同じ名前の定期登録があります。店名を変えるか、「くり返し」を「しない」にしてください。');
         recordDiagnosticAction('receipt_save_started', 'records');
         await saveDraft();
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
@@ -902,6 +924,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         ensureTab('receipt');
         if (editing) await receiptDetail(saved); else await recordsPage();
         el('message').textContent = editing ? '変更を保存しました。' : '登録しました。';
+        if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
       });
     });
     const cancelEntry = button('キャンセル', editing ? () => receiptDetail(receipt) : newEntryReturn); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);

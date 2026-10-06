@@ -36,6 +36,7 @@
     "test:account-balances-e2e": "node test/browser-account-balances.mjs",
     "test:monthly-budgets-e2e": "node test/browser-monthly-budgets.mjs",
     "test:recurring-e2e": "node test/browser-recurring.mjs",
+    "test:entry-recurrence-e2e": "node test/browser-entry-recurrence.mjs",
     "test:recurring-catch-up-e2e": "node test/browser-recurring-catch-up.mjs",
     "test:transaction-search-e2e": "node test/browser-transaction-search.mjs",
     "test:category-learning-e2e": "node test/browser-category-learning.mjs",
