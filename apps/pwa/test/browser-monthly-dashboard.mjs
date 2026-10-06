@@ -33,7 +33,7 @@ async function manual(kind, name, amount, categoryName, accountName) {
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 }
 async function transfer(amount, source, destination) {
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間の振替');
   await page.getByLabel('振替先口座', { exact: true }).waitFor();
   await page.getByLabel('金額（円）', { exact: true }).fill(String(amount));
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: source });
@@ -88,9 +88,9 @@ try {
   await waitForMonth('2026年10月');
   await totals({ income: '200,000', expense: '2,900', balance: '+¥197,100' });
   const breakdown = page.locator('#home-categories');
-  await breakdown.locator('svg[role="img"][aria-label="支出の内訳：Synthetic Food 82.8%、Synthetic Home 17.2%"]').waitFor();
-  assert.deepEqual(await breakdown.locator('.donut-center').evaluate(center => Array.from(center.children).map(child => child.textContent)), ['Synthetic Food', '82.8%']);
-  assert.deepEqual(await breakdown.locator('.donut-legend li').evaluateAll(items => items.map(item => Array.from(item.children).map(child => child.textContent).filter(Boolean).join(' '))), ['Synthetic Food 82.8%', 'Synthetic Home 17.2%']);
+  await breakdown.locator('.breakdown-bar[role="img"][aria-label="支出の内訳：Synthetic Food 82.8%、Synthetic Home 17.2%"]').waitFor();
+  assert.equal(await breakdown.locator('.breakdown-bar > span').count(), 2);
+  assert.deepEqual(await breakdown.locator('.breakdown-legend li').evaluateAll(items => items.map(item => Array.from(item.children).map(child => child.textContent).filter(Boolean).join(' '))), ['Synthetic Food 82.8%', 'Synthetic Home 17.2%']);
   const details = breakdown.locator('details.monthly-category-details');
   assert.equal(await details.locator('summary').textContent(), 'すべてのカテゴリ');
   await details.locator('summary').click();

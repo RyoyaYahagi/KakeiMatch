@@ -53,7 +53,7 @@ try {
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('収入');
   await page.locator(expenseField).waitFor();
   assert.deepEqual(await groups(expenseField), ['銀行口座', '現金', 'その他 / 未分類', 'クレジットカード']);
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間の振替');
   await page.locator('#manual-transaction-destination').waitFor();
   assert.deepEqual(await groups('#manual-transaction-destination'), ['銀行口座', '現金', 'その他 / 未分類', 'クレジットカード']);
   await noOverflow();

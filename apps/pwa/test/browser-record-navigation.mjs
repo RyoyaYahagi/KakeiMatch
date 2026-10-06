@@ -29,23 +29,23 @@ try {
   await openChooser();
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   assert.deepEqual(await page.locator('#record-sheet button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label') ?? button.textContent)),
-    ['閉じる', 'レシートを撮る', '保存した写真から', '支出を手入力', '収入', '口座間振替']);
+    ['閉じる', 'レシートを撮る', '写真から', '支出を手入力', '収入', '口座間の振替']);
   assert.equal(await page.locator('#record-sheet input[type=file]').count(), 2);
   if (process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
   await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
-  // Categories are chosen with buttons; expand the defaults to reach a newly added custom category.
-  const showAllCategories = page.getByRole('button', { name: /^すべて表示（\d+）$/ });
-  if (await showAllCategories.count()) await showAllCategories.click();
+  // The category takes one row; every category is chosen in a sheet opened from "すべて".
+  await click('すべてのカテゴリから選ぶ');
   await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).click();
-  assert.equal(await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).getAttribute('aria-checked'), 'true');
+  await page.locator('.category-sheet').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.category-row-name').textContent(), 'Synthetic Navigation Food');
   assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Navigation Food');
   assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 1);
   await click('キャンセル');
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   await click('収入'); await page.locator('#manual-transaction-payee').waitFor(); await click('キャンセル');
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
-  await click('口座間振替'); await page.getByLabel('振替先口座', { exact: true }).waitFor(); await click('キャンセル');
+  await click('口座間の振替'); await page.getByLabel('振替先口座', { exact: true }).waitFor(); await click('キャンセル');
   await page.getByRole('heading', { name: '何を記録しますか？' }).waitFor();
   // Closing returns to the screen the chooser was opened from (here, home).
   await click('閉じる');

@@ -27,8 +27,21 @@ export const receiptExtractionResultSchema = z.object({
     field: z.enum(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"]).nullable(),
     code: z.string().trim().min(1),
     message: z.string().trim().min(1),
+    /** 0-based position in items or adjustments when the warning concerns one entry. */
+    index: z.number().int().safe().nonnegative().nullable().optional(),
   }).strict()),
-}).strict();
+}).strict().refine(value => value.warnings.every(warning => warningIndexInRange(warning, value)));
+
+/** A warning index must point at an existing item or adjustment of the field it names. */
+export function warningIndexInRange(
+  warning: { field: string | null; index?: number | null },
+  value: { items: unknown[]; adjustments?: unknown[] },
+): boolean {
+  if (warning.index == null) return true;
+  if (warning.field === "items") return warning.index < value.items.length;
+  if (warning.field === "adjustments") return warning.index < (value.adjustments?.length ?? 0);
+  return false;
+}
 
 export type ReceiptExtractionResult = z.infer<typeof receiptExtractionResultSchema>;
 

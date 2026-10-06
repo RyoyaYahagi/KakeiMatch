@@ -92,7 +92,10 @@ export function createMasterShortcut(options: {
         if (itemDetails && itemWasOpen) itemDetails.open = true;
         // Return focus to the control that opened the dialog. Focusing a visually-hidden
         // category <select> can open the native picker on iOS when the dialog closes.
-        if (launch.isConnected) launch.focus();
+        // The button may sit in a sheet that closed when the new entry was chosen; that sheet then says where focus goes.
+        const host = launch.closest('dialog');
+        if (launch.isConnected && host && !host.open) host.dispatchEvent(new CustomEvent('return-focus'));
+        else if (launch.isConnected) launch.focus();
         else if (options.origin.field.isConnected && options.origin.field.getAttribute('aria-hidden') !== 'true') options.origin.field.focus();
       };
       const form = masterCreationForm(options.ledger, options.request, async id => { await options.origin.onCreated(id); close(); }, showError);

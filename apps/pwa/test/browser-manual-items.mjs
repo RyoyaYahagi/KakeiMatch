@@ -28,7 +28,7 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#home-tab').click(); await click('記録を追加'); await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
-  assert.equal(await page.getByText('購入内容（任意）', { exact: true }).count(), 1);
+  assert.equal(await page.locator('.purchase-details > summary').textContent(), '品目分けない（品目・値引き・税額）');
   assert.equal(await page.getByRole('button', { name: '全体', exact: true }).getAttribute('aria-pressed'), 'true');
   assert.equal(await page.getByRole('button', { name: '品目一覧', exact: true }).count(), 1);
   await page.locator('#manual-transaction-payee').fill('Synthetic Manual Items');
@@ -80,7 +80,8 @@ try {
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1400');
   // A missing basic field must be revealed when registering from the item pane.
   // Keep the items and memo intact throughout failed validation.
-  for (const fieldName of ['payee', 'amount', 'date', 'account', 'category']) {
+  // The category is not asked for while every item has one (docs/UX.md 支出の入力), so it is checked separately below.
+  for (const fieldName of ['payee', 'amount', 'date', 'account']) {
     const field = page.locator(`#manual-transaction-${fieldName}`);
     const original = await field.inputValue();
     if (fieldName === 'account' || fieldName === 'category') await field.selectOption('');
@@ -100,6 +101,9 @@ try {
   }
   if (process.env.PWA_MANUAL_ITEMS_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_MANUAL_ITEMS_SCREENSHOT_PATH, fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  // With items, the row shows the split, and the record takes its category from the items.
+  await page.locator('#manual-transaction-category').selectOption('');
+  assert.match(await page.locator('.derived-category').getAttribute('aria-label'), /^カテゴリは品目ごと：食費 ¥1,000、日用品 ¥500/);
   await save();
   await page.locator('#home-tab').click(); await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
   await page.getByText('すべてのカテゴリ', { exact: true }).click();

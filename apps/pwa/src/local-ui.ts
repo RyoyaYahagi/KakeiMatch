@@ -7,13 +7,15 @@ import { showRecurringSchedules } from './local-recurring-ui';
 import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFilters } from './local-transaction-search';
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
-import { renderHomeAttention, type HomeAttentionCounts } from './home-attention';
-import { daysBetween, reviewSummaryRow, shortDay, updateReconciliationBadge } from './reconciliation-ui';
+import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem } from './home-attention';
+import { daysBetween, reviewSummaryRow, shortDay, slipPart, slipPerforation, slipSeal, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
-import { dateShortcuts, formActions, optionalFields } from './entry-form';
-import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
+import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
+import { scheduleFromEntry } from './entry-recurrence';
+import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
+import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
 import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
@@ -24,7 +26,7 @@ import { initializeBackupUi } from './local-backup-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
-import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
+import { LocalReceiptService, LocalReceiptServiceError, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
 import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
@@ -158,7 +160,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       selectedMonth = action.type === 'current' ? today().slice(0, 7) : shiftMonth(selectedMonth, action.offset);
       void home().catch(report);
     });
-    renderMonthlyBudgets(overview, budgetSummary, () => { void budgetEditor('monthly').catch(report); });
+    renderMonthlyBudgets(overview, budgetSummary, () => { void budgetEditor('monthly').catch(report); }, today());
     renderCategoryBreakdown(el('home-categories'), summary);
     const accountNames = new Map(accounts.map(account => [account.id, account.name]));
     const list = el('transactions'); list.replaceChildren();
@@ -169,9 +171,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。', 'empty'));
 
-    const { counts } = await reconciliationState();
+    const { run, decisions, pending, counts } = await reconciliationState();
+    const allStatements = run ? await statements.list() : [];
     ensureScreen(screen);
-    renderHomeAttention(el('home-attention'), counts, () => reviewPage().catch(report));
+    renderHomeAttention(el('home-attention'), counts, homeAttentionItems(run, decisions, pending, allStatements),
+      decisions.filter(d => d.source === 'automatic' && d.status === 'applied').length, () => reviewPage().catch(report));
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
@@ -211,21 +215,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     saveFile(capture); saveFile(library);
     const camera = document.createElement('button'); camera.type = 'button'; camera.className = 'choice-primary'; camera.setAttribute('aria-label', 'レシートを撮る');
     const cameraBadge = document.createElement('span'); cameraBadge.className = 'choice-primary-icon'; cameraBadge.append(icon('camera'));
-    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、内容を読み取れます'));
+    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、品目まで読み取れます'));
     camera.append(cameraBadge, cameraText, icon('chevronRight'));
     camera.addEventListener('click', () => capture.click());
-    const choices = document.createElement('ul'); choices.className = 'choice-list surface-section';
+    const choices = document.createElement('ul'); choices.className = 'choice-list';
     const startEntry = (kind: 'expense' | 'income' | 'transfer') => () => { closeRecordSheet(); return manualEditor(kind); };
-    for (const [label, symbol, tone, action] of [
-      ['保存した写真から', 'image', 'food', () => library.click()],
-      ['支出を手入力', 'pencil', 'other', startEntry('expense')],
-      ['収入', 'income', 'income', startEntry('income')],
-      ['口座間振替', 'transfer', 'other', startEntry('transfer')],
+    // docs/UX.md ＋追加: four equal tiles under the photo tile. The name stays the button's accessible name.
+    for (const [label, hint, symbol, action] of [
+      ['写真から', '保存したレシート', 'image', () => library.click()],
+      ['支出を手入力', 'レシートなし', 'pencil', startEntry('expense')],
+      ['収入', '給与・臨時収入', 'income', startEntry('income')],
+      ['口座間の振替', '現金の引き出しなど', 'transfer', startEntry('transfer')],
     ] as const) {
       const item = document.createElement('li');
-      const choice = button(label, action); choice.className = 'choice-row';
-      const badge = document.createElement('span'); badge.className = `record-icon tone-${tone}`; badge.append(icon(symbol));
-      choice.prepend(badge); choice.append(icon('chevronRight'));
+      const choice = button(label, action); choice.className = 'choice-row'; choice.setAttribute('aria-label', label);
+      const words = document.createElement('span'); words.className = 'choice-row-text'; words.append(text('span', label), text('small', hint));
+      choice.replaceChildren(icon(symbol), words);
       item.append(choice); choices.append(item);
     }
     body.append(grabber, header, capture, library, camera, choices, text('p', '写真と入力内容はこの端末に保存します。読み取りは「AIで読み取る」を選んだ時だけ行います。', 'muted'));
@@ -254,8 +259,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     await open('receipt');
     await showManualTransactionEditor({ view, ledger, repository, kind, transaction,
-      onSaved: async () => { ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords(); el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。'; },
+      recurringNames: async () => (await ledger.listRecurringSchedules()).map(row => row.name.trim()),
+      onSaved: async schedule => {
+        ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords();
+        el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。';
+        if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
+      },
       onCancel: transaction ? () => transactionDetail(transaction) : newEntryReturn });
+  }
+  /** The record is already saved; a failed schedule is reported without hiding that. */
+  async function saveScheduleAfterEntry(schedule: NonNullable<ReturnType<typeof scheduleFromEntry>>) {
+    try {
+      await recurring.save(schedule);
+      return `登録しました。${schedule.startDate}から定期登録も作りました。`;
+    } catch (error) {
+      return `登録しました。定期登録は作れませんでした（${error instanceof Error ? error.message : '原因を確認できませんでした。'}）。設定の「定期登録」から作ってください。`;
+    }
   }
   async function returnToRecords() { if (searchOrigin) await searchPage(); else await recordsPage(); }
   async function searchPage() {
@@ -464,6 +483,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       adjustments: useExtraction ? extractionAdjustments : base?.adjustments ?? extractionAdjustments,
       taxAmountYen: useExtraction ? extraction?.taxAmountYen ?? null : base?.taxAmountYen ?? extraction?.taxAmountYen ?? null,
     };
+    // docs/UX.md 支出の入力: a new expense typed by hand starts with the category used last time.
+    const lastUsed = !receipt.image && !editing && !initial.categoryId
+      ? await lastUsedCategory(ledger, 'expense', categories.map(entry => entry.id)).catch(() => '') : '';
+    if (lastUsed) initial.categoryId = lastUsed;
     let items = initial.items.map(item => ({ ...item }));
     let adjustments = initial.adjustments.map(item => ({ ...item }));
     const blob = await repository.getBlob(receipt.image?.blobId ?? 'missing');
@@ -487,14 +510,25 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       open.append(img, badge); open.addEventListener('click', () => openReceiptImage(src));
       previewFrame.append(open); overviewExtras.append(previewFrame);
     }
-    if (receipt.extraction?.warnings.length) overviewExtras.append(text('p', '読み取り結果に確認が必要な項目があります。画像と照らし合わせてください。'));
+    // Read warnings say where to compare with the image; they are drawn once the fields exist.
+    const reviewedWarnings = new Set(receipt.reviewedWarnings ?? []);
+    const reviewWarnings = (receipt.extraction ? describeReceiptWarnings(receipt.extraction) : [])
+      .map((review, warningIndex) => ({ ...review, warningIndex })).filter(review => !reviewedWarnings.has(review.warningIndex));
+    const reviewArea = document.createElement('div');
+    overviewExtras.append(reviewArea);
+    const entryId = (target: ReceiptWarningTarget) => target.kind === 'item' && target.index !== null ? `receipt-item:${receipt.id}:${target.index}`
+      : target.kind === 'adjustment' && target.index !== null ? `receipt-adjustment:${receipt.id}:${target.index}` : null;
+    const flaggedEntryIds = new Set(reviewWarnings.flatMap(({ target }) => entryId(target) ?? []));
 
     const form = document.createElement('form');
     const inputId = (field: string) => !receipt.image ? `manual-transaction-${field === 'merchant' ? 'payee' : field}` : `receipt-${field}`;
     const merchant = document.createElement('input'); merchant.id = inputId('merchant'); merchant.required = true; merchant.maxLength = 200; merchant.value = initial.merchant;
     const date = document.createElement('input'); date.id = inputId('date'); date.type = 'date'; date.required = true; date.value = initial.purchasedDate;
     const time = document.createElement('input'); time.id = 'receipt-time'; time.type = 'time'; time.value = initial.purchasedTime ?? '';
-    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = '1'; amount.step = '1'; amount.required = true; amount.value = initial.totalAmountYen ? String(initial.totalAmountYen) : '';
+    const amount = document.createElement('input'); amount.id = inputId('amount'); amount.type = 'number'; amount.inputMode = 'numeric'; amount.min = receipt.image ? '0' : '1'; amount.step = '1'; amount.required = true;
+    // A receipt paid entirely with points has a 0 yen total; an empty manual entry stays blank.
+    const zeroTotal = Boolean(receipt.image) && initial.totalAmountYen === 0 && (extraction?.totalAmountYen === 0 || confirmed?.totalAmountYen === 0);
+    amount.value = initial.totalAmountYen || zeroTotal ? String(initial.totalAmountYen) : '';
     const category = document.createElement('select'); category.id = inputId('category'); category.required = true;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
     category.value = actualCategoryId(initial.categoryId);
@@ -509,13 +543,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const adjustmentsList = document.createElement('ul'); adjustmentsList.className = 'receipt-adjustment-list';
     const warning = text('p', '', 'receipt-difference'); warning.id = 'receipt-difference'; warning.setAttribute('role', 'status');
     // When items and adjustments add up to the total, only the total needs comparing with the photo.
-    const totalCheck = text('p', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
+    const totalCheck = text('span', '', 'receipt-total-check'); totalCheck.id = 'receipt-total-check'; totalCheck.setAttribute('aria-live', 'polite');
     const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
     let expandItemId: string | null = null;
     let expandAdjustmentId: string | null = null;
     const addItem = button('品目を追加', () => { items = readItems(); expandItemId = crypto.randomUUID(); items.push({ id: expandItemId, name: '', amountYen: null, categoryId: null }); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
     const addAdjustment = button('値引きを追加', () => { adjustments = readAdjustments(); expandAdjustmentId = crypto.randomUUID(); adjustments.push({ id: expandAdjustmentId, label: '', amountYen: 0, targetItemId: null }); drawAdjustments(); updateDifference(); scheduleDraft(); });
-    const applyCategory = button('全品目にこのカテゴリを適用', () => { items = readItems().map(item => ({ ...item, categoryId: category.value || null })); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
+    // Chooses one category in the sheet and gives it to every item.
+    let applyToAllItems = false;
+    const applyCategory = button('全品目を同じカテゴリにする', () => { applyToAllItems = true; categoryUi.open(); });
     const taxDetails = document.createElement('details'); taxDetails.className = 'receipt-tax';
     const taxLabel = fieldLabel('label', '税額（円・任意）', 'receipt-tax');
     const tax = document.createElement('input'); tax.id = 'receipt-tax'; tax.type = 'number'; tax.inputMode = 'numeric'; tax.min = '0'; tax.step = '1'; tax.value = initial.taxAmountYen == null ? '' : String(initial.taxAmountYen);
@@ -524,64 +560,231 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const memo = document.createElement('textarea'); memo.id = memoLabel.htmlFor; memo.maxLength = 2000; memo.value = initial.memo ?? '';
     const aiArea = document.createElement('div'); aiArea.className = 'receipt-ai-area';
     aiArea.append(text('p', '画像から店名・日付・金額・品目を読み取り、カテゴリを設定します。', 'muted'));
-    const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', async () => {
+    // docs/UX.md 読み取り中: the steps as rows, a band moving over the photo, and a way to stop waiting.
+    const readingBadge = text('span', '読み取り中', 'reading-badge'); readingBadge.hidden = true; previewFrame.append(readingBadge);
+    const failure = document.createElement('div'); failure.className = 'reading-failure'; failure.hidden = true;
+    // Failed reads worth trying again with the same photo; quota, sign-in and image limits are not.
+    const retryable = (error: unknown) => !(error instanceof LocalReceiptServiceError) || (!error.retryAfterWait && ['offline_or_unavailable', 'invalid_ai_response', 'unavailable'].includes(error.code));
+    const retake = document.createElement('input'); retake.type = 'file'; retake.accept = 'image/jpeg,image/png,image/webp'; retake.setAttribute('capture', 'environment'); retake.hidden = true;
+    retake.addEventListener('change', () => {
+      const file = retake.files?.[0]; if (!file) return;
+      void (async () => {
+        const replacement = await receipts.saveImage(file);
+        // The new photo replaces this one; the old pending receipt goes away so it is not left waiting.
+        await receipts.deletePending(receipt.id);
+        await receiptEditor(replacement);
+      })().catch(report);
+    });
+    const readPhoto = async () => {
       if (receipt.extraction && !window.confirm('もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？')) return;
       if (receipt.registration.status === 'applied') return;
       recordDiagnosticAction('receipt_ai_started', 'records');
       await saveDraft();
+      failure.hidden = true; failure.replaceChildren();
       // AI never fills the payment source, so it stays selectable while the read runs.
       const controls = form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button');
+      const waitButton = button('待たずに手で入力する', () => stopWaiting()); waitButton.className = 'text-button';
       controls.forEach(control => { control.disabled = control !== account; });
       const aiFilled = [amount, merchant, date];
       aiFilled.forEach(field => field.classList.add('ai-pending'));
-      previewFrame.classList.add('is-reading');
+      previewFrame.classList.add('is-reading'); readingBadge.hidden = false;
       aiButton.hidden = true;
       const progress = createReadingProgress();
       aiArea.append(progress.element);
+      const submitLabel = submit.textContent;
+      submit.textContent = '読み取り中…'; submit.hidden = false;
+      submit.after(waitButton);
+      let abandoned = false;
+      let stage: 'reading' | 'categorizing' = 'reading';
+      const finish = (keepProgress = false) => {
+        if (!keepProgress) progress.stop();
+        waitButton.remove();
+        aiButton.hidden = false;
+        previewFrame.classList.remove('is-reading'); readingBadge.hidden = true;
+        aiFilled.forEach(field => field.classList.remove('ai-pending'));
+        controls.forEach(control => { control.disabled = false; });
+        submit.textContent = submitLabel;
+      };
+      const stopWaiting = async () => {
+        abandoned = true; finish();
+        if (stage === 'categorizing') {
+          // The text is already read: show it and let the categories be chosen by hand.
+          const updated = await receipts.get(receipt.id);
+          if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
+          el('message').textContent = '読み取った内容を表示しました。カテゴリは自分で選べます。';
+        } else el('message').textContent = '読み取りを待たずに入力できます。読み取りが終わっても、入力した内容はそのままです。';
+      };
       try {
         await receipts.analyze(receipt.id);
-        progress.setStep('categorizing');
+        if (abandoned) return;
+        stage = 'categorizing'; progress.setStep('categorizing');
+        submit.textContent = '分類を待っています…'; waitButton.textContent = '分類を待たずに自分で選ぶ';
         try {
           const suggested = await receipts.suggestCategory(receipt.id);
           recordLocalDiagnostic('ai');
+          if (abandoned) return;
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           if (updated?.aiSuggestion.source === 'learned_rule') el('message').textContent = 'いつもの分類を適用しました。';
           if (suggested === null && updated?.extraction?.items.length === 0) el('message').textContent = 'カテゴリを選択してください。';
         } catch (error) {
+          if (abandoned) return;
           report(error);
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           el('message').textContent = `${error instanceof Error ? error.message : 'カテゴリを提案できませんでした。'} 読み取った内容は編集できます。`;
         }
+        if (!abandoned) finish();
       } catch (error) {
+        if (abandoned) return;
         report(error);
-        if (error instanceof Error && /アカウント|ログイン|認証/.test(error.message)) aiArea.append(button('アカウントを確認する', options.openAccount));
-      } finally {
-        progress.stop();
-        aiButton.hidden = false;
-        previewFrame.classList.remove('is-reading');
-        aiFilled.forEach(field => field.classList.remove('ai-pending'));
-        controls.forEach(control => { control.disabled = false; });
+        finish(true); progress.fail(); aiButton.hidden = true;
+        // docs/UX.md 読み取り中: say what failed and what to do next; try again first when it may work.
+        const retakeButton = button('撮り直す', () => retake.click());
+        failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', 'ぼやけや反射があれば撮り直してください。'), retakeButton);
+        if (error instanceof Error && /アカウント|ログイン|認証|サインイン/.test(error.message)) failure.append(button('アカウントを確認する', options.openAccount));
+        failure.hidden = false;
+        if (retryable(error)) {
+          const retry = button('もう一度読み取る', async () => { clearFailure(); await readPhoto(); }, false);
+          const manual = button('手で入力して続ける', () => clearFailure()); manual.className = 'text-button';
+          const clearFailure = () => { retry.remove(); manual.remove(); submit.hidden = false; failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
+          submit.hidden = true; submit.after(retry, manual);
+        } else {
+          const close = () => { failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
+          const manual = button('手で入力して続ける', close); manual.className = 'text-button'; failure.append(manual);
+        }
       }
-    });
-    if (blob && !editing) { aiArea.append(aiButton); overviewExtras.append(aiArea); }
+    };
+    const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', readPhoto);
+    if (blob && !editing) { aiArea.append(aiButton, failure, retake); overviewExtras.append(aiArea); }
     if (editing) aiArea.replaceChildren();
-    const merchantLabel = fieldLabel('label', receipt.image ? '店名' : '店名・支払先', merchant.id);
-    const dateLabel = fieldLabel('label', receipt.image ? '購入日' : '日付', date.id);
+    const merchantLabel = shortLabel(merchant.id, '店名', receipt.image ? '' : '・支払先');
+    const dateLabel = shortLabel(date.id, '日付');
     const timeLabel = fieldLabel('label', '時刻（任意）', time.id);
-    const amountLabel = fieldLabel('label', receipt.image ? '合計金額（円）' : '金額（円）', amount.id);
-    const categoryLabel = fieldLabel('label', receipt.image ? '全体カテゴリ' : '支出カテゴリ', category.id);
-    const accountLabel = fieldLabel('label', '支払元', account.id);
+    const amountLabel = shortLabel(amount.id, '金額', '（円）');
+    const categoryLabel = shortLabel(category.id, 'カテゴリ');
+    const accountLabel = shortLabel(account.id, '支払元');
     const purchaseDetails = document.createElement('details'); purchaseDetails.className = 'purchase-details';
     purchaseDetails.open = Boolean(receipt.image) || items.length > 0 || adjustments.length > 0;
-    purchaseDetails.append(text('summary', '購入内容（任意）'), applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
+    const purchaseSummary = document.createElement('summary');
+    const purchaseHint = text('span', '', 'entry-row-hint');
+    // docs/UX.md 支出の入力: items live only in the item list (#194); in the overview this row leads there.
+    const itemsEntry = document.createElement('button'); itemsEntry.type = 'button'; itemsEntry.className = 'entry-row entry-row-link';
+    const itemsEntryHint = text('span', '', 'entry-row-hint');
+    itemsEntry.append(text('span', '品目', 'entry-row-key'), itemsEntryHint, icon('chevronRight'));
+    itemsEntry.addEventListener('click', () => setEditorPane('items'));
+    purchaseSummary.append(text('span', '品目', 'entry-row-key'), purchaseHint);
+    purchaseDetails.append(purchaseSummary, applyCategory, itemsHeading, itemsList, addItem, adjustmentsHeading, adjustmentsList, addAdjustment, taxDetails);
     amount.classList.add('amount-input');
-    const optional = optionalFields('時刻・メモを追加（任意）', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
-    const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields';
-    overviewFields.append(amountLabel, amount, totalCheck, merchantLabel, merchant, dateLabel, date, dateShortcuts(date, today()),
-      categoryLabel, category, accountLabel, account, optional);
+    const optional = optionalFields('時刻・メモ', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
+    // docs/DESIGN.md 帳簿の行で組む入力: one ruled row per field.
+    const categoryUi = categoryRow({ select: category, label: categoryLabel, usageReady: recentCategoryUsage(ledger),
+      hint: lastUsed ? { value: lastUsed, text: '前回と同じ' } : receipt.aiSuggestion.source === 'learned_rule' && category.value ? { value: category.value, text: 'いつもの分類' } : null });
+    // With items, the category comes from them: the row shows the split and leads to the item list.
+    // The category chosen in the sheet then only fills items that have none.
+    const derivedValue = document.createElement('button'); derivedValue.type = 'button'; derivedValue.className = 'derived-category';
+    derivedValue.addEventListener('click', () => setEditorPane('items'));
+    categoryUi.row.querySelector('.entry-row-value')?.append(derivedValue);
+    const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields entry-rows';
+    overviewFields.append(entryRow(amountLabel, amount, totalCheck), entryRow(merchantLabel, merchant), entryRow(dateLabel, date, dateShortcuts(date, today())),
+      categoryUi.row, entryRow(accountLabel, account), optional, itemsEntry);
+    // A new expense typed by hand can repeat (rent, subscriptions). Receipts and edits stay single records.
+    const recurrence = !receipt.image && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
+    if (recurrence) overviewFields.append(recurrence.row);
     form.append(overviewFields, purchaseDetails, warning, status);
+    const reviewFields = { merchant: [merchantLabel, merchant], purchasedDate: [dateLabel, date], purchasedTime: [timeLabel, time], totalAmountYen: [amountLabel, amount], taxAmountYen: [taxLabel, tax] } as const;
+    const fieldFlags = new Map<keyof typeof reviewFields, HTMLElement>();
+    for (const field of new Set(reviewWarnings.flatMap(({ target }) => target.kind === 'field' ? [target.field] : []))) {
+      const [label, input] = reviewFields[field];
+      // "写真と確認" (compare with the photo) is a different thing from the total's "差額あり".
+      const flag = text('span', '△ 写真と確認', 'review-flag'); flag.id = `${input.id}-review`;
+      // In a ledger row the mark goes to the right column, so the three columns stay aligned.
+      const row = label.closest('.entry-row');
+      if (row) {
+        let side = row.querySelector<HTMLElement>(':scope > .entry-row-side');
+        if (!side) { side = document.createElement('div'); side.className = 'entry-row-side'; row.append(side); }
+        side.prepend(flag);
+      } else label.after(flag);
+      input.setAttribute('aria-describedby', flag.id);
+      fieldFlags.set(field, flag);
+      if (field === 'purchasedTime') optional.open = true;
+      if (field === 'taxAmountYen') taxDetails.open = true;
+      // Editing the field is itself a check against the image.
+      input.addEventListener('input', () => { void resolveReviews(review => review.target.kind === 'field' && review.target.field === field).catch(report); }, { once: true });
+    }
+    for (const list of [itemsList, adjustmentsList]) list.addEventListener('input', event => {
+      const entry = (event.target as HTMLElement).closest<HTMLElement>('[data-receipt-item],[data-receipt-adjustment]');
+      const id = entry?.dataset.receiptItem ?? entry?.dataset.receiptAdjustment;
+      if (id && flaggedEntryIds.has(id)) void resolveReviews(review => entryId(review.target) === id).catch(report);
+    });
+    const reviewBand = document.createElement('section'); reviewBand.className = 'notice notice-warning receipt-review';
+    const reviewTitle = text('p', '', 'receipt-review-title'); reviewTitle.id = 'receipt-review-title';
+    reviewBand.setAttribute('aria-labelledby', reviewTitle.id);
+    const reviewList = document.createElement('ul'); reviewList.className = 'receipt-review-list';
+    const reviewRows = new Map<number, HTMLLIElement>();
+    for (const review of reviewWarnings) {
+      const row = document.createElement('button'); row.type = 'button'; row.className = 'text-button receipt-review-row';
+      const body = document.createElement('span'); body.className = 'receipt-review-text';
+      body.append(text('strong', review.label), text('span', review.message));
+      row.append(body, icon('chevronRight'));
+      row.addEventListener('click', () => showReviewTarget(review.target));
+      const done = button('確認した', () => resolveReviews(other => other.warningIndex === review.warningIndex));
+      done.className = 'text-button receipt-review-done'; done.setAttribute('aria-label', `${review.label}を確認した`);
+      const item = document.createElement('li'); item.append(row, done); reviewList.append(item);
+      reviewRows.set(review.warningIndex, item);
+    }
+    reviewBand.append(icon('warning'), reviewTitle, reviewList);
+    const refreshReviewBand = () => {
+      reviewTitle.textContent = `画像と照らし合わせてほしいところが${reviewRows.size}件あります`;
+      if (!reviewRows.size) reviewBand.remove();
+    };
+    if (reviewWarnings.length) { refreshReviewBand(); reviewArea.append(reviewBand); }
+    /** Hides checked warnings now and remembers them for this read. */
+    async function resolveReviews(matches: (review: typeof reviewWarnings[number]) => boolean) {
+      const resolved = reviewWarnings.filter(review => reviewRows.has(review.warningIndex) && matches(review));
+      if (!resolved.length) return;
+      for (const review of resolved) {
+        reviewRows.get(review.warningIndex)?.remove(); reviewRows.delete(review.warningIndex);
+        const id = entryId(review.target);
+        if (id && !reviewWarnings.some(other => reviewRows.has(other.warningIndex) && entryId(other.target) === id)) {
+          flaggedEntryIds.delete(id);
+          (itemsList.querySelector(`[data-receipt-item="${CSS.escape(id)}"]`) ?? adjustmentsList.querySelector(`[data-receipt-adjustment="${CSS.escape(id)}"]`))?.querySelector('.receipt-review-note')?.remove();
+        }
+        if (review.target.kind === 'field') {
+          const field = review.target.field;
+          if (!reviewWarnings.some(other => reviewRows.has(other.warningIndex) && other.target.kind === 'field' && other.target.field === field)) {
+            fieldFlags.get(field)?.remove(); reviewFields[field][1].removeAttribute('aria-describedby');
+          }
+        }
+      }
+      refreshReviewBand();
+      await receipts.markWarningsReviewed(receipt.id, resolved.map(review => review.warningIndex));
+    }
+    /** Moves to the place a read warning is about, so the user can compare it with the image. */
+    function showReviewTarget(target: ReceiptWarningTarget) {
+      if (target.kind === 'image') {
+        setEditorPane('overview', false);
+        overviewExtras.querySelector('img')?.scrollIntoView({ block: 'center' });
+        return;
+      }
+      if (target.kind === 'field') {
+        setEditorPane('overview', false);
+        if (target.field === 'taxAmountYen') { purchaseDetails.open = true; taxDetails.open = true; }
+        if (target.field === 'purchasedTime') optional.open = true;
+        const input = reviewFields[target.field][1];
+        input.scrollIntoView({ block: 'center' }); input.focus({ preventScroll: true });
+        return;
+      }
+      setEditorPane('items', false);
+      const list = target.kind === 'item' ? itemsList : adjustmentsList;
+      const id = `${target.kind === 'item' ? 'receipt-item' : 'receipt-adjustment'}:${receipt.id}:${target.index}`;
+      const entry = target.index === null ? null : list.querySelector<HTMLElement>(`[data-receipt-${target.kind}="${CSS.escape(id)}"]`);
+      const details = entry instanceof HTMLDetailsElement ? entry : entry?.querySelector('details');
+      if (!details) { (target.kind === 'item' ? itemsHeading : adjustmentsHeading).scrollIntoView({ block: 'start' }); return; }
+      details.open = true;
+      details.scrollIntoView({ block: 'center' });
+      details.querySelector<HTMLElement>('input')?.focus({ preventScroll: true });
+    }
     view.append(form);
     const setEditorPane = (pane: 'overview' | 'items', scroll = true) => {
       const itemsOnly = pane === 'items';
@@ -593,6 +796,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       // Item-level details, discounts, tax and item-total differences belong only to the items pane.
       purchaseDetails.hidden = !itemsOnly;
       warning.hidden = !itemsOnly;
+      if (recurrence) recurrence.row.hidden = itemsOnly;
       purchaseDetails.classList.toggle('items-only', itemsOnly);
       if (itemsOnly) purchaseDetails.open = true;
       if (scroll) editorTabs.scrollIntoView({ block: 'start' });
@@ -612,7 +816,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           categories = await ledger.listExpenseCategories();
           for (const select of [category, ...Array.from(itemsList.querySelectorAll<HTMLSelectElement>('[data-item-category]'))]) {
             const previous = select.value;
-            select.replaceChildren(new Option(select === category ? '選択してください' : '全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+            select.replaceChildren(new Option(select === category ? '選択してください' : '未選択', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
             if (previous && !categories.some(entry => entry.id === previous)) select.append(new Option('カテゴリを選び直してください（利用不可）', previous));
             select.value = previous;
           }
@@ -622,16 +826,23 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         },
       } });
     }
-    category.after(addCategoryShortcut(category));
-    enhanceCategorySelect(category, categoryLabel, recentCategoryUsage(ledger));
-    account.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
+    categoryUi.sheet.querySelector('.sheet-body')?.append(addCategoryShortcut(category));
+    // The item list hides the overview rows; the sheet stays outside them so "全品目を同じカテゴリにする" can still open it.
+    form.append(categoryUi.sheet);
+    category.addEventListener('change', () => {
+      if (!applyToAllItems) return;
+      applyToAllItems = false;
+      items = readItems().map(item => ({ ...item, categoryId: category.value || null })); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft();
+    });
+    categoryUi.sheet.addEventListener('close', () => { applyToAllItems = false; });
+    account.after(compactAddButton(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
       field: account, beforeOpen: saveDraft,
       onCreated: async id => {
         accounts = await ledger.listOpenAccounts();
         account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts));
         account.value = id; await saveDraft();
       },
-    } }));
+    } })));
 
     function readItems(): ReceiptItem[] {
       return Array.from(itemsList.querySelectorAll<HTMLElement>('[data-receipt-item]')).map(row => ({
@@ -673,15 +884,38 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (draftTimer) clearTimeout(draftTimer);
       draftTimer = setTimeout(() => { void saveDraft().catch(report); }, 350);
     }
-    function updateDifference() {
+    /** docs/UX.md 支出の入力: with items, the category row shows the split instead of asking for one category. */
+    function updateCategoryMode() {
       const currentItems = readItems(); const currentAdjustments = readAdjustments();
-      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.className = 'receipt-total-check'; return; }
+      const split = currentItems.length > 0;
+      categoryUi.row.classList.toggle('is-split', split); derivedValue.hidden = !split;
+      itemsEntryHint.textContent = purchaseHint.textContent = split ? `${currentItems.length}品目${currentAdjustments.length ? ` · 値引き・調整${currentAdjustments.length}` : ''}` : '分けない（品目・値引き・税額）';
+      if (!split) return;
+      const totals = new Map<string, number>();
+      for (const item of currentItems) { const key = item.categoryId || category.value || ''; totals.set(key, (totals.get(key) ?? 0) + (item.amountYen ?? 0)); }
+      const parts = [...totals].sort((a, b) => b[1] - a[1]);
+      derivedValue.replaceChildren(text('span', '品目ごと', 'derived-tag'),
+        ...parts.map(([id, total]) => text('span', `${id ? categoryName(id) : '未選択'} ${yen(total)}`, `derived-part${id ? '' : ' is-empty'}`)));
+      derivedValue.setAttribute('aria-label', `カテゴリは品目ごと：${parts.map(([id, total]) => `${id ? categoryName(id) : '未選択'} ${yen(total)}`).join('、')}。品目一覧で見る`);
+    }
+    function updateDifference() {
+      updateCategoryMode();
+      const currentItems = readItems(); const currentAdjustments = readAdjustments();
+      if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.removeAttribute('aria-label'); totalCheck.className = 'receipt-total-check'; return; }
       const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
       const difference = Number(amount.value) - knownTotal;
+      // docs/UX.md レシートの場合: only a short mark beside the total; the full sentence is its accessible name.
       totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
-      totalCheck.textContent = difference === 0 ? '✓ 品目と値引きの合計と一致しています。合計金額だけ画像と照らし合わせてください。'
-        : `△ 品目と値引きの合計と${yen(Math.abs(difference))}違います。品目一覧で確認してください。`;
+      // "差額あり" keeps this apart from "写真と確認", the mark for fields AI was unsure of.
+      totalCheck.textContent = difference === 0 ? '✓ 一致' : '△ 差額あり';
+      totalCheck.setAttribute('aria-label', difference === 0 ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
       warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
+    }
+    /** docs/DESIGN.md 品目の行: a line the photo should confirm shows a small note under its name. */
+    function nameWithReviewNote(name: HTMLElement, flagged: boolean) {
+      const wrap = text('span', '', 'receipt-compact-name'); wrap.append(name);
+      if (flagged) wrap.append(text('small', '△ 写真と確認', 'receipt-review-note'));
+      return wrap;
     }
     function drawItems() {
       itemsList.replaceChildren();
@@ -698,7 +932,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           summaryMeta.textContent = categoryName(item.categoryId);
         };
         refreshSummary();
-        summary.append(summaryTitle, summaryAmount, summaryMeta);
+        summary.append(nameWithReviewNote(summaryTitle, flaggedEntryIds.has(item.id)), summaryAmount, summaryMeta);
         details.open = expandItemId === item.id;
         details.addEventListener('toggle', () => {
           if (!details.open) {
@@ -720,7 +954,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const unit = document.createElement('input'); unit.id = unitLabel.htmlFor; unit.dataset.itemUnitPrice = ''; unit.type = 'number'; unit.inputMode = 'numeric'; unit.min = '0'; unit.step = '1'; unit.value = item.unitPriceYen == null ? '' : String(item.unitPriceYen);
         const itemCategoryLabel = fieldLabel('label', 'カテゴリ', `item-category-${item.id}`);
         const itemCategory = document.createElement('select'); itemCategory.id = itemCategoryLabel.htmlFor; itemCategory.dataset.itemCategory = '';
-        itemCategory.replaceChildren(new Option('全体カテゴリを使う', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
+        itemCategory.replaceChildren(new Option('未選択', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
         const availableCategoryId = actualCategoryId(item.categoryId);
         if (item.categoryId && !availableCategoryId) itemCategory.append(new Option('カテゴリを選び直してください（利用不可）', item.categoryId));
         itemCategory.value = availableCategoryId || item.categoryId || '';
@@ -766,7 +1000,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           summaryMeta.textContent = adjustment.amountYen > 0 ? 'その他の調整' : '値引き';
         };
         refreshSummary();
-        summary.append(summaryTitle, summaryAmount, summaryMeta);
+        summary.append(nameWithReviewNote(summaryTitle, flaggedEntryIds.has(adjustment.id)), summaryAmount, summaryMeta);
         details.open = expandAdjustmentId === adjustment.id;
         details.addEventListener('toggle', () => {
           if (!details.open) {
@@ -820,13 +1054,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       void busy(submit, async () => {
         if (draftTimer) clearTimeout(draftTimer);
         const value = pendingEdit?.after ?? read();
-        if (!value.merchant.trim() || !value.purchasedDate || !value.totalAmountYen || !value.categoryId || !value.accountId) {
+        // With items, the record's category is the first item's; items without one need a choice first.
+        if (!pendingEdit && value.items?.length) {
+          if (!value.categoryId && value.items.some(item => !item.categoryId)) { setEditorPane('items', false); throw new Error('品目のカテゴリを選んでください。'); }
+          if (!value.categoryId) { value.categoryId = value.items.find(item => item.categoryId)?.categoryId ?? ''; category.value = value.categoryId; }
+        }
+        // A photographed receipt paid entirely with points may total 0 yen; a typed expense needs 1 yen or more.
+        const missingTotal = pendingEdit ? !receipt.image && !value.totalAmountYen : amount.value.trim() === '' || (!receipt.image && !value.totalAmountYen);
+        if (!value.merchant.trim() || !value.purchasedDate || missingTotal || !value.categoryId || !value.accountId) {
           setEditorPane('overview', false);
-          // The category picker uses visible buttons instead of native validation.
-          if (!value.categoryId) overviewFields.querySelector<HTMLButtonElement>('.category-choice')?.focus();
-          throw new Error('店名、日付、合計金額、全体カテゴリ、支払元を確認してください。');
+          if (!value.categoryId) categoryUi.row.querySelector<HTMLButtonElement>('.entry-row-more')?.focus();
+          throw new Error('店名、日付、金額、カテゴリ、支払元を確認してください。');
         }
         if (value.items?.some(item => !item.name.trim()) || value.adjustments?.some(item => !item.label.trim())) throw new Error('品目名と値引き・調整の内容を入力してください。');
+        const frequency = recurrence?.value() ?? '';
+        const schedule = frequency ? scheduleFromEntry({ name: value.merchant, kind: 'expense', amountYen: value.totalAmountYen, categoryId: value.categoryId, accountId: value.accountId, date: value.purchasedDate }, frequency) : null;
+        if (schedule && (await ledger.listRecurringSchedules()).some(row => row.name.trim() === schedule.name)) throw new Error('同じ名前の定期登録があります。店名を変えるか、「くり返し」を「しない」にしてください。');
         recordDiagnosticAction('receipt_save_started', 'records');
         await saveDraft();
         form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement | HTMLTextAreaElement>('input,select,textarea,button').forEach(control => { control.disabled = true; });
@@ -849,6 +1092,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         ensureTab('receipt');
         if (editing) await receiptDetail(saved); else await recordsPage();
         el('message').textContent = editing ? '変更を保存しました。' : '登録しました。';
+        if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
       });
     });
     const cancelEntry = button('キャンセル', editing ? () => receiptDetail(receipt) : newEntryReturn); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);
@@ -925,6 +1169,30 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     disclosure.append(disclosureSummary, section);
     return disclosure;
   }
+  /** docs/UX.md ホーム: failed decisions first, then statements to review, then ones without a record. */
+  function homeAttentionItems(run: Awaited<ReturnType<typeof reconciliationState>>['run'], decisions: Awaited<ReturnType<typeof reconciliationState>>['decisions'],
+    pending: Awaited<ReturnType<typeof reconciliationState>>['pending'], allStatements: Awaited<ReturnType<typeof statements.list>>): HomeAttentionItem[] {
+    if (!run) return [];
+    const byId = new Map(allStatements.map(statement => [statement.id, statement]));
+    const items: HomeAttentionItem[] = [];
+    for (const decision of decisions.filter(d => d.status !== 'applied')) {
+      const statement = byId.get(decision.statementId);
+      items.push({ merchant: statement?.merchant ?? '保存済みの照合', amountYen: statement?.amountYen ?? decision.statementAmountYen, tone: 'danger', reason: '反映できませんでした' });
+    }
+    for (const row of pending.filter(r => r.status === 'needs_review')) {
+      const statement = byId.get(row.statementTransactionId); if (!statement) continue;
+      const candidates = run.candidates.filter(c => c.statementTransactionId === row.statementTransactionId);
+      const reason = candidates.length > 1 ? `候補が${candidates.length}件あります`
+        : candidates[0]?.amountDeltaYen ? `金額が${yen(Math.abs(candidates[0].amountDeltaYen))}違います`
+        : candidates[0]?.dateDistanceDays ? `日付が${candidates[0].dateDistanceDays}日ずれています` : '内容を確認してください';
+      items.push({ merchant: statement.merchant, amountYen: statement.amountYen, tone: 'warning', reason });
+    }
+    for (const row of pending.filter(r => r.status !== 'needs_review')) {
+      const statement = byId.get(row.statementTransactionId); if (!statement) continue;
+      items.push({ merchant: statement.merchant, amountYen: statement.amountYen, tone: 'missing', reason: '記録が見つかりません' });
+    }
+    return items;
+  }
   async function reconciliationState() {
     const [run, decisions] = await Promise.all([reconciliation.latest(), reconciliation.resolutions()]);
     const pending = run?.statementResults.filter(row => row.status !== 'matched' && !decisions.some(d => d.statementId === row.statementTransactionId)) ?? [];
@@ -952,7 +1220,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const needsReview = pending.filter(r => r.status === 'needs_review').length, unmatched = pending.filter(r => r.status === 'unmatched_statement').length;
     const waiting = run.receiptResults.filter(r => r.status === 'unmatched_receipt').length;
     const tiles = document.createElement('div'); tiles.className = 'review-tiles'; tiles.setAttribute('aria-hidden', 'true');
-    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['danger', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
+    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['missing', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
       const tile = document.createElement('div'); tile.className = `review-tile tile-${tone}`;
       const name = document.createElement('span'); name.className = 'review-tile-label'; name.append(icon(symbol), document.createTextNode(label));
       const value = document.createElement('span'); value.className = 'review-tile-count'; value.append(document.createTextNode(String(count)), text('small', '件'));
@@ -985,7 +1253,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const statement = allStatements.find(s => s.id === row.statementTransactionId); if (!statement) continue;
       const item = document.createElement('li'); const detail = document.createElement('details'); detail.className = 'review-item';
       const needsDecision = row.status === 'needs_review';
-      const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'danger');
+      const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'missing');
       const setReason = (reason: string) => { summary.note.textContent = `${shortDay(statement.usedDate)} · ${reason}`; };
       setReason(needsDecision ? '内容を確認してください' : '記録が見つかりません');
       detail.append(summary.element);
@@ -993,7 +1261,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (statement.kind === 'refund') { setReason('返金のため自動で処理できません'); body.append(text('p', '返金の記録です。現在は自動処理できません。')); }
       else {
         const statementSource = statementProviderLabels[statement.provider as StatementProvider] ?? '明細';
-        body.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · ${statementSource}`, 'compare-statement'));
+        // docs/DESIGN.md 突き合わせの伝票: the statement on top, each candidate record below a perforation.
+        // Each candidate gets its own slip, so the buttons stay with the pair they decide.
+        const statementHalf = () => slipPart('statement', statementSource, [
+          { label: '日付', value: shortDay(statement.usedDate) }, { label: '店名', value: statement.merchant }, { label: '金額', value: yen(statement.amountYen) }]);
         const candidates = run.candidates.filter(c => c.statementTransactionId === statement.id);
         const reasons: string[] = [];
         for (const candidate of candidates) {
@@ -1003,18 +1274,31 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           if (!actual || actual.kind !== 'expense') continue;
           const block = document.createElement('div'); block.className = 'compare-candidate';
           const actualAccount = accountsById.get(actual.accountId)?.name ?? '利用できない支払元';
-          block.append(text('p', `家計簿：${actual.date} · ${actual.payeeName || '店名なし'} · ${yen(Math.abs(actual.amountYen))} · ${actualAccount}`));
           const amountGap = Math.abs(statement.amountYen - Math.abs(actual.amountYen));
           const dayGap = Math.abs(daysBetween(statement.usedDate, actual.date));
-          const differences = [
-            ...(actual.date !== statement.usedDate ? [`日付差 ${statement.usedDate} / ${actual.date}`] : []),
-            ...(actual.amountYen !== -statement.amountYen ? [`金額差 ${yen(amountGap)}（明細 ${yen(Math.abs(statement.amountYen))} / 家計簿 ${yen(Math.abs(actual.amountYen))}）`] : []),
-          ];
-          reasons.push(actual.amountYen !== -statement.amountYen ? `金額が${yen(amountGap)}違います` : dayGap ? `日付が${dayGap}日ずれています` : '内容を確認してください');
-          if (differences.length) block.append(text('p', `差分：${differences.join(' · ')}`, 'compare-diff'));
+          const sameDate = actual.date === statement.usedDate, sameAmount = actual.amountYen === -statement.amountYen;
+          const record = slipPart('record', actualAccount, [
+            { label: '日付', value: shortDay(actual.date), same: sameDate, differs: !sameDate },
+            { label: '店名', value: actual.payeeName || '店名なし' },
+            { label: '金額', value: yen(Math.abs(actual.amountYen)), same: sameAmount, differs: !sameAmount }]);
+          const reason = !sameAmount ? `金額が${yen(amountGap)}違います` : dayGap ? `日付が${dayGap}日ずれています` : '内容を確認してください';
+          reasons.push(reason);
+          const seal = slipSeal();
+          const slip = document.createElement('div'); slip.className = 'review-slip';
+          slip.append(statementHalf(), slipPerforation(), record, seal);
+          block.append(slip);
+          // Why it is a candidate, in the warning color, right under the slip.
+          block.append(text('p', `△ ${reason}`, 'compare-why'));
+          if (!sameDate || !sameAmount) block.append(text('p', `「同じ支出」にすると、記録を明細の${[!sameDate ? `日付（${shortDay(statement.usedDate)}）` : '', !sameAmount ? `金額（${yen(statement.amountYen)}）` : ''].filter(Boolean).join('と')}に合わせます。`, 'muted'));
           const unsupportedSplitAmount = actual.isSplit === true && actual.amountYen !== -statement.amountYen;
           if (unsupportedSplitAmount) block.append(text('p', '分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。'));
-          const sameExpense = button('同じ支出', async () => { await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId); await rerun(); }, false);
+          const sameExpense = button('同じ支出', async () => {
+            await reconciliation.sameExpense(run.runId, statement.id, candidate.receiptId);
+            // The seal is pressed once the decision is saved, then the list is read again.
+            slip.classList.add('is-stamped'); seal.classList.add('is-pressed');
+            await new Promise(resolve => setTimeout(resolve, matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 350));
+            await rerun();
+          }, false);
           sameExpense.disabled = unsupportedSplitAmount;
           const otherExpense = button('別の支出', async () => { await reconciliation.rejectPair(run.runId, statement.id, candidate.receiptId); await rerun(); }); otherExpense.className = 'text-button';
           block.append(sameExpense, otherExpense);
@@ -1022,6 +1306,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         }
         if (reasons.length > 1) setReason(`候補が${reasons.length}件あります`); else if (reasons.length === 1) setReason(reasons[0]);
         if (!candidates.length) {
+          const slip = document.createElement('div'); slip.className = 'review-slip'; slip.append(statementHalf()); body.append(slip);
           const category = document.createElement('select'); category.id = `category-${statement.id}`; category.required = true;
           const categoryLabel = fieldLabel('label', 'カテゴリ', category.id);
           category.append(new Option('カテゴリを選択してください', ''), ...expenseCategories.map(c => new Option(c.name, c.id)));
@@ -1072,7 +1357,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (automatic.length) {
       const history = document.createElement('details'); history.className = 'surface-section review-history';
-      history.append(text('summary', `自動で一致した内容を見る（${auto}件）`));
+      const historySummary = document.createElement('summary'); const seal = text('span', '済', 'seal'); seal.setAttribute('aria-hidden', 'true');
+      historySummary.append(seal, text('span', `自動で一致した内容を見る（${auto}件）`)); history.append(historySummary);
       const matchedList = document.createElement('ul');
       const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
       const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));

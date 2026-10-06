@@ -121,7 +121,7 @@ try {
   await category('Synthetic Budget Salary', true); await category('Synthetic Custom Budget');
   await manual('支出', 'Synthetic Budget Expense', 1500, 'Synthetic Budget Food', 'Synthetic Budget Wallet');
   await manual('収入', 'Synthetic Budget Income', 200000, 'Synthetic Budget Salary', 'Synthetic Budget Bank');
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間の振替');
   await page.getByLabel('金額（円）', { exact: true }).fill('8000');
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: 'Synthetic Budget Bank' });
   await page.getByLabel('振替先口座', { exact: true }).selectOption({ label: 'Synthetic Budget Wallet' });
@@ -132,7 +132,9 @@ try {
   await setDefaultPlan(5000);
   await homeMonth('2026年10月');
   let summary = page.locator('details.monthly-budget-details');
-  await summary.locator('summary').getByText('10月の予算 · ¥2,900 / ¥5,000', { exact: true }).waitFor();
+  await summary.locator('summary[aria-label^="10月の予算 ¥5,000、使用額 ¥2,900"]').waitFor();
+  assert.equal(await summary.locator('.budget-ticks > i').count(), 31);
+  assert.equal(await summary.locator('.budget-headline').textContent(), '予算 ¥5,000');
   await summary.locator('summary').click();
   await page.locator('#budget-total').getByText('全体予算：¥2,900 / ¥5,000 · 残り ¥2,100 · 58.0%', { exact: true }).waitFor();
   await page.getByText('カテゴリ別の内訳は設定していません。', { exact: true }).waitFor();
@@ -168,7 +170,7 @@ try {
     'Synthetic Custom Budget': 0,
   });
   await homeMonth('2026年12月');
-  await page.getByText('12月の予算 · ¥0 / ¥5,000', { exact: true }).waitFor();
+  await page.locator('summary[aria-label^="12月の予算 ¥5,000、使用額 ¥0"]').waitFor();
 
   // A monthly override can be removed and falls back to the basic monthly plan.
   await monthEditor('2026年12月');
@@ -176,9 +178,9 @@ try {
   await page.getByText('予算を保存しました。', { exact: true }).waitFor();
   await page.getByRole('button', { name: '設定へ戻る', exact: true }).click();
   await homeMonth('2026年12月');
-  await page.getByText('12月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
+  await page.locator('summary[aria-label^="12月の予算 ¥3,500、使用額 ¥0"]').waitFor();
   await moveHome('2027年1月');
-  await page.getByText('1月の予算 · ¥0 / ¥3,500', { exact: true }).waitFor();
+  await page.locator('summary[aria-label^="1月の予算 ¥3,500、使用額 ¥0"]').waitFor();
 
   // A month can also opt out of category allocation and keep only its overall budget.
   await setMonthlyPlan('2026年10月', 4500);
