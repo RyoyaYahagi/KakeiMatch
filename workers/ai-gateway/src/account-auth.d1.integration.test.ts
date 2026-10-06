@@ -2,12 +2,14 @@ import { readFileSync } from "node:fs";
 import { Miniflare } from "miniflare";
 import { afterEach, describe, expect, it } from "vitest";
 import { deleteAccountData, handleAccountRequest, handleAuthRequest, type AccountEnv } from "./account-auth";
+import { consumeSignupTicket } from "./account-signup";
+import { digest } from "./account-http";
 
 const origin = "http://localhost:8787";
 const migrations = [
   "0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql",
   "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql",
-  "0007_account_deletion.sql",
+  "0007_account_deletion.sql", "0008_open_signup_family_invites.sql",
 ].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 const migrationSql = migrations
   .map(migration => migration.replace(/^--.*$/gm, "").replace(/\s+/g, " ").trim())
@@ -23,7 +25,7 @@ afterEach(async () => {
 });
 
 describe("Better Auth with local D1", () => {
-  it("creates an invited account and generates real Passkey registration options from D1", async () => {
+  it("opens signup without creating a user before Passkey verification and starts the account as free", async () => {
     const miniflare = new Miniflare({
       script: "export default { fetch() { return new Response('ok'); } }",
       modules: true,
@@ -38,21 +40,22 @@ describe("Better Auth with local D1", () => {
       BETTER_AUTH_SECRET: authSecret,
       ACCOUNT_BOOTSTRAP_SECRET: bootstrapSecret,
       CLOUD_ACCOUNT_ORIGIN: origin,
+      TURNSTILE_SECRET_KEY: "1x0000000000000000000000000000000AA",
+      ACCOUNT_RATE_LIMIT: { limit: async () => ({ success: true }) },
     };
+    const turnstile = async () => Response.json({ success: true, hostname: "example.com" });
 
-    const inviteResponse = await handleAccountRequest(new Request(`${origin}/api/account/invites`, {
+    const signupResponse = await handleAccountRequest(new Request(`${origin}/api/account/signup`, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${bootstrapSecret}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ email: "d1-invite@example.test", name: "D1 test member" }),
-    }), env);
-    expect(inviteResponse.status).toBe(201);
-    const invite = await inviteResponse.json() as { context: string };
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ email: "D1-Signup@example.test", name: "D1 test member", turnstileToken: "synthetic", plan: "family" }),
+    }), env, { fetchImpl: turnstile as typeof fetch });
+    expect(signupResponse.status).toBe(201);
+    const signup = await signupResponse.json() as { context: string };
+    expect(await d1.prepare("SELECT COUNT(*) AS count FROM user").first<{ count: number }>()).toEqual({ count: 0 });
 
     const optionsResponse = await handleAuthRequest(new Request(
-      `${origin}/api/auth/passkey/generate-register-options?context=${encodeURIComponent(invite.context)}`,
+      `${origin}/api/auth/passkey/generate-register-options?context=${encodeURIComponent(signup.context)}`,
       { headers: { origin } },
     ), env);
     expect(optionsResponse.status).toBe(200);
@@ -61,10 +64,72 @@ describe("Better Auth with local D1", () => {
     expect(options.user?.id).toBeTruthy();
     expect(options.user?.name).toBe("D1 test member");
 
+    // Better Auth calls this after WebAuthn verification; a replay cannot create a second account.
+    const tokenHash = await digest(signup.context);
+    const userId = await consumeSignupTicket(d1, tokenHash, Date.now());
+    expect(userId).toBeTruthy();
+    expect(await consumeSignupTicket(d1, tokenHash, Date.now())).toBeNull();
+    expect(await d1.prepare("SELECT email, emailVerified FROM user WHERE id = ?").bind(userId).first())
+      .toEqual({ email: "d1-signup@example.test", emailVerified: 0 });
+    expect(await d1.prepare("SELECT COUNT(*) AS count FROM account_entitlements").first<{ count: number }>()).toEqual({ count: 0 });
+    expect(await d1.prepare("SELECT COUNT(*) AS count FROM account_signup_tickets").first<{ count: number }>()).toEqual({ count: 0 });
+
+    const duplicate = await handleAccountRequest(new Request(`${origin}/api/account/signup`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin },
+      body: JSON.stringify({ email: "d1-signup@example.test", name: "Another", turnstileToken: "synthetic" }),
+    }), env, { fetchImpl: turnstile as typeof fetch });
+    expect(duplicate.status).toBe(409);
+
     const accountTables = await d1.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all<{ name: string }>();
     const tableNames = (accountTables.results as Array<{ name: string }>).map((row) => row.name);
     expect(tableNames).not.toContain("receipt");
     expect(tableNames).not.toContain("statement");
+  });
+
+  it("does not create an account from an expired signup ticket or a ticket whose email was taken meanwhile", async () => {
+    const miniflare = new Miniflare({
+      script: "export default { fetch() { return new Response('ok'); } }",
+      modules: true,
+      compatibilityDate: "2026-09-30",
+      d1Databases: { ACCOUNT_DB: "signup-ticket-test" },
+    });
+    instances.push(miniflare);
+    const d1 = await miniflare.getD1Database("ACCOUNT_DB");
+    await applyMigrations(d1);
+    await d1.prepare(`INSERT INTO account_signup_tickets(id,user_id,token_hash,email,name,created_at,expires_at)
+      VALUES ('t1','u1','expired-hash','one@example.test','One',1,100), ('t2','u2','taken-hash','taken@example.test','Two',1,9999999999999)`).run();
+    await d1.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('existing','Existing','taken@example.test',1,1)").run();
+
+    expect(await consumeSignupTicket(d1, "expired-hash", 200)).toBeNull();
+    await expect(consumeSignupTicket(d1, "taken-hash", 200)).rejects.toThrow();
+    expect(await d1.prepare("SELECT COUNT(*) AS count FROM user").first<{ count: number }>()).toEqual({ count: 1 });
+  });
+
+  it("keeps outstanding operator recovery invites usable for Passkey registration", async () => {
+    const miniflare = new Miniflare({
+      script: "export default { fetch() { return new Response('ok'); } }",
+      modules: true,
+      compatibilityDate: "2026-09-30",
+      d1Databases: { ACCOUNT_DB: "recovery-invite-test" },
+    });
+    instances.push(miniflare);
+    const d1 = await miniflare.getD1Database("ACCOUNT_DB");
+    await applyMigrations(d1);
+    await d1.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('member','Synthetic member','member@example.test',1,1)").run();
+    const env: AccountEnv = { ACCOUNT_DB: d1, BETTER_AUTH_SECRET: authSecret, ACCOUNT_BOOTSTRAP_SECRET: bootstrapSecret, CLOUD_ACCOUNT_ORIGIN: origin };
+    const recovery = await handleAccountRequest(new Request(`${origin}/api/account/recovery`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bootstrapSecret}`, "content-type": "application/json" },
+      body: JSON.stringify({ email: "member@example.test" }),
+    }), env);
+    expect(recovery.status).toBe(201);
+    const { context } = await recovery.json() as { context: string };
+    const options = await handleAuthRequest(new Request(
+      `${origin}/api/auth/passkey/generate-register-options?context=${encodeURIComponent(context)}`, { headers: { origin } },
+    ), env);
+    expect(options.status).toBe(200);
+    expect((await options.json() as { user?: { name?: string } }).user?.name).toBe("Synthetic member");
   });
 
   it("atomically removes account data and blocks an in-flight passkey registration from restoring the ID", async () => {

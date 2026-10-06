@@ -34,7 +34,7 @@ function testDatabase(existingUserId: string | null = null) {
       const queries = statements.map((statement) => (statement as { query: string }).query);
       batches.push(queries);
       if (queries.some((query) => query.includes("account_deletion_tombstones"))) hasTombstone = true;
-      return statements.map(() => ({ success: true })) as never[];
+      return statements.map(() => ({ success: true, meta: { changes: 1 } })) as never[];
     },
   };
   return { database, calls, batches };
@@ -55,50 +55,215 @@ const envFor = (ACCOUNT_DB: AccountD1Database): AccountEnv => ({
   CLOUD_ACCOUNT_ORIGIN: "https://kakeimatch.example",
 });
 
-describe("Cloud account bootstrap and recovery", () => {
-  it("rejects unauthenticated operator provisioning and untrusted origins", async () => {
-    const { database } = testDatabase();
-    const env = envFor(database);
-    const unauthorized = await handleAccountRequest(post("https://kakeimatch.example/api/account/invites", {
-      email: "person@example.test", name: "Person",
-    }, "wrong"), env);
-    expect(unauthorized.status).toBe(401);
+const signedIn = (id = "synthetic-self", email = "self@example.test") => {
+  authState.session = {
+    user: { id, name: "Synthetic Self", email },
+    session: { id: "synthetic-session", expiresAt: new Date("2026-10-10T00:00:00Z") },
+  };
+};
 
-    const request = new Request("https://kakeimatch.example/api/account/invites", {
-      method: "POST",
-      headers: { authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}`, "content-type": "application/json", origin: "https://attacker.example" },
-      body: JSON.stringify({ email: "person@example.test", name: "Person" }),
-    });
-    expect((await handleAccountRequest(request, env)).status).toBe(403);
+function signupRequest(body: Record<string, unknown>, origin = "https://kakeimatch.example", ip = "203.0.113.7") {
+  return new Request("https://kakeimatch.example/api/account/signup", {
+    method: "POST",
+    headers: { "content-type": "application/json", origin, "cf-connecting-ip": ip },
+    body: JSON.stringify(body),
+  });
+}
+
+const signupEnv = (database: AccountD1Database, allow = () => true): AccountEnv => ({
+  ...envFor(database),
+  TURNSTILE_SITE_KEY: "synthetic-site-key",
+  TURNSTILE_SECRET_KEY: "synthetic-turnstile-secret",
+  ACCOUNT_RATE_LIMIT: { limit: async () => ({ success: allow() }) },
+});
+
+const turnstileResult = (result: Record<string, unknown>) =>
+  vi.fn(async () => Response.json(result)) as unknown as typeof fetch;
+const humanSignup = turnstileResult({ success: true, hostname: "kakeimatch.example", action: "signup" });
+
+describe("Open signup", () => {
+  it("issues a short-lived ticket without creating a user or accepting a plan", async () => {
+    const { database, calls } = testDatabase();
+    const fetchImpl = turnstileResult({ success: true, hostname: "kakeimatch.example", action: "signup" });
+    const response = await handleAccountRequest(signupRequest({
+      email: " New@Example.test ", name: "New member", turnstileToken: "synthetic-token", plan: "family", userId: "victim",
+    }), signupEnv(database), { fetchImpl });
+    const body = await response.json() as { context: string };
+
+    expect(response.status).toBe(201);
+    expect(body.context).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(calls.some((call) => call.query.includes("INSERT INTO user"))).toBe(false);
+    expect(calls.some((call) => call.query.includes("account_entitlements"))).toBe(false);
+    const ticket = calls.find((call) => call.query.includes("INSERT INTO account_signup_tickets"));
+    expect(ticket?.values).toContain("new@example.test");
+    expect(ticket?.values).not.toContain(body.context);
+    expect(ticket?.values).not.toContain("victim");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it("does not expose public email/password signup", async () => {
+  it("rejects a failed or mismatched bot check before writing anything", async () => {
+    const { database, calls } = testDatabase();
+    const env = signupEnv(database);
+    for (const fetchImpl of [
+      turnstileResult({ success: false, "error-codes": ["invalid-input-response"] }),
+      turnstileResult({ success: true, hostname: "attacker.example", action: "signup" }),
+      turnstileResult({ success: true, hostname: "kakeimatch.example", action: "login" }),
+    ]) {
+      const response = await handleAccountRequest(signupRequest({ email: "bot@example.test", name: "Bot", turnstileToken: "token" }), env, { fetchImpl });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "bot_check_failed" });
+    }
+    const missingToken = await handleAccountRequest(signupRequest({ email: "bot@example.test", name: "Bot" }), env, { fetchImpl: humanSignup });
+    expect(missingToken.status).toBe(400);
+    expect(calls.some((call) => call.query.includes("account_signup_tickets"))).toBe(false);
+  });
+
+  it("rate-limits signup per client address and fails closed without protection configured", async () => {
+    const { database, calls } = testDatabase();
+    const limited = await handleAccountRequest(signupRequest({ email: "a@example.test", name: "A", turnstileToken: "t" }),
+      signupEnv(database, () => false), { fetchImpl: humanSignup });
+    expect(limited.status).toBe(429);
+
+    const limiter = vi.fn(async () => ({ success: true }));
+    await handleAccountRequest(signupRequest({ email: "a@example.test", name: "A", turnstileToken: "t" }),
+      { ...signupEnv(database), ACCOUNT_RATE_LIMIT: { limit: limiter } }, { fetchImpl: humanSignup });
+    expect(limiter).toHaveBeenCalledWith({ key: "signup:203.0.113.7" });
+
+    const noLimiter = await handleAccountRequest(signupRequest({ email: "a@example.test", name: "A", turnstileToken: "t" }),
+      { ...signupEnv(database), ACCOUNT_RATE_LIMIT: undefined }, { fetchImpl: humanSignup });
+    expect(noLimiter.status).toBe(503);
+    const noTurnstile = await handleAccountRequest(signupRequest({ email: "a@example.test", name: "A", turnstileToken: "t" }),
+      { ...signupEnv(database), TURNSTILE_SECRET_KEY: undefined }, { fetchImpl: humanSignup });
+    expect(noTurnstile.status).toBe(503);
+    expect(calls.filter((call) => call.query.includes("INSERT INTO account_signup_tickets"))).toHaveLength(1);
+  });
+
+  it("requires the app origin for signup and reports email already in use", async () => {
+    const { database } = testDatabase();
+    const foreign = await handleAccountRequest(signupRequest({ email: "a@example.test", name: "A", turnstileToken: "t" }, "https://attacker.example"),
+      signupEnv(database), { fetchImpl: humanSignup });
+    expect(foreign.status).toBe(403);
+    const noOrigin = new Request("https://kakeimatch.example/api/account/signup", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "a@example.test", name: "A", turnstileToken: "t" }),
+    });
+    expect((await handleAccountRequest(noOrigin, signupEnv(database), { fetchImpl: humanSignup })).status).toBe(403);
+
+    const { database: withUser } = testDatabase("existing-user");
+    const taken = await handleAccountRequest(signupRequest({ email: "taken@example.test", name: "A", turnstileToken: "t" }),
+      signupEnv(withUser), { fetchImpl: humanSignup });
+    expect(taken.status).toBe(409);
+  });
+
+  it("exposes only the public site key when signup protection is configured", async () => {
+    const { database } = testDatabase();
+    const configured = await handleAccountRequest(new Request("https://kakeimatch.example/api/account/signup-config"), signupEnv(database));
+    expect(await configured.json()).toEqual({ signupAvailable: true, turnstileSiteKey: "synthetic-site-key" });
+    const missing = await handleAccountRequest(new Request("https://kakeimatch.example/api/account/signup-config"), envFor(database));
+    expect(await missing.json()).toEqual({ signupAvailable: false, turnstileSiteKey: null });
+  });
+
+  it("no longer exposes operator account-creation invites or public email/password signup", async () => {
     const { database } = testDatabase();
     const env = envFor(database);
+    const legacyInvite = await handleAccountRequest(post("https://kakeimatch.example/api/account/invites", {
+      email: "person@example.test", name: "Person",
+    }), env);
+    expect(legacyInvite.status).toBe(404);
+
     const request = new Request("https://kakeimatch.example/api/auth/sign-up/email", {
       method: "POST",
       headers: { "content-type": "application/json", origin: "https://kakeimatch.example" },
       body: JSON.stringify({ name: "Person", email: "person@example.test", password: "not-a-real-password" }),
     });
-
     expect((await handleAuthRequest(request, env)).status).toBeGreaterThanOrEqual(400);
   });
+});
 
-  it("creates an expiring invite while storing only its SHA-256 digest", async () => {
+describe("Family invites", () => {
+  const issue = (headers: Record<string, string>, body: unknown = {}) =>
+    new Request("https://kakeimatch.example/api/account/family-invites", {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+    });
+  const accept = (body: unknown, headers: Record<string, string> = { origin: "https://kakeimatch.example" }) =>
+    new Request("https://kakeimatch.example/api/account/family-invites/accept", {
+      method: "POST", headers: { "content-type": "application/json", cookie: "synthetic-session-cookie", ...headers }, body: JSON.stringify(body),
+    });
+  const token = "A".repeat(43);
+
+  it("lets only the operator secret issue invites, from no or the same origin", async () => {
     const { database, calls } = testDatabase();
-    const response = await handleAccountRequest(post("https://kakeimatch.example/api/account/invites", {
-      email: " PERSON@example.test ", name: "Person",
-    }), envFor(database));
-    const body = await response.json() as { context: string; expiresAt: string; inviteUrl: string };
+    const env = signupEnv(database);
+    signedIn();
+    expect((await handleAccountRequest(issue({ cookie: "synthetic-session-cookie", origin: "https://kakeimatch.example" }), env)).status).toBe(401);
+    expect((await handleAccountRequest(issue({ authorization: "Bearer wrong" }), env)).status).toBe(401);
+    expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}`, origin: "https://attacker.example" }), env)).status).toBe(403);
+    expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), { ...env, ACCOUNT_BOOTSTRAP_SECRET: undefined })).status).toBe(401);
+    expect((await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), signupEnv(database, () => false))).status).toBe(429);
+    expect(calls.some((call) => call.query.includes("INSERT INTO family_invites"))).toBe(false);
 
+    const response = await handleAccountRequest(issue({ authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}` }), env);
     expect(response.status).toBe(201);
-    expect(body.context).toMatch(/^[A-Za-z0-9_-]{40,50}$/);
-    expect(body.inviteUrl).toBe(`https://kakeimatch.example/?invite=${encodeURIComponent(body.context)}`);
-    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now());
-    expect(calls.some((call) => call.query.includes("INSERT INTO user") && call.values.includes("person@example.test"))).toBe(true);
-    const inviteInsert = calls.find((call) => call.query.includes("INSERT INTO account_invite"));
-    expect(inviteInsert).toBeDefined();
-    expect(inviteInsert?.values).not.toContain(body.context);
+    const body = await response.json() as { inviteUrl: string };
+    expect(body.inviteUrl).toMatch(/^https:\/\/kakeimatch\.example\/#family-invite=[A-Za-z0-9_-]{43}$/);
+    const insert = calls.find((call) => call.query.includes("INSERT INTO family_invites"));
+    expect(insert?.values.join(" ")).not.toContain(body.inviteUrl.split("=")[1]);
+    expect(insert?.values.join(" ")).not.toContain("family@example.test");
+  });
+
+  it("requires a signed-in session and the app origin to accept", async () => {
+    const { database, batches } = testDatabase();
+    const env = signupEnv(database);
+    authState.session = null;
+    expect((await handleAccountRequest(accept({ token }), env)).status).toBe(401);
+    signedIn();
+    expect((await handleAccountRequest(accept({ token }, { origin: "https://attacker.example" }), env)).status).toBe(403);
+    expect((await handleAccountRequest(accept({ token }, {}), env)).status).toBe(403);
+    expect((await handleAccountRequest(accept({ token }), signupEnv(database, () => false))).status).toBe(429);
+    expect(batches).toHaveLength(0);
+  });
+
+  it("uses the bearer token as the invite capability, binds the grant to the session user, and ignores client identity claims", async () => {
+    const { database, calls, batches } = testDatabase();
+    signedIn("synthetic-self", "self@example.test");
+    const response = await handleAccountRequest(accept({ token, plan: "family", userId: "another-user", email: "another@example.test" }), signupEnv(database));
+    expect(response.status).toBe(200);
+    expect(batches).toHaveLength(1);
+    const writes = calls.filter((call) => call.query.includes("UPDATE family_invites") || call.query.includes("INSERT INTO account_entitlements"));
+    expect(writes).toHaveLength(2);
+    for (const write of writes) {
+      expect(write.values).toContain("synthetic-self");
+      expect(write.values).not.toContain("another-user");
+    }
+  });
+
+  it("does not grant Family through a plan field on signup, usage, or unknown account routes", async () => {
+    const { database, calls } = testDatabase();
+    signedIn();
+    for (const path of ["/api/account/plan", "/api/account/entitlements", "/api/account/family"]) {
+      const response = await handleAccountRequest(new Request(`https://kakeimatch.example${path}`, {
+        method: "POST", headers: { "content-type": "application/json", origin: "https://kakeimatch.example" }, body: JSON.stringify({ plan: "family" }),
+      }), signupEnv(database));
+      expect(response.status).toBe(404);
+    }
+    expect(calls.some((call) => call.query.includes("account_entitlements"))).toBe(false);
+  });
+});
+
+describe("Cloud account recovery", () => {
+  it("rejects unauthenticated operator recovery and untrusted origins", async () => {
+    const { database } = testDatabase("user-123");
+    const env = envFor(database);
+    const unauthorized = await handleAccountRequest(post("https://kakeimatch.example/api/account/recovery", {
+      email: "person@example.test",
+    }, "wrong"), env);
+    expect(unauthorized.status).toBe(401);
+
+    const request = new Request("https://kakeimatch.example/api/account/recovery", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.ACCOUNT_BOOTSTRAP_SECRET}`, "content-type": "application/json", origin: "https://attacker.example" },
+      body: JSON.stringify({ email: "person@example.test" }),
+    });
+    expect((await handleAccountRequest(request, env)).status).toBe(403);
   });
 
   it("revokes sessions and passkeys before issuing recovery invite", async () => {
@@ -141,6 +306,20 @@ describe("Cloud account bootstrap and recovery", () => {
     expect(batches[0]?.some((query) => query.includes("INSERT INTO account_deletion_tombstones"))).toBe(true);
     expect(batches[0]?.some((query) => query.includes("DELETE FROM user"))).toBe(true);
     expect(calls.some((call) => call.query.includes("DELETE FROM user") && call.values.includes("synthetic-self"))).toBe(true);
+  });
+
+  it("accepts an empty request stream, as Cloudflare delivers a bodiless DELETE", async () => {
+    authState.session = {
+      user: { id: "synthetic-self", name: "Synthetic Self", email: "self@example.test" },
+      session: { id: "synthetic-session", expiresAt: new Date("2026-10-10T00:00:00Z") },
+    };
+    const { database, batches } = testDatabase();
+    const response = await handleAccountRequest(new Request("https://kakeimatch.example/api/account/delete", {
+      method: "DELETE", headers: { origin: "https://kakeimatch.example", cookie: "synthetic-session-cookie" }, body: new Uint8Array(0),
+    }), envFor(database));
+
+    expect(response.status).toBe(200);
+    expect(batches).toHaveLength(1);
   });
 
   it("treats a repeated deletion attempt as successful and idempotent", async () => {

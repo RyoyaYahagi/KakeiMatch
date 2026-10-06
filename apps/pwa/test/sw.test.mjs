@@ -11,6 +11,8 @@ assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
 assert.match(csp, /worker-src 'self' blob: data:/);
 const scriptSrc = csp.split(';').find(directive => directive.trim().startsWith('script-src'));
 assert.doesNotMatch(scriptSrc, /'unsafe-inline'|'unsafe-eval'/);
+assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com/);
+assert.match(csp, /connect-src 'self' https:\/\/challenges\.cloudflare\.com/);
 
 function worker(build = 'old', stores = new Map()) {
   const handlers = new Map();

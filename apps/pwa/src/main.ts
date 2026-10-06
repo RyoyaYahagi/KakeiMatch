@@ -13,6 +13,7 @@ import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
+import { captureFamilyInvite, clearFamilyInvite, fetchSignupConfig, pendingFamilyInvite, renderBotCheck } from './account-signup';
 import { downloadLocalDataRescue } from './local-data-rescue';
 import './style.css';
 
@@ -88,11 +89,30 @@ root.innerHTML = `
         <div id="usage-meter" class="usage-meter" hidden><span></span></div>
         <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。お問い合わせの深掘りを使う場合は、AIへの質問1回ごとに利用枠を1回使います。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
       </div>
+      <div id="family-invite" class="family-invite" hidden>
+        <p><strong>家族プランの招待</strong></p>
+        <p id="family-invite-text"></p>
+        <button id="family-invite-accept" type="button" hidden>家族プランを受け取る</button>
+        <button id="family-invite-dismiss" class="text-button" type="button">この招待を使わない</button>
+      </div>
       <div id="signed-out-actions" hidden>
         <p>AI機能を利用するにはアカウントが必要です。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
         <button id="passkey-login" type="button">Passkeyで続ける</button>
-        <button id="invite-register" class="secondary" type="button">招待コードで登録</button>
+        <button id="signup-start" class="secondary" type="button">新規登録</button>
+        <button id="invite-register" class="secondary" type="button" hidden>招待コードで登録</button>
         <button id="manual-entry" class="secondary" type="button">家計簿に戻る</button>
+        <form id="signup-form" class="signup-form" hidden novalidate>
+          <h5>新規登録</h5>
+          <p class="muted">登録すると無料プランで始まります。毎月の読み取り回数に上限があります。登録にはこの端末のPasskey（顔認証・指紋認証など）を使います。</p>
+          <label for="signup-name">表示名</label>
+          <input id="signup-name" name="name" autocomplete="nickname" maxlength="120" required />
+          <label for="signup-email">メールアドレス</label>
+          <input id="signup-email" name="email" type="email" autocomplete="email" maxlength="254" required />
+          <p class="muted">アカウントの識別に使います。確認メールやお知らせは送信しません。</p>
+          <div id="signup-bot-check" class="signup-bot-check"></div>
+          <button id="signup-submit" type="submit" disabled>Passkeyを作成して登録</button>
+          <button id="signup-cancel" class="text-button" type="button">キャンセル</button>
+        </form>
       </div>
       <div id="signed-in-actions" hidden>
         <button id="use-ai" class="secondary" type="button">AI利用を確認</button>
@@ -172,6 +192,15 @@ const accountMessage = element<HTMLParagraphElement>('account-message');
 const passkeyList = element<HTMLUListElement>('passkey-list');
 const loginButton = element<HTMLButtonElement>('passkey-login');
 const inviteButton = element<HTMLButtonElement>('invite-register');
+const signupStartButton = element<HTMLButtonElement>('signup-start');
+const signupForm = element<HTMLFormElement>('signup-form');
+const signupName = element<HTMLInputElement>('signup-name');
+const signupEmail = element<HTMLInputElement>('signup-email');
+const signupSubmit = element<HTMLButtonElement>('signup-submit');
+const signupBotCheck = element<HTMLElement>('signup-bot-check');
+const familyInvitePanel = element<HTMLElement>('family-invite');
+const familyInviteText = element<HTMLParagraphElement>('family-invite-text');
+const familyInviteAccept = element<HTMLButtonElement>('family-invite-accept');
 const manualButton = element<HTMLButtonElement>('manual-entry');
 const addPasskeyButton = element<HTMLButtonElement>('add-passkey');
 const logoutButton = element<HTMLButtonElement>('logout');
@@ -252,6 +281,7 @@ async function refreshAccount() {
     signedOutActions.hidden = signedIn;
     signedInActions.hidden = !signedIn;
     developerCostsUi.setSignedIn(signedIn);
+    renderFamilyInvite(signedIn);
     if (!signedIn) {
       usageSummary.textContent = 'ログインすると今月のAI利用回数を確認できます。';
       accountStatus.textContent = '未ログインです。';
@@ -355,6 +385,132 @@ inviteButton.addEventListener('click', () => {
     .finally(() => { inviteButton.disabled = false; });
 });
 
+function renderFamilyInvite(signedIn: boolean) {
+  const pending = pendingFamilyInvite() !== null;
+  familyInvitePanel.hidden = !pending;
+  familyInviteAccept.hidden = !signedIn;
+  familyInviteText.textContent = signedIn
+    ? '受け取ると、このアカウントは毎月の読み取り回数の上限がない家族プランになります。'
+    : '招待を受け取るには、Passkeyでログインするか、新規登録してください。';
+}
+
+let botCheck: Awaited<ReturnType<typeof renderBotCheck>> | null = null;
+
+// The open form owns the screen's single primary action, so the other entry buttons step aside.
+function setSignupFormOpen(open: boolean) {
+  signupForm.hidden = !open;
+  for (const button of [signupStartButton, loginButton, manualButton]) button.hidden = open;
+}
+
+function closeSignupForm() {
+  setSignupFormOpen(false);
+  botCheck?.remove();
+  botCheck = null;
+}
+
+signupStartButton.addEventListener('click', () => {
+  signupStartButton.disabled = true;
+  accountMessage.textContent = '';
+  void fetchSignupConfig().then(async config => {
+    if (!config.signupAvailable || !config.turnstileSiteKey) throw new Error('signup_unavailable');
+    setSignupFormOpen(true);
+    botCheck = await renderBotCheck(signupBotCheck, config.turnstileSiteKey, ready => { signupSubmit.disabled = !ready; });
+    signupName.focus();
+  }).catch(() => {
+    closeSignupForm();
+    accountMessage.textContent = '現在は新規登録を利用できません。時間をおいて、もう一度お試しください。';
+  }).finally(() => { signupStartButton.disabled = false; });
+});
+
+element<HTMLButtonElement>('signup-cancel').addEventListener('click', () => {
+  closeSignupForm();
+  signupStartButton.focus();
+});
+
+signupForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const name = signupName.value.trim();
+  const email = signupEmail.value.trim();
+  if (!name || !signupEmail.checkValidity() || !email) {
+    accountMessage.textContent = '表示名とメールアドレスを入力してください。';
+    (name ? signupEmail : signupName).focus();
+    return;
+  }
+  const turnstileToken = botCheck?.token();
+  if (!turnstileToken) {
+    accountMessage.textContent = '確認が完了するまでお待ちください。';
+    return;
+  }
+  signupSubmit.disabled = true;
+  accountMessage.textContent = 'アカウントを準備しています…';
+  void fetch('/api/account/signup', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, email, turnstileToken }),
+  }).then(async response => {
+    if (!response.ok) {
+      const result = await response.json().catch(() => null) as { error?: string } | null;
+      throw new Error(result?.error ?? 'signup_failed');
+    }
+    const { context } = await response.json() as { context: string };
+    accountMessage.textContent = 'Passkeyを登録しています…';
+    const result = await authClient.passkey.addPasskey({ name: 'この端末', context, createSession: true });
+    if (result.error) throw new Error('passkey_failed');
+    closeSignupForm();
+    signupForm.reset();
+    await refreshAccount();
+    await issueAiToken();
+  }).catch(error => {
+    const code = error instanceof Error ? error.message : '';
+    accountMessage.textContent = code === 'email_unavailable'
+      ? 'このメールアドレスは登録できません。登録済みの場合は「Passkeyで続ける」からログインしてください。'
+      : code === 'rate_limited'
+        ? '登録の試行が多すぎます。1分ほど待ってから、もう一度お試しください。'
+        : code === 'passkey_failed'
+          ? 'Passkeyを登録できませんでした。もう一度お試しください。'
+          : '登録できませんでした。入力内容とオンライン状態を確認して、もう一度お試しください。';
+    botCheck?.reset();
+  });
+});
+
+familyInviteAccept.addEventListener('click', () => {
+  const token = pendingFamilyInvite();
+  if (!token) return;
+  familyInviteAccept.disabled = true;
+  accountMessage.textContent = '家族プランを確認しています…';
+  void fetch('/api/account/family-invites/accept', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  }).then(async response => {
+    const result = await response.json().catch(() => null) as { error?: string } | null;
+    if (response.status === 401) throw new Error('session_expired');
+    if (!response.ok) throw new Error(result?.error ?? 'family_invite_failed');
+    clearFamilyInvite();
+    await refreshAccount();
+    accountMessage.textContent = '家族プランになりました。';
+  }).catch(error => {
+    const code = error instanceof Error ? error.message : '';
+    if (code === 'invalid_family_invite' || code === 'family_limit_reached') clearFamilyInvite();
+    renderFamilyInvite(code !== 'session_expired');
+    accountMessage.textContent = code === 'invalid_family_invite'
+      ? 'この招待は使えません。有効期限が切れたか、使用済みか、別のアカウント向けです。招待した人に新しい招待を依頼してください。'
+      : code === 'family_limit_reached'
+        ? '家族プランの人数が上限に達しているため、受け取れませんでした。招待した人に確認してください。'
+        : code === 'session_expired'
+          ? 'ログイン状態を確認できません。Passkeyで再度ログインしてから受け取ってください。'
+          : '家族プランを受け取れませんでした。オンライン状態を確認して、もう一度お試しください。';
+  }).finally(() => { familyInviteAccept.disabled = false; });
+});
+
+element<HTMLButtonElement>('family-invite-dismiss').addEventListener('click', () => {
+  clearFamilyInvite();
+  familyInvitePanel.hidden = true;
+  accountMessage.textContent = '招待を破棄しました。';
+});
+
 manualButton.addEventListener('click', () => {
   accountMessage.textContent = '家計簿に戻ります。';
   showTab('home');
@@ -449,6 +605,10 @@ if ('serviceWorker' in navigator) {
   });
 }
 message.textContent = '家計簿を準備しています…';
+// Operator recovery links use ?invite=. Family invites arrive in the fragment and are removed from the URL at once.
+inviteButton.hidden = !new URLSearchParams(location.search).has('invite');
+const familyInviteOpened = captureFamilyInvite();
+
 void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
   recordLocalDiagnostic('startup');
 }).catch((error: unknown) => {
@@ -463,4 +623,8 @@ void initializeLocalUi({ openAccount: () => showTab('settings') }).then(() => {
     householdView.hidden = true;
     element<HTMLElement>('local-view').hidden = true;
   }
+}).finally(() => {
+  if (!familyInviteOpened) return;
+  showTab('settings');
+  familyInvitePanel.scrollIntoView({ block: 'start' });
 });

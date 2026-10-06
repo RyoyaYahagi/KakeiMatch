@@ -510,6 +510,12 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 #passkey-list .text-button { color: var(--danger); }
 .account-delete-zone { margin-top: var(--space-6); padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .account-delete-zone p { margin-bottom: var(--space-2); }
+.family-invite { margin: var(--space-4) 0; padding: var(--space-3) var(--space-4); border: 1px solid var(--primary); border-radius: var(--radius-lg); }
+.family-invite p { margin: 0 0 var(--space-2); }
+.signup-form { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.signup-form h5 { margin: 0 0 var(--space-2); }
+.signup-form p.muted { margin: var(--space-2) 0 0; }
+.signup-bot-check { min-height: 65px; margin-top: var(--space-4); }
 
 /* Receipts */
 .entry-editor-tabs { margin: var(--space-2) 0 var(--space-3); }
