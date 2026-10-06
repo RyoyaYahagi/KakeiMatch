@@ -296,7 +296,7 @@ try {
   await importStatementCsv();
   await page.getByText(/要確認 1件/).waitFor();
   await page.locator('details.review-item').filter({ has: page.locator('summary .record-title', { hasText: 'Synthetic Corner' }) }).locator('summary').click();
-  await page.locator('details p').filter({ hasText: 'Synthetic Corner Market' }).locator('xpath=following-sibling::button[1]').click();
+  await page.locator('.compare-candidate').filter({ has: page.locator('.slip-record', { hasText: 'Synthetic Corner Market' }) }).getByRole('button', { name: '同じ支出', exact: true }).click();
   await waitForProfileRecords(rows => rows.some(row => row.kind === 'reconciliation-resolution' && row.value.source === 'user' && row.value.status === 'applied') &&
     rows.some(row => row.kind === 'merchant-mapping' && row.value.aliasMerchant === 'Synthetic Corner Market'), 'applied user resolution and merchant alias');
   await seedAuditAndPreferences();

@@ -66,6 +66,36 @@ describe("LocalReceiptService", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it("remembers checked read warnings until the receipt is read again", async () => {
+    const warned = { ...extraction, warnings: [
+      { field: "purchasedDate", code: "missing", message: "購入日が印字されていません。" },
+      { field: "totalAmountYen", code: "check", message: "合計金額を確認してください。" },
+    ] };
+    const fetchImpl = vi.fn(async () => Response.json(warned));
+    const { service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    await service.markWarningsReviewed(receipt.id, [1, 1, 7, -1]);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([1]);
+    await service.markWarningsReviewed(receipt.id, [0]);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([0, 1]);
+    await service.analyze(receipt.id);
+    expect((await service.get(receipt.id))?.reviewedWarnings).toBeUndefined();
+  });
+
+  it("registers a receipt paid entirely with points as one 0 yen expense in the overall category", async () => {
+    const fetchImpl = vi.fn(async () => Response.json(extraction));
+    const { ledger, service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    await service.confirm(receipt.id, { merchant: "Synthetic Net Market", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 0,
+      categoryId: "actual-food", accountId: "cash",
+      items: [{ id: "item-1", name: "Synthetic Rice", amountYen: 400, categoryId: "actual-food" }, { id: "item-2", name: "Synthetic Soap", amountYen: 300, categoryId: "actual-household" }],
+      adjustments: [{ id: "adjustment-1", label: "ポイント利用", amountYen: -700, targetItemId: null }] });
+    await service.register(receipt.id);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ amountYen: 0, categoryId: "actual-food" }));
+    expect((ledger.importReceipt.mock.calls[0] as unknown[])[0]).not.toHaveProperty("splits");
+  });
+
   it("keeps a valid image larger than the AI gateway limit locally for manual entry", async () => {
     const fetchImpl = vi.fn();
     const { repository, service } = await setup(fetchImpl);
@@ -369,6 +399,15 @@ describe("LocalReceiptService", () => {
     expect(saved?.extraction).toBeNull();
     expect(saved?.registration.status).toBe("pending");
     expect(new Uint8Array(await (await repository.getBlob(receipt.image!.blobId))!.blob.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+  });
+
+  it.each([
+    ["a paused AI", { error: "ai_temporarily_paused" }, true],
+    ["an unavailable provider", { error: "provider_unavailable" }, false],
+  ])("tells whether trying again at once can help after %s", async (_name, body, retryAfterWait) => {
+    const { service } = await setup(vi.fn(async () => Response.json(body, { status: 503 })));
+    const receipt = await service.saveImage(pngBlob());
+    await expect(service.analyze(receipt.id)).rejects.toMatchObject({ code: "offline_or_unavailable", retryAfterWait });
   });
 
   it("offers manual registration after an expired category flow", async () => {

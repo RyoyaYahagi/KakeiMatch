@@ -119,7 +119,7 @@ try {
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Bank');
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Corrected Apple');
   // Collapse the split to one category, preserving the parent Actual transaction ID.
-  await click('品目一覧'); await click('全品目にこのカテゴリを適用'); await click('変更を保存する');
+  await click('品目一覧'); await click('全品目を同じカテゴリにする'); await page.getByRole('radio', { name: '食費', exact: true }).click(); await click('変更を保存する');
   await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   await click('編集する'); await page.locator('#receipt-merchant').waitFor();
   await click('品目一覧');
