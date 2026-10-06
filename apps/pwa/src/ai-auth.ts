@@ -40,7 +40,7 @@ export async function getAiAccessToken({ allowGuest = true }: { allowGuest?: boo
     const guest = await requestToken({ authorization: `Guest ${saved}` });
     if (guest.ok) return readToken(guest, 'guest');
     if (guest.status !== 401) throw new Error('ai_token_unavailable');
-    // The guest was retired elsewhere or the server forgot it; start a new one.
+    // The server no longer knows this guest; start a new one.
     forgetGuestSecret();
   }
   const created = await requestToken({ authorization: `Guest ${await startGuest()}` });

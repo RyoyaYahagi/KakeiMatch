@@ -4,7 +4,7 @@ import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
-import { guestUsage, retireGuest, type GuestUsage } from './guest-ai';
+import { guestUsage, type GuestUsage } from './guest-ai';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
@@ -90,11 +90,10 @@ root.innerHTML = `
         <p class="muted">レシートの読み取りとカテゴリ提案で1回です。読み取り直すと新たに1回使います。お問い合わせのAI機能は回数に数えません。ログインしていない時は1日5回までで、毎日午前0時（日本時間）に戻ります。ログイン中はプランの回数で、毎月1日の午前0時に戻ります。</p>
       </div>
       <div id="signed-out-actions" hidden>
-        <p>ログインしなくても、AIを1日5回まで使えます。初めて使う時だけ、ロボットでないことを確かめます。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
+        <p>ログインしなくても、AIを1日5回まで使えます。初めて使う時だけ、ロボットでないことを確かめます。サーバーに記録するのはAIの利用回数だけで、家計データは保存しません。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
         <button id="passkey-login" type="button">Passkeyで続ける</button>
         <button id="invite-register" class="secondary" type="button">招待コードで登録</button>
         <button id="manual-entry" class="secondary" type="button">家計簿に戻る</button>
-        <button id="guest-retire" class="text-button" type="button" hidden>登録なしのAI利用をやめる</button>
       </div>
       <div id="signed-in-actions" hidden>
         <button id="use-ai" class="secondary" type="button">AI利用を確認</button>
@@ -170,7 +169,6 @@ const usageSummary = element<HTMLParagraphElement>('usage-summary');
 const accountStatus = element<HTMLParagraphElement>('account-status');
 const signedOutActions = element<HTMLElement>('signed-out-actions');
 const signedInActions = element<HTMLElement>('signed-in-actions');
-const guestRetireButton = element<HTMLButtonElement>('guest-retire');
 const accountMessage = element<HTMLParagraphElement>('account-message');
 const passkeyList = element<HTMLUListElement>('passkey-list');
 const loginButton = element<HTMLButtonElement>('passkey-login');
@@ -258,7 +256,6 @@ async function refreshAccount() {
     if (!signedIn) {
       accountStatus.textContent = '未ログインです。';
       const guest = await guestUsage().catch(() => undefined);
-      guestRetireButton.hidden = !guest;
       if (guest) renderUsage(guest);
       else {
         element<HTMLElement>('usage-meter').hidden = true;
@@ -266,7 +263,6 @@ async function refreshAccount() {
       }
       return;
     }
-    guestRetireButton.hidden = true;
     accountStatus.textContent = `ログイン中${session?.user.name ? `：${session.user.name}` : ''}`;
     const [usageResult, passkeyResult] = await Promise.allSettled([
       apiJson<UsageResponse>('/api/ai/usage').then(renderUsage),
@@ -346,16 +342,6 @@ async function issueAiToken() {
   }
   accountMessage.textContent = 'AI利用の認証を確認しました。';
 }
-
-guestRetireButton.addEventListener('click', () => {
-  if (!window.confirm('この端末の登録なしのAI利用をやめます。\n\n今日使った回数はいたずら防止のためサーバーに残るので、やめても回数は戻りません。家計簿のデータは消えません。')) return;
-  guestRetireButton.disabled = true;
-  void retireGuest()
-    // refreshAccount clears the message, so say it afterwards.
-    .then(async () => { clearAiAccessToken(); await refreshAccount(); accountMessage.textContent = '登録なしのAI利用をやめました。'; })
-    .catch(() => { accountMessage.textContent = 'やめられませんでした。オンラインで再度お試しください。'; })
-    .finally(() => { guestRetireButton.disabled = false; });
-});
 
 loginButton.addEventListener('click', () => {
   loginButton.disabled = true;

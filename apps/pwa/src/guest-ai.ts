@@ -114,12 +114,3 @@ export async function guestUsage(): Promise<GuestUsage | null> {
   if (!response.ok) throw new Error('guest_usage_unavailable');
   return response.json() as Promise<GuestUsage>;
 }
-
-/** Ends this device's guest on the server. Its counts stay there so a new guest cannot reset today's limit. */
-export async function retireGuest(): Promise<void> {
-  const secret = storedGuestSecret();
-  if (!secret) return;
-  const response = await fetch('/api/ai/guest', { method: 'DELETE', credentials: 'same-origin', headers: { authorization: `Guest ${secret}` } });
-  if (!response.ok && response.status !== 401) throw new Error('guest_retire_failed');
-  forgetGuestSecret();
-}

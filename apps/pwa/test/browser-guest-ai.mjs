@@ -9,7 +9,7 @@ await context.addInitScript(() => { navigator.serviceWorker.register = async () 
 const page = await context.newPage();
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const guestSecret = 'G'.repeat(43);
-const calls = { created: 0, retired: 0, guestTokens: 0 };
+const calls = { created: 0, guestTokens: 0 };
 let geminiStatus = 200;
 
 // A stand-in for Turnstile. It passes unless the page sets `__holdBotCheck`.
@@ -25,12 +25,9 @@ await context.route('https://challenges.cloudflare.com/turnstile/v0/api.js*', ro
 await context.route('**/api/ai/guest', async route => {
   const request = route.request();
   if (request.method() === 'GET') return route.fulfill({ json: { guestAvailable: true, turnstileSiteKey: '1x00000000000000000000AA' } });
-  if (request.method() === 'POST') {
-    assert.deepEqual(request.postDataJSON(), { turnstileToken: 'synthetic-turnstile-token' });
-    calls.created++; return route.fulfill({ status: 201, json: { guestSecret } });
-  }
-  assert.equal(request.headers().authorization, `Guest ${guestSecret}`);
-  calls.retired++; return route.fulfill({ json: { retired: true } });
+  assert.equal(request.method(), 'POST');
+  assert.deepEqual(request.postDataJSON(), { turnstileToken: 'synthetic-turnstile-token' });
+  calls.created++; return route.fulfill({ status: 201, json: { guestSecret } });
 });
 await context.route('**/api/ai/token', route => {
   if (route.request().headers().authorization !== `Guest ${guestSecret}`) return route.fulfill({ status: 401, json: { error: 'unauthorized' } });
@@ -87,16 +84,13 @@ try {
   assert.equal(await page.getByRole('button', { name: 'もう一度読み取る', exact: true }).count(), 0);
   await page.keyboard.press('Escape');
 
-  // Settings show today's count, and the guest can be retired.
+  // Settings show today's count.
   await page.locator('#settings-tab').click();
   await page.getByText('今日のAI読み取り 1 / 5回 · 登録なし', { exact: true }).waitFor();
-  page.once('dialog', dialog => dialog.accept());
-  await click('登録なしのAI利用をやめる');
-  await page.getByText('登録なしのAI利用をやめました。', { exact: true }).waitFor();
-  assert.equal(calls.retired, 1);
-  assert.equal(await page.evaluate(() => localStorage.getItem('kakeimatch.aiGuestSecret')), null);
 
-  // Cancelling the bot check keeps the photo and explains what happened.
+  // On a device without a guest, cancelling the bot check keeps the photo and explains what happened.
+  await page.evaluate(() => localStorage.removeItem('kakeimatch.aiGuestSecret'));
+  await page.reload(); await page.getByText('今月の支出', { exact: false }).first().waitFor();
   await page.evaluate(() => { window.__holdBotCheck = true; });
   geminiStatus = 200;
   await readReceipt();
@@ -107,5 +101,5 @@ try {
   await page.getByText('確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。手で入力するか、もう一度読み取ってください。', { exact: true }).waitFor();
   assert.equal(calls.created, 1);
   assert.deepEqual(errors, []);
-  console.log('PASS: guest AI runs a bot check once, reads without an account, explains the daily limit, shows today\'s count, retires, and keeps the photo when the check is cancelled.');
+  console.log('PASS: guest AI runs a bot check once, reads without an account, explains the daily limit, shows today\'s count, and keeps the photo when the check is cancelled.');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }
