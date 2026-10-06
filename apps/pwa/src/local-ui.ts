@@ -211,21 +211,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     saveFile(capture); saveFile(library);
     const camera = document.createElement('button'); camera.type = 'button'; camera.className = 'choice-primary'; camera.setAttribute('aria-label', 'レシートを撮る');
     const cameraBadge = document.createElement('span'); cameraBadge.className = 'choice-primary-icon'; cameraBadge.append(icon('camera'));
-    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、内容を読み取れます'));
+    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、品目まで読み取れます'));
     camera.append(cameraBadge, cameraText, icon('chevronRight'));
     camera.addEventListener('click', () => capture.click());
-    const choices = document.createElement('ul'); choices.className = 'choice-list surface-section';
+    const choices = document.createElement('ul'); choices.className = 'choice-list';
     const startEntry = (kind: 'expense' | 'income' | 'transfer') => () => { closeRecordSheet(); return manualEditor(kind); };
-    for (const [label, symbol, tone, action] of [
-      ['保存した写真から', 'image', 'food', () => library.click()],
-      ['支出を手入力', 'pencil', 'other', startEntry('expense')],
-      ['収入', 'income', 'income', startEntry('income')],
-      ['口座間振替', 'transfer', 'other', startEntry('transfer')],
+    // docs/UX.md ＋追加: four equal tiles under the photo tile. The name stays the button's accessible name.
+    for (const [label, hint, symbol, action] of [
+      ['写真から', '保存したレシート', 'image', () => library.click()],
+      ['支出を手入力', 'レシートなし', 'pencil', startEntry('expense')],
+      ['収入', '給与・臨時収入', 'income', startEntry('income')],
+      ['口座間の振替', '現金の引き出しなど', 'transfer', startEntry('transfer')],
     ] as const) {
       const item = document.createElement('li');
-      const choice = button(label, action); choice.className = 'choice-row';
-      const badge = document.createElement('span'); badge.className = `record-icon tone-${tone}`; badge.append(icon(symbol));
-      choice.prepend(badge); choice.append(icon('chevronRight'));
+      const choice = button(label, action); choice.className = 'choice-row'; choice.setAttribute('aria-label', label);
+      const words = document.createElement('span'); words.className = 'choice-row-text'; words.append(text('span', label), text('small', hint));
+      choice.replaceChildren(icon(symbol), words);
       item.append(choice); choices.append(item);
     }
     body.append(grabber, header, capture, library, camera, choices, text('p', '写真と入力内容はこの端末に保存します。読み取りは「AIで読み取る」を選んだ時だけ行います。', 'muted'));
@@ -952,7 +953,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const needsReview = pending.filter(r => r.status === 'needs_review').length, unmatched = pending.filter(r => r.status === 'unmatched_statement').length;
     const waiting = run.receiptResults.filter(r => r.status === 'unmatched_receipt').length;
     const tiles = document.createElement('div'); tiles.className = 'review-tiles'; tiles.setAttribute('aria-hidden', 'true');
-    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['danger', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
+    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['missing', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
       const tile = document.createElement('div'); tile.className = `review-tile tile-${tone}`;
       const name = document.createElement('span'); name.className = 'review-tile-label'; name.append(icon(symbol), document.createTextNode(label));
       const value = document.createElement('span'); value.className = 'review-tile-count'; value.append(document.createTextNode(String(count)), text('small', '件'));
@@ -985,7 +986,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const statement = allStatements.find(s => s.id === row.statementTransactionId); if (!statement) continue;
       const item = document.createElement('li'); const detail = document.createElement('details'); detail.className = 'review-item';
       const needsDecision = row.status === 'needs_review';
-      const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'danger');
+      const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'missing');
       const setReason = (reason: string) => { summary.note.textContent = `${shortDay(statement.usedDate)} · ${reason}`; };
       setReason(needsDecision ? '内容を確認してください' : '記録が見つかりません');
       detail.append(summary.element);
@@ -1072,7 +1073,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (automatic.length) {
       const history = document.createElement('details'); history.className = 'surface-section review-history';
-      history.append(text('summary', `自動で一致した内容を見る（${auto}件）`));
+      const historySummary = document.createElement('summary'); const seal = text('span', '済', 'seal'); seal.setAttribute('aria-hidden', 'true');
+      historySummary.append(seal, text('span', `自動で一致した内容を見る（${auto}件）`)); history.append(historySummary);
       const matchedList = document.createElement('ul');
       const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
       const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));

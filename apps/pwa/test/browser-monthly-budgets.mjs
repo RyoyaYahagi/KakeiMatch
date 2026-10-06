@@ -121,7 +121,7 @@ try {
   await category('Synthetic Budget Salary', true); await category('Synthetic Custom Budget');
   await manual('支出', 'Synthetic Budget Expense', 1500, 'Synthetic Budget Food', 'Synthetic Budget Wallet');
   await manual('収入', 'Synthetic Budget Income', 200000, 'Synthetic Budget Salary', 'Synthetic Budget Bank');
-  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間振替');
+  await page.locator('#home-tab').click(); await click('記録を追加'); await click('口座間の振替');
   await page.getByLabel('金額（円）', { exact: true }).fill('8000');
   await page.getByLabel('振替元口座', { exact: true }).selectOption({ label: 'Synthetic Budget Bank' });
   await page.getByLabel('振替先口座', { exact: true }).selectOption({ label: 'Synthetic Budget Wallet' });
