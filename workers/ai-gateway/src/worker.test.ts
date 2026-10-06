@@ -538,6 +538,14 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await eventCount()).toBe(0);
     expect(await usage()).toMatchObject({ used: 0 });
   });
+  it("accepts a phone-sized photo without overflowing the base64 check", async () => {
+    const large = Buffer.alloc(5 * 1024 * 1024, 1); Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(large);
+    const provider = fetchOk({ output_text: JSON.stringify(receipt) });
+    const response = await handleRequest(request("gemini", { ...image, imageBase64: large.toString("base64"), flowId: crypto.randomUUID() }), env, options(provider));
+    expect(response.status).toBe(200);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect((await handleRequest(request("gemini", { ...image, imageBase64: `${image.imageBase64}=`, flowId: crypto.randomUUID() }), env, options())).status).toBe(400);
+  });
   it("does not count malformed, missing-flow, unauthorized or unconfigured requests", async () => {
     expect((await handleRequest(request("gemini", image), env, options())).status).toBe(400);
     expect((await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID(), imageBase64: "bad" }), env, options())).status).toBe(400);
