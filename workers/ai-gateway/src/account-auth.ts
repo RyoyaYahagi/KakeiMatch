@@ -321,7 +321,8 @@ async function handleDeleteAccountRequest(request: Request, env: AccountEnv): Pr
   const originUrl = configuredOrigin(env, request);
   if (!originUrl) return json(403, { error: "untrusted_origin" });
   if (request.headers.get("origin") !== originUrl.origin) return json(403, { error: "forbidden_origin" });
-  if (request.body !== null) return json(400, { error: "invalid_request" });
+  // Cloudflare gives a bodiless DELETE an empty stream, so check the bytes rather than the stream.
+  if (request.body !== null && (await request.arrayBuffer()).byteLength > 0) return json(400, { error: "invalid_request" });
 
   let account: AccountSession | null;
   try {
