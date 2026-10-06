@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
-import { reserveFlow, type FlowLimits } from "./receipt-ai-usage";
+import { reserveFlow, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
 import { GUEST_CREATIONS_PER_ADDRESS_DAILY } from "./guest-ai";
 import { sqliteD1 } from "./test-support/sqlite-d1";
 
@@ -101,6 +101,11 @@ describe("guest AI", () => {
     await guestSecret(); const first = guestId();
     const reserve = (user: string, address: string, at = now) => reserveFlow(db, user, crypto.randomUUID(), "mac", at, limits, "receipt", address);
     for (let index = 0; index < 5; index++) expect(await reserve(first, "address-a")).toBe("reserved");
+    expect(await reserve(first, "address-a")).toBe("ai_quota_exceeded");
+    // A flow the provider answered with an error status gives its slot back.
+    const failed = (sqlite.prepare("SELECT flow_id FROM ai_receipt_flows WHERE user_id = ? LIMIT 1").get(first) as { flow_id: string }).flow_id;
+    await uncountFlow(db, first, failed);
+    expect(await reserve(first, "address-a")).toBe("reserved");
     expect(await reserve(first, "address-a")).toBe("ai_quota_exceeded");
     // Tokyo midnight is 15:00 UTC; the next day starts a new count.
     expect(await reserve(first, "address-a", Date.parse("2026-10-06T15:00:00Z") / 1000)).toBe("reserved");

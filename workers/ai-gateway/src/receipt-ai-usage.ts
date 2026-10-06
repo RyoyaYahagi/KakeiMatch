@@ -22,11 +22,11 @@ export async function flowMac(secret: string, user: string, flow: string, stage:
   return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
 }
 export async function flowUsage(db: Db, user: string, month: string): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt' AND dispatched = 1").bind(user, month).first<{ used: number }>();
+  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt' AND counted = 1 AND dispatched = 1").bind(user, month).first<{ used: number }>();
   return row?.used ?? 0;
 }
 export async function guestDayUsage(db: Db, user: string, day: string): Promise<number> {
-  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND dispatched = 1").bind(user, day).first<{ used: number }>();
+  const row = await db.prepare("SELECT COUNT(*) AS used FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND counted = 1 AND dispatched = 1").bind(user, day).first<{ used: number }>();
   return row?.used ?? 0;
 }
 export type FlowKind = "receipt" | "contact-submit" | "contact-transcribe" | "contact-interview";
@@ -37,10 +37,10 @@ function quotaCondition(kind: FlowKind, user: string, now: number, ipDayMac: str
   const day = dayKey(now);
   if (kind === "receipt") return {
     sql: `CASE WHEN guest THEN
-        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt') < ?
-        AND (SELECT COUNT(*) FROM ai_receipt_flows WHERE ip_day_mac = ? AND day = ? AND kind = 'receipt') < ?
+        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND counted = 1) < ?
+        AND (SELECT COUNT(*) FROM ai_receipt_flows WHERE ip_day_mac = ? AND day = ? AND kind = 'receipt' AND counted = 1) < ?
       ELSE monthly_limit IS NULL OR
-        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt') < monthly_limit END`,
+        (SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND month = ? AND kind = 'receipt' AND counted = 1) < monthly_limit END`,
     values: [user, day, limits.guestDaily, ipDayMac, day, limits.guestAddressDaily, user, monthKey(now)],
   };
   // Each submission opens a GitHub Issue, so a per-address daily cap stops floods.
@@ -105,6 +105,11 @@ export async function releaseUndispatchedFlow(db: Db, user: string, flow: string
 }
 /** Marks the flow dispatched only when its cost event exists, so it can share a batch with the event INSERT. */
 export function markFlowDispatchedStatement(db: Db, user: string, flow: string, eventId: string): AccountD1Statement {
-  return db.prepare("UPDATE ai_receipt_flows SET dispatched=1 WHERE user_id=? AND flow_id=? AND EXISTS(SELECT 1 FROM ai_provider_cost_events WHERE id=?)")
+  // Each dispatch counts again, so a retry that reaches the provider is counted even after an uncounted error.
+  return db.prepare("UPDATE ai_receipt_flows SET dispatched=1, counted=1 WHERE user_id=? AND flow_id=? AND EXISTS(SELECT 1 FROM ai_provider_cost_events WHERE id=?)")
     .bind(user, flow, eventId);
+}
+/** The provider answered with an error status, so the user got nothing; the cost event stays for the global caps. */
+export async function uncountFlow(db: Db, user: string, flow: string): Promise<void> {
+  await db.prepare("UPDATE ai_receipt_flows SET counted=0 WHERE user_id=? AND flow_id=?").bind(user, flow).run();
 }

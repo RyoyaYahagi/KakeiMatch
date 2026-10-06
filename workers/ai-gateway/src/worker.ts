@@ -1,7 +1,7 @@
 import { parseContactInput, parseClassification, parseContactInterviewInput, parseContactInterview, classificationPayload, transcriptionPayload, contactInterviewPayload, submitContact, type ContactEnv } from './contact';
 import { guardrailConfig, costAdmission, refreshCircuitStatement, type CostAdmission } from "./ai-global-guardrails";
 import { assertCostEventCompleted, beginCostEventStatement, completeCostEventStatement, monthlyCosts, monthBounds } from "./ai-provider-costs";
-import { monthKey, dayKey, flowMac, flowUsage, guestDayUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement, type FlowLimits } from "./receipt-ai-usage";
+import { monthKey, dayKey, flowMac, flowUsage, guestDayUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
 import { addressDayMac, guestFromRequest, handleGuestRequest, hasGuestAuthorization, touchGuest, type GuestEnv } from "./guest-ai";
 import { getAccountSession, isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-auth";
 
@@ -531,7 +531,12 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     let response: Response, decoded: unknown, eventId: string;
     try { ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, "https://generativelanguage.googleapis.com/v1beta/interactions", { method: "POST", headers: { "content-type": "application/json", "x-goog-api-key": env.GEMINI_API_KEY }, body: JSON.stringify(payload) }, 30_000, fetchImpl, clock, admission, env)); }
     catch (error) { return dispatchError(error); }
-    if (!response.ok) return providerError(response.status);
+    if (!response.ok) {
+      // An error status means the provider did not read the receipt. A timeout status may follow work, so it still counts.
+      // If this update fails the flow simply stays counted.
+      if (response.status !== 408 && response.status !== 504) await uncountFlow(env.ACCOUNT_DB, identity, flowId).catch(() => undefined);
+      return providerError(response.status);
+    }
     const outputText = geminiOutputText(decoded);
     if (!outputText) return invalidProviderResponse(env, eventId, provider, clock());
     let extraction: unknown;
