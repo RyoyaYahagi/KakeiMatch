@@ -1,7 +1,7 @@
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
-import { dateShortcuts, formActions, optionalFields } from './entry-form';
-import { enhanceCategorySelect, recentCategoryUsage } from './category-picker';
+import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, shortLabel } from './entry-form';
+import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
@@ -113,10 +113,12 @@ export function showManualTransactionEditor(options: {
     if (!locked) throw new Error('別の画面でこの記録を編集中です。閉じてから開き直してください。');
     if (!heading.isConnected || options.view.hidden) { releaseEditorLock?.(); return null; }
     const categoriesPromise = transfer ? Promise.resolve([]) : kind === 'expense' ? ledger.listExpenseCategories() : ledger.listIncomeCategories();
-    return Promise.all([categoriesPromise, ledger.listOpenAccounts(), options.repository.get<ManualTransactionDraft>(draftId)] as const);
+    // docs/UX.md 収入・振替の入力: a new income starts with the category used last time.
+    const lastUsedPromise = !transfer && !transaction ? categoriesPromise.then(rows => lastUsedCategory(ledger, kind as 'expense' | 'income', rows.map(row => row.id))).catch(() => '') : Promise.resolve('');
+    return Promise.all([categoriesPromise, ledger.listOpenAccounts(), options.repository.get<ManualTransactionDraft>(draftId), lastUsedPromise] as const);
   }).then(result => {
     if (!result || !heading.isConnected || options.view.hidden) return;
-    const [categories, accounts, draftRecord] = result;
+    const [categories, accounts, draftRecord, lastUsed] = result;
     const draft = draftRecord?.kind === 'category-state' && draftRecord.value.manualKind === kind &&
       (draftRecord.value.manualTransactionId ?? null) === (transaction?.id ?? null) ? draftRecord.value : null;
     const draftSnapshot: FormValue | null = draft ? {
@@ -124,32 +126,32 @@ export function showManualTransactionEditor(options: {
       payeeName: draft.merchant, categoryId: draft.categoryId, accountId: draft.accountId,
       memo: draft.manualMemo ?? null, destinationAccountId: draft.destinationAccountId,
     } : null;
-    const dateLabel = fieldLabel('label', '日付', 'manual-transaction-date');
+    const dateLabel = shortLabel('manual-transaction-date', '日付');
     const date = node('input'); date.id = dateLabel.htmlFor; date.type = 'date'; date.required = true;
     date.value = draftSnapshot?.date ?? transaction?.date ?? localToday();
 
-    const amountLabel = fieldLabel('label', '金額（円）', 'manual-transaction-amount');
+    const amountLabel = shortLabel('manual-transaction-amount', '金額', '（円）');
     const amount = node('input'); amount.id = amountLabel.htmlFor; amount.type = 'number'; amount.inputMode = 'numeric';
     amount.min = '1'; amount.step = '1'; amount.required = true;
     amount.value = draftSnapshot ? String(draftSnapshot.amountYen) : transaction ? String(Math.abs(transaction.amountYen)) : '';
 
     const payeeText = kind === 'expense' ? '店名・支払先' : '入金元・内容';
-    const payeeLabel = fieldLabel('label', payeeText, 'manual-transaction-payee');
+    const payeeLabel = kind === 'expense' ? shortLabel('manual-transaction-payee', '店名', '・支払先') : shortLabel('manual-transaction-payee', '内容', '', '入金元・');
     const payee = node('input'); payee.id = payeeLabel.htmlFor; payee.maxLength = 200; payee.required = !transfer;
     payee.value = draftSnapshot?.payeeName ?? transaction?.payeeName ?? '';
 
     const categoryText = kind === 'expense' ? '支出カテゴリ' : '収入カテゴリ';
-    const categoryLabel = fieldLabel('label', categoryText, 'manual-transaction-category');
+    const categoryLabel = shortLabel('manual-transaction-category', 'カテゴリ');
     const category = node('select'); category.id = categoryLabel.htmlFor; category.required = !transfer;
     category.replaceChildren(new Option('選択してください', ''), ...categories.map(value => new Option(value.name, value.id)));
     const currentCategoryId = transaction?.categoryId ?? categories.find(value => value.name === transaction?.categoryName)?.id ?? '';
-    const selectedCategoryId = draftSnapshot?.categoryId ?? currentCategoryId;
+    const selectedCategoryId = draftSnapshot?.categoryId ?? (currentCategoryId || lastUsed);
     if (selectedCategoryId && !categories.some(value => value.id === selectedCategoryId)) {
       category.append(new Option(`現在のカテゴリ：${transaction?.categoryName ?? '利用できません'}`, selectedCategoryId));
     }
     category.value = selectedCategoryId;
 
-    const accountLabel = fieldLabel('label', transfer ? '振替元口座' : kind === 'expense' ? '支払元' : '入金先口座', 'manual-transaction-account');
+    const accountLabel = transfer ? fieldLabel('label', '振替元口座', 'manual-transaction-account') : kind === 'expense' ? shortLabel('manual-transaction-account', '支払元') : shortLabel('manual-transaction-account', '入金先', '口座');
     const account = node('select'); account.id = accountLabel.htmlFor; account.required = true;
     account.replaceChildren(new Option('選択してください', ''), ...accountOptions(accounts, kind));
     const selectedAccountId = draftSnapshot?.accountId ?? transaction?.accountId;
@@ -175,13 +177,14 @@ export function showManualTransactionEditor(options: {
     cancel.addEventListener('click', () => { void options.onCancel().catch(error => { status.textContent = messageFor(error); }); });
 
     amount.classList.add('amount-input');
-    const optional = optionalFields('メモを追加（任意）', [memoLabel, memo], Boolean(memo.value));
-    form.append(amountLabel, amount, payeeLabel, payee, dateLabel, date, dateShortcuts(date, localToday()),
-      categoryLabel, category, accountLabel, account, optional, status, formActions(submit));
-    if (transfer) {
-      payeeLabel.remove(); payee.remove(); categoryLabel.remove(); category.remove();
-      optional.before(destinationLabel, destination);
-    }
+    const optional = optionalFields('メモ', [memoLabel, memo], Boolean(memo.value));
+    // docs/DESIGN.md 帳簿の行で組む入力: one ruled row per field.
+    const categoryUi = transfer ? null : categoryRow({ select: category, label: categoryLabel, usageReady: recentCategoryUsage(ledger),
+      hint: lastUsed && !draftSnapshot ? { value: lastUsed, text: '前回と同じ' } : null });
+    const rows = document.createElement('div'); rows.className = 'entry-rows';
+    rows.append(entryRow(amountLabel, amount), ...(transfer ? [] : [entryRow(payeeLabel, payee)]), entryRow(dateLabel, date, dateShortcuts(date, localToday())),
+      ...(categoryUi ? [categoryUi.row] : []), entryRow(accountLabel, account), ...(transfer ? [entryRow(destinationLabel, destination)] : []), optional);
+    form.append(rows, status, formActions(submit));
     const shortcuts: HTMLButtonElement[] = [];
     function addShortcut(field: HTMLSelectElement, request: { kind: 'category'; isIncome: boolean } | { kind: 'account' }) {
       const shortcut = createMasterShortcut({ ledger, request, origin: {
@@ -201,12 +204,15 @@ export function showManualTransactionEditor(options: {
             }
           }
           field.value = id;
+          // Lets the category row show the new name and close its sheet.
+          field.dispatchEvent(new Event('change', { bubbles: true }));
           await persistDraft(readValue());
         },
       } });
-      field.after(shortcut); shortcuts.push(shortcut);
+      if (field === category && categoryUi) categoryUi.sheet.querySelector('.sheet-body')?.append(shortcut); else field.after(compactAddButton(shortcut));
+      shortcuts.push(shortcut);
     }
-    if (!transfer) { addShortcut(category, { kind: 'category', isIncome: kind === 'income' }); enhanceCategorySelect(category, categoryLabel, recentCategoryUsage(ledger)); }
+    if (!transfer) addShortcut(category, { kind: 'category', isIncome: kind === 'income' });
     addShortcut(account, { kind: 'account' });
     if (transfer) addShortcut(destination, { kind: 'account' });
     cancel.className = 'text-button back-link'; cancel.prepend(icon('chevronLeft'));

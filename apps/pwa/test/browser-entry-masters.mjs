@@ -8,16 +8,23 @@ await context.route('**/api/**', route => route.fulfill({ status: 403, json: { e
 const page = await context.newPage(); await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
-const dialog = () => page.getByRole('dialog');
-const shortcut = field => page.locator(`[data-master-shortcut-for="${field}"]`).click();
+// The add dialog, not the category sheet that may be open under it.
+const dialog = () => page.locator('dialog.master-create-dialog');
+const masterDialog = dialog;
+// Category shortcuts sit at the end of the category sheet, opened from "すべて".
+const openCategorySheet = async field => { if (field.endsWith('category')) await click('すべてのカテゴリから選ぶ'); };
+const shortcut = async field => { await openCategorySheet(field); await page.locator(`[data-master-shortcut-for="${field}"]`).click(); };
 async function create(field, name, category = false) {
   const trigger = page.locator(`[data-master-shortcut-for="${field}"]`);
+  await openCategorySheet(field);
   await trigger.click(); await dialog().waitFor();
   await dialog().getByLabel(category ? 'カテゴリ名' : '支払元の名前', { exact: true }).fill(name);
   await dialog().getByRole('button', { name: '追加する', exact: true }).click();
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
-  assert.equal(await trigger.evaluate(node => document.activeElement === node), true);
+  // Choosing the new category closes the sheet, so focus returns to the "すべて" button that opened it.
+  if (field.endsWith('category')) assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'すべてのカテゴリから選ぶ');
+  else assert.equal(await trigger.evaluate(node => document.activeElement === node), true);
 }
 async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-amount').waitFor(); }
 async function fill(name, amount) {
@@ -43,9 +50,11 @@ try {
   await assertDraft('Synthetic entry expense', '900');
   const categoryShortcut = page.locator('[data-master-shortcut-for="manual-transaction-category"]');
   const categoryId = await page.locator('#manual-transaction-category').inputValue();
-  await categoryShortcut.click(); await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click(); await dialog().waitFor({ state: 'detached' });
+  await openCategorySheet('manual-transaction-category');
+  await categoryShortcut.click(); await masterDialog().getByRole('button', { name: '入力へ戻る', exact: true }).click(); await masterDialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator('#manual-transaction-category').inputValue(), categoryId);
   assert.equal(await categoryShortcut.evaluate(node => document.activeElement === node), true);
+  await page.keyboard.press('Escape'); await page.locator('.category-sheet').waitFor({ state: 'hidden' });
   await assertDraft('Synthetic entry expense', '900');
   await create('manual-transaction-account', 'Synthetic Entry Wallet'); await assertDraft('Synthetic entry expense', '900');
   const walletId = await page.locator('#manual-transaction-account').inputValue();
@@ -62,6 +71,7 @@ try {
   const other = await context.newPage(); await other.goto(process.env.PWA_E2E_URL); await other.getByRole('button', { name: '記録を追加', exact: true }).click(); await other.getByRole('button', { name: '収入', exact: true }).click();
   await other.getByText('別の画面でこの記録を編集中です。閉じてから開き直してください。', { exact: true }).waitFor(); await other.close();
   await dialog().getByRole('button', { name: '入力へ戻る', exact: true }).click();
+  await page.keyboard.press('Escape'); await page.locator('.category-sheet').waitFor({ state: 'hidden' });
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 
   await chooser('口座間の振替'); await page.locator('#manual-transaction-amount').fill('1500'); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill('Synthetic transfer memo');

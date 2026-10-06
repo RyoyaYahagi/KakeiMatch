@@ -34,11 +34,11 @@ try {
   if (process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
   await click('支出を手入力');
   await page.locator('#manual-transaction-payee').waitFor();
-  // Categories are chosen with buttons; expand the defaults to reach a newly added custom category.
-  const showAllCategories = page.getByRole('button', { name: /^すべて表示（\d+）$/ });
-  if (await showAllCategories.count()) await showAllCategories.click();
+  // The category takes one row; every category is chosen in a sheet opened from "すべて".
+  await click('すべてのカテゴリから選ぶ');
   await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).click();
-  assert.equal(await page.getByRole('radio', { name: 'Synthetic Navigation Food', exact: true }).getAttribute('aria-checked'), 'true');
+  await page.locator('.category-sheet').waitFor({ state: 'hidden' });
+  assert.equal(await page.locator('.category-row-name').textContent(), 'Synthetic Navigation Food');
   assert.equal(await page.locator('#manual-transaction-category option:checked').textContent(), 'Synthetic Navigation Food');
   assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 1);
   await click('キャンセル');
