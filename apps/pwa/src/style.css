@@ -223,10 +223,28 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .tone-missing { --tone: var(--missing); --tone-soft: var(--missing-soft); }
 .review-body { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 0 var(--space-4); }
 .review-body p { margin: 0; overflow-wrap: anywhere; }
-.compare-statement { padding: var(--space-3); border-radius: var(--radius-md); background: var(--sunken); }
-.compare-candidate { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-md); }
+.compare-candidate { display: flex; flex-direction: column; gap: var(--space-2); }
+/* docs/DESIGN.md 突き合わせの伝票: the statement and a record on one slip, split by a perforation. */
+.review-slip { position: relative; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); }
+.slip-part { display: flex; flex-direction: column; gap: 2px; padding: var(--space-3) var(--space-4); }
+.slip-source { display: flex; justify-content: space-between; gap: var(--space-2); margin-bottom: var(--space-1); color: var(--muted); font-size: .75rem; letter-spacing: .06em; }
+.slip-part dl { display: grid; grid-template-columns: 3.5em minmax(0, 1fr); gap: var(--space-1) var(--space-3); margin: 0; }
+.slip-part dt { align-self: center; color: var(--muted); font-size: .8125rem; }
+.slip-part dd { min-width: 0; margin: 0; font-weight: 500; overflow-wrap: anywhere; }
+.slip-part dd:nth-of-type(1), .slip-part dd:nth-of-type(3) { font-family: var(--font-num); font-weight: 700; }
+.slip-part dd:nth-of-type(3) { font-size: 1.125rem; }
+.slip-differs { justify-self: start; padding: 0 var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); }
+.slip-same { margin-left: var(--space-2); color: var(--muted); font-family: var(--font-body); font-size: .75rem; font-weight: 400; }
+.slip-perforation { position: relative; margin: 0 var(--space-4); border-top: 2px dashed var(--border-strong); }
+.slip-perforation::before, .slip-perforation::after { content: ""; position: absolute; top: -9px; width: 16px; height: 16px; border: 1px solid var(--border); border-radius: var(--radius-full); background: var(--bg); }
+.slip-perforation::before { left: calc(-1 * var(--space-4) - 9px); clip-path: inset(0 0 0 50%); }
+.slip-perforation::after { right: calc(-1 * var(--space-4) - 9px); clip-path: inset(0 50% 0 0); }
+.slip-seal { position: absolute; top: 50%; right: var(--space-4); display: grid; place-items: center; width: 96px; height: 96px; margin-top: -48px; border: 4px solid var(--success); border-radius: var(--radius-full); background: color-mix(in srgb, var(--surface) 70%, transparent); color: var(--success); font-weight: 900; line-height: 1.1; text-align: center; opacity: 0; transform: rotate(-14deg) scale(1.6); pointer-events: none; }
+.slip-seal span { display: block; font-size: 2.125rem; }
+.slip-seal small { display: block; font-size: .6875rem; letter-spacing: .1em; }
+.slip-seal.is-pressed { opacity: .92; transform: rotate(-14deg) scale(1); transition: transform .22s cubic-bezier(.3, 1.6, .5, 1), opacity .12s; }
+.compare-why { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-size: .875rem; font-weight: 700; }
 .compare-candidate button { width: 100%; margin: 0; }
-.compare-diff { padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: .875rem; font-weight: 500; }
 .review-body > button:last-child { width: 100%; margin-top: var(--space-2); }
 .review-clear { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--success-soft); color: var(--success); font-weight: 700; }
 .review-clear .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }

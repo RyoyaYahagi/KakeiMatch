@@ -106,8 +106,15 @@ try {
 
   const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });
   await difference.locator('summary').click();
-  await difference.getByText('家計簿：2026-09-30 · Synthetic Difference Shop · ¥550 · Synthetic PayPay Card', { exact: true }).waitFor();
-  await difference.getByText('差分：金額差 ¥50（明細 ¥500 / 家計簿 ¥550）', { exact: true }).waitFor();
+  // docs/DESIGN.md 突き合わせの伝票: the statement over the record, the differing amount marked, and why it is a candidate.
+  const slip = difference.locator('.review-slip');
+  assert.deepEqual(await slip.locator('.slip-statement dd').allTextContents(), ['9/30', 'Synthetic Difference Shop', '¥500']);
+  assert.deepEqual(await slip.locator('.slip-record dd').allTextContents(), ['9/30同じ', 'Synthetic Difference Shop', '¥550']);
+  assert.equal(await slip.locator('.slip-record .slip-source').textContent(), 'あなたの記録Synthetic PayPay Card');
+  assert.equal(await slip.locator('.slip-record .slip-differs').textContent(), '¥550');
+  await difference.getByText('△ 金額が¥50違います', { exact: true }).waitFor();
+  await difference.getByText('「同じ支出」にすると、記録を明細の金額（¥500）に合わせます。', { exact: true }).waitFor();
+  if (process.env.PWA_REVIEW_SLIP_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_REVIEW_SLIP_SCREENSHOT_PATH, fullPage: true });
   assert.equal(await difference.locator('select').count(), 0, 'matching an existing record must not ask for a payment source');
   await difference.getByRole('button', { name: '別の支出', exact: true }).click();
   await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
