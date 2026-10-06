@@ -194,13 +194,16 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
   const setBusy = (value: boolean) => { busy = value; update(); };
   const bearerHeaders = async () => ({ authorization: `Bearer ${await getAiAccessToken()}` });
   const errorMessage = (code: string, transcribing: boolean) => {
-    if (code === 'account_session_required' || code === 'unauthorized') return '送信にはログインが必要です。設定からログインしてください。';
+    if (code === 'bot_check_cancelled' || code === 'bot_check_failed') return '確認ができなかったため、送れませんでした。文章と録音はこの画面内に残っています。もう一度お試しください。';
+    if (code === 'guest_limit_reached') return 'この接続からの登録なしの利用が多いため、今日は送れません。文章と録音はこの画面内に残っています。設定からログインすると送れます。';
+    if (code === 'account_session_required' || code === 'unauthorized' || code === 'guest_unavailable') return '送信にはログインが必要です。設定からログインしてください。';
     if (code === 'invalid_flow' || code === 'invalid_request') return '送信内容を確認できませんでした。文章を編集して再度お試しください。';
     if (code === 'issue_submission_unknown') return '登録結果を確認できませんでした。重複を避けるため再登録を止めています。GitHubの課題一覧をご確認ください。';
     if (code === 'issue_submission_failed') return 'お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
     if (code === 'invalid_provider_response') return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。再試行するか、破棄して録り直してください。' : '回答を確認できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。';
     if (code === 'offline' || !navigator.onLine) return 'オフラインです。文章と録音はこの画面内に残っています。接続後に再度お試しください。';
-    if (code === 'ai_quota_exceeded') return '今月のAI利用上限に達しました。文章と録音はこの画面内に残っています。利用枠の更新後に再度お試しください。';
+    // Contact AI is not counted against a plan; this is the daily cap on submissions from one connection.
+    if (code === 'ai_quota_exceeded') return '今日はこの接続からの送信が多いため、これ以上送れません。文章と録音はこの画面内に残っています。明日もう一度お試しください。';
     if (code === 'rate_limited') return '短時間に利用が続いています。文章はこの画面内に残っています。少し待ってから再度お試しください。';
     if (code === 'ai_temporarily_paused' || code === 'provider_timeout' || code === 'provider_unavailable' || code === 'temporarily_unavailable') return transcribing ? '音声を文字にできませんでした。録音はこの画面内に残っています。時間をおいて再度お試しください。' : '現在送信できません。文章はこの画面内に残っています。時間をおいて再度お試しください。';
     if (code === 'not_configured') return 'お問い合わせを現在利用できません。文章はこの画面内に下書きとして残っています。';

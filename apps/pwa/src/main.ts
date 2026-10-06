@@ -4,6 +4,7 @@ import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
+import { guestUsage, type GuestUsage } from './guest-ai';
 import { setNavActive } from './app-nav';
 import { initializeContactUi } from './contact-ui';
 import { recordDiagnosticAction, recordDiagnosticFailure, recordDiagnosticNetwork, recordDiagnosticScreen } from './contact-diagnostics';
@@ -86,10 +87,10 @@ root.innerHTML = `
       <div class="ai-usage">
         <p id="usage-summary" aria-live="polite">利用状況を読み込んでいます…</p>
         <div id="usage-meter" class="usage-meter" hidden><span></span></div>
-        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。音声の文字起こしとお問い合わせの送信は、それぞれ1回ずつ利用します。お問い合わせの深掘りを使う場合は、AIへの質問1回ごとに利用枠を1回使います。レシートを読み取り直すと新たに1回使います。毎月1日の午前0時（日本時間）に利用枠が更新されます。</p>
+        <p class="muted">レシートの読み取りとカテゴリ提案で1回です。読み取り直すと新たに1回使います。お問い合わせのAI機能は回数に数えません。ログインしていない時は1日5回までで、毎日午前0時（日本時間）に戻ります。ログイン中はプランの回数で、毎月1日の午前0時に戻ります。</p>
       </div>
       <div id="signed-out-actions" hidden>
-        <p>AI機能を利用するにはアカウントが必要です。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
+        <p>ログインしなくても、AIを1日5回まで使えます。初めて使う時だけ、ロボットでないことを確かめます。サーバーに記録するのはAIの利用回数だけで、家計データは保存しません。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
         <button id="passkey-login" type="button">Passkeyで続ける</button>
         <button id="invite-register" class="secondary" type="button">招待コードで登録</button>
         <button id="manual-entry" class="secondary" type="button">家計簿に戻る</button>
@@ -232,7 +233,7 @@ homeTab.addEventListener('click', () => showTab('home'));
 settingsTab.addEventListener('click', () => showTab('settings'));
 
 type SessionResponse = { user: { name?: string; email?: string }; session: { expiresAt: string } } | null;
-type UsageResponse = { plan: 'free' | 'pro' | 'family'; used: number; limit: number | null; remaining: number | null };
+type UsageResponse = { plan: 'free' | 'pro' | 'family'; used: number; limit: number | null; remaining: number | null } | GuestUsage;
 type PasskeyRow = { id: string; name?: string | null; createdAt?: string | Date };
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -253,8 +254,13 @@ async function refreshAccount() {
     signedInActions.hidden = !signedIn;
     developerCostsUi.setSignedIn(signedIn);
     if (!signedIn) {
-      usageSummary.textContent = 'ログインすると今月のAI利用回数を確認できます。';
       accountStatus.textContent = '未ログインです。';
+      const guest = await guestUsage().catch(() => undefined);
+      if (guest) renderUsage(guest);
+      else {
+        element<HTMLElement>('usage-meter').hidden = true;
+        usageSummary.textContent = guest === undefined ? '今日の利用回数を取得できません。オンラインで再度お試しください。' : 'ログインしなくても、AIの読み取りを1日5回まで使えます。';
+      }
       return;
     }
     accountStatus.textContent = `ログイン中${session?.user.name ? `：${session.user.name}` : ''}`;
@@ -274,6 +280,13 @@ async function refreshAccount() {
 }
 
 function renderUsage(usage: UsageResponse) {
+  if (usage.plan === 'guest') {
+    usageSummary.textContent = `今日のAI読み取り ${usage.used} / ${usage.limit}回 · 登録なし`;
+    const meter = element<HTMLElement>('usage-meter');
+    meter.hidden = false;
+    meter.style.setProperty('--usage', `${Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100))}%`);
+    return;
+  }
   const planName = usage.plan === 'family' ? 'Family' : usage.plan === 'pro' ? 'Pro' : 'Free';
   usageSummary.textContent = usage.limit === null
     ? `今月の読み取り ${usage.used}回 · ${planName} · 上限なし`
@@ -316,7 +329,7 @@ async function renderPasskeys() {
 async function issueAiToken() {
   accountMessage.textContent = 'AI機能を準備しています…';
   try {
-    await getAiAccessToken();
+    await getAiAccessToken({ allowGuest: false });
   } catch (error) {
     if (error instanceof Error && error.message === 'account_session_required') {
       signedInActions.hidden = true;

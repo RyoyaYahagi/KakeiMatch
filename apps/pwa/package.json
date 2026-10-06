@@ -18,6 +18,7 @@
     "test:e2e": "node test/browser-flow.mjs",
     "test:security-e2e": "node test/browser-security.mjs",
     "test:contact-e2e": "node test/browser-contact.mjs",
+    "test:guest-ai-e2e": "node test/browser-guest-ai.mjs",
     "test:auth-e2e": "node test/browser-account.mjs",
     "test:account-deletion-e2e": "node test/browser-account-deletion.mjs",
     "test:backup-e2e": "node test/browser-backup.mjs",
