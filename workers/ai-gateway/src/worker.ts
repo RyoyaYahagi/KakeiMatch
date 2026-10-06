@@ -193,7 +193,8 @@ function normalizeReceiptExtraction(value: unknown): unknown {
 function parseImage(value: unknown): { data: string; mimeType: "image/jpeg" | "image/png" | "image/webp" } | null {
   if (!isRecord(value) || typeof value.imageBase64 !== "string" || value.imageBase64.length === 0 || value.imageBase64.length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 8) return null;
   if (value.contentType !== "image/jpeg" && value.contentType !== "image/png" && value.contentType !== "image/webp") return null;
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.imageBase64)) return null;
+  // A flat character class: a repeated group overflows the regex stack on phone-sized photos.
+  if (value.imageBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(value.imageBase64)) return null;
   const binary = atob(value.imageBase64);
   if (binary.length === 0 || binary.length > MAX_IMAGE_BYTES) return null;
   const jpeg = binary.length >= 3 && binary.charCodeAt(0) === 0xff && binary.charCodeAt(1) === 0xd8 && binary.charCodeAt(2) === 0xff;
