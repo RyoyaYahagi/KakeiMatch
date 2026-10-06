@@ -18,6 +18,7 @@
     "test:e2e": "node test/browser-flow.mjs",
     "test:security-e2e": "node test/browser-security.mjs",
     "test:contact-e2e": "node test/browser-contact.mjs",
+    "test:device-link-e2e": "node test/browser-device-link.mjs",
     "test:guest-ai-e2e": "node test/browser-guest-ai.mjs",
     "test:auth-e2e": "node test/browser-account.mjs",
     "test:account-deletion-e2e": "node test/browser-account-deletion.mjs",
@@ -59,6 +60,8 @@
     "@better-auth/passkey": "1.7.6",
     "better-auth": "1.7.6",
     "csv-parse": "7.0.3",
+    "jsqr": "1.4.0",
+    "qrcode-generator": "2.0.4",
     "zod": "4.6.5"
   },
   "devDependencies": {

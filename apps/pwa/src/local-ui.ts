@@ -23,6 +23,7 @@ import { showManualTransactionEditor } from './local-transaction-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { initializeMasterUi, createMasterShortcut } from './local-master-ui';
 import { initializeBackupUi } from './local-backup-ui';
+import { initializeDeviceLinkUi } from './device-link-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
@@ -1399,6 +1400,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   await initializeBackupUi(repository, ledger);
   // The "家計簿の読み込み・切り替え" page leads with switching and importing, then backup restore and where data is kept.
   el('data-settings').prepend(el('budget-section'), el('import-section'));
+  initializeDeviceLinkUi(repository, ledger);
   const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
   const recurringEntry = button('定期登録', recurringOverview); recurringEntry.classList.add('master-entry'); recurringEntry.setAttribute('aria-label', '定期登録'); setup.append(recurringEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
