@@ -35,7 +35,17 @@ Familyは月間AI利用量の上限を持ちません。無制限は月間produc
 
 Issue #60の切替には `0003_receipt_ai_flows.sql` を適用してから、PWAとWorkerを同時に更新します。旧 `ai_usage` 行は履歴として保持し、新しい集計・利用枠には加算しません。旧provider単位・UTC月の履歴からフロー数を復元できないため、切替月は新方式で開始したフローのみ計上し、切替時点から利用枠を再付与します。過去分の補完は行いません。旧PWAの識別子なしの要求は拒否します。利用者はアプリを更新して再解析できます。既存・復元済みレシートの確認値、手入力、家計簿登録は継続できます。残り回数は0以上に制限します。ロールバック時は旧カウンタを利用するため、切替前の利用回数へ戻る点に注意してください。
 
-`GET /api/ai/usage` は `{plan, month, used, limit, remaining}` を返します。unlimited planでは `limit` と `remaining` は `null` です。`POST /api/ai/token` はclientからuser IDを受け取らず、認証sessionのuser IDをJWTの `sub` として設定します。JWTは `aud: "kakeimatch-ai"` とし、署名秘密情報はserver-onlyです。
+`GET /api/ai/usage` は `{plan, period: "month", month, used, limit, remaining}` を返します。unlimited planでは `limit` と `remaining` は `null` です。`POST /api/ai/token` はclientからuser IDを受け取らず、認証sessionのuser IDをJWTの `sub` として設定します。JWTは `aud: "kakeimatch-ai"` とし、署名秘密情報はserver-onlyです。
+
+利用枠に数えるのはレシートの読み取りだけです。お問い合わせの送信・深掘り・音声の文字起こしは数えず、代わりに `CONTACT_RATE_LIMIT`（利用者ごと・接続元アドレスごとに1分5回）をかけます。送信はGitHub Issueを作るため、接続元アドレスごとに1日10件までとします。
+
+## 登録なしのAI利用（ゲスト）
+
+アカウントを作らなくても、端末ごとにAIを1日5回（Asia/Tokyoの暦日、`AI_GUEST_DAILY_LIMIT`）使えます。初回にTurnstile（`action=guest`）を通した端末へ、サーバーがゲストを作ります。ゲストはPasskeyもsessionも持たない `user` 行で、利用量・費用・問い合わせの記録は通常のアカウントと同じ表に付きます。端末はランダムな合言葉を保存し、D1にはそのSHA-256だけを保存します。端末は `Authorization: Guest <合言葉>` で `POST /api/ai/token` を呼び、通常と同じ短期JWTを受け取ります。`GET /api/ai/usage` はゲストに `{plan: "guest", period: "day", day, used, limit, remaining}` を返します。開発者向けの費用表示はアカウントだけです。
+
+いたずら防止として、接続元アドレスごとに1日のゲスト作成を10件、ゲストのレシート読み取りを合計20回までにします。アドレスは保存せず、暦日を鍵に含めたHMACだけを保存するため、元のアドレスへ戻せず、日をまたいで結び付けられません。全体の費用上限（下記）は最後の歯止めとして働きます。
+
+`DELETE /api/ai/guest` はゲストを退役させます。合言葉を消してtombstoneを付けるため、以後そのゲストではAIを使えません。利用量と費用の行は件数とHMACだけで中身を含まないため残します。消すと、作り直しを繰り返して1日の上限や全体の費用上限をすり抜けられるためです。家計データはもともとサーバーへ保存しません。
 
 ## APIと障害時の動作
 

@@ -45,7 +45,7 @@ describe('contact Gateway with real SQLite migrations', () => {
     sqlite.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Synthetic','synthetic@example.test',0,0),('another-user','Another','another@example.test',0,0)");
     db = sqliteD1(sqlite);
     env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, GEMINI_API_KEY: 'synthetic-gemini',
-      GITHUB_ISSUES_TOKEN: 'synthetic-github', GITHUB_ISSUES_REPOSITORY: 'Synthetic/Contact', AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) } };
+      GITHUB_ISSUES_TOKEN: 'synthetic-github', GITHUB_ISSUES_REPOSITORY: 'Synthetic/Contact', AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) }, CONTACT_RATE_LIMIT: { limit: async () => ({ success: true }) } };
   });
   afterEach(() => sqlite.close());
   const run = (req: Request, fetchImpl: typeof fetch) => handleRequest(req, env, { nowSeconds: () => now, fetchImpl });
@@ -133,13 +133,22 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect((await run(request(message, '/api/contact', { authorization: '' }), fetchImpl)).status).toBe(401);
     expect((await run(request(message, '/api/contact', { origin: 'https://evil.example.test' }), fetchImpl)).status).toBe(403); expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it('enforces provider pause, user rate limit and monthly usage quota', async () => {
+  it('enforces provider pause and rate limits, but not the receipt quota', async () => {
     const fetchImpl = vi.fn<typeof fetch>(); env.AI_EMERGENCY_STOP = 'true';
     const response = await run(request(audio, '/api/contact/transcribe'), fetchImpl); expect(response.status).toBe(503); expect(await response.json()).toEqual({ error: 'ai_temporarily_paused' });
     env.AI_EMERGENCY_STOP = 'false'; env.AI_USER_RATE_LIMIT = { limit: async () => ({ success: false }) }; expect((await run(request(message), fetchImpl)).status).toBe(429);
-    env.AI_USER_RATE_LIMIT = { limit: async () => ({ success: true }) }; env.AI_FREE_MONTHLY_LIMIT = '1';
-    sqlite.exec("INSERT INTO ai_receipt_flows(user_id,flow_id,month,created_at,image_mac,dispatched) VALUES ('synthetic-user','existing','2026-10',1,'synthetic',1)");
+    env.AI_USER_RATE_LIMIT = { limit: async () => ({ success: true }) };
+    // Contact features have their own per-identity and per-address limit.
+    const keys: string[] = [];
+    env.CONTACT_RATE_LIMIT = { limit: async ({ key }) => { keys.push(key); return { success: !key.startsWith('contact-address:') }; } };
     expect((await run(request(audio, '/api/contact/transcribe'), fetchImpl)).status).toBe(429); expect(fetchImpl).not.toHaveBeenCalled();
+    expect(keys).toEqual(['contact:synthetic-user', expect.stringMatching(/^contact-address:[0-9a-f]{64}$/)]);
+    env.CONTACT_RATE_LIMIT = { limit: async () => ({ success: true }) }; env.AI_FREE_MONTHLY_LIMIT = '1';
+    sqlite.exec("INSERT INTO ai_receipt_flows(user_id,flow_id,month,created_at,image_mac,dispatched) VALUES ('synthetic-user','existing','2026-10',1,'synthetic',1)");
+    // A used-up receipt quota does not stop a transcription, which is not counted.
+    const transcribed = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('合成の問い合わせ本文')));
+    expect((await run(request(audio, '/api/contact/transcribe'), transcribed)).status).toBe(200);
+    expect(sqlite.prepare("SELECT kind FROM ai_receipt_flows WHERE flow_id = ?").get(audio.flowId)).toEqual({ kind: 'contact-transcribe' });
   });
   it('fails closed for malformed AI classification, interview output and empty audio output', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('{"kind":"bug","title":"x","reply":"x","repository":"evil"}')));
