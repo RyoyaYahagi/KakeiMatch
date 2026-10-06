@@ -52,12 +52,11 @@ async function verifyTurnstile(secret: string, token: unknown, expectedHostname:
   return result.hostname === expectedHostname && result.action === "guest";
 }
 
-/** The guest's user ID for a `Guest <secret>` header, or null. Retired guests are tombstoned. */
+/** The guest's user ID for a `Guest <secret>` header, or null. */
 export async function guestFromRequest(request: Request, db: Db): Promise<string | null> {
   const match = /^Guest ([A-Za-z0-9_-]+)$/.exec(request.headers.get("authorization") ?? "");
   if (!match || !GUEST_SECRET.test(match[1])) return null;
-  const row = await db.prepare(`SELECT user_id AS userId FROM guest_devices
-    WHERE secret_hash = ? AND NOT EXISTS (SELECT 1 FROM account_deletion_tombstones WHERE user_id = guest_devices.user_id)`)
+  const row = await db.prepare("SELECT user_id AS userId FROM guest_devices WHERE secret_hash = ?")
     .bind(await sha256Hex(match[1])).first<{ userId: string }>();
   return row?.userId ?? null;
 }
@@ -70,7 +69,7 @@ export async function touchGuest(db: Db, userId: string, now: number): Promise<v
 
 /**
  * `/api/ai/guest`: GET tells the PWA whether guests are available and the public
- * Turnstile site key, POST creates a guest after the bot check, DELETE retires it.
+ * Turnstile site key, and POST creates a guest after the bot check.
  */
 export async function handleGuestRequest(request: Request, env: GuestEnv, options: GuestOptions = {}): Promise<Response> {
   const url = new URL(request.url);
@@ -80,26 +79,10 @@ export async function handleGuestRequest(request: Request, env: GuestEnv, option
     const available = Boolean(siteKey && env.TURNSTILE_SECRET_KEY && env.ACCOUNT_DB && env.AI_GATEWAY_AUTH_SECRET && env.AI_USER_RATE_LIMIT);
     return json(200, { guestAvailable: available, turnstileSiteKey: available ? siteKey : null });
   }
-  if (request.method !== "POST" && request.method !== "DELETE") return json(405, { error: "method_not_allowed" });
+  if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
   if (!env.ACCOUNT_DB || !env.AI_GATEWAY_AUTH_SECRET) return json(503, { error: "not_configured" });
   const db = env.ACCOUNT_DB;
-
-  if (request.method === "DELETE") {
-    let userId: string | null;
-    try { userId = await guestFromRequest(request, db); } catch { return json(503, { error: "temporarily_unavailable" }); }
-    if (!userId) return json(401, { error: "unauthorized" });
-    // Usage and cost rows stay, attached to a tombstoned guest: deleting them would
-    // let a retire-and-recreate loop slip past the daily and global caps. They
-    // hold only counts and digests, never receipt or inquiry content.
-    const results = await db.batch<AccountD1BatchResult>([
-      db.prepare("INSERT INTO account_deletion_tombstones(user_id) VALUES (?) ON CONFLICT(user_id) DO NOTHING").bind(userId),
-      db.prepare("DELETE FROM guest_devices WHERE user_id = ?").bind(userId),
-      db.prepare("DELETE FROM contact_submissions WHERE user_id = ?").bind(userId),
-    ]).catch(() => null);
-    if (!results || results.some(result => result?.success !== true)) return json(503, { error: "temporarily_unavailable" });
-    return json(200, { retired: true });
-  }
 
   if (!env.TURNSTILE_SECRET_KEY || !env.AI_USER_RATE_LIMIT) return json(503, { error: "not_configured" });
   const addressMac = await addressDayMac(env.AI_GATEWAY_AUTH_SECRET, request, now);

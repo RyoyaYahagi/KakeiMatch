@@ -1,6 +1,5 @@
 -- Guests use AI without signing up. A guest is a user row with no Passkey or
 -- session; the device keeps a random secret and D1 keeps only its digest.
--- Retiring a guest tombstones the user so usage and cost rows stay counted.
 -- created_ip_day_mac is an HMAC of the client address keyed by the Tokyo day:
 -- it caps guests per address for that day and cannot be read back or linked across days.
 CREATE TABLE guest_devices (

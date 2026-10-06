@@ -125,18 +125,4 @@ describe("guest AI", () => {
     expect(await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, "contact-submit", "address")).toBe("ai_quota_exceeded");
   });
 
-  it("retires a guest so its secret stops working, while usage still counts", async () => {
-    const value = await guestSecret(); const user = guestId();
-    for (let index = 0; index < 5; index++) await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, "receipt", "address");
-    sqlite.prepare("INSERT INTO contact_submissions(user_id, flow_id, input_mac, state, updated_at) VALUES (?, 'synthetic-flow', 'mac', 'done', 1)").run(user);
-
-    expect((await handleRequest(guestRequest("DELETE", { authorization: "Guest " + "B".repeat(43) }), env)).status).toBe(401);
-    const retired = await handleRequest(guestRequest("DELETE", { authorization: `Guest ${value}` }), env);
-    expect(await retired.json()).toEqual({ retired: true });
-    expect((await handleRequest(tokenRequest(value), env)).status).toBe(401);
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM guest_devices").get()).toEqual({ count: 0 });
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM contact_submissions").get()).toEqual({ count: 0 });
-    // Retiring and starting over does not reset the address cap.
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE ip_day_mac = 'address'").get()).toEqual({ count: 5 });
-  });
 });
