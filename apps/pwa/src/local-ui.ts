@@ -904,12 +904,16 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (!currentItems.length || currentItems.some(item => item.amountYen == null) || !amount.value) { warning.textContent = ''; totalCheck.textContent = ''; totalCheck.removeAttribute('aria-label'); totalCheck.className = 'receipt-total-check'; return; }
       const knownTotal = currentItems.reduce((sum, item) => sum + (item.amountYen ?? 0), 0) + currentAdjustments.reduce((sum, item) => sum + item.amountYen, 0);
       const difference = Number(amount.value) - knownTotal;
+      // docs/UX.md レシートの場合: items on a tax-exclusive receipt add up to the total only with the tax.
+      const taxYen = parseNullableInteger(tax.value);
+      const taxMatch = difference !== 0 && taxYen != null && taxYen > 0 && difference === taxYen;
+      const match = difference === 0 || taxMatch;
       // docs/UX.md レシートの場合: only a short mark beside the total; the full sentence is its accessible name.
-      totalCheck.className = `receipt-total-check ${difference === 0 ? 'is-match' : 'is-mismatch'}`;
+      totalCheck.className = `receipt-total-check ${match ? 'is-match' : 'is-mismatch'}`;
       // "差額あり" keeps this apart from "写真と確認", the mark for fields AI was unsure of.
-      totalCheck.textContent = difference === 0 ? '✓ 一致' : '△ 差額あり';
-      totalCheck.setAttribute('aria-label', difference === 0 ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
-      warning.textContent = difference === 0 ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください（税額は差額に含めていません）。`;
+      totalCheck.textContent = match ? '✓ 一致' : '△ 差額あり';
+      totalCheck.setAttribute('aria-label', taxMatch ? '品目と値引きと税額の合計と一致' : match ? '品目と値引きの合計と一致' : `品目と値引きの合計と${yen(Math.abs(difference))}違います`);
+      warning.textContent = match ? '' : `購入内容との差額は${difference < 0 ? '−' : '+'}${yen(difference)}です。入力した合計金額を保ちます。値引きや税額を確認してください${taxYen ? `（税額${yen(taxYen)}を足しても合いません）` : ''}。`;
     }
     /** docs/DESIGN.md 品目の行: a line the photo should confirm shows a small note under its name. */
     function nameWithReviewNote(name: HTMLElement, flagged: boolean) {

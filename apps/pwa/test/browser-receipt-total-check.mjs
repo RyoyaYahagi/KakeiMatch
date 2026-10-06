@@ -43,6 +43,18 @@ try {
   assert.equal(await check.textContent(), '△ 差額あり');
   assert.equal(await check.getAttribute('aria-label'), '品目と値引きの合計と¥50違います');
   assert.match(await check.getAttribute('class'), /is-mismatch/);
+  // A tax-exclusive receipt: items and discount plus the read tax make the total.
+  await page.locator('#receipt-amount').fill('950');
+  await click('品目一覧'); await page.locator('.receipt-tax > summary').click();
+  await page.locator('#receipt-tax').fill('50');
+  assert.equal(await check.textContent(), '✓ 一致');
+  assert.equal(await check.getAttribute('aria-label'), '品目と値引きと税額の合計と一致');
+  // A tax that still leaves a gap names it in the items pane.
+  await page.locator('#receipt-tax').fill('40');
+  assert.equal(await check.textContent(), '△ 差額あり');
+  assert.match(await page.locator('.receipt-difference').textContent(), /税額¥40を足しても合いません/);
+  await page.locator('#receipt-tax').fill('');
+  await click('全体');
   await page.locator('#receipt-amount').fill('900');
   // The photo opens full screen; a tap zooms into that spot and another tap fits it again.
   await click('レシート画像を拡大して見る');
@@ -63,7 +75,7 @@ try {
   await viewer.waitFor({ state: 'detached' });
   assert.equal(await page.locator('#receipt-amount').inputValue(), '900');
   assert.deepEqual(errors, []);
-  console.log('PASS: a total that matches items is confirmed, a mismatch shows the difference, and the photo opens full screen with tap zoom.');
+  console.log('PASS: a total that matches items is confirmed, a tax-exclusive total matches with its tax, a mismatch shows the difference, and the photo opens full screen with tap zoom.');
 } finally {
   await browser.close();
 }

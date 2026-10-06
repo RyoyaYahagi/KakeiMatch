@@ -50,7 +50,7 @@ try {
   await page.locator('.reading-step.is-now').filter({ hasText: '文字を読み取っています' }).waitFor();
   assert.deepEqual(await page.locator('.reading-step').evaluateAll(rows => rows.map(row => row.className.replace('reading-step ', ''))), ['is-done', 'is-now', 'is-todo']);
   assert.equal(await page.locator('.reading-step.is-done').textContent(), '✓写真を保存しましたこの端末に。読み取れなくても消えません');
-  assert.equal(await page.locator('.reading-step.is-now small').textContent(), '10秒ほどかかります');
+  assert.equal(await page.locator('.reading-step.is-now small').textContent(), '数秒かかります');
   assert.equal(await page.getByRole('status').filter({ hasText: '文字を読み取っています' }).count(), 1);
   assert.equal(await page.locator('.receipt-preview-frame.is-reading').count(), 1);
   assert.ok(await page.locator('.reading-badge').isVisible());
