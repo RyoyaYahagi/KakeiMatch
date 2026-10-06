@@ -502,37 +502,33 @@ form .search-submit { width: 100%; min-height: 48px; border-radius: var(--radius
 /* A light band moves down the photo while AI reads it. */
 .receipt-preview-frame.is-reading::after { content: ''; position: absolute; left: 0; right: 0; top: -35%; height: 35%; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary) 22%, transparent) 80%, color-mix(in srgb, var(--primary) 70%, transparent) 97%, transparent); animation: receipt-scan 1.6s ease-in-out infinite; pointer-events: none; }
 @keyframes receipt-scan { to { top: 100%; } }
-.receipt-reading { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-2) 0 var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--sunken); }
-.receipt-reading-text { flex: 1; min-width: 0; }
-.receipt-reading p { margin: 0; }
-/* The reading robot: it sways and follows the receipt while reading, then hops while suggesting categories. */
-.reading-robot { width: 64px; height: 64px; flex: none; overflow: visible; }
-.reading-robot * { transform-box: fill-box; }
-.robot-head, .robot-body, .robot-hand { fill: var(--primary); }
-.robot-body { opacity: .85; }
-.robot-face, .robot-receipt { fill: var(--surface); }
-.robot-receipt { stroke: var(--border); stroke-width: 1; }
-.robot-eyes circle { fill: var(--text); }
-.robot-antenna { stroke: var(--primary); stroke-width: 2.5; stroke-linecap: round; }
-.robot-antenna-tip { fill: var(--warning); }
-.robot-receipt-line { fill: var(--muted); }
-.receipt-reading[data-step="reading"] .robot-figure { transform-origin: 50% 100%; animation: robot-sway 1.2s ease-in-out infinite; }
-.receipt-reading[data-step="reading"] .robot-eyes { animation: robot-look 1.2s ease-in-out infinite; }
-.receipt-reading[data-step="categorizing"] .robot-figure { animation: robot-hop .55s ease-in-out infinite; }
-.receipt-reading[data-step="categorizing"] .robot-antenna-tip { animation: robot-blink .55s steps(2, jump-none) infinite; }
-@keyframes robot-sway { 0%, 100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
-@keyframes robot-look { 0%, 100% { transform: translate(-2px, 1px); } 50% { transform: translate(2px, 1px); } }
-@keyframes robot-hop { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
-@keyframes robot-blink { 0% { opacity: 1; } 100% { opacity: .25; } }
-.receipt-reading-title { font-weight: 700; font-variant-numeric: tabular-nums; }
-.receipt-reading-hint { margin-top: var(--space-1) !important; color: var(--muted); font-size: .875rem; }
+/* docs/DESIGN.md 読み取り中: each step on a ruled row, done / in progress / still to come. */
+.receipt-reading { margin: var(--space-2) 0 var(--space-3); }
+.reading-steps { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--border); }
+.reading-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: var(--space-3); min-height: 46px; padding: var(--space-1) 0; border-bottom: 1px solid var(--border); color: var(--muted); font-size: .875rem; }
+.reading-step-words { display: flex; flex-direction: column; min-width: 0; }
+.reading-step small { color: var(--muted); font-size: .75rem; }
+.reading-step-mark { display: grid; place-items: center; width: 22px; height: 22px; border: 1.5px dashed var(--border-strong); border-radius: var(--radius-full); font-size: .75rem; font-weight: 900; }
+.reading-step.is-done { color: var(--text); }
+.reading-step.is-done .reading-step-mark { border: 0; background: var(--primary-soft); color: var(--primary); }
+.reading-step.is-now { color: var(--text); font-weight: 700; }
+.reading-step.is-now .reading-step-mark { border: 2px solid var(--primary); border-right-color: transparent; animation: reading-spin .8s linear infinite; }
+.reading-step.is-failed { color: var(--danger); font-weight: 700; }
+.reading-step.is-failed .reading-step-mark { border: 0; background: var(--danger-soft); color: var(--danger); }
+@keyframes reading-spin { to { transform: rotate(360deg); } }
+.reading-badge { position: absolute; top: var(--space-2); right: var(--space-2); padding: 2px var(--space-3); border-radius: var(--radius-full); background: var(--text); color: var(--bg); font-size: .75rem; font-weight: 700; }
+.reading-failure { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); margin: 0 0 var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); background: var(--danger-soft); }
+.reading-failure p { margin: 0; color: var(--text); font-size: .875rem; }
+.reading-failure .reading-failure-title { color: var(--danger); font-weight: 700; }
+.reading-failure button { margin: 0; }
+.form-actions .text-button { display: block; width: 100%; min-height: 44px; margin: var(--space-1) 0 0; }
 /* Fields AI will fill show a placeholder band instead of stale values. */
 input.ai-pending { color: transparent; background: linear-gradient(90deg, var(--sunken) 25%, var(--surface) 50%, var(--sunken) 75%); background-size: 200% 100%; animation: ai-pending 1.4s linear infinite; }
 @keyframes ai-pending { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 @media (prefers-reduced-motion: reduce) {
   .receipt-preview-frame.is-reading::after { animation: none; top: 0; height: 100%; background: color-mix(in srgb, var(--primary) 12%, transparent); }
   input.ai-pending { animation: none; }
-  .reading-robot * { animation: none !important; }
+  .reading-step.is-now .reading-step-mark { animation: none; border-right-color: var(--primary); }
 }
 .receipt-item-list, .receipt-adjustment-list { list-style: none; padding: 0; margin: 0; }
 .receipt-item-list li, .receipt-adjustment-list li { border-bottom: 1px solid var(--border); padding: 0; }
