@@ -648,6 +648,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       } });
     }
     categoryUi.sheet.querySelector('.sheet-body')?.append(addCategoryShortcut(category));
+    // The item list hides the overview rows; the sheet stays outside them so "全品目を同じカテゴリにする" can still open it.
+    form.append(categoryUi.sheet);
     category.addEventListener('change', () => {
       if (!applyToAllItems) return;
       applyToAllItems = false;
