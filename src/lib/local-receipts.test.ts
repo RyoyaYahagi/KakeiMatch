@@ -442,6 +442,49 @@ describe("receipt category allocations", () => {
   it("aggregates a targeted discount into its category and keeps the printed total", () => {
     expect(receiptAllocations(value)).toEqual([{ categoryId: "food", amountYen: 900 }, { categoryId: "household", amountYen: 500 }]);
   });
+  it("registers multiple categories when items plus external tax match the total", async () => {
+    const { service, ledger } = await setup();
+    const receipt = await service.saveImage(pngBlob());
+    await service.confirm(receipt.id, { ...value, totalAmountYen: 1540, taxAmountYen: 140 });
+    await service.register(receipt.id);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      amountYen: -1540,
+      splits: [{ categoryId: "actual-food", amountYen: -990 }, { categoryId: "actual-household", amountYen: -550 }],
+    }));
+  });
+  it("does not add inclusive tax a second time", () => {
+    expect(receiptAllocations({ ...value, taxAmountYen: 140 })).toEqual([
+      { categoryId: "food", amountYen: 900 }, { categoryId: "household", amountYen: 500 },
+    ]);
+  });
+  it("distributes tax rounding by largest remainder with stable ties", () => {
+    const items = [
+      { id: "a", name: "Synthetic A", amountYen: 1, categoryId: "food" },
+      { id: "b", name: "Synthetic B", amountYen: 2, categoryId: "household" },
+    ];
+    expect(receiptAllocations({ ...value, items, adjustments: [], totalAmountYen: 4, taxAmountYen: 1 })).toEqual([
+      { categoryId: "food", amountYen: 1 }, { categoryId: "household", amountYen: 3 },
+    ]);
+    expect(receiptAllocations({ ...value, items: items.map(item => ({ ...item, amountYen: 1 })), adjustments: [], totalAmountYen: 3, taxAmountYen: 1 })).toEqual([
+      { categoryId: "food", amountYen: 2 }, { categoryId: "household", amountYen: 1 },
+    ]);
+  });
+  it("keeps large yen products exact and excludes a fully discounted category", () => {
+    const largeValue = { ...value, items: [
+      { id: "a", name: "Synthetic A", amountYen: 4_000_000_000, categoryId: "food" },
+      { id: "b", name: "Synthetic B", amountYen: 2_000_000_000, categoryId: "household" },
+    ], adjustments: [], totalAmountYen: 6_600_000_000, taxAmountYen: 600_000_000 };
+    expect(receiptAllocations(largeValue)).toEqual([
+      { categoryId: "food", amountYen: 4_400_000_000 }, { categoryId: "household", amountYen: 2_200_000_000 },
+    ]);
+    expect(receiptAllocations({ ...value, adjustments: [{ id: "d", label: "値引き", amountYen: -1000, targetItemId: "a" }], totalAmountYen: 550, taxAmountYen: 50 })).toEqual([
+      { categoryId: "household", amountYen: 550 },
+    ]);
+  });
+  it("rejects a gap that tax cannot explain and a discount without a target", () => {
+    expect(() => receiptAllocations({ ...value, totalAmountYen: 1541, taxAmountYen: 140 })).toThrow(/カテゴリ配分/);
+    expect(() => receiptAllocations({ ...value, totalAmountYen: 1540, taxAmountYen: 140, adjustments: [{ id: "d", label: "値引き", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
+  });
   it("requires confirmation for an unattributed discount or a total mismatch", () => {
     expect(() => receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
     expect(() => receiptAllocations({ ...value, totalAmountYen: 1500 })).toThrow(/カテゴリ配分/);

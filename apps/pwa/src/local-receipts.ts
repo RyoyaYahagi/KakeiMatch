@@ -607,7 +607,26 @@ export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ catego
     totals.set(key, amount);
   }
   const sum = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
-  if (!Number.isSafeInteger(sum) || sum !== value.totalAmountYen) fail();
+  if (!Number.isSafeInteger(sum)) fail();
+  if (sum !== value.totalAmountYen) {
+    const tax = value.taxAmountYen;
+    // Only add external tax when it explains the entire difference. Inclusive tax is already in sum.
+    if (sum <= 0 || tax == null || !isSafeYen(tax) || tax <= 0 || value.totalAmountYen - sum !== tax) fail();
+    // Allocate proportionally after discounts. BigInt keeps products exact even for large safe yen values.
+    const denominator = BigInt(sum);
+    const shares = [...totals].map(([categoryId, amountYen], order) => {
+      const product = BigInt(amountYen) * BigInt(tax!);
+      return { categoryId, amountYen, order, taxYen: Number(product / denominator), remainder: product % denominator };
+    });
+    let remaining = tax! - shares.reduce((sum, share) => sum + share.taxYen, 0);
+    const ranked = [...shares].sort((a, b) => a.remainder === b.remainder ? a.order - b.order : a.remainder > b.remainder ? -1 : 1);
+    for (const share of ranked) {
+      if (remaining === 0) break;
+      share.taxYen += 1;
+      remaining -= 1;
+    }
+    for (const share of shares) totals.set(share.categoryId, share.amountYen + share.taxYen);
+  }
   return [...totals].filter(([,amount]) => amount > 0).map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
 }
 
