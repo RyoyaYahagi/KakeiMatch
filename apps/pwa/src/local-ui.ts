@@ -47,7 +47,7 @@ const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`;
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 function text(tag: string, value: string, className = '') { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; }
 function button(label: string, action: () => Promise<unknown> | void, secondary = true) {
-  const node = document.createElement('button'); node.type = 'button'; node.textContent = label; node.className = secondary ? 'secondary' : '';
+  const node = document.createElement('button'); node.type = 'button'; node.textContent = label; node.className = secondary ? 'secondary' : 'primary';
   node.addEventListener('click', () => { void busy(node, action); }); return node;
 }
 async function busy(node: HTMLButtonElement, action: () => Promise<unknown> | void) {
@@ -111,7 +111,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       if (screenTab === 'receipt') await returnToRecords();
       showDeletionToast(audit);
     });
-    remove.classList.add('destructive'); return remove;
+    remove.classList.add('destructive'); remove.prepend(icon('trash')); return remove;
   }
   let imageUrl: string | null = null;
   let resetMasterUi = () => {};
@@ -564,8 +564,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const status = text('p', '', 'status'); status.id = 'receipt-save-state'; status.setAttribute('role', 'status');
     let expandItemId: string | null = null;
     let expandAdjustmentId: string | null = null;
-    const addItem = button('品目を追加', () => { items = readItems(); expandItemId = crypto.randomUUID(); items.push({ id: expandItemId, name: '', amountYen: null, categoryId: null }); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); });
-    const addAdjustment = button('値引きを追加', () => { adjustments = readAdjustments(); expandAdjustmentId = crypto.randomUUID(); adjustments.push({ id: expandAdjustmentId, label: '', amountYen: 0, targetItemId: null }); drawAdjustments(); updateDifference(); scheduleDraft(); });
+    const addItem = button('品目を追加', () => { items = readItems(); expandItemId = crypto.randomUUID(); items.push({ id: expandItemId, name: '', amountYen: null, categoryId: null }); drawItems(); updateAdjustmentTargets(); updateDifference(); scheduleDraft(); }); addItem.prepend(icon('add'));
+    const addAdjustment = button('値引きを追加', () => { adjustments = readAdjustments(); expandAdjustmentId = crypto.randomUUID(); adjustments.push({ id: expandAdjustmentId, label: '', amountYen: 0, targetItemId: null }); drawAdjustments(); updateDifference(); scheduleDraft(); }); addAdjustment.prepend(icon('add'));
     // Chooses one category in the sheet and gives it to every item.
     let applyToAllItems = false;
     const applyCategory = button('全品目を同じカテゴリにする', () => { applyToAllItems = true; categoryUi.open(); });
@@ -657,7 +657,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         report(error);
         finish(true); progress.fail(); aiButton.hidden = true;
         // docs/UX.md 読み取り中: say what failed and what to do next; try again first when it may work.
-        const retakeButton = button('撮り直す', () => retake.click());
+        const retakeButton = button('撮り直す', () => retake.click()); retakeButton.prepend(icon('camera'));
         failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', 'ぼやけや反射があれば撮り直してください。'), retakeButton);
         if (error instanceof Error && /アカウント|ログイン|認証|サインイン/.test(error.message)) failure.append(button('アカウントを確認する', options.openAccount));
         failure.hidden = false;
@@ -992,7 +992,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           if (input === name) updateAdjustmentTargets();
           updateDifference(); scheduleDraft();
         });
-        remove.classList.add('destructive');
+        remove.classList.add('destructive'); remove.prepend(icon('trash'));
         const optional = document.createElement('div'); optional.append(quantityLabel, quantity, unitLabel, unit);
         details.append(summary, nameLabel, name, amountLabel, itemAmount, itemCategoryLabel, itemCategory, addCategoryShortcut(itemCategory), remove, optional);
         const row = document.createElement('li'); row.append(details); itemsList.append(row);
@@ -1045,7 +1045,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const target = document.createElement('select'); target.id = targetLabel.htmlFor; target.dataset.adjustmentTarget = '';
         target.replaceChildren(new Option('指定しない', ''), ...items.map(item => new Option(item.name || '品目を入力', item.id)));
         target.value = adjustment.targetItemId ?? '';
-        const remove = button('値引きを削除', () => { adjustments = readAdjustments().filter(entry => entry.id !== adjustment.id); drawAdjustments(); updateDifference(); scheduleDraft(); });
+        const remove = button('値引きを削除', () => { adjustments = readAdjustments().filter(entry => entry.id !== adjustment.id); drawAdjustments(); updateDifference(); scheduleDraft(); }); remove.prepend(icon('trash'));
         for (const input of [name, value, target, kind]) input.addEventListener('input', () => {
           amountLabel.textContent = kind.value === 'discount' ? '値引き額（円）' : '調整額（円）';
           adjustment.label = name.value;
@@ -1067,7 +1067,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       form.querySelectorAll('input,select,textarea,button').forEach(node => { (node as HTMLInputElement).disabled = true; });
       status.textContent = '判断内容は保存されています。同じ内容で保存を再試行してください。';
     }
-    const submit = document.createElement('button'); submit.type = 'submit';
+    const submit = document.createElement('button'); submit.type = 'submit'; submit.className = 'primary';
     submit.textContent = editing ? pendingEdit ? '同じ内容で再試行する' : '変更を保存する' : receipt.registration.status === 'failed' ? '登録を再試行する' : '登録する';
     form.append(formActions(submit));
     form.addEventListener('submit', event => {
@@ -1226,7 +1226,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     // The result is saved even after leaving; only the redraw is skipped.
     const rerun = async () => { recordDiagnosticAction('reconciliation_run_started', 'reconciliation'); await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
     const header = document.createElement('div'); header.className = 'page-header';
-    const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact';
+    const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact'; refresh.prepend(icon('repeat'));
     header.append(text('h2', '照合'), refresh); view.append(header);
     const { run, decisions, pending } = await reconciliationState();
     ensureScreen(screen);

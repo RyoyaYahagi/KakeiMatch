@@ -1,6 +1,7 @@
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import { recordLocalDiagnostic, type DiagnosticFeature } from './local-diagnostics';
 import { cleanupReceiptImages, cleanupStatementCsv, getCleanupSummary, getStorageStatus, shouldRemindLocalExport } from './local-data-lifecycle';
+import { icon } from './ui-icons';
 import { exportLocalBackup, INCOMPLETE_RESTORE_KEY, PREVIOUS_PROFILE_KEY, restoreLocalBackup, returnToPreviousProfile, wipeLocalHousehold, type BackupLedger } from './local-backup';
 
 const text = (tag: string, value: string) => { const element = document.createElement(tag); element.textContent = value; return element; };
@@ -33,7 +34,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     finally { running = false; for (const target of targets) target?.removeAttribute('inert'); }
   };
   const button = (id: string, label: string, action: () => Promise<void>, primary = false) => {
-    const element = document.createElement('button'); element.type = 'button'; element.id = id; element.textContent = label; element.className = primary ? '' : 'secondary';
+    const element = document.createElement('button'); element.type = 'button'; element.id = id; element.textContent = label; element.className = primary ? 'primary' : 'secondary';
     element.addEventListener('click', () => { status = statuses.get([...statuses.keys()].find(area => area.contains(element)) ?? section)!; void run(action, id === 'backup-export' ? 'backup' : id === 'restore-previous' ? 'restore' : 'save'); }); return element;
   };
   const cleanupInfo = text('p', '');
@@ -78,7 +79,9 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   const at = (node: Element) => children.indexOf(node);
   const exportButton = section.querySelector('#backup-export')!;
   const importButton = section.querySelector('#backup-import')!;
-  importButton.textContent = '復元する'; importButton.setAttribute('aria-label', 'バックアップを復元する');
+  importButton.textContent = '復元する'; importButton.prepend(icon('upload'));
+  section.querySelector('#restore-previous')!.prepend(icon('repeat'));
+  for (const id of ['receipt-image-cleanup', 'statement-csv-cleanup', 'local-wipe']) section.querySelector(`#${id}`)!.prepend(icon('trash')); importButton.setAttribute('aria-label', 'バックアップを復元する');
   const restoreButton = section.querySelector('#restore-previous')!;
   const cleanupHeading = children.find(child => child.tagName === 'H3')!;
   const actions = document.createElement('div'); actions.className = 'backup-quick-buttons'; actions.append(exportButton, importButton);

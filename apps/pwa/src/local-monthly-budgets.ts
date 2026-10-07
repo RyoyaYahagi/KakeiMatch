@@ -181,7 +181,7 @@ export async function showMonthlyBudgetEditor(options: {
     breakdown.addEventListener('change', updateBreakdown);
     updateBreakdown();
 
-    const submit = node('button', mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'button';
+    const submit = node('button', mode === 'default' ? '基本予算を保存' : 'この月の予算を保存'); submit.type = 'button'; submit.className = 'primary';
     submit.addEventListener('click', () => { void save(); });
     const actions = node('div'); actions.className = 'page-actions'; actions.append(submit);
     let resetControl: HTMLButtonElement | null = null;
