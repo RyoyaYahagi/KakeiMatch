@@ -66,7 +66,7 @@ try {
   assert.equal(await page.getByLabel('振替元口座', { exact: true }).locator('option:checked').textContent(), 'Synthetic Other');
   assert.equal(await page.getByLabel('振替先口座', { exact: true }).locator('option:checked').textContent(), 'Synthetic Bank');
   await click('キャンセル');
-  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const buffer = await readFile(await download.path());
   await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());

@@ -117,7 +117,7 @@ try {
   assert.equal(await page.locator('#transactions li').count(), 1);
   await page.reload(); await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
   await page.locator('#settings-tab').click();
-  const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file);
   const buffer = await readFile(file);
   await waitForBackupExportReady(page);

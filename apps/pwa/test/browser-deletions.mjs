@@ -54,7 +54,7 @@ try {
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor();
   snapshot = await records(); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.actualTransactionId, original);
   await detail('Synthetic Split'); await remove(); await page.clock.fastForward(11000);
-  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click(); const download = await downloadPromise; const buffer = await readFile(await download.path());
+  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click(); const download = await downloadPromise; const buffer = await readFile(await download.path());
   await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept()); await page.locator('#backup-file').setInputFiles({ name: 'synthetic-deleted.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer }); await navigation;
   await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor(); await page.locator('#receipt-tab').click();

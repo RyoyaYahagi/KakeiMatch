@@ -103,7 +103,7 @@ try {
   assert.equal(await page.locator('#manual-transaction-account option:checked').textContent(), 'Synthetic Wallet');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic edited income');
   await click('キャンセル');
-  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const path = await download.path(); assert.ok(path); const buffer = await readFile(path);
   await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());

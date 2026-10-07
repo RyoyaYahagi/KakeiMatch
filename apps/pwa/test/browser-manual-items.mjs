@@ -118,7 +118,7 @@ try {
   assert.equal(await item(0).locator('[data-item-name]').inputValue(), 'Synthetic Soap');
   assert.equal(await page.locator('#manual-transaction-amount').inputValue(), '1400');
   await save(true);
-  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
   await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());

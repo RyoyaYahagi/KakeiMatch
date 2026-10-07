@@ -7,7 +7,7 @@ const text = (tag: string, value: string) => { const element = document.createEl
 const bytes = (size: number) => `${(size / 1024 / 1024).toFixed(1)} MiB`;
 
 export async function initializeBackupUi(repository: LocalDataRepository, ledger: BackupLedger): Promise<void> {
-  // docs/UX.md 設定: backup actions sit on the settings screen; restore help and cleanup tools are on their own pages.
+  // Backup actions and recovery help share a page; the settings overview shows reminders.
   const section = document.createElement('section'); section.id = 'backup-settings';
   const ledgerPanel = document.createElement('section'); ledgerPanel.id = 'backup-restore'; ledgerPanel.className = 'surface-section settings-panel';
   const cleanupPanel = document.createElement('section'); cleanupPanel.id = 'backup-cleanup-tools'; cleanupPanel.className = 'surface-section settings-panel';
@@ -41,6 +41,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     const incomplete = localStorage.getItem(INCOMPLETE_RESTORE_KEY) !== null;
     incompleteWarning.textContent = incomplete ? '復元途中のデータが残っている可能性があります。新しい復元とアプリからの全削除は停止しています。元の家計データのバックアップを保存し、ブラウザーのサイトデータ削除を利用してください。' : '';
     (document.getElementById('backup-import') as HTMLButtonElement).disabled = incomplete;
+    (document.getElementById('restore-previous') as HTMLButtonElement).hidden = !localStorage.getItem(PREVIOUS_PROFILE_KEY);
     const saved = await repository.get<{ lastExportAt: string }>('settings:backup');
     const at = saved?.value.lastExportAt ?? null;
     exportDate.textContent = at ? `最終書き出し生成日時：${new Date(at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}（日本時間）` : 'まだバックアップを書き出していません。';
@@ -65,7 +66,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     }, true),
     text('p', '読み込みは新しい家計データとして復元します。現在のデータと合併しません。復元に成功した後に切り替え、元のデータも端末に残します。ほかのタブでの家計操作を終えてから実行してください。'),
     button('backup-import', 'バックアップを読み込む', async () => { input.value = ''; input.click(); status.textContent = 'バックアップファイルを選択してください。'; }), input,
-    button('restore-previous', '切り替え前の家計データに戻る', async () => { if (!window.confirm('切り替え前の家計データに戻りますか？現在のデータも端末に残ります。')) return; await returnToPreviousProfile(); location.reload(); }),
+    button('restore-previous', '変更前のデータに戻す', async () => { if (!window.confirm('変更前のデータに戻しますか？現在のデータも端末に残ります。')) return; await returnToPreviousProfile(); location.reload(); }),
     text('h3', '原本の整理'), cleanupInfo,
     text('p', '原本を削除すると後から原本を確認・再解析できなくなります。家計簿の取引、確認値、明細行、照合結果、判断と履歴は残します。未確認・登録待ち・再試行待ちのレシート画像は対象にしません。原本の自動削除は行いません。'),
     button('receipt-image-cleanup', 'レシート画像を削除', async () => { await refresh(); if (!window.confirm(`${cleanupInfo.textContent}\n登録済みのレシート画像を削除しますか？後から原本を確認できなくなります。`)) return; const result = await cleanupReceiptImages(repository); await refresh(); status.textContent = `${result.deletedCount}件のレシート画像を削除しました。確認値と照合結果は残っています。`; }),
@@ -77,21 +78,19 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   const at = (node: Element) => children.indexOf(node);
   const exportButton = section.querySelector('#backup-export')!;
   const importButton = section.querySelector('#backup-import')!;
+  importButton.textContent = '復元する'; importButton.setAttribute('aria-label', 'バックアップを復元する');
   const restoreButton = section.querySelector('#restore-previous')!;
   const cleanupHeading = children.find(child => child.tagName === 'H3')!;
-  // Side by side the import button keeps a short label; its spoken name stays complete.
-  importButton.textContent = '読み込む'; importButton.setAttribute('aria-label', 'バックアップを読み込む');
   const actions = document.createElement('div'); actions.className = 'backup-quick-buttons'; actions.append(exportButton, importButton);
   const explanations = children.slice(1, at(cleanupHeading)).filter(child => child.tagName === 'P' && ![exportDate, reminder, capacity, incompleteWarning, status].includes(child as HTMLElement));
   const about = document.createElement('details'); about.className = 'settings-inner-disclosure';
   about.append(text('summary', 'バックアップについて'), capacity, ...explanations);
-  ledgerPanel.append(text('h3', 'バックアップと復元'), restoreButton, statuses.get(ledgerPanel)!, about);
+  ledgerPanel.append(restoreButton, statuses.get(ledgerPanel)!, about);
   cleanupPanel.append(...children.slice(at(cleanupHeading)).filter(child => child !== status), statuses.get(cleanupPanel)!);
-  section.replaceChildren(exportDate, reminder, incompleteWarning, actions, input, statuses.get(section)!);
-  document.getElementById('backup-quick')!.append(section);
-  document.getElementById('data-settings')!.append(ledgerPanel);
+  section.replaceChildren(exportDate, incompleteWarning, actions, input, statuses.get(section)!);
+  document.getElementById('backup-quick')!.append(reminder);
+  document.getElementById('data-settings')!.prepend(section, ledgerPanel);
   document.getElementById('cleanup-host')!.append(cleanupPanel);
-  (document.getElementById('restore-previous') as HTMLButtonElement).disabled = !localStorage.getItem(PREVIOUS_PROFILE_KEY);
   input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; status = statuses.get(section)!; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); recordLocalDiagnostic('restore'); location.reload(); }, 'restore'); });
   document.getElementById('settings-tab')!.addEventListener('click', () => { void refresh().catch(error => { status = statuses.get(section)!; status.textContent = error instanceof Error ? error.message : '保存状況を確認できません。'; }); });
   await refresh();

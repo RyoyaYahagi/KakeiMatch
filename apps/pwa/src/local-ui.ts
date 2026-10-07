@@ -1398,15 +1398,18 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
   await initializeBackupUi(repository, ledger);
-  // The "家計簿の読み込み・切り替え" page leads with switching and importing, then backup restore and where data is kept.
-  el('data-settings').prepend(el('budget-section'), el('import-section'));
+  const importDetails = document.createElement('details'); importDetails.className = 'settings-inner-disclosure';
+  importDetails.append(text('summary', '既存の家計簿を取り込む'), el('import-section'));
+  el('data-settings').append(importDetails);
+  // Selection is only a recovery step when the saved budget cannot be determined.
+  el('data-settings').prepend(el('budget-section'));
   const deviceLink = initializeDeviceLinkUi(repository, ledger);
   const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
   const recurringEntry = button('定期登録', recurringOverview); recurringEntry.classList.add('master-entry'); recurringEntry.setAttribute('aria-label', '定期登録'); setup.append(recurringEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }
   try { await ledger.listOpenAccounts(); } catch (error) { if (!(error instanceof ActualBudgetSelectionRequiredError)) throw error; }
   const actual = await import('@actual-app/api');
-  const budgets = await actual.getBudgets(); const selector = el<HTMLSelectElement>('budget'); selector.replaceChildren(...budgets.map(b => new Option(b.name, b.id))); if (!budgetId) selector.prepend(new Option('家計簿を選択してください', '')); selector.value = budgetId ?? ''; el('budget-section').hidden = false;
+  const budgets = await actual.getBudgets(); const selector = el<HTMLSelectElement>('budget'); selector.replaceChildren(...budgets.map(b => new Option(b.name, b.id))); if (!budgetId) selector.prepend(new Option('家計簿を選択してください', '')); selector.value = budgetId ?? ''; el('budget-section').hidden = !!budgetId;
   selector.addEventListener('change', () => { void (async () => { if ((await receipts.list()).length || (await statements.list()).length) { selector.value = budgetId ?? ''; throw new Error('記録のある家計簿は切り替えられません。'); } budgetId = selector.value; await repository.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId, dataDir }, updatedAt: new Date().toISOString() }); location.reload(); })().catch(report); });
   const zip = el<HTMLInputElement>('import-file'); el('import-section').hidden = false;
   el('import-button').addEventListener('click', () => zip.click());
@@ -1430,5 +1433,5 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (latestDeletion) showDeletionToast(latestDeletion);
     if (!el('household-view').hidden) await home().catch((error: unknown) => { if (!(error instanceof StaleScreenError)) throw error; }); else el('message').textContent = '';
     deviceLink.announceReceived();
-  } else el('message').textContent = '使う家計簿を選択してください。';
+  } else { el('message').textContent = '使う家計簿を確認できません。設定の「バックアップと復元」から選択してください。'; }
 }

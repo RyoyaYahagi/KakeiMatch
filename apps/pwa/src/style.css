@@ -329,10 +329,10 @@ button.entry-row-link .icon { width: 18px; height: 18px; color: var(--muted); fi
 .backup-quick-buttons #backup-export { flex: 2 1 0; margin: 0; }
 .backup-quick-buttons #backup-import { flex: 1 1 0; margin: 0; }
 /* docs/DESIGN.md 設定: the backup state is one short line with a mark, not a box. */
-.backup-quick-actions #backup-reminder:not(:empty) { padding: 0; background: none; color: var(--warning); font-size: .875rem; }
-.backup-quick-actions #backup-reminder:not(:empty)::before { content: "△ "; }
+.backup-quick #backup-reminder:not(:empty) { padding: 0; background: none; color: var(--warning); font-size: .875rem; }
+.backup-quick #backup-reminder:not(:empty)::before { content: "△ "; }
 .backup-quick-actions #last-export { font-size: .875rem; color: var(--muted); }
-.backup-quick-actions #last-export:has(+ #backup-reminder:not(:empty)) { display: none; }
+.backup-quick:has(#backup-reminder:empty) { display: none; }
 .settings-page { display: grid; gap: var(--space-3); }
 .settings-page > .page-title { margin: 0; }
 .settings-page > .page-title:focus { outline: none; }

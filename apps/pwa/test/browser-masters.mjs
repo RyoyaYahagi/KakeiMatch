@@ -151,7 +151,7 @@ try {
 
   // The Actual ZIP inside .kmb must retain renamed, income and closed masters.
   await page.locator('#settings-tab').click();
-  const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const path = await download.path(); assert.ok(path);
   const buffer = await readFile(path);
   await waitForBackupExportReady(page);
