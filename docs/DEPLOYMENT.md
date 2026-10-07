@@ -34,6 +34,42 @@ npm run --prefix workers/ai-gateway build
 
 AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace外にあります。`npm ci --prefix workers/ai-gateway` でその依存をinstallしてから上記commandを実行してください。`npm run --prefix workers/ai-gateway dev` はViteを直接起動し、PWAのCloudflare configを読みません。本番PWAと同一origin APIのlocal確認にはrootの `pnpm dev` またはbuild後の `pnpm start` を使います。Worker単体のlocal開発を行う場合は、必要なときだけ `.dev.vars.example` を `.dev.vars` へコピーし、合成値を設定します。実provider要求にはprovider keyが必要です。値はGitに入れず、deploy先ではCloudflare secretを使います。D1 schema変更は `workers/ai-gateway/migrations/` のversion付きSQLで管理します。
 
+## ローカルでAIを試す
+
+PWAと同一originのWorkerを動かすには、リポジトリrootで次を実行します。Node.js 22以上とCorepackが必要です。`pnpm start` はビルド済みの配信確認用なので、AIの開発には `pnpm dev` を使います。
+
+```sh
+corepack pnpm install
+cp apps/pwa/.dev.vars.example apps/pwa/.dev.vars
+```
+
+既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。実際の読み取りには `GEMINI_API_KEY`、カテゴリ提案には `TYPESAFE_API_KEY` を自分のAPIキーへ置き換えます。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
+
+次に、開発サーバーと同じ保存先にあるローカルD1だけを更新します。IDは `cloudflare.config.ts` の開発用 `ACCOUNT_DB` と一致させます。`--local` と `--persist-to .wrangler/state` を省略しないでください。
+
+```sh
+corepack pnpm --dir apps/pwa exec cf d1 migrations apply 25111b8d-a7ec-4765-b53e-5b5d0ad6fd39 \
+  --local --persist-to .wrangler/state --dir ../../workers/ai-gateway/migrations
+corepack pnpm dev
+```
+
+ブラウザーで `http://localhost:5173` を開きます。`CLOUD_ACCOUNT_ORIGIN` もこの値に合わせます。Passkeyを試す場合はIPアドレスではなく `localhost` を使います。設定の「ログイン・利用状況」で登録なしのAI利用が表示され、合成レシートから「AIで読み取る」を選ぶと、bot確認後に読み取りへ進みます。例として「テストマート、牛乳220円、パン180円、合計400円」の画像を使います。実際のレシート画像は、読み取り時にGoogleへ送られます。登録なしの利用枠は日本時間の1日5回です。
+
+開発用の公開鍵はconfigでテスト鍵を選び、秘密鍵は `.dev.vars.example` のテスト鍵を使います。これらは [Cloudflare公式のテスト鍵](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)です。本番では使いません。bot確認にはCloudflareへの通信が必要です。providerキーを合成値のままにした場合、実AIの成功は確認できません。`not_configured` やD1のtableエラーが出たら、`.dev.vars` の設定と、開発サーバーとmigrationの保存先が一致しているかを確認します。設定を変えたら開発サーバーを再起動します。
+
+アカウント付きの経路を試す場合は、別のターミナルでローカルの `ACCOUNT_BOOTSTRAP_SECRET` を対話入力して招待を発行します。実在するメールアドレスや本番のsecretは使いません。
+
+```sh
+read -rs 'ACCOUNT_BOOTSTRAP_SECRET?ローカルbootstrap secret: '
+echo
+export ACCOUNT_BOOTSTRAP_SECRET
+ACCOUNT_ADMIN_URL=http://localhost:5173 \
+node workers/ai-gateway/scripts/account-invite.mjs invite developer@example.test 'Local Developer'
+unset ACCOUNT_BOOTSTRAP_SECRET
+```
+
+この入力例はzsh用です。発行されたローカルの招待URLを同じブラウザーで開き、Passkeyを登録します。APIキー、`.dev.vars` の内容、招待URLをPRやチャットへ貼りません。
+
 ## legacy server環境からの移行
 
 以前のNext.jsアプリ、server SQLite、ファイル保存、Actual CLI、Docker Composeはlegacy参照として残します。PWAを利用するための本番構成ではありません。legacy Composeファイルを本番導入手順として使わないでください。過去の設計は[legacy architecture](legacy/ARCHITECTURE.md)と[legacy implementation plan](legacy/IMPLEMENTATION_PLAN.md)に記録しています。
@@ -63,7 +99,7 @@ corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir .
 corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
 ```
 
-secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は上記の5個です。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
+secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は「本番URLとデータ」に記載しています。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
 
 検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、PWAとAPIが同じversionに含まれることを確認してから公開します。
 
