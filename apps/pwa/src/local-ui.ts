@@ -298,7 +298,13 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     header.append(text('h2', '記録'), search);
     const filters = document.createElement('div'); filters.className = 'segmented'; filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', '種類で絞り込む');
     const accountsLink = button('口座・残高を見る', accountBalancesPage); accountsLink.className = 'text-button link-row'; accountsLink.prepend(icon('wallet')); accountsLink.append(icon('chevronRight'));
-    view.append(header, filters, accountsLink);
+    const groups = document.createElement('div'); groups.className = 'record-groups';
+    const empty = text('p', '記録を読み込んでいます…', 'empty');
+    view.append(header, filters, accountsLink, groups, empty);
+    for (const [value, label] of [['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']] as const) {
+      const option = document.createElement('button'); option.type = 'button'; option.textContent = label; option.dataset.filter = value; option.disabled = true;
+      filters.append(option);
+    }
     const [localReceipts, rows, accounts, reconciliationView] = await Promise.all([receipts.list(), ledger.getRecentTransactions({ limit: 100 }), ledger.listAccounts(), reconciliationState()]);
     // docs/UX.md 記録一覧: records that are candidates of a statement still waiting for a decision.
     const reviewTransactionIds = new Set((reconciliationView.run?.candidates ?? [])
@@ -333,11 +339,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         list.append(item);
       }
       section.append(text('h3', `確認待ち ${pending.length}件`, 'record-day-header'), list);
-      view.append(section);
+      view.insertBefore(section, groups);
     }
-    const groups = document.createElement('div'); groups.className = 'record-groups';
-    const empty = text('p', 'まだ記録がありません。', 'empty');
-    view.append(groups, empty);
+    empty.textContent = 'まだ記録がありません。';
     const records = rows.filter(row => row.kind !== 'transfer' || row.amountYen < 0);
     const accountNames = new Map(accounts.map(account => [account.id, account.name]));
     const receiptFor = (row: ActualTransaction) => localReceipts.find(receipt => receipt.registration.actualTransactionId === row.id);
@@ -353,11 +357,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       empty.textContent = recordsFilter === 'all' ? 'まだ記録がありません。' : 'この種類の記録はありません。';
       filters.querySelectorAll('button').forEach(option => option.setAttribute('aria-pressed', String(option.dataset.filter === recordsFilter)));
     };
-    for (const [value, label] of [['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']] as const) {
-      const option = document.createElement('button'); option.type = 'button'; option.textContent = label; option.dataset.filter = value;
-      option.addEventListener('click', () => { recordsFilter = value; render(); });
-      filters.append(option);
-    }
+    filters.querySelectorAll<HTMLButtonElement>('button').forEach(option => {
+      option.addEventListener('click', () => { recordsFilter = option.dataset.filter as RecordKindFilter; render(); });
+      option.disabled = false;
+    });
     render();
   }
   async function transactionDetail(transaction: ActualTransaction) {
