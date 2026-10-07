@@ -4,7 +4,7 @@ import { expect, it, vi } from 'vitest';
 import { submitContact } from './contact';
 
 it('applies contact migration to D1 and serializes concurrent publication with no inquiry body stored', async () => {
-  const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: '2026-09-30', d1Databases: { ACCOUNT_DB: 'contact-synthetic-test' } });
+  const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: '2026-08-01', d1Databases: { ACCOUNT_DB: 'contact-synthetic-test' } });
   try {
     const db = await instance.getD1Database('ACCOUNT_DB');
     for (const name of ['0001_auth.sql', '0006_contact_submissions.sql']) await db.exec(readFileSync(new URL(`../migrations/${name}`, import.meta.url), 'utf8').replace(/^--.*$/gm, '').replace(/\s+/g, ' '));
