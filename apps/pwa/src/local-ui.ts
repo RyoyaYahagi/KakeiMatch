@@ -1,3 +1,4 @@
+import { initializeMoneyForwardUi } from './moneyforward-ui';
 import { createAccountMetadataAccess } from './local-account-metadata';
 import { accountOptions } from './local-account-ui';
 import { renderMonthlyBudgets, showMonthlyBudgetEditor } from './local-monthly-budgets';
@@ -128,6 +129,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     recordDiagnosticAction(diagnosticAction, diagnosticScreen);
     recordDiagnosticScreen(diagnosticScreen);
     const revision = ++screenRevision; screenTab = tab;
+    closeMoneyForward();
     await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve();
     ensureScreen(revision);
     resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
@@ -1412,6 +1414,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
   await initializeBackupUi(repository, ledger);
+  const closeMoneyForward = initializeMoneyForwardUi(repository, ledger, () => budgetId);
   const importDetails = document.createElement('details'); importDetails.className = 'settings-inner-disclosure';
   importDetails.append(text('summary', '既存の家計簿を取り込む'), el('import-section'));
   el('data-settings').append(importDetails);

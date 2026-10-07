@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { accountMetadataRecordId } from "./actual-browser-ledger";
 import { monthlyBudgetSettingsRecordId } from "./monthly-budget-settings";
+import { rebindMoneyForwardImportSettings } from "./moneyforward-import-format";
 import { createPortableBackup, readPortableBackup } from "./local-backup-format";
 import type { LocalDataBackupV2 } from "./local-data";
 
@@ -46,6 +47,23 @@ async function create(input = fixture()): Promise<Blob> {
 }
 
 describe("account metadata backup", () => {
+  it("round-trips the Money Forward journal and rebinds its undo history to the restored budget", async () => {
+    const data = fixture();
+    const row = { rowNumber: 2, date: "2026-09-28", description: "Synthetic Cafe", amountYen: -1200, kind: "expense", accountName: null,
+      majorCategory: "食費", minorCategory: "食料品", memo: "", sourceTransactionId: null, sourceKey: "a".repeat(64), isTransfer: false,
+      isIncludedInCalculation: true, categoryNeedsReviewReason: null };
+    const settings = { version: 1, rules: { categories: {}, accounts: {} }, batches: [{ id: "mf-batch", budgetId: "old-budget", createdAt: time,
+      updatedAt: time, status: "completed", mappings: { categories: {}, accounts: {} }, rows: [{ row, importedId: `moneyforward:key:${"a".repeat(64)}`,
+        status: "created", transactionSnapshot: [{ id: "actual-txn", date: "2026-09-28", account: "synthetic-account", amount: -1200,
+          imported_id: `moneyforward:key:${"a".repeat(64)}` }], error: null }] }] };
+    data.records.push({ id: "settings:moneyforward-import", kind: "app-settings", updatedAt: time, value: settings });
+    const restored = await readPortableBackup(await create(data));
+    expect(restored.localData.records.find(record => record.id === "settings:moneyforward-import")?.value).toEqual(settings);
+    expect(rebindMoneyForwardImportSettings(settings, "new-budget")).toMatchObject({ batches: [{ budgetId: "new-budget" }] });
+    data.records[data.records.length - 1]!.value = { ...settings, unexpected: true };
+    await expect(create(data)).rejects.toThrow(/記録内容が不正/);
+  });
+
   it("preserves the exact rule evidence that was applied to a receipt", async () => {
     const data = fixture();
     const receipt = data.records.find(record => record.kind === "receipt-metadata")!;
