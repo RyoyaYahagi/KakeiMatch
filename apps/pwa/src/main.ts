@@ -1,6 +1,5 @@
 import { LocalDataStorageError } from '../../../src/lib/local-data';
 import { initializeLocalUi } from './local-ui';
-import { initializeDeveloperCostsUi } from './developer-costs-ui';
 import { createAuthClient } from 'better-auth/client';
 import { passkeyClient } from '@better-auth/passkey/client';
 import { clearAiAccessToken, getAiAccessToken } from './ai-auth';
@@ -144,17 +143,6 @@ root.innerHTML = `
       </div>
       <div id="signed-in-actions" hidden>
         <button id="use-ai" class="secondary" type="button">AI利用を確認</button>
-        <section id="developer-costs" hidden aria-labelledby="developer-costs-heading">
-          <h5 id="developer-costs-heading">APIコスト（推定）</h5>
-          <div class="month-selector">
-            <button id="costs-previous-month" class="secondary" type="button" aria-label="前月のAI利用料金">‹</button>
-            <strong id="costs-month" aria-live="polite"></strong>
-            <button id="costs-next-month" class="secondary" type="button" aria-label="翌月のAI利用料金">›</button>
-          </div>
-          <p id="costs-total" aria-live="polite">利用料金を読み込んでいます…</p>
-          <p id="costs-unknown" class="muted" hidden></p>
-          <ul id="costs-providers"></ul>
-        </section>
         <h5>Passkey</h5>
         <ul id="passkey-list"></ul>
         <button id="add-passkey" class="secondary" type="button">${iconMarkup('add')}Passkeyを追加</button>
@@ -171,14 +159,7 @@ root.innerHTML = `
       <section id="settings-page-app" class="settings-page" hidden aria-labelledby="settings-page-app-title">
         <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
         <h2 id="settings-page-app-title" class="page-title">アプリ情報</h2>
-      <section id="app-info" class="surface-section settings-panel">
-        <label class="developer-option" for="developer-options">
-          <input id="developer-options" type="checkbox" />
-          開発者向け機能を表示
-        </label>
-        <p class="muted">この設定はこの端末のブラウザーだけに保存され、バックアップには含まれません。</p>
-        <p id="developer-options-status" class="status" role="status"></p>
-      </section>
+      <section id="app-info" class="settings-panel"></section>
       <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
         <h3 id="oss-licenses-title">オープンソースライセンス</h3>
       </section>
@@ -250,21 +231,6 @@ const addPasskeyButton = element<HTMLButtonElement>('add-passkey');
 const logoutButton = element<HTMLButtonElement>('logout');
 const deleteAccountButton = element<HTMLButtonElement>('delete-account');
 const useAiButton = element<HTMLButtonElement>('use-ai');
-const developerOptions = element<HTMLInputElement>('developer-options');
-const developerCosts = element<HTMLElement>('developer-costs');
-const developerCostsUi = initializeDeveloperCostsUi({
-  toggle: developerOptions,
-  section: developerCosts,
-  status: element<HTMLParagraphElement>('developer-options-status'),
-  month: element<HTMLElement>('costs-month'),
-  total: element<HTMLElement>('costs-total'),
-  unknown: element<HTMLElement>('costs-unknown'),
-  providers: element<HTMLUListElement>('costs-providers'),
-  previous: element<HTMLButtonElement>('costs-previous-month'),
-  next: element<HTMLButtonElement>('costs-next-month'),
-});
-
-
 function showTab(tab: 'home' | 'settings') {
   recordDiagnosticAction(tab === 'home' ? 'navigate_home' : 'navigate_settings', tab);
   recordDiagnosticScreen(tab);
@@ -325,7 +291,6 @@ async function refreshAccount() {
     const signedIn = Boolean(session?.user);
     signedOutActions.hidden = signedIn;
     signedInActions.hidden = !signedIn;
-    developerCostsUi.setSignedIn(signedIn);
     if (!signedIn) {
       accountStatus.textContent = '未ログインです。';
       const guest = await guestUsage().catch(() => undefined);
@@ -350,7 +315,6 @@ async function refreshAccount() {
     accountStatus.textContent = 'AIアカウントへ接続できません。家計簿のデータはこの端末で引き続き利用できます。';
     signedOutActions.hidden = true;
     signedInActions.hidden = true;
-    developerCostsUi.setSignedIn(false);
   }
 }
 
@@ -466,7 +430,6 @@ logoutButton.addEventListener('click', () => {
     clearAiAccessToken();
     signedInActions.hidden = true;
     signedOutActions.hidden = false;
-    developerCostsUi.setSignedIn(false);
     accountStatus.textContent = '未ログインです。';
     accountMessage.textContent = 'ログアウトしました。端末の家計簿データは保持されています。';
   }).catch(() => { accountMessage.textContent = 'ログアウトできませんでした。'; });
@@ -492,7 +455,6 @@ deleteAccountButton.addEventListener('click', () => {
     clearAiAccessToken();
     signedInActions.hidden = true;
     signedOutActions.hidden = false;
-    developerCostsUi.setSignedIn(false);
     accountStatus.textContent = '未ログインです。';
     usageSummary.textContent = 'アカウントを削除しました。';
     accountMessage.textContent = '家計簿・レシート・明細・照合記録はこの端末に残っています。引き続き利用できます。';

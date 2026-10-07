@@ -374,31 +374,18 @@ button.entry-row-link .icon { width: 18px; height: 18px; color: var(--muted); fi
 .contact-meta { display: flex; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-1); color: var(--muted); font-size: .8125rem; }
 .contact-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
 .contact-actions button { flex: 1 1 9rem; margin: 0; }
-.contact-interview-consent { display: flex; align-items: flex-start; gap: var(--space-3); margin: var(--space-3) 0; padding: var(--space-3); border-radius: var(--radius-lg); background: var(--sunken); }
-.contact-interview-consent input { flex: none; margin: 2px 0 0; }
-.contact-interview-consent span { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
-.contact-interview-consent strong { font-size: .9375rem; }
-.contact-interview-consent small { color: var(--muted); line-height: 1.5; }
-.contact-interview, .contact-review { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--border); }
-.contact-interview h3, .contact-review h3 { margin: 0 0 var(--space-2); }
-.contact-interview-question { margin: var(--space-2) 0; font-weight: 700; overflow-wrap: anywhere; }
-.contact-recommendation { margin: var(--space-3) 0; padding: var(--space-3); border-radius: var(--radius-md); background: var(--primary-soft); }
-.contact-recommendation > span { display: block; color: var(--muted); font-size: .75rem; font-weight: 700; }
-.contact-recommendation p { margin: var(--space-1) 0 var(--space-2); overflow-wrap: anywhere; }
-.contact-recommendation button { width: 100%; margin: 0; }
-#contact-interview-answer { min-height: 96px; }
-#contact-review-message { min-height: 144px; }
-.contact-interview-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
-.contact-interview-actions button { flex: 1 1 10rem; margin: 0; }
+.contact-diagnostic-consent { display: flex; align-items: flex-start; gap: var(--space-3); margin: var(--space-3) 0; padding: var(--space-3); border-radius: var(--radius-lg); background: var(--sunken); }
+.contact-diagnostic-consent input { flex: none; margin: 2px 0 0; }
+.contact-diagnostic-consent span { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
+.contact-diagnostic-consent strong { font-size: .9375rem; }
+.contact-diagnostic-consent small { color: var(--muted); line-height: 1.5; }
 #contact-status, #contact-audio-status { min-height: 1.5em; margin: var(--space-2) 0; }
 .contact-send-bar { margin-top: var(--space-3); }
 #contact-send { width: 100%; min-height: 52px; margin: 0; border-radius: var(--radius-lg); }
-.contact-issues-link { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); }
 #contact-login-path { width: 100%; margin-top: var(--space-2); }
 .contact-result { margin-top: var(--space-4); padding-top: var(--space-3); border-top: 1px solid var(--border); }
 .contact-result h3 { margin: 0 0 var(--space-2); }
 .contact-result p { overflow-wrap: anywhere; }
-.contact-result a { display: inline-flex; align-items: center; min-height: 44px; color: var(--primary); }
 .contact-result button { width: 100%; margin: var(--space-2) 0 0; }
 #backup-export { width: 100%; min-height: 48px; margin: var(--space-3) 0 var(--space-1); border-radius: var(--radius-lg); }
 #backup-reminder:not(:empty) { padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--warning-soft); color: var(--warning); font-weight: 500; }
@@ -720,11 +707,6 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .budget-category-list p { margin: var(--space-1) 0; overflow-wrap: anywhere; }
 
 /* Developer options */
-.developer-option { display: flex; align-items: center; gap: var(--space-3); min-height: 44px; }
-.developer-option input { width: 24px; min-height: 24px; margin: 0; }
-#developer-costs { margin-top: var(--space-4); }
-#developer-costs .month-selector { margin: var(--space-2) 0; }
-#developer-costs .month-selector button { min-width: 44px; }
 .developer-cost-row { display: grid; gap: var(--space-1); overflow-wrap: anywhere; }
 
 /* Dialogs */

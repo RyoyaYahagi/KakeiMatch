@@ -2,3 +2,4 @@ AI_GATEWAY_AUTH_SECRET=<local-synthetic-signing-secret>
 GEMINI_API_KEY=<local-synthetic-gemini-key>
 TYPESAFE_API_KEY=<local-synthetic-jev-key>
 GITHUB_ISSUES_TOKEN=<local-synthetic-github-issues-token>
+FEEDBACK_ENCRYPTION_KEY=<local-synthetic-32-byte-base64url-key>

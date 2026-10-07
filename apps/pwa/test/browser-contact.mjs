@@ -35,11 +35,9 @@ await context.addInitScript(() => {
 
 const contactRequests = [];
 const transcribeRequests = [];
-const interviewRequests = [];
 let contactFailure = null;
 let transcribeFailure = null;
 let transcribeText = '録音からの合成テキスト';
-let interviewStep = 0;
 await context.route('**/api/**', async route => {
   const url = new URL(route.request().url());
   if (url.pathname.endsWith('/api/auth/get-session')) return route.fulfill({ json: null });
@@ -54,15 +52,6 @@ await context.route('**/api/**', async route => {
     }
     return route.fulfill({ json: { text: transcribeText } });
   }
-  if (url.pathname.endsWith('/api/contact/interview')) {
-    const body = route.request().postDataJSON();
-    interviewRequests.push({ body, authorization: route.request().headers().authorization });
-    interviewStep++;
-    if (body.finish || body.history.length >= 1) {
-      return route.fulfill({ json: { status: 'ready', kind: 'improvement', question: '', recommendation: '', summary: '改善の要望です。\n困っていること: 品目入力までの操作が多い。\n期待すること: 少ない操作で入力したい。\n再現条件: 未確認。' } });
-    }
-    return route.fulfill({ json: { status: 'ask', kind: 'improvement', question: 'どの場面で一番手間に感じますか？', recommendation: '品目を入力するために何度も操作する場面です。', summary: '' } });
-  }
   if (url.pathname.endsWith('/api/contact')) {
     const body = route.request().postDataJSON();
     contactRequests.push({ body, authorization: route.request().headers().authorization });
@@ -71,9 +60,9 @@ await context.route('**/api/**', async route => {
       contactFailure = null;
       return route.fulfill({ status: 503, json: { error } });
     }
-    if (body.message.includes('改善')) return route.fulfill({ json: { kind: 'improvement', reply: '改善のご要望を受け付けました。', issueUrl: 'https://github.com/example/project/issues/123' } });
-    if (body.message.includes('不具合')) return route.fulfill({ json: { kind: 'bug', reply: '不具合の報告を受け付けました。', issueUrl: 'https://github.com/example/project/issues/124' } });
-    return route.fulfill({ json: { kind: 'question', reply: 'お問い合わせありがとうございます。', issueUrl: null } });
+    const kind = body.kind;
+    const reply = kind === 'improvement' ? '改善のご要望を受け付けました。' : kind === 'bug' ? '不具合の報告を受け付けました。' : 'お問い合わせありがとうございます。';
+    return route.fulfill({ json: { feedbackId: 'synthetic-feedback-id', kind, reply, issueUrl: null } });
   }
   return route.fulfill({ json: {} });
 });
@@ -92,9 +81,10 @@ try {
   await page.goto(process.env.PWA_E2E_URL);
   await page.getByText('今月の支出 ¥0', { exact: false }).waitFor();
   await openContact();
-  await page.getByText(/音声と文章はGoogleに送信されます/).waitFor();
+  await page.getByText(/内部Inboxに保存され、GitHubへ公開されません/).waitFor();
 
   // Question submissions stay in the contact flow and carry only the typed message.
+  await page.locator('#contact-kind').selectOption('question');
   await page.locator('#contact-message').fill('使い方について質問です');
   if (process.env.PWA_CONTACT_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_CONTACT_SCREENSHOT_PATH, fullPage: true });
   if (process.env.PWA_CONTACT_DARK_SCREENSHOT_PATH) {
@@ -104,101 +94,40 @@ try {
   }
   await send();
   await page.getByText('お問い合わせありがとうございます。', { exact: true }).waitFor();
-  assert.equal(await page.locator('#contact-issue-link').isVisible(), false);
   const questionId = contactRequests.at(-1).body.flowId;
   assert.match(questionId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  assert.deepEqual(Object.keys(contactRequests.at(-1).body).sort(), ['flowId', 'message']);
+  assert.deepEqual(Object.keys(contactRequests.at(-1).body).sort(), ['flowId', 'kind', 'message']);
+  assert.equal(contactRequests.at(-1).body.kind, 'question');
   assert.equal(contactRequests.at(-1).authorization, 'Bearer synthetic-contact-token');
   await send();
   assert.equal(contactRequests.at(-1).body.flowId, questionId, 'unchanged resubmission keeps its flow ID');
 
-  // Editing creates a new flow ID. Improvement reports can return a GitHub issue link.
+  // The selected kind is submitted to an internal inbox; no GitHub link is returned.
+  await page.locator('#contact-kind').selectOption('improvement');
   await page.locator('#contact-message').fill('改善の要望です');
   await send();
   await page.getByText('改善のご要望を受け付けました。', { exact: true }).waitFor();
   assert.notEqual(contactRequests.at(-1).body.flowId, questionId);
-  assert.equal(await page.locator('#contact-issue-link').getAttribute('href'), 'https://github.com/example/project/issues/123');
-
-
-  // Optional guided interview asks one plain-language question at a time and requires final user approval.
-  await page.locator('#contact-message').fill('改善したいけれど、入力が面倒です');
-  await page.locator('#contact-interview-optin').check();
-  await page.locator('#contact-diagnostics-optin').check();
-  assert.equal(await button('詳しくしてから送信').isEnabled(), true);
-  await button('詳しくしてから送信').click();
-  await page.getByText('どの場面で一番手間に感じますか？', { exact: true }).waitFor();
-  assert.equal(await page.getByText('品目を入力するために何度も操作する場面です。', { exact: true }).count(), 1);
-  assert.equal(interviewRequests.at(-1).body.history.length, 0);
-  assert.equal(interviewRequests.at(-1).body.finish, false);
-  const diagnostic = interviewRequests.at(-1).body.diagnostic;
-  assert.equal(diagnostic.version, 1);
-  assert.equal(diagnostic.currentScreen, 'settings');
-  assert.equal(diagnostic.network, 'online');
-  assert.equal(Array.isArray(diagnostic.events), true);
-  assert.equal(diagnostic.events.some(event => event.screen === 'contact'), false, 'support-screen events are excluded from the attached pre-contact context');
-  assert.equal(JSON.stringify(diagnostic).includes('改善したいけれど、入力が面倒です'), false, 'diagnostics never contain the user report text');
-  await button('おすすめを使う').click();
-  assert.equal(await page.locator('#contact-interview-answer').inputValue(), '品目を入力するために何度も操作する場面です。');
-  await button('回答して続ける').click();
-  await page.getByRole('heading', { name: '送信内容を確認', exact: true }).waitFor();
-  assert.equal(interviewRequests.at(-1).body.history.length, 1);
-  assert.deepEqual(interviewRequests.at(-1).body.history[0], {
-    question: 'どの場面で一番手間に感じますか？',
-    answer: '品目を入力するために何度も操作する場面です。',
-  });
-  assert.equal(await page.locator('#contact-review-message').inputValue(), '改善の要望です。\n困っていること: 品目入力までの操作が多い。\n期待すること: 少ない操作で入力したい。\n再現条件: 未確認。');
-  const confirmedMessage = '改善したいけれど、入力が面倒です。利用者が確認して追記した内容です。';
-  await page.locator('#contact-review-message').fill(confirmedMessage);
-  assert.equal(await page.locator('#contact-message').inputValue(), '改善したいけれど、入力が面倒です', 'AI summary and review edits do not overwrite the original report');
-  const beforeApprove = contactRequests.length;
-  assert.equal(contactRequests.length, beforeApprove, 'interview does not publish before explicit approval');
-  contactFailure = 'issue_submission_failed';
-  await button('この内容で送信する').click();
-  await page.getByText('お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。', { exact: true }).waitFor();
-  const refinedFlowId = contactRequests.at(-1).body.flowId;
-  assert.equal(contactRequests.at(-1).body.message, confirmedMessage);
-  assert.equal(await page.locator('#contact-review-message').inputValue(), confirmedMessage, 'failed submission keeps the confirmed text for retry');
-  await button('この内容で送信する').click();
-  await page.getByText('改善のご要望を受け付けました。', { exact: true }).waitFor();
-  const refined = contactRequests.at(-1).body;
-  assert.equal(refined.flowId, refinedFlowId, 'retry uses the same flow ID to prevent duplicate issues');
-  assert.equal(refined.originalMessage, '改善したいけれど、入力が面倒です');
-  assert.equal(refined.message, confirmedMessage);
-  assert.equal(refined.message, confirmedMessage, 'the edited final text is sent as written by the user');
-  assert.deepEqual(Object.keys(refined).sort(), ['diagnostic', 'flowId', 'message', 'originalMessage']);
-  assert.deepEqual(refined.diagnostic, diagnostic);
-  assert.equal(JSON.stringify(refined.diagnostic).includes('品目を入力するために何度も操作する場面です。'), false);
-  assert.equal(await page.locator('#contact-result-message').innerText(), confirmedMessage, 'success displays the final user-confirmed text');
-  assert.equal(await page.locator('#contact-message').inputValue(), '改善したいけれど、入力が面倒です', 'success does not replace the original report with the AI summary');
+  assert.equal(await page.locator('#contact-inbox-note').isVisible(), true);
+  assert.equal(await page.locator('#contact-result-message').innerText(), '改善の要望です');
+  assert.equal(await page.locator('#contact-feedback-id').innerText(), '受付番号: synthetic-feedback-id');
+  assert.equal(await page.locator('#contact-issue-link').count(), 0);
   if (process.env.PWA_CONTACT_RESULT_SCREENSHOT_PATH) {
     await page.screenshot({ path: process.env.PWA_CONTACT_RESULT_SCREENSHOT_PATH, fullPage: true });
   }
-  assert.equal(interviewRequests.every(value => value.authorization === 'Bearer synthetic-contact-token'), true);
-  await page.locator('#contact-interview-optin').uncheck();
-  await page.locator('#contact-diagnostics-optin').uncheck();
+  await page.locator('#contact-diagnostics-optin').check();
 
   // Definite failures preserve the text and flow ID for a retry.
+  await page.locator('#contact-kind').selectOption('bug');
   await page.locator('#contact-message').fill('不具合の報告です');
-  contactFailure = 'issue_submission_failed';
+  contactFailure = 'temporarily_unavailable';
   await send();
-  await page.getByText('お問い合わせを登録できませんでした。文章はこの画面内に残っています。時間をおいて再度お試しください。', { exact: true }).waitFor();
+  await page.getByText('現在送信できません。文章はこの画面内に残っています。時間をおいて再度お試しください。', { exact: true }).waitFor();
   const retryId = contactRequests.at(-1).body.flowId;
   assert.equal(await page.locator('#contact-message').inputValue(), '不具合の報告です');
   await send();
   assert.equal(contactRequests.at(-1).body.flowId, retryId);
   await page.getByText('不具合の報告を受け付けました。', { exact: true }).waitFor();
-
-  // Ambiguous GitHub results fail closed and require an edit to start a new flow.
-  await page.locator('#contact-message').fill('GitHubの登録結果が不明です');
-  contactFailure = 'issue_submission_unknown';
-  await send();
-  await page.getByText('登録結果を確認できませんでした。重複を避けるため再登録を止めています。GitHubの課題一覧をご確認ください。', { exact: true }).waitFor();
-  assert.equal(await button('送信する').isDisabled(), true);
-  assert.equal(await page.locator('#contact-issues-link').getAttribute('href'), 'https://github.com/RyoyaYahagi/KakeiMatch/issues');
-  const blockedId = contactRequests.at(-1).body.flowId;
-  await page.locator('#contact-message').fill('GitHubの登録結果が不明です。確認後に再送します');
-  await send();
-  assert.notEqual(contactRequests.at(-1).body.flowId, blockedId);
 
   // Navigation keeps the draft. Stopping a recording automatically transcribes it; a failed transcription can retry the retained audio.
   await page.locator('#contact-message').fill('下書きは移動後も残ります');
@@ -222,6 +151,7 @@ try {
   assert.equal(audioRequest.body.audioBase64, 'GkXfow==');
   assert.equal(audioRequest.body.contentType, 'audio/webm');
   assert.equal(audioRequest.authorization, 'Bearer synthetic-contact-token');
+  await page.locator('#contact-kind').selectOption('question');
   await send();
   await page.getByText('お問い合わせありがとうございます。', { exact: true }).waitFor();
   assert.notEqual(contactRequests.at(-1).body.flowId, audioRequest.body.flowId, 'transcription and message submission use separate flow IDs');
@@ -268,9 +198,9 @@ try {
   assert.equal(await page.evaluate(() => window.__contactMedia.stoppedTracks), 6, 'recording stops automatically after 60 seconds');
   assert.deepEqual(errors, []);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  console.log('PASS: contact consent, guided interview approval and edited-text retention, automatic transcription retries with stable IDs, overlong-result recovery, draft retention, recorder errors, and microphone cleanup on navigation.');
+  console.log('PASS: internal inbox consent, selected kind, stable retry IDs, automatic transcription retries, overlong-result recovery, draft retention, recorder errors, and microphone cleanup on navigation.');
 } catch (error) {
   console.log(await page.locator('body').innerText());
-  console.log('Synthetic requests:', { contact: contactRequests, transcribe: transcribeRequests, interview: interviewRequests });
+  console.log('Synthetic requests:', { contact: contactRequests, transcribe: transcribeRequests });
   throw error;
 } finally { await browser.close(); }
