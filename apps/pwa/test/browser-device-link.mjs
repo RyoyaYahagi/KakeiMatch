@@ -71,7 +71,7 @@ try {
 
   // Chosen on the first device, so the second asks before replacing its household.
   await dialogA.getByRole('button', { name: 'この端末の家計簿にそろえる', exact: true }).click();
-  await dialogB.getByText('受け取った家計簿で、この端末の家計簿を置き換えますか？元の家計簿は「切り替え前の家計データに戻る」で戻せます。', { exact: true }).waitFor({ timeout: 30_000 });
+  await dialogB.getByText('受け取った家計簿で、この端末の家計簿を置き換えますか？元の家計簿は「変更前のデータに戻す」で戻せます。', { exact: true }).waitFor({ timeout: 30_000 });
   const reload = b.waitForEvent('load');
   await dialogB.getByRole('button', { name: '置き換える', exact: true }).click();
   await dialogA.getByText('相手の端末の家計簿を、この端末の家計簿にそろえました。', { exact: true }).waitFor({ timeout: 30_000 });
