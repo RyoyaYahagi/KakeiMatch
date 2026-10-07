@@ -363,7 +363,7 @@ function renderUsage(usage: UsageResponse) {
     meter.style.setProperty('--usage', `${Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100))}%`);
     return;
   }
-  const planName = usage.plan === 'family' ? 'Family' : usage.plan === 'pro' ? 'Pro' : 'Free';
+  const planName = usage.plan === 'family' ? 'Plus' : usage.plan === 'pro' ? 'Pro' : 'Free';
   usageSummary.textContent = usage.limit === null
     ? `今月の読み取り ${usage.used}回 · ${planName} · 上限なし`
     : `今月の読み取り ${usage.used} / ${usage.limit}回 · ${planName}`;

@@ -125,7 +125,7 @@ node workers/ai-gateway/scripts/account-invite.mjs invite "$account_email" "$acc
 unset ACCOUNT_BOOTSTRAP_SECRET account_email account_name
 ```
 
-本人が招待URLからPasskey / Face IDを登録してログインします。家族の招待にも同じ手順を使えます。Familyの付与には既存の `account:set-plan` を使い、本人の明示指示なしに実ユーザーのplanを変更しません。
+本人が招待URLからPasskey / Face IDを登録してログインします。家族の招待にも同じ手順を使えます。Plus（内部ID `family`）の付与には既存の `account:set-plan` を使い、本人の明示指示なしに実ユーザーのplanを変更しません。
 
 実家計データを使わず、「テストマート、牛乳220円、パン180円、合計400円」の合成レシート画像で確認します。Gemini解析は利用量が1回増え、同じflowのJevカテゴリ提案では増えず、明示的な再解析ではさらに1回増えることを確認します。
 
@@ -150,7 +150,7 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 
 ## サービス全体のAI費用制限（Issue #56）
 
-`0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Familyにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
+`0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Plusにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
 
 ## お問い合わせの導入
 

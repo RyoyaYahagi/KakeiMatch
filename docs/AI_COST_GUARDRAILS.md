@@ -1,6 +1,6 @@
 # AI費用の停止と再開
 
-サービス全体のAI停止は、利用者の製品利用枠とは独立して動作します。Familyも対象です。停止中も端末内の家計簿、レシート、手入力、明細取込、照合、バックアップは利用できます。#117の計測テーブルを共通の正本に使います。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)、[実装: PWA](../apps/pwa/src/local-receipts.ts)
+サービス全体のAI停止は、利用者の製品利用枠とは独立して動作します。Plusも対象です。停止中も端末内の家計簿、レシート、手入力、明細取込、照合、バックアップは利用できます。#117の計測テーブルを共通の正本に使います。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)、[実装: PWA](../apps/pwa/src/local-receipts.ts)
 
 ## 判定と設定
 
@@ -83,4 +83,4 @@ WHERE provider='gemini';
 
 Workerの更新前に `0005_ai_global_guardrails.sql` を適用してください。#56適用前のコスト不明イベントには、Gemini 0.05 USD・Jev 0.005 USDの初期予約額を付けます。実料金の推測値として既存イベントを書き換えません。新しいフローは送信前の予約と送信済みの状態を区別し、停止した要求では製品利用枠を消費しません。中断した未送信予約は120秒後に回収します。追加するのは既存コストイベントの予約額、フローの送信状態、provider停止状態です。#117の0004も必要です。旧Workerへ戻すとglobal guardrailは適用されなくなるため、ロールバック中のAIは運用上停止してください。追加テーブル・列は残します。[migration: 0005](../workers/ai-gateway/migrations/0005_ai_global_guardrails.sql)
 
-ローカル検証では合成要求を並行送信し、Familyと複数アカウントを含む要求数・費用上限、処理中の予約、失敗・不明件数、緊急停止、運用者の再開を確認します。PWAでは停止応答を模擬し、画像を保持した手入力を確認します。実provider・請求書・本番停止の確認は別途運用者が行います。[テスト: worker.test.ts](../workers/ai-gateway/src/worker.test.ts)
+ローカル検証では合成要求を並行送信し、Plusと複数アカウントを含む要求数・費用上限、処理中の予約、失敗・不明件数、緊急停止、運用者の再開を確認します。PWAでは停止応答を模擬し、画像を保持した手入力を確認します。実provider・請求書・本番停止の確認は別途運用者が行います。[テスト: worker.test.ts](../workers/ai-gateway/src/worker.test.ts)
