@@ -873,6 +873,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const previousDataDir = dataDirFor();
         let importStarted = false;
         let importResolved = false;
+        let succeeded = false;
         let failure: Error | undefined;
         try {
           await activateDataDir(api, runtime, dataDir);
@@ -885,6 +886,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           const found = (await localBudgets(api)).find((budget) => budget.id === imported.id);
           if (!found) throw new ActualBrowserUnavailableError("invalid_data");
           await Promise.all([api.getAccounts(), api.getCategories()]);
+          succeeded = true;
           return imported.id;
         } catch (error) {
           if (importStarted) {
@@ -904,7 +906,10 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           throw failure;
         } finally {
           try {
-            if (runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
+            // Restarting the engine on the previous directory takes as long as the import itself, and
+            // after a restore the page reloads into the new one. Every other operation switches back to
+            // the configured directory first (withBudget), so a success leaves it to them.
+            if (!succeeded && runtime.dataDir !== previousDataDir) await activateDataDir(api, runtime, previousDataDir);
           } catch (reactivationError) {
             // The coordinator relies on these error types to protect occupied targets
             // and remember an import that may have left unenumerable data.

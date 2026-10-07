@@ -250,8 +250,12 @@ describe("Actual browser ledger", () => {
     });
     expect(selectedBudget.current).toBe("budget");
     expect(saveBudgetId).not.toHaveBeenCalled();
+    // A success does not restart the engine on the previous directory; the next operation does.
+    expect(api.init).toHaveBeenLastCalledWith({ dataDir: "/restored/profile-1" });
+    await ledger.exportBackup();
     expect(api.shutdown).toHaveBeenCalled();
     expect(api.init).toHaveBeenLastCalledWith({ dataDir: "/documents" });
+    expect(api.loadBudget).toHaveBeenLastCalledWith("budget");
   });
 
   it("removes budgets imported into the restore directory when validation fails", async () => {

@@ -174,7 +174,7 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
     }
     async function replace(snapshot: Blob) {
       restoring = true; closeButton.disabled = true;
-      show(text('p', '家計簿を切り替えています。この画面を閉じずにお待ちください。'));
+      show(text('p', '家計簿を切り替えています。数秒かかります。この画面を閉じずにお待ちください。'));
       try {
         await restoreLocalBackup(snapshot, ledger);
         const peer = peerSummary;
