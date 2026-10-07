@@ -54,11 +54,13 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 try {
   await page.goto(process.env.PWA_E2E_URL);
   await page.getByText('今月の支出 ¥0', { exact: false }).waitFor();
-  await page.locator('#settings-tab').click();
+  // The developer option lives in アプリ情報; the costs it reveals are in ログイン・利用状況.
+  await page.locator('#settings-tab').click(); await click('アプリ情報');
   assert.equal(await page.locator('#developer-options').isChecked(), false);
   assert.equal(requestedMonths.length, 0, 'costs are not requested when developer options are off');
 
   await page.locator('#developer-options').check();
+  await click('設定へ戻る'); await click('ログイン・利用状況');
   await page.getByText('合計 US$1.234567', { exact: true }).waitFor();
   await page.getByText('料金を確定できない要求が2件あります。合計には計測できた料金だけを含みます。', { exact: true }).waitFor();
   await page.getByText('3件 · 入力 1,200 / 出力 300 トークン · US$1.00', { exact: true }).waitFor();
@@ -81,7 +83,7 @@ try {
   await click('ログアウト');
   await page.getByText('未ログインです。', { exact: true }).waitFor();
   await page.reload();
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await click('ログイン・利用状況');
   await page.getByText('ログインしなくても、AIの読み取りを1日5回まで使えます。', { exact: true }).waitFor();
   assert.equal(await page.locator('#developer-options').isChecked(), true, 'developer preference stays on this browser after reload');
   assert.equal(await page.locator('#developer-costs').isVisible(), false, 'costs stay inside the signed-in AI account');
@@ -89,7 +91,7 @@ try {
   await page.evaluate(() => sessionStorage.setItem('synthetic-block-developer-setting', 'true'));
   await page.reload();
   await page.getByText('今月の支出 ¥0', { exact: false }).waitFor();
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await click('アプリ情報');
   assert.equal(await page.locator('#developer-options').isChecked(), false, 'unavailable local storage falls back to the default without breaking the app');
   await page.getByText('端末設定を読み取れません。この画面を開いている間は初期設定で動作します。', { exact: true }).waitFor();
   await page.locator('#developer-options').check();

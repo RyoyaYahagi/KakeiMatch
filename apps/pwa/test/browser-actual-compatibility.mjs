@@ -123,7 +123,7 @@ try {
     await page.reload(); await ready(); await checkHousehold();
     const exported = await exportArchive();
     await importArchive(exported); await checkHousehold();
-    await settings();
+    await settings('家計簿の読み込み・切り替え');
     const navigation = page.waitForNavigation({ waitUntil: 'load' });
     page.once('dialog', dialog => dialog.accept()); await page.locator('#restore-previous').click();
     await navigation; await ready(); await checkHousehold();

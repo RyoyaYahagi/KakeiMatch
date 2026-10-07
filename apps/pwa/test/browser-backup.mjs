@@ -283,7 +283,7 @@ async function wipeLocalData() {
     assert.match(prompt.message(), /すべて削除/);
     await prompt.accept('すべて削除');
   });
-  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#local-wipe').click();
+  await page.getByRole('button', { name: '原本の整理・全削除', exact: true }).click(); await page.locator('#local-wipe').click();
   await navigation;
 }
 
@@ -331,7 +331,7 @@ try {
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
   await assertDeletedDefaultCategoryAbsent();
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '家計簿の読み込み・切り替え', exact: true }).click();
   const returnNavigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#restore-previous').click();
@@ -339,7 +339,7 @@ try {
   await waitForReady();
   const previousSnapshot = await exportSnapshot();
   assert.deepEqual(previousSnapshot, beforeCorruptImport, 'the prior profile should still be intact and selectable after staging restore');
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '家計簿の読み込み・切り替え', exact: true }).click();
   const restoreNavigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#restore-previous').click();
@@ -350,11 +350,11 @@ try {
   // Cleanup removes only image/CSV blobs; canonical rows and decisions remain.
   await page.locator('#settings-tab').click();
   page.once('dialog', dialog => dialog.accept());
-  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-image-cleanup').click();
-  await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '2件のレシート画像を削除しました。');
+  await page.getByRole('button', { name: '原本の整理・全削除', exact: true }).click(); await page.locator('#receipt-image-cleanup').click();
+  await page.waitForFunction(message => document.querySelector('#backup-cleanup-tools [role=status]')?.textContent?.includes(message), '2件のレシート画像を削除しました。');
   page.once('dialog', dialog => dialog.accept());
-  for (const summary of await page.locator('#backup-cleanup-tools:not([open]) > summary').all()) await summary.click(); await page.locator('#statement-csv-cleanup').click();
-  await page.waitForFunction(message => document.querySelector('#backup-settings [role=status]')?.textContent?.includes(message), '1件のCSV原本を削除しました。');
+  await page.locator('#statement-csv-cleanup').click();
+  await page.waitForFunction(message => document.querySelector('#backup-cleanup-tools [role=status]')?.textContent?.includes(message), '1件のCSV原本を削除しました。');
   await page.locator('#home-tab').click();
   await waitForReady();
   const cleanedSnapshot = await exportSnapshot();
@@ -374,8 +374,9 @@ try {
   assert.deepEqual(noRawRestored.renderedTransactions, cleanedSnapshot.renderedTransactions);
 
   // The profile is deliberately signed out in this fresh browser context.
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'ログイン・利用状況', exact: true }).click();
   await page.getByText(/未ログイン|AIアカウントへ接続できません/).waitFor();
+  await page.locator('#settings-tab').click();
   // Synthetic unresolved-import marker: new imports must stop even if the public list is empty.
   const incompleteKey = 'kakeimatch.incomplete-actual-restore.v1';
   const profileBeforeGuard = await page.evaluate(() => localStorage.getItem('kakeimatch.local-profile.v1'));

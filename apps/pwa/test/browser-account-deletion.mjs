@@ -53,7 +53,7 @@ try {
   await page.locator('#manual-transaction-account').selectOption({ label: 'Synthetic Wallet' });
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
 
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await click('ログイン・利用状況');
   await page.getByRole('button', { name: 'アカウントを削除', exact: true }).waitFor();
   await mkdir(dirname(screenshotPath), { recursive: true });
   await page.getByRole('button', { name: 'アカウントを削除', exact: true }).scrollIntoViewIfNeeded();
@@ -79,7 +79,7 @@ try {
   await page.locator('#transactions').getByText('Synthetic Shop', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
   assert.equal(await page.locator('#backup-export').isVisible(), true, 'local backup remains available');
-  assert.equal(await page.getByText('原本の整理・全削除', { exact: true }).isVisible(), true, 'local original management and clear-all remain available');
+  assert.equal(await page.getByRole('button', { name: '原本の整理・全削除', exact: true }).isVisible(), true, 'local original management and clear-all remain available');
   console.log(`PASS: explicit cancel and confirmation, bodyless account deletion, local synthetic ledger and backup remain available; screenshot ${screenshotPath}`);
 } catch (error) {
   const body = await page.locator('body').innerText({ timeout: 2000 }).catch(() => '<page content unavailable>');

@@ -12,7 +12,7 @@ page.on('request', request => { if (request.method() === 'POST' && request.postD
 const preview = page.locator('#diagnostics-preview');
 const readReport = async () => JSON.parse(await preview.textContent());
 const open = async () => {
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'アプリ情報', exact: true }).click();
   await page.locator('#local-diagnostics summary').click();
   await page.waitForFunction(() => document.querySelector('#diagnostics-preview')?.textContent?.startsWith('{'));
 };
@@ -67,7 +67,7 @@ try {
   });
   await futurePage.reload();
   await futurePage.getByText('この画面より新しい版の端末内データがあります。', { exact: false }).waitFor();
-  await futurePage.locator('#settings-tab').click();
+  await futurePage.locator('#settings-tab').click(); await futurePage.getByRole('button', { name: 'アプリ情報', exact: true }).click();
   await futurePage.locator('#local-diagnostics summary').click();
   await futurePage.waitForFunction(() => document.querySelector('#diagnostics-preview')?.textContent?.startsWith('{'));
   const futureReport = JSON.parse(await futurePage.locator('#diagnostics-preview').textContent());

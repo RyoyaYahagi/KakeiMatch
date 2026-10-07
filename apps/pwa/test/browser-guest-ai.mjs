@@ -64,7 +64,7 @@ try {
   await page.getByText('今月の支出 ¥0').waitFor();
 
   // Settings say AI works without an account.
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await click('ログイン・利用状況');
   await page.getByText('ログインしなくても、AIの読み取りを1日5回まで使えます。', { exact: true }).waitFor();
 
   // The first read runs the bot check once, then reads as a guest.
@@ -85,7 +85,7 @@ try {
   await page.keyboard.press('Escape');
 
   // Settings show today's count.
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await click('ログイン・利用状況');
   await page.getByText('今日のAI読み取り 1 / 5回 · 登録なし', { exact: true }).waitFor();
 
   // On a device without a guest, cancelling the bot check keeps the photo and explains what happened.

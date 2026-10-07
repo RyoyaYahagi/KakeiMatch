@@ -1397,9 +1397,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
   await initializeBackupUi(repository, ledger);
-  const ledgerTools = document.createElement('details'); ledgerTools.className = 'surface-section settings-disclosure';
-  ledgerTools.append(text('summary', '家計簿の読み込み・切り替え'), el('import-section'), el('budget-section'));
-  el('data-settings').append(ledgerTools);
+  // The "家計簿の読み込み・切り替え" page leads with switching and importing, then backup restore and where data is kept.
+  el('data-settings').prepend(el('budget-section'), el('import-section'));
   const budgetEntry = button('予算設定', budgetEditor); budgetEntry.classList.add('master-entry'); budgetEntry.setAttribute('aria-label', '予算設定'); setup.append(budgetEntry);
   const recurringEntry = button('定期登録', recurringOverview); recurringEntry.classList.add('master-entry'); recurringEntry.setAttribute('aria-label', '定期登録'); setup.append(recurringEntry);
   if (!crossOriginIsolated || typeof SharedArrayBuffer === 'undefined') { el('message').textContent = '家計簿を開くためにページを再読込してください。'; return; }

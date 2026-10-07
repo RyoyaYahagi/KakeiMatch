@@ -318,6 +318,26 @@ button.entry-row-link .icon { width: 18px; height: 18px; color: var(--muted); fi
 .settings-list > .master-entry { display: flex; align-items: center; min-height: 52px; padding: var(--space-2) 0; border-bottom: 1px solid var(--border); font-size: 1rem; }
 .settings-list > .master-entry:last-child { border-bottom: 0; }
 .settings-list > .master-entry::after { content: "›"; float: none; margin-left: auto; font-size: 1.25rem; }
+.master-entry-value { margin-left: auto; padding-left: var(--space-3); color: var(--muted); font-size: .875rem; text-align: right; }
+.settings-list > .master-entry:has(.master-entry-value)::after { margin-left: var(--space-2); }
+.settings-list > .master-entry.destructive-text { color: var(--danger); }
+.backup-quick { padding: var(--space-3) 0; }
+.backup-quick-actions > p { margin: 0 0 var(--space-2); }
+.backup-quick-actions > p:empty { display: none; }
+.backup-quick-buttons { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.backup-quick-buttons { align-items: stretch; }
+.backup-quick-buttons button { margin: 0; min-height: 48px; padding-block: var(--space-2); }
+.backup-quick-buttons #backup-export { flex: 2 1 0; margin: 0; }
+.backup-quick-buttons #backup-import { flex: 1 1 0; margin: 0; }
+/* docs/DESIGN.md 設定: the backup state is one short line with a mark, not a box. */
+.backup-quick-actions #backup-reminder:not(:empty) { padding: 0; background: none; color: var(--warning); font-size: .875rem; }
+.backup-quick-actions #backup-reminder:not(:empty)::before { content: "△ "; }
+.backup-quick-actions #last-export { font-size: .875rem; color: var(--muted); }
+.backup-quick-actions #last-export:has(+ #backup-reminder:not(:empty)) { display: none; }
+.settings-page { display: grid; gap: var(--space-3); }
+.settings-page > .page-title { margin: 0; }
+.settings-page > .page-title:focus { outline: none; }
+.settings-foot { margin: var(--space-4) var(--space-1); font-size: .8125rem; color: var(--muted); }
 .settings-stack { display: flex; flex-direction: column; gap: var(--space-3); }
 .storage-location { padding: var(--space-4) 0; }
 .storage-location h4 { margin: 0 0 var(--space-2); font-size: 1rem; }

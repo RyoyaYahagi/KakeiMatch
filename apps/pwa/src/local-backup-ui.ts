@@ -7,8 +7,14 @@ const text = (tag: string, value: string) => { const element = document.createEl
 const bytes = (size: number) => `${(size / 1024 / 1024).toFixed(1)} MiB`;
 
 export async function initializeBackupUi(repository: LocalDataRepository, ledger: BackupLedger): Promise<void> {
+  // docs/UX.md 設定: backup actions sit on the settings screen; restore help and cleanup tools are on their own pages.
   const section = document.createElement('section'); section.id = 'backup-settings';
-  const status = text('p', ''); status.setAttribute('role', 'status');
+  const ledgerPanel = document.createElement('section'); ledgerPanel.id = 'backup-restore'; ledgerPanel.className = 'surface-section settings-panel';
+  const cleanupPanel = document.createElement('section'); cleanupPanel.id = 'backup-cleanup-tools'; cleanupPanel.className = 'surface-section settings-panel';
+  const statusLine = () => { const line = text('p', ''); line.setAttribute('role', 'status'); return line; };
+  const statuses = new Map<Element, HTMLElement>([[section, statusLine()], [ledgerPanel, statusLine()], [cleanupPanel, statusLine()]]);
+  // Messages appear in the part of the screen where the action was started.
+  let status = statuses.get(section)!;
   const exportDate = text('p', ''); exportDate.id = 'last-export';
   const reminder = text('p', ''); reminder.id = 'backup-reminder';
   const capacity = text('p', '');
@@ -20,7 +26,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     if (running) return;
     running = true;
     // Household controls stay inert during the snapshot/switch; account operations are independent.
-    const targets = [document.querySelector('nav'), document.getElementById('household-view'), document.getElementById('local-view'), document.getElementById('local-settings'), section];
+    const targets = [document.querySelector('nav'), document.getElementById('household-view'), document.getElementById('local-view'), document.getElementById('local-settings'), section, ledgerPanel, cleanupPanel];
     for (const target of targets) target?.setAttribute('inert', '');
     status.textContent = '処理しています。この画面を閉じずにお待ちください。';
     try { await action(); } catch (error) { recordLocalDiagnostic(feature, error); status.textContent = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '処理に失敗しました。元のデータを確認してください。'; }
@@ -28,7 +34,7 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
   };
   const button = (id: string, label: string, action: () => Promise<void>, primary = false) => {
     const element = document.createElement('button'); element.type = 'button'; element.id = id; element.textContent = label; element.className = primary ? '' : 'secondary';
-    element.addEventListener('click', () => { void run(action, id === 'backup-export' ? 'backup' : id === 'restore-previous' ? 'restore' : 'save'); }); return element;
+    element.addEventListener('click', () => { status = statuses.get([...statuses.keys()].find(area => area.contains(element)) ?? section)!; void run(action, id === 'backup-export' ? 'backup' : id === 'restore-previous' ? 'restore' : 'save'); }); return element;
   };
   const cleanupInfo = text('p', '');
   async function refresh() {
@@ -66,20 +72,27 @@ export async function initializeBackupUi(repository: LocalDataRepository, ledger
     button('statement-csv-cleanup', '取込元CSVを削除', async () => { await refresh(); if (!window.confirm(`${cleanupInfo.textContent}\n取り込み済みのCSV原本を削除しますか？後から原本を確認できなくなります。`)) return; const result = await cleanupStatementCsv(repository); await refresh(); status.textContent = `${result.deletedCount}件のCSV原本を削除しました。明細行と照合結果は残っています。`; }),
     text('h3', 'この端末の家計データをすべて削除'), text('p', '切り替え前のデータと復元途中のデータを含め、このサイトの端末内家計簿・レシート・画像・明細・照合・設定を削除します。バックアップがなければ復旧できません。アカウント・Passkey・契約・AI利用権限には影響しません。'),
     button('local-wipe', 'この端末の家計データをすべて削除', async () => { if (!window.confirm('この端末の家計データをすべて削除します。バックアップがなければ復旧できません。続けますか？')) return; if (window.prompt('削除を確定するには「すべて削除」と入力してください。') !== 'すべて削除') { status.textContent = '削除を取り消しました。'; return; } await wipeLocalHousehold(repository, ledger); location.reload(); }), status);
-  // docs/UX.md 設定: everyday backup actions stay visible; explanations and destructive tools are folded.
-  section.className = 'surface-section settings-panel';
-  const firstToolHeading = section.querySelector('h3')!;
+  section.className = 'backup-quick-actions';
   const children = Array.from(section.children);
-  const statusLines = new Set<Element>([exportDate, reminder, capacity, incompleteWarning, status]);
+  const at = (node: Element) => children.indexOf(node);
+  const exportButton = section.querySelector('#backup-export')!;
+  const importButton = section.querySelector('#backup-import')!;
+  const restoreButton = section.querySelector('#restore-previous')!;
+  const cleanupHeading = children.find(child => child.tagName === 'H3')!;
+  // Side by side the import button keeps a short label; its spoken name stays complete.
+  importButton.textContent = '読み込む'; importButton.setAttribute('aria-label', 'バックアップを読み込む');
+  const actions = document.createElement('div'); actions.className = 'backup-quick-buttons'; actions.append(exportButton, importButton);
+  const explanations = children.slice(1, at(cleanupHeading)).filter(child => child.tagName === 'P' && ![exportDate, reminder, capacity, incompleteWarning, status].includes(child as HTMLElement));
   const about = document.createElement('details'); about.className = 'settings-inner-disclosure';
-  about.append(text('summary', 'バックアップについて'), ...children.slice(1, children.indexOf(firstToolHeading)).filter(child => child.tagName === 'P' && !statusLines.has(child)));
-  const tools = document.createElement('details'); tools.className = 'settings-inner-disclosure danger-zone'; tools.id = 'backup-cleanup-tools';
-  tools.append(text('summary', '原本の整理・全削除'), ...children.slice(children.indexOf(firstToolHeading), children.indexOf(status)));
-  section.append(about, tools);
-  section.querySelector('#restore-previous')!.after(status);
-  document.getElementById('data-settings')!.append(section);
+  about.append(text('summary', 'バックアップについて'), capacity, ...explanations);
+  ledgerPanel.append(text('h3', 'バックアップと復元'), restoreButton, statuses.get(ledgerPanel)!, about);
+  cleanupPanel.append(...children.slice(at(cleanupHeading)).filter(child => child !== status), statuses.get(cleanupPanel)!);
+  section.replaceChildren(exportDate, reminder, incompleteWarning, actions, input, statuses.get(section)!);
+  document.getElementById('backup-quick')!.append(section);
+  document.getElementById('data-settings')!.append(ledgerPanel);
+  document.getElementById('cleanup-host')!.append(cleanupPanel);
   (document.getElementById('restore-previous') as HTMLButtonElement).disabled = !localStorage.getItem(PREVIOUS_PROFILE_KEY);
-  input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); recordLocalDiagnostic('restore'); location.reload(); }, 'restore'); });
-  document.getElementById('settings-tab')!.addEventListener('click', () => { void refresh().catch(error => { status.textContent = error instanceof Error ? error.message : '保存状況を確認できません。'; }); });
+  input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; status = statuses.get(section)!; void run(async () => { if (!window.confirm('バックアップを新しい保存先へ復元し、成功後に切り替えますか？元の家計データは端末に残ります。')) return; await restoreLocalBackup(file, ledger); recordLocalDiagnostic('restore'); location.reload(); }, 'restore'); });
+  document.getElementById('settings-tab')!.addEventListener('click', () => { void refresh().catch(error => { status = statuses.get(section)!; status.textContent = error instanceof Error ? error.message : '保存状況を確認できません。'; }); });
   await refresh();
 }
