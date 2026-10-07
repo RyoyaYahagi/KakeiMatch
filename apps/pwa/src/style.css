@@ -109,19 +109,22 @@ li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .surface-section { background: transparent; border-block: 1px solid var(--border); border-radius: 0; padding: var(--space-4) 0; }
 .surface-section h2 { margin: 0; font-size: .9375rem; }
 
-/* Buttons: primary by default, then secondary / text / destructive.
-   docs/DESIGN.md ボタン: only the primary button is filled; the others carry no frame or fill. */
-button { font: inherit; min-height: 44px; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-md); background: var(--primary); color: var(--on-primary); font-weight: 700; cursor: pointer; word-break: keep-all; overflow-wrap: anywhere; transition: transform .08s ease, background-color .12s ease; }
+/* Buttons (docs/DESIGN.md ボタン): only `.primary` is filled. A button without a class
+   carries no frame or fill, so a forgotten class never adds another filled block. */
+button { font: inherit; min-height: 44px; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--primary); font-weight: 700; cursor: pointer; word-break: keep-all; overflow-wrap: anywhere; transition: transform .08s ease, background-color .12s ease; }
 @supports (word-break: auto-phrase) { button { word-break: auto-phrase; } }
 button:disabled { opacity: .55; cursor: default; }
+button.primary { background: var(--primary); color: var(--on-primary); }
+button.primary:active:not(:disabled) { background: var(--primary-press); transform: translateY(1px) scale(.985); }
+button.primary:disabled { opacity: 1; background: var(--sunken); color: var(--muted); }
 .secondary { background: transparent; color: var(--primary); border: 0; padding-inline: var(--space-2); font-weight: 700; margin: var(--space-2) var(--space-2) 0 0; }
 .text-button { background: transparent; color: var(--primary); padding: var(--space-1) var(--space-2); font-weight: 500; }
 button.destructive { background: transparent; color: var(--danger); border: 0; padding-inline: var(--space-2); font-weight: 700; }
 .secondary:active:not(:disabled), .text-button:active:not(:disabled) { background: var(--primary-soft); }
 button.destructive:active:not(:disabled) { background: var(--danger-soft); }
-/* Unclassed buttons are the filled primary ones, except where a container restyles its buttons. */
-:where(button:not([class]), button[class=""]):not(.segmented button, .master-row button, .record-list button, .date-shortcuts button):active:not(:disabled) { background: var(--primary-press); transform: translateY(1px) scale(.985); }
-:where(button:not([class]), button[class=""]):not(.segmented button, .master-row button, .record-list button, .date-shortcuts button):disabled { opacity: 1; background: var(--sunken); color: var(--muted); }
+/* A secondary or destructive button may lead with an icon (docs/DESIGN.md ボタン). */
+:is(.secondary, button.destructive):has(> .icon) { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
+:is(.secondary, button.destructive) > .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 form button { margin-top: var(--space-5); }
 .note-edit { background: transparent; color: var(--primary); border: 1px solid var(--border-strong); margin-top: var(--space-2); min-height: 36px; font-weight: 500; }
 

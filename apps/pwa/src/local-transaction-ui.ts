@@ -174,7 +174,7 @@ export function showManualTransactionEditor(options: {
     const memoLabel = fieldLabel('label', 'メモ（任意）', 'manual-transaction-memo');
     const memo = node('textarea'); memo.id = memoLabel.htmlFor; memo.maxLength = 2000; memo.value = draftSnapshot?.memo ?? transaction?.memo ?? '';
 
-    const submit = node('button', editing ? '変更を保存する' : '登録する');
+    const submit = node('button', editing ? '変更を保存する' : '登録する', 'primary');
     submit.type = 'submit';
     const cancel = node('button', 'キャンセル', 'secondary');
     cancel.type = 'button';

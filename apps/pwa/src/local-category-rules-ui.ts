@@ -1,5 +1,6 @@
 import { LocalCategoryLearning, type LocalCategoryRule } from './local-category-learning';
 import { backLink } from './settings-ui';
+import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
@@ -25,7 +26,7 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
   const list = node('section', undefined, 'surface-section settings-rows category-rule-list');
   const listTitle = node('h3', '自動で学習した分類', 'settings-group-title');
   const ul = node('ul'); list.append(ul);
-  const reset = node('button', 'すべての変更をリセット', 'secondary');
+  const reset = node('button', 'すべての変更をリセット', 'secondary'); reset.prepend(icon('repeat'));
   reset.type = 'button';
   reset.addEventListener('click', () => {
     if (!window.confirm('分類ルールへの変更をすべてリセットしますか？学習履歴は残り、ルールは履歴から再計算されます。')) return;
@@ -87,7 +88,7 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
     select.replaceChildren(...categories.map(category => new Option(category.name, category.id)));
     select.value = rule.categoryId;
     categoryLabel.append(select);
-    const save = node('button', 'カテゴリを変更', 'secondary'); save.type = 'button';
+    const save = node('button', 'カテゴリを変更', 'secondary'); save.type = 'button'; save.prepend(icon('pencil'));
     save.disabled = true;
     const originalCategory = rule.categoryId;
     const updateSave = () => { save.disabled = !select.value || select.value === originalCategory; };

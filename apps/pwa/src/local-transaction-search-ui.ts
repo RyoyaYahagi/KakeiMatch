@@ -72,8 +72,8 @@ export async function showTransactionSearch(options: {
   fields.append(kindLabelNode, kind, categoryLabel, category, accountLabel, account, minLabel, min, maxLabel, max);
   details.append(fields); details.open = false;
   form.append(details);
-  const submit = node('button', '検索する'); submit.type = 'submit'; form.append(submit);
-  const clear = node('button', '条件をすべて解除'); clear.type = 'button'; clear.className = 'secondary'; form.append(clear);
+  const submit = node('button', '検索する'); submit.type = 'submit'; submit.className = 'primary'; form.append(submit);
+  const clear = node('button', '条件をすべて解除'); clear.type = 'button'; clear.className = 'secondary'; clear.prepend(icon('close')); form.append(clear);
   const active = node('p'); active.className = 'transaction-search-active visually-hidden'; active.setAttribute('aria-live', 'polite'); form.append(active);
   submit.className = 'search-submit'; clear.className = 'text-button';
   view.append(form);
