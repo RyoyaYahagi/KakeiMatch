@@ -1,6 +1,6 @@
 /* Design tokens: docs/DESIGN.md. Screens use these variables instead of raw values. */
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
   --bg: #FAF6F1;
   --surface: #FFFFFF;
   --sunken: #F3EBE1;
@@ -45,8 +45,8 @@
   color: var(--text);
   background: var(--bg);
 }
-@media (prefers-color-scheme: dark) {
-  :root {
+:root[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #17120E;
     --surface: #221B15;
     --sunken: #2B221B;
@@ -72,7 +72,6 @@
     --c-util: #F0C150; --c-util-soft: #3A2E0E;
     --c-comm: #B3A5F5; --c-comm-soft: #241F45;
     --c-other: #A9B4AF; --c-other-soft: #262E2B;
-  }
 }
 
 /* Base */
