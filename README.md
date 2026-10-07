@@ -72,14 +72,14 @@ OCRの精度100%は目指していません。成功の基準は機能の数で�
 
 - **Passkeyログイン**: パスワードを使わず、Face IDなどでログインします。アカウントはAI機能の利用時だけ必要です
 - **AI利用枠**: 利用者ごとの月間利用回数と、サービス全体の費用上限を設けています
-- **お問い合わせ**: 音声で入力でき、不具合や改善要望はGitHub Issueとして登録されます
+- **お問い合わせ**: 音声で入力でき、問い合わせは運用担当者専用の受信箱へ保存され、担当者が確認してから必要なものを課題として登録します
 - **アカウント削除**: 本人がアカウントを削除できます。端末の家計データは削除されません
 
 ## 設計で大事にしたこと
 
 ### 家計データを端末から出さない（local-first）
 
-家計簿、レシート、明細、照合結果は利用者のブラウザー（IndexedDBとActual Budgetのブラウザー版）に保存します。サーバー側のデータベースには、本人確認、session、Passkey、AI利用量など、アカウントとAIの運用に必要な情報だけを保存します。アカウントにログインしていなくても、通信できなくても、AI以外の機能はすべて使えます。
+家計簿、レシート、明細、照合結果は利用者のブラウザー（IndexedDBとActual Budgetのブラウザー版）に保存します。サーバー側のデータベースには、アカウントとAIの運用情報に加え、明示送信された問い合わせのマスキング済み本文、暗号化した原文、管理操作の監査情報を保存します。問い合わせの本文と原文には90日の保存期限があります。アカウントにログインしていなくても、通信できなくても、AI以外の機能はすべて使えます。
 
 AIに送る情報も絞っています。レシート画像は、利用者が「AIで読み取る」を選んだときだけ送ります。カテゴリ提案には、検証済みの店名、合計金額、最大30件の品目名と金額だけを送ります。
 
@@ -119,7 +119,7 @@ flowchart TB
     Assets["PWA配信"]
     Auth["/api/auth・/api/account<br/>Better Auth + Passkey"]
     AI["/api/ai・/api/contact<br/>認証・利用枠・応答検証"]
-    D1[("D1<br/>アカウント・利用量のみ")]
+    D1[("D1<br/>アカウント・利用量・問い合わせ")]
     Auth --> D1
     AI --> D1
   end
@@ -171,7 +171,7 @@ flowchart TB
 - [記録の検索・絞り込み](docs/LOCAL_TRANSACTION_SEARCH.md)
 - [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)、[口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)、[月予算（全体／カテゴリ別）](docs/LOCAL_MONTHLY_BUDGETS.md)
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
-- [お問い合わせ](docs/CONTACT.md)と[端末内の診断](docs/LOCAL_DIAGNOSTICS.md)
+- [管理画面](docs/ADMIN.md)、[お問い合わせ](docs/CONTACT.md)と[端末内の診断](docs/LOCAL_DIAGNOSTICS.md)
 
 **データと運用**
 

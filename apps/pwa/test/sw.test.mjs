@@ -109,3 +109,10 @@ test('all API requests including GET auth/session bypass the service worker', ()
     for (const method of ['GET', 'POST']) assert.equal(context.request(path, 'cors', method), undefined);
   }
 });
+
+test('admin documents and API bypass even an installed offline shell', async () => {
+  const context = worker(); await context.lifecycle('install'); context.setOnline(false);
+  for (const path of ['/admin', '/admin/', '/admin/feedback', '/admin/ai', '/admin.html', '/api/admin/overview']) {
+    assert.equal(context.request(path, 'navigate'), undefined);
+  }
+});

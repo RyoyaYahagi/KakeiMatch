@@ -20,8 +20,10 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityDate: '2026-09-29',
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
-      assets: { runWorkerFirst: ['/api/*'] },
+      triggers: [{ type: 'scheduled', schedule: '0 18 * * *' }],
+      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html'] },
       env: {
+        ASSETS: bindings.assets(),
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),
         BETTER_AUTH_SECRET: bindings.secret(),
         ACCOUNT_BOOTSTRAP_SECRET: bindings.secret(),
@@ -34,6 +36,10 @@ export default defineConfig(({ mode, isPreview }) => {
         GEMINI_API_KEY: bindings.secret(),
         GITHUB_ISSUES_TOKEN: bindings.secret(),
         GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
+        ADMIN_USER_IDS: bindings.secret(),
+        CF_ACCESS_TEAM_DOMAIN: bindings.secret(),
+        CF_ACCESS_AUD: bindings.secret(),
+        FEEDBACK_ENCRYPTION_KEY: bindings.secret(),
         TYPESAFE_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
         // Contact AI is not counted against a plan, so it gets its own tighter limit per identity and per address.

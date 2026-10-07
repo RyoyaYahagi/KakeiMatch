@@ -19,7 +19,7 @@ function bearer(user = 'synthetic-user') {
 function request(body: unknown, path = '/api/contact', headers: Record<string,string> = {}) {
   return new Request(origin + path, { method: 'POST', headers: { origin, authorization: bearer(), 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
 }
-const message = { flowId, message: '合成テスト: 記録を追加すると保存が失敗します。' };
+const message = { flowId, kind: 'bug', message: '合成テスト: 記録を追加すると保存が失敗します。' };
 const wav = Buffer.from('RIFF0000WAVEsynthetic-audio').toString('base64');
 const audio = { flowId, audioBase64: wav, contentType: 'audio/wav' };
 const diagnostic = {
@@ -35,7 +35,6 @@ const interview = { flowId, message: '入力が面倒です', history: [], finis
 function provider(text: string, model = 'gemini-3.5-flash-lite') {
   return { model, steps: [{ type: 'model_output', content: [{ type: 'text', text }] }], usage: { total_input_tokens: 100, total_output_tokens: 20, total_tokens: 120 } };
 }
-const classification = (kind = 'bug') => provider(JSON.stringify({ kind, title: '合成テストの保存失敗', reply: '設定をご確認ください。' }));
 describe('contact Gateway with real SQLite migrations', () => {
   let sqlite: DatabaseSync; let env: GatewayEnv; let db: AccountD1Binding;
   beforeEach(() => {
@@ -45,27 +44,32 @@ describe('contact Gateway with real SQLite migrations', () => {
     sqlite.exec("INSERT INTO user(id,name,email,createdAt,updatedAt) VALUES ('synthetic-user','Synthetic','synthetic@example.test',0,0),('another-user','Another','another@example.test',0,0)");
     db = sqliteD1(sqlite);
     env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, GEMINI_API_KEY: 'synthetic-gemini',
-      GITHUB_ISSUES_TOKEN: 'synthetic-github', GITHUB_ISSUES_REPOSITORY: 'Synthetic/Contact', AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) }, CONTACT_RATE_LIMIT: { limit: async () => ({ success: true }) } };
+      GITHUB_ISSUES_TOKEN: 'synthetic-github', GITHUB_ISSUES_REPOSITORY: 'Synthetic/Contact', FEEDBACK_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64url'),
+      AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) }, CONTACT_RATE_LIMIT: { limit: async () => ({ success: true }) } };
   });
   afterEach(() => sqlite.close());
   const run = (req: Request, fetchImpl: typeof fetch) => handleRequest(req, env, { nowSeconds: () => now, fetchImpl });
-  const githubOk = () => Response.json({ number: 123, html_url: 'https://github.com/Synthetic/Contact/issues/123' }, { status: 201 });
-  it('posts a classified bug exactly once and reuses success without AI or GitHub calls', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(githubOk());
+  it('saves a sanitized inquiry to the internal Inbox and reuses the idempotent result without AI or GitHub calls', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
     const response = await run(request(message), fetchImpl);
-    expect(response.status).toBe(200); expect(await response.json()).toMatchObject({ kind: 'bug', issueUrl: 'https://github.com/Synthetic/Contact/issues/123' });
-    const post = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
-    expect(post.body).toContain(message.message); expect(post.body).not.toContain('synthetic-user'); expect(post.body).not.toContain('synthetic@example.test');
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://api.github.com/repos/Synthetic/Contact/issues');
-    expect((await run(request(message), fetchImpl)).status).toBe(200); expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const result = await response.json() as { feedbackId: string; kind: string; issueUrl: string | null };
+    expect(response.status).toBe(200); expect(result).toMatchObject({ kind: 'bug', issueUrl: null });
+    expect(result.feedbackId).toBeTruthy(); expect(fetchImpl).not.toHaveBeenCalled();
+    expect((await run(request(message), fetchImpl)).status).toBe(200); expect(fetchImpl).not.toHaveBeenCalled();
     const row = sqlite.prepare('SELECT * FROM contact_submissions').get(); expect(JSON.stringify(row)).not.toContain(message.message);
-    const costs = await monthlyCosts(db, 'synthetic-user', '2026-10'); expect(costs.providers.gemini.requests).toBe(1); expect(costs.unknownRequests).toBe(0);
+    const feedback = sqlite.prepare('SELECT message_sanitized,message_original_encrypted,retention_expires_at FROM feedback_submissions').get() as { message_sanitized: string; message_original_encrypted: string; retention_expires_at: number };
+    expect(feedback.message_sanitized).toContain(message.message);
+    expect(feedback.message_original_encrypted).not.toContain(message.message);
+    expect(feedback.retention_expires_at).toBe(now + 90 * 24 * 60 * 60);
+    const costs = await monthlyCosts(db, 'synthetic-user', '2026-10'); expect(costs.providers.gemini.requests).toBe(0);
   });
-  it.each(['improvement', 'question'])('handles %s and only creates an Issue for a concrete change', async kind => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification(kind))).mockResolvedValueOnce(githubOk());
-    const response = await run(request(message), fetchImpl); expect(response.status).toBe(200);
-    const result = await response.json() as { kind: string; issueUrl: string | null };
-    expect(result.kind).toBe(kind); expect(result.issueUrl === null).toBe(kind === 'question'); expect(fetchImpl).toHaveBeenCalledTimes(kind === 'question' ? 1 : 2);
+  it.each(['improvement', 'question'])('stores the user-selected %s kind without classifying or publishing', async kind => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const response = await run(request({ ...message, kind }), fetchImpl);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ kind, issueUrl: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sqlite.prepare('SELECT kind FROM feedback_submissions').get()).toEqual({ kind });
   });
   it('asks one non-technical interview question and can return a bounded ready summary', async () => {
     const ask = provider(JSON.stringify({ status: 'ask', kind: 'improvement', question: 'どの場面で一番手間に感じますか？', recommendation: '品目を入力する場面です。', summary: '' }));
@@ -95,23 +99,21 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect(readyResponse.status).toBe(200);
     expect((await readyResponse.json() as { status: string }).status).toBe('ready');
   });
-  it('keeps the original complaint and sanitized diagnostics beside the user-approved refined text in the GitHub issue', async () => {
-    const refined = { flowId, message: '困っていること: 保存できない。\n期待すること: 正常に保存したい。\n再現条件: 未確認。', originalMessage: '保存できなくて困っています', diagnostic };
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(githubOk());
+  it('stores the final sanitized report and diagnostics while keeping secret-stripped original encrypted', async () => {
+    const refined = { flowId, kind: 'improvement', message: '困っていること: 保存できない。\n期待すること: 正常に保存したい。\n再現条件: 未確認。', originalMessage: '保存できなくて困っています Authorization: Bearer abc.def', diagnostic };
+    const fetchImpl = vi.fn<typeof fetch>();
     const response = await run(request(refined), fetchImpl);
     expect(response.status).toBe(200);
-    const post = JSON.parse(String(fetchImpl.mock.calls[1][1]?.body));
-    expect(post.body).toContain('最初のお問い合わせ:');
-    expect(post.body).toContain(refined.originalMessage);
-    expect(post.body).toContain('深掘り後の内容:');
-    expect(post.body).toContain(refined.message);
-    expect(post.body).toContain('アプリ側で確認できた情報');
-    expect(post.body).toContain('storage');
-    expect(post.body).toContain('records');
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const stored = sqlite.prepare('SELECT message_original_encrypted,message_sanitized,diagnostic_json_sanitized FROM feedback_submissions').get() as { message_original_encrypted: string; message_sanitized: string; diagnostic_json_sanitized: string };
+    expect(stored.message_original_encrypted).not.toContain('保存できなくて困っています');
+    expect(stored.message_sanitized).toContain(refined.message);
+    expect(stored.diagnostic_json_sanitized).toContain('storage');
+    expect(stored.diagnostic_json_sanitized).toContain('records');
+    expect(stored.diagnostic_json_sanitized).not.toContain('private');
     const row = sqlite.prepare('SELECT * FROM contact_submissions').get();
     expect(JSON.stringify(row)).not.toContain(refined.originalMessage);
     expect(JSON.stringify(row)).not.toContain(refined.message);
-    expect(JSON.stringify(row)).not.toContain('storage');
   });
   it('sends Base64 audio inline with transcribe model and meters its price', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('合成の音声入力です。', 'gemini-3.5-transcribe')));
@@ -133,7 +135,7 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect((await run(request(message, '/api/contact', { authorization: '' }), fetchImpl)).status).toBe(401);
     expect((await run(request(message, '/api/contact', { origin: 'https://evil.example.test' }), fetchImpl)).status).toBe(403); expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it('enforces provider pause and rate limits, but not the receipt quota', async () => {
+  it('keeps transcription behind provider pause and rate limits, but saves final Inbox submissions without AI quota', async () => {
     const fetchImpl = vi.fn<typeof fetch>(); env.AI_EMERGENCY_STOP = 'true';
     const response = await run(request(audio, '/api/contact/transcribe'), fetchImpl); expect(response.status).toBe(503); expect(await response.json()).toEqual({ error: 'ai_temporarily_paused' });
     env.AI_EMERGENCY_STOP = 'false'; env.AI_USER_RATE_LIMIT = { limit: async () => ({ success: false }) }; expect((await run(request(message), fetchImpl)).status).toBe(429);
@@ -150,9 +152,9 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect((await run(request(audio, '/api/contact/transcribe'), transcribed)).status).toBe(200);
     expect(sqlite.prepare("SELECT kind FROM ai_receipt_flows WHERE flow_id = ?").get(audio.flowId)).toEqual({ kind: 'contact-transcribe' });
   });
-  it('fails closed for malformed AI classification, interview output and empty audio output', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('{"kind":"bug","title":"x","reply":"x","repository":"evil"}')));
-    expect((await run(request(message), fetchImpl)).status).toBe(502); expect(fetchImpl).toHaveBeenCalledTimes(1);
+  it('rejects malformed final submission kinds and invalid interview/audio provider output', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    expect((await run(request({ ...message, kind: 'not-a-kind' }), fetchImpl)).status).toBe(400); expect(fetchImpl).not.toHaveBeenCalled();
     const badInterview = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider(JSON.stringify({
       status: 'ask', kind: 'bug', question: '何が起きましたか？', recommendation: '', summary: '',
     }))));
@@ -161,38 +163,28 @@ describe('contact Gateway with real SQLite migrations', () => {
     expect((await run(request({ ...audio, flowId: crypto.randomUUID() }, '/api/contact/transcribe'), blank)).status).toBe(502);
   });
   it('binds idempotency to contents and user, rejects cross-endpoint flow replay', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification('question')));
+    const fetchImpl = vi.fn<typeof fetch>();
     expect((await run(request(message), fetchImpl)).status).toBe(200);
     expect((await run(request({ ...message, message: 'changed' }), fetchImpl)).status).toBe(409);
     expect((await run(request(audio, '/api/contact/transcribe'), fetchImpl)).status).toBe(409);
-    const another = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification('question')));
+    const another = vi.fn<typeof fetch>();
     expect((await run(request(message, '/api/contact', { authorization: bearer('another-user') }), another)).status).toBe(200);
     expect(sqlite.prepare('SELECT COUNT(*) AS n FROM contact_submissions').get()?.n).toBe(2);
+    expect(fetchImpl).not.toHaveBeenCalled(); expect(another).not.toHaveBeenCalled();
   });
-  it('serializes parallel submissions before publishing', async () => {
-    let resolve!: (response: Response) => void;
-    const fetchImpl = vi.fn<typeof fetch>().mockImplementationOnce(async () => new Promise<Response>(r => { resolve = r; })).mockResolvedValueOnce(githubOk());
-    const pending = run(request(message), fetchImpl);
-    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
-    expect((await run(request(message), fetchImpl)).status).toBe(503);
-    resolve(Response.json(classification())); expect((await pending).status).toBe(200); expect(fetchImpl).toHaveBeenCalledTimes(2);
+  it('serializes concurrent inbox submissions and never dispatches AI or GitHub', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const responses = await Promise.all([run(request(message), fetchImpl), run(request(message), fetchImpl)]);
+    expect(responses.map(response => response.status)).toEqual([200, 200]);
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM feedback_submissions').get()?.n).toBe(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
-  it.each(['network', 'server', 'malformed'])('prevents reposting after ambiguous %s failure', async failure => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification()));
-    if (failure === 'network') fetchImpl.mockRejectedValueOnce(new Error('synthetic timeout'));
-    else fetchImpl.mockResolvedValueOnce(failure === 'server' ? new Response('', { status: 503 }) : Response.json({ number: 12, html_url: 'https://evil.example.test' }, { status: 201 }));
-    const first = await run(request(message), fetchImpl); expect(first.status).toBe(409); expect(await first.json()).toEqual({ error: 'issue_submission_unknown' });
-    expect((await run(request(message), fetchImpl)).status).toBe(409); expect(fetchImpl).toHaveBeenCalledTimes(2);
-  });
-  it('allows a bounded retry after GitHub definitively rejected the request', async () => {
-    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(new Response('', { status: 403 }))
-      .mockResolvedValueOnce(Response.json(classification())).mockResolvedValueOnce(githubOk());
-    expect((await run(request(message), fetchImpl)).status).toBe(502); expect((await run(request(message), fetchImpl)).status).toBe(200);
-  });
-  it('requires GitHub configuration before classification and never accepts client repository', async () => {
+  it('fails closed without an encryption key and rejects unexpected request fields', async () => {
     const fetchImpl = vi.fn<typeof fetch>(); env.GITHUB_ISSUES_TOKEN = undefined;
+    env.FEEDBACK_ENCRYPTION_KEY = undefined;
     expect((await run(request(message), fetchImpl)).status).toBe(503);
     expect((await run(request({ ...message, repository: 'evil/repo' }), fetchImpl)).status).toBe(400); expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sqlite.prepare('SELECT COUNT(*) AS n FROM feedback_submissions').get()?.n).toBe(0);
   });
 });
 it('rejects oversize, invalid encodings, malformed interview history and mismatched audio headers', () => {

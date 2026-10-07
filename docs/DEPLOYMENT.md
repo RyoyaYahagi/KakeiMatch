@@ -152,6 +152,8 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 
 `0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Plusにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
 
-## お問い合わせの導入
+## お問い合わせと管理画面の導入
 
-Worker更新前に `0006_contact_submissions.sql` を適用し、`GITHUB_ISSUES_TOKEN` をSecret bindingへ登録します。対象リポジトリへのIssues書き込み権限が必要です。`GITHUB_ISSUES_REPOSITORY` はサーバー設定で固定します。秘密値の登録は既存の本人による手順に従います。実際の投稿・文字起こし・iPhone録音は合成内容で確認してください。詳細は[お問い合わせ](CONTACT.md)を参照してください。
+Worker更新前に `0016_feedback_inbox.sql` までのmigrationを適用します。`FEEDBACK_ENCRYPTION_KEY` と `ADMIN_USER_IDS` をSecret bindingへ登録します。本番では管理経路をCloudflare Accessで保護し、Worker側に `CF_ACCESS_TEAM_DOMAIN` と `CF_ACCESS_AUD` を設定します。問い合わせ原文の暗号鍵は独立した32バイトのランダム値をBase64で表します。鍵不足の場合は平文保存へ切り替えず、送信を拒否します。
+
+`GITHUB_ISSUES_TOKEN` は管理者による明示的なIssue作成にだけ使います。対象リポジトリへのIssues書き込み権限に限定し、`GITHUB_ISSUES_REPOSITORY` はサーバー設定で固定します。通常の問い合わせ送信はGitHubへ投稿しません。毎日03:00（日本時間）のscheduled handlerは90日の保存期限を過ぎた問い合わせ本文と原文を削除します。詳しくは[管理画面](ADMIN.md)と[お問い合わせ](CONTACT.md)を参照してください。

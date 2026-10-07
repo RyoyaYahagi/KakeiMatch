@@ -13,3 +13,11 @@ AI_EMERGENCY_STOP=false
 AI_GUARDRAILS_JSON={}
 # Cloudflare's always-pass Turnstile testing secret. Never use it in production.
 TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
+
+# Admin IDs come from server-verified sessions; leave empty to disable admin routes.
+ADMIN_USER_IDS=<synthetic-admin-user-id>
+# Generate independently with: openssl rand -base64 32
+FEEDBACK_ENCRYPTION_KEY=<synthetic-32-byte-base64-key>
+# Configure both for an Access-protected environment; omit both in local development.
+# CF_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
+# CF_ACCESS_AUD=<access-application-audience>

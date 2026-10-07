@@ -27,7 +27,7 @@ Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
 
 Actual Budgetのブラウザー版は家計簿を端末内に保存します。KakeiMatchはレシート情報と画像、取り込んだ明細、照合run・判断、登録状態をブラウザー内に保存します。明細解析、照合、状態変更、金額処理は決定的な通常コードで行います。これらの家計データをアプリ用データベースへ送りません。
 
-Cloud accountは端末内の家計操作には不要です。Better AuthとPasskeyはアカウントとAI APIの本人確認に使います。D1には本人確認とsession、Passkey、招待・回復情報、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態だけを保存します。問い合わせ本文と音声はD1へ保存しません。取引、レシート画像、明細CSV、照合結果、Actual Budgetデータは保存しません。ログアウトしても端末の家計データは削除されません。
+Cloud accountは端末内の家計操作には不要です。Better AuthとPasskeyはアカウントとAI APIの本人確認に使います。D1には本人確認とsession、Passkey、招待・回復情報、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態、マスキング済み問い合わせと許可された診断情報、暗号化した原文、管理操作の監査ログを保存します。音声はD1へ保存しません。取引、レシート画像、明細CSV、照合結果、Actual Budgetデータは保存しません。ログアウトしても端末の家計データは削除されません。
 
 本人によるアカウント削除は、同一originと有効sessionをサーバーで確認し、D1のbatchで削除済みの不透明なuser IDをtombstoneへ記録してからuser行を削除します。認証情報、session、招待、利用権限、AI利用記録、問い合わせ処理状態は外部キーにより削除します。tombstoneは遅れて終わるPasskey登録から同じIDが復活するのを防ぐためにだけ保持し、氏名・email・認証情報を持ちません。AI用JWTは要求ごとにD1のuser行を確認してから使います。家計データは端末に残り、アカウント削除と連動して消しません。
 
@@ -49,6 +49,6 @@ Issue #38のクラウド保存は、明示同意後の暗号文のみを端末�
 
 旧Next.jsアプリとserver adapterはlegacyまたは移行時の参照として残します。本番client、起動経路、家計データの正本ではありません。PWA production buildが共有するroot moduleは、browser-safeな14ファイルに限定しています。Vite pluginは実際のmodule graphを検査し、それ以外のroot moduleやlegacy runtime packageがbundleへ入る場合はbuildを失敗させます。詳細は[legacy文書index](legacy/README.md)と[legacy runtime inventory](LEGACY_RUNTIME_INVENTORY.md)を参照してください。現行PWAの動作と合成データによる確認手順は[ローカル利用フロー](LOCAL_FIRST_FLOW.md)に記載します。
 
-お問い合わせでは、録音終了後に音声をGoogleへ送り自動で文字起こしします。利用者が許可した場合は、サーバー管理のProduct Contextと文章をGeminiへ送り、1問ずつの深掘りと送信前要約を行います。別途利用者が許可した場合だけ、メモリ上のFlight Recorderから固定語彙で構成した画面・操作・安全なエラーコード・通信状態を添付します。生ログ、stack trace、入力文字列、家計データは診断コンテキストに入りません。最終送信時に文章を分類し、不具合と改善要望はGitHub Issueへ登録します。最初の問い合わせと深掘り後の文章をIssueに残し、深掘り途中の本文・質問・回答、家計データ、アカウントの個人情報はD1へ保存しません。詳細は[お問い合わせ](CONTACT.md)を参照してください。
+お問い合わせでは、録音終了後に音声をGoogleへ送り自動で文字起こしします。利用者が許可した場合は、サーバー管理のProduct Contextと文章をGeminiへ送り、1問ずつの深掘りと送信前要約を行います。別途利用者が許可した場合だけ、メモリ上のFlight Recorderから固定語彙で構成した画面・操作・安全なエラーコード・通信状態を添付します。生ログ、stack trace、入力文字列、家計データは診断コンテキストに入りません。最終送信時はAIやGitHubを呼ばず、管理者専用Inboxへ保存します。管理者が確認してからマスキング済み情報だけをAI分析またはIssue化します。原文は秘密情報を除去して暗号化し、90日の保存期限を設けます。管理UI/APIはサーバー側の管理者認可と、設定済み環境ではCloudflare Access JWT検証で保護します。詳細は[お問い合わせ](CONTACT.md)を参照してください。
 
 任意の端末内画面ロックはCloud accountと独立し、PINと復旧コードのsalt付きハッシュだけをブラウザーのlocalStorageへ保存します。生体認証での解除を有効にした場合は、端末のplatform authenticatorでuser verificationを必須にしたWebAuthn credentialを作り、credential IDと公開鍵だけを同じ設定へ保存します。解除時は端末内で生成したchallengeへの署名、origin、RP ID hash、user verification flagをブラウザー内で検証し、サーバーやCloud accountのPasskey認証には送りません。設定はhouseholdデータとは別で、`.kmb`バックアップには含めません。画面を隠す通常UIの保護であり、IndexedDBやActualの家計データの暗号化ではありません。
