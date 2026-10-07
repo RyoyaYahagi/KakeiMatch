@@ -51,7 +51,7 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
   let dispose: () => Promise<void>;
   beforeEach(async () => {
     if (mode === "D1") {
-      const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-09-30", d1Databases: { ACCOUNT_DB: "flow-reservation-test" } });
+      const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-08-01", d1Databases: { ACCOUNT_DB: "flow-reservation-test" } });
       dispose = () => instance.dispose();
       const d1 = await instance.getD1Database("ACCOUNT_DB");
       db = d1;
@@ -84,7 +84,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     accountState.session = true;
     accountState.userId = "synthetic-user";
     if (mode === "D1") {
-      const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-09-30", d1Databases: { ACCOUNT_DB: "ai-flow-test" } });
+      const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-08-01", d1Databases: { ACCOUNT_DB: "ai-flow-test" } });
       dispose = () => instance.dispose();
       const d1 = await instance.getD1Database("ACCOUNT_DB");
       db = d1;

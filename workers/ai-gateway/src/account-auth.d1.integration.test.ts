@@ -27,7 +27,7 @@ describe("Better Auth with local D1", () => {
     const miniflare = new Miniflare({
       script: "export default { fetch() { return new Response('ok'); } }",
       modules: true,
-      compatibilityDate: "2026-09-30",
+      compatibilityDate: "2026-08-01",
       d1Databases: { ACCOUNT_DB: "kakeimatch-account-test" },
     });
     instances.push(miniflare);
@@ -71,7 +71,7 @@ describe("Better Auth with local D1", () => {
     const miniflare = new Miniflare({
       script: "export default { fetch() { return new Response('ok'); } }",
       modules: true,
-      compatibilityDate: "2026-09-30",
+      compatibilityDate: "2026-08-01",
       d1Databases: { ACCOUNT_DB: "account-deletion-test" },
     });
     instances.push(miniflare);
