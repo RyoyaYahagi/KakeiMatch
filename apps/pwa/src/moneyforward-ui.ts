@@ -3,6 +3,7 @@ import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-
 import { backLink, pageTitle, groupTitle, detailList, pageActions } from './settings-ui';
 import { parseMoneyForwardBlob, categoryKey, resolveMoneyForwardCategory, type MoneyForwardParseResult } from './moneyforward-parser';
 import { MoneyForwardImportService, type CategoryChoice, type AccountChoice, type ImportPlan } from './moneyforward-import';
+import { icon } from './ui-icons';
 import { suggestMoneyForwardCategory } from './moneyforward-category-suggestion';
 
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
@@ -37,7 +38,8 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
     finally { pending = false; page.removeAttribute('aria-busy'); page.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLButtonElement>('input,select,button').forEach(el => el.disabled = false); }
   }
   function action(label: string, handler: () => Promise<void>, primary = false) {
-    const button = node('button', label, primary ? '' : 'secondary'); button.type = 'button';
+    const button = node('button', label, primary ? 'primary' : 'secondary'); button.type = 'button';
+    if (!primary) button.prepend(icon(label.includes('取り消す') || label.includes('再試行') ? 'repeat' : label.includes('AI') ? 'bulb' : label.includes('CSV') ? 'upload' : 'pencil'));
     button.addEventListener('click', () => { void run(handler); }); return button;
   }
   async function history() {
@@ -68,7 +70,8 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
       if (result.fatalErrors.length) {
         const diagnostic = result as MoneyForwardParseResult & { foundHeaders?: string[]; missingHeaders?: string[]; unknownHeaders?: string[] };
         status.textContent = '現在のMoneyForward CSV形式に対応していない可能性があります。列を確認してください。';
-        body.append(node('p', `読み込みエラー: ${result.fatalErrors.map(error => error.code).join('、')}`));
+        const reasons = { invalid_file: 'ファイルを読み取れません', empty_file: 'ファイルが空です', header_only: '取引行がありません', header_mismatch: '必須の列が不足または重複しています', malformed_csv: 'CSVの区切りや引用符を確認できません', limit_exceeded: 'ファイルサイズ・行数・項目の長さが上限を超えています' };
+        body.append(node('p', result.fatalErrors.map(error => reasons[error.code]).join('、')));
         body.append(node('p', `見つかった列: ${diagnostic.foundHeaders?.join('、') || result.headerSignature || 'なし'}`));
         body.append(node('p', `不足している必須列: ${diagnostic.missingHeaders?.join('、') || '日付・内容・金額（円）・大項目を確認してください'}`));
         if (result.duplicateHeaders?.length) body.append(node('p', `重複している列: ${result.duplicateHeaders.join('、')}`));

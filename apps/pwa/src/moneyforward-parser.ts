@@ -187,7 +187,8 @@ export function resolveMoneyForwardCategory(
   const sameName = active.find(category => category.name === (individual ?? minor))
     ?? (!individual ? active.find(category => category.name === major) : undefined);
   if (sameName) return { categoryId: sameName.id, suggestedName: sameName.name, reason: "" };
-  const suggestedName = individual ?? CATEGORY_TARGETS[row.kind][major] ?? null;
+  const targets = CATEGORY_TARGETS[row.kind];
+  const suggestedName = individual ?? (Object.hasOwn(targets, major) ? targets[major] : null);
   if (!suggestedName) return { categoryId: null, suggestedName: null, reason: "対応表にないカテゴリです。分類を確認してください" };
   const preferredName = suggestedName ? CATEGORY_LABEL_ALIASES[suggestedName] ?? suggestedName : null;
   const category = preferredName ? active.find(entry => entry.name === preferredName) : undefined;
