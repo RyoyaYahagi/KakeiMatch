@@ -175,7 +175,7 @@ flowchart TB
 
 **データと運用**
 
-- [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、更新手順
+- [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、更新手順、ローカルでAIを試す手順
 - [AI費用の停止と再開](docs/AI_COST_GUARDRAILS.md)
 - [バックアップと復元](docs/LOCAL_BACKUP.md)と[不完全復元の調査と停止](docs/ACTUAL_RESTORE_CLEANUP.md)
 - [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md)と[アプリ更新](docs/PWA_UPDATES.md)

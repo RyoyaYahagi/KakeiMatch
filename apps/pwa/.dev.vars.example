@@ -1,0 +1,15 @@
+# Local values for `cf dev` in apps/pwa. Copy to .dev.vars (ignored by Git) and keep them synthetic,
+# except GEMINI_API_KEY / TYPESAFE_API_KEY when you deliberately try the real providers.
+# Generate each secret with: openssl rand -hex 32
+BETTER_AUTH_SECRET=<local-synthetic-secret>
+ACCOUNT_BOOTSTRAP_SECRET=<local-synthetic-secret>
+AI_GATEWAY_AUTH_SECRET=<local-synthetic-secret>
+# Passkeys need a host name: open the app at localhost, not 127.0.0.1.
+CLOUD_ACCOUNT_ORIGIN=http://localhost:5173
+GEMINI_API_KEY=<your-gemini-key-or-synthetic>
+TYPESAFE_API_KEY=<your-jev-key-or-synthetic>
+GITHUB_ISSUES_TOKEN=<local-synthetic-token>
+AI_EMERGENCY_STOP=false
+AI_GUARDRAILS_JSON={}
+# Cloudflare's always-pass Turnstile testing secret. Never use it in production.
+TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA

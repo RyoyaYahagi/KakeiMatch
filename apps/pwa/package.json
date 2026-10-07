@@ -6,7 +6,7 @@
     "dev": "cf dev",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node test/sw.test.mjs",
+    "test": "node test/sw.test.mjs && node --experimental-strip-types --test test/browser-bundle-secrets.test.mjs",
     "test:updates-e2e": "node test/browser-updates.mjs",
     "test:local-data-rescue-e2e": "node test/browser-local-data-rescue.mjs",
     "test:idb-migration-e2e": "node test/browser-idb-migration.mjs",
