@@ -23,7 +23,7 @@ page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
 async function assertOnlyBlockedEvalProbe() {
   const violations = await page.evaluate(() => window.__cspViolations);
-  assert.ok(violations.every(violation => violation.directive === 'script-src' && violation.blockedURI === 'eval' && new URL(violation.sourceFile).pathname.startsWith('/assets/index-')),
+  assert.ok(violations.every(violation => violation.directive === 'script-src' && violation.blockedURI === 'eval' && /^\/assets\/(?:app|index)-[^/]+\.js$/.test(new URL(violation.sourceFile).pathname)),
     `Unexpected CSP violation: ${JSON.stringify(violations)}`);
 }
 
