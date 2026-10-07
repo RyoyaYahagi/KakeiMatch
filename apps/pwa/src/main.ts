@@ -64,10 +64,31 @@ root.innerHTML = `
     <section id="local-view" hidden></section>
     <section id="settings-view" hidden>
       <div id="settings-content">
+      <div id="settings-root">
       <div class="page-header"><h2>設定</h2></div>
       <h3 class="settings-group-title">家計簿</h3>
       <section id="local-settings" class="surface-section settings-list" aria-label="家計簿の設定"></section>
       <h3 class="settings-group-title">データ</h3>
+      <section id="backup-quick" class="surface-section backup-quick" aria-label="バックアップ"></section>
+      <section id="data-rows" class="surface-section settings-list" aria-label="データの設定">
+        <button class="master-entry" type="button" data-settings-page="settings-page-ledger" aria-label="家計簿の読み込み・切り替え"><span class="master-entry-name">家計簿の読み込み・切り替え</span></button>
+        <button class="master-entry" type="button" data-settings-page="settings-page-lock" aria-label="画面ロック"><span class="master-entry-name">画面ロック</span><span id="screen-lock-row-value" class="master-entry-value"></span></button>
+        <button class="master-entry destructive-text" type="button" data-settings-page="settings-page-cleanup" aria-label="原本の整理・全削除"><span class="master-entry-name">原本の整理・全削除</span></button>
+      </section>
+      <h3 class="settings-group-title">写真の読み取り</h3>
+      <section class="surface-section settings-list" aria-label="写真の読み取りの設定">
+        <button class="master-entry" type="button" data-settings-page="settings-page-ai" aria-label="ログイン・利用状況"><span class="master-entry-name">ログイン・利用状況</span><span id="ai-row-value" class="master-entry-value"></span></button>
+      </section>
+      <h3 class="settings-group-title">アプリ</h3>
+      <section class="surface-section settings-list" aria-label="アプリの設定">
+        <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ"><span class="master-entry-name">お問い合わせ</span><span class="master-entry-value">声でも送れます</span></button>
+        <button class="master-entry" type="button" data-settings-page="settings-page-app" aria-label="アプリ情報"><span class="master-entry-name">アプリ情報</span><span class="master-entry-value">診断・ライセンス</span></button>
+      </section>
+      <p class="settings-foot">家計簿と画像はこの端末に保存されます。ログアウトしても消えません。</p>
+      </div>
+      <section id="settings-page-ledger" class="settings-page" hidden aria-labelledby="settings-page-ledger-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-ledger-title" class="page-title">家計簿の読み込み・切り替え</h2>
       <div id="data-settings" class="settings-stack">
         <section class="surface-section storage-location" aria-labelledby="storage-location-title">
           <h4 id="storage-location-title">保存先</h4>
@@ -75,10 +96,22 @@ root.innerHTML = `
           <p>家計簿・レシート・明細・照合結果は、この端末に保存されています。</p>
           <p class="muted">家計データはCloudflareに保存しません。AIアカウントの認証や利用枠の情報はCloudflareで管理します。AIを利用する場合だけ、処理に必要な情報をAIサービスへ送信します。</p>
           <p class="storage-location-risk">端末の紛失やブラウザーのデータ消去で、家計データが失われることがあります。バックアップを別の場所に保存してください。</p>
-          <a class="storage-location-link" href="#backup-settings">バックアップと端末データ${iconMarkup('chevronRight')}</a>
         </section>
       </div>
-      <h3 class="settings-group-title">写真の読み取り</h3>
+      </section>
+      <section id="settings-page-lock" class="settings-page" hidden aria-labelledby="settings-page-lock-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-lock-title" class="page-title">画面ロック</h2>
+      <div id="screen-lock-host"></div>
+      </section>
+      <section id="settings-page-cleanup" class="settings-page" hidden aria-labelledby="settings-page-cleanup-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-cleanup-title" class="page-title">原本の整理・全削除</h2>
+      <div id="cleanup-host"></div>
+      </section>
+      <section id="settings-page-ai" class="settings-page" hidden aria-labelledby="settings-page-ai-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-ai-title" class="page-title">ログイン・利用状況</h2>
       <section id="ai-settings" class="surface-section settings-panel" aria-label="AI利用">
       <div class="ai-status">
         <span class="record-icon record-icon-large tone-daily">${iconMarkup('scan')}</span>
@@ -120,9 +153,11 @@ root.innerHTML = `
       </div>
       <p class="status" id="account-message" role="status"></p>
       </section>
-      <h3 class="settings-group-title">アプリ</h3>
+      </section>
+      <section id="settings-page-app" class="settings-page" hidden aria-labelledby="settings-page-app-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-app-title" class="page-title">アプリ情報</h2>
       <section id="app-info" class="surface-section settings-panel">
-        <h4>アプリ情報</h4>
         <label class="developer-option" for="developer-options">
           <input id="developer-options" type="checkbox" />
           開発者向け機能を表示
@@ -133,9 +168,6 @@ root.innerHTML = `
       <section id="oss-licenses" class="oss-licenses" aria-labelledby="oss-licenses-title">
         <h3 id="oss-licenses-title">オープンソースライセンス</h3>
       </section>
-      <h3 class="settings-group-title">サポート</h3>
-      <section class="surface-section settings-list" aria-label="サポート">
-        <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ">お問い合わせ</button>
       </section>
       </div>
       <section id="contact-view" hidden></section>
@@ -151,6 +183,30 @@ const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');
 const settingsView = element<HTMLElement>('settings-view');
 const settingsContent = element<HTMLElement>('settings-content');
+const settingsRoot = element<HTMLElement>('settings-root');
+// docs/UX.md 設定: the settings screen is one-line entries; each opens its own page with a way back.
+function showSettingsRoot() {
+  settingsRoot.hidden = false;
+  settingsContent.querySelectorAll<HTMLElement>('.settings-page').forEach(page => { page.hidden = true; });
+}
+function openSettingsPage(id: string) {
+  settingsRoot.hidden = true;
+  settingsContent.querySelectorAll<HTMLElement>('.settings-page').forEach(page => { page.hidden = page.id !== id; });
+  window.scrollTo({ top: 0 });
+  element<HTMLElement>(`${id}-title`).focus({ preventScroll: true });
+}
+settingsContent.addEventListener('click', event => {
+  const target = event.target instanceof Element ? event.target : null;
+  const entry = target?.closest<HTMLElement>('[data-settings-page]');
+  if (entry) { openSettingsPage(entry.dataset.settingsPage!); return; }
+  const back = target?.closest('[data-settings-back]');
+  if (back) {
+    const page = back.closest('.settings-page')!.id;
+    showSettingsRoot();
+    settingsContent.querySelector<HTMLElement>(`[data-settings-page="${page}"]`)?.focus();
+  }
+});
+settingsContent.querySelectorAll<HTMLElement>('.settings-page .page-title').forEach(title => { title.tabIndex = -1; });
 const contactView = element<HTMLElement>('contact-view');
 const homeTab = element<HTMLButtonElement>('home-tab');
 const settingsTab = element<HTMLButtonElement>('settings-tab');
@@ -160,12 +216,13 @@ const contactUi = initializeContactUi(contactView, {
     contactView.hidden = true;
     if (focusLogin) {
       void refreshAccount();
-      element<HTMLElement>('ai-settings').scrollIntoView({ block: 'start' });
+      openSettingsPage('settings-page-ai');
       window.setTimeout(() => (signedOutActions.hidden ? useAiButton : loginButton).focus(), 0);
     }
   },
 });
 const usageSummary = element<HTMLParagraphElement>('usage-summary');
+const aiRowValue = element<HTMLElement>('ai-row-value');
 const accountStatus = element<HTMLParagraphElement>('account-status');
 const signedOutActions = element<HTMLElement>('signed-out-actions');
 const signedInActions = element<HTMLElement>('signed-in-actions');
@@ -198,6 +255,7 @@ function showTab(tab: 'home' | 'settings') {
   recordDiagnosticScreen(tab);
   contactUi.close();
   settingsContent.hidden = false;
+  showSettingsRoot();
   contactView.hidden = true;
   document.getElementById('local-view')!.hidden = true;
   for (const id of ['receipt-tab', 'reconciliation-tab']) {
@@ -260,6 +318,7 @@ async function refreshAccount() {
       else {
         element<HTMLElement>('usage-meter').hidden = true;
         usageSummary.textContent = guest === undefined ? '今日の利用回数を取得できません。オンラインで再度お試しください。' : 'ログインしなくても、AIの読み取りを1日5回まで使えます。';
+        aiRowValue.textContent = guest === undefined ? '' : '1日5回まで';
       }
       return;
     }
@@ -271,6 +330,7 @@ async function refreshAccount() {
     if (usageResult.status === 'rejected') usageSummary.textContent = '利用状況を取得できません。オンラインで再度お試しください。';
     if (passkeyResult.status === 'rejected') accountMessage.textContent = 'Passkey一覧を取得できません。';
   } catch {
+    aiRowValue.textContent = '';
     usageSummary.textContent = '利用状況を取得できません。オンラインで再度お試しください。';
     accountStatus.textContent = 'AIアカウントへ接続できません。家計簿のデータはこの端末で引き続き利用できます。';
     signedOutActions.hidden = true;
@@ -282,6 +342,7 @@ async function refreshAccount() {
 function renderUsage(usage: UsageResponse) {
   if (usage.plan === 'guest') {
     usageSummary.textContent = `今日のAI読み取り ${usage.used} / ${usage.limit}回 · 登録なし`;
+    aiRowValue.textContent = `今日 ${usage.used}/${usage.limit}回`;
     const meter = element<HTMLElement>('usage-meter');
     meter.hidden = false;
     meter.style.setProperty('--usage', `${Math.min(100, Math.round(usage.used / Math.max(1, usage.limit) * 100))}%`);
@@ -291,6 +352,7 @@ function renderUsage(usage: UsageResponse) {
   usageSummary.textContent = usage.limit === null
     ? `今月の読み取り ${usage.used}回 · ${planName} · 上限なし`
     : `今月の読み取り ${usage.used} / ${usage.limit}回 · ${planName}`;
+  aiRowValue.textContent = usage.limit === null ? `今月 ${usage.used}回` : `今月 ${usage.used}/${usage.limit}回`;
   // The meter only repeats the text above; the text stays the source for assistive technology.
   const meter = element<HTMLElement>('usage-meter');
   meter.hidden = usage.limit === null;

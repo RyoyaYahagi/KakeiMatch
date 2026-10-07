@@ -97,6 +97,9 @@ try {
   assert.equal(await page.locator('#receipt-category option:checked').textContent(), '食費');
   assert.equal(await page.getByRole('button', { name: 'カテゴリを提案する', exact: true }).count(), 0);
   await page.locator('#settings-tab').click();
+  // The settings row shows the short count; the full line is on ログイン・利用状況.
+  await page.locator('#ai-row-value').getByText('今月 1/30回', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'ログイン・利用状況', exact: true }).click();
   await page.getByText('今月の読み取り 1 / 30回 · Free', { exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Diagnostic Store/ }).click();
@@ -120,6 +123,9 @@ try {
   await page.locator('#receipt-amount').fill('1280');
   assert.notEqual(aiRequests[1].flowId, aiRequests[0].flowId);
   await page.locator('#settings-tab').click();
+  // The settings row shows the short count; the full line is on ログイン・利用状況.
+  await page.locator('#ai-row-value').getByText('今月 2/30回', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'ログイン・利用状況', exact: true }).click();
   await page.getByText('今月の読み取り 2 / 30回 · Free', { exact: true }).waitFor();
   if (process.env.PWA_USAGE_SCREENSHOT_PATH) { await page.locator('#usage-summary').scrollIntoViewIfNeeded(); await page.screenshot({ path: process.env.PWA_USAGE_SCREENSHOT_PATH }); }
   await page.locator('#receipt-tab').click();

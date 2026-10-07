@@ -12,7 +12,7 @@ page.on('console', message => { if (message.type() === 'error') console.error('c
 try {
   await page.goto(url);
   await page.getByText('今月の支出 ¥0', { exact: false }).waitFor();
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '画面ロック', exact: true }).click();
   const settings = page.locator('.screen-lock-settings');
   await settings.waitFor();
   await page.getByRole('button', { name: '画面ロックを有効にする', exact: true }).click();
@@ -34,7 +34,7 @@ try {
   assert.equal(await page.locator('#settings-view').evaluate(node => node.hidden), false, 'unlock returns to the screen which was already open');
   if (process.env.PWA_SCREEN_LOCK_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREEN_LOCK_SCREENSHOT_PATH, fullPage: true });
 
-  await page.locator('#settings-tab').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '画面ロック', exact: true }).click();
   await settings.getByRole('button', { name: '今すぐロック', exact: true }).click();
   await page.locator('#screen-lock-overlay:not([hidden])').waitFor();
   if (process.env.PWA_SCREEN_LOCK_LOCKED_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_SCREEN_LOCK_LOCKED_SCREENSHOT_PATH });
@@ -45,7 +45,7 @@ try {
   await secondPage.locator('#screen-lock-pin').fill('246810');
   await secondPage.getByRole('button', { name: 'ロックを解除', exact: true }).click();
   await secondPage.locator('#screen-lock-overlay[hidden]').waitFor({ state: 'attached' });
-  await secondPage.locator('#settings-tab').click();
+  await secondPage.locator('#settings-tab').click(); await secondPage.getByRole('button', { name: '画面ロック', exact: true }).click();
   await secondPage.locator('.screen-lock-settings').getByLabel('現在のPIN').fill('000000');
   await secondPage.getByRole('button', { name: '画面ロックを無効にする', exact: true }).click();
   await secondPage.getByText('現在のPINが違います。', { exact: true }).waitFor();
@@ -70,7 +70,7 @@ try {
   await secondPage.locator('#screen-lock-overlay[hidden]').waitFor({ state: 'attached' });
   assert.equal(await secondPage.evaluate(() => localStorage.getItem('kakeimatch.screen-lock.v1')), null, 'recovery disables the lock instead of deleting household data');
 
-  await secondPage.locator('#settings-tab').click();
+  await secondPage.locator('#settings-tab').click(); await secondPage.getByRole('button', { name: '画面ロック', exact: true }).click();
   await secondPage.getByRole('button', { name: '画面ロックを有効にする', exact: true }).click();
   await secondPage.locator('#screen-lock-new-pin').fill('135790');
   await secondPage.locator('#screen-lock-confirm-pin').fill('135790');
@@ -108,7 +108,7 @@ try {
   });
   await biometricPage.goto(biometricUrl.href);
   await biometricPage.getByText('今月の支出 ¥0', { exact: false }).waitFor();
-  await biometricPage.locator('#settings-tab').click();
+  await biometricPage.locator('#settings-tab').click(); await biometricPage.getByRole('button', { name: '画面ロック', exact: true }).click();
   const biometricSettings = biometricPage.locator('.screen-lock-settings');
   await biometricSettings.getByRole('button', { name: '画面ロックを有効にする', exact: true }).click();
   await biometricPage.locator('#screen-lock-new-pin').fill('135790');

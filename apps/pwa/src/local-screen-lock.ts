@@ -452,7 +452,9 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
       section.append(enable);
     }
     section.append(message);
-    settingsContent.querySelector('#app-info')?.before(section);
+    settingsContent.querySelector('#screen-lock-host')?.append(section);
+    const rowValue = settingsContent.querySelector('#screen-lock-row-value');
+    if (rowValue) rowValue.textContent = config ? 'オン' : 'オフ';
   }
 
   setLocked(locked);
