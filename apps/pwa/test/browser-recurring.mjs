@@ -46,6 +46,7 @@ async function fill({ name, kind = 'expense', amount, category, account, frequen
 async function save() { await click('保存する'); }
 async function recordNames() {
   await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: /Synthetic Monthly Expense/ }).waitFor();
   return page.locator('.record-groups').innerText();
 }
 try {
