@@ -5,6 +5,7 @@ import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '..
 import { basicCategorySettingsRecordId } from './local-category-defaults';
 import { decryptPortableSyncVersion } from '../../../src/lib/encrypted-sync-version';
 import type { EncryptionContext } from '../../../src/lib/encrypted-household-format';
+import { rebindMoneyForwardImportSettings } from '../../../src/lib/moneyforward-import-format';
 
 export const PREVIOUS_PROFILE_KEY = 'kakeimatch.previous-local-profile.v1';
 export const INCOMPLETE_RESTORE_KEY = 'kakeimatch.incomplete-actual-restore.v1';
@@ -108,6 +109,9 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
           const oldBudgetId = record.id.slice('settings:monthly-budgets:'.length);
           const settings = validateMonthlyBudgetSettings(record.value, oldBudgetId);
           return { ...record, id: monthlyBudgetSettingsRecordId(budgetId), value: { ...settings, budgetId } };
+        }
+        if (record.id === 'settings:moneyforward-import') {
+          return { ...record, value: rebindMoneyForwardImportSettings(record.value, budgetId) };
         }
         return record;
       }),

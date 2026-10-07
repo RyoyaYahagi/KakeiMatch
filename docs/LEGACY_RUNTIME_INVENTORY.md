@@ -13,6 +13,7 @@ The root Next.js application and its server-side Actual integration are legacy r
 - The PWA Cloudflare configuration uses the Issue #39 preview by default. Production configuration is selected only by the explicit `production-deploy` mode and requires account D1 settings. Root scripts expose `deploy:preview` for the Issue #39 preview and `deploy` for the explicit production mode; only the dedicated preview was deployed for synthetic verification; production was not deployed.
 - Browser-safe root modules imported by the PWA:
   - `src/lib/local-data.ts`: IndexedDB repository used by receipt, statement, reconciliation, and backup features.
+  - `src/lib/moneyforward-import-format.ts`: validates local MoneyForward import journals and category/account rules with Zod; it imports only Zod and the existing browser ledger snapshot schema.
   - `src/lib/local-backup-format.ts`: validates and encodes the portable `.kmb` backup format.
   - `src/lib/encrypted-household-format.ts` and `src/lib/encrypted-sync-version.ts`: shared authenticated encryption and verification of portable encrypted versions. The sync restore entrypoint is not exposed in the normal UI until the household coordinator is implemented.
   - `src/lib/actual-browser-ledger.ts`: browser Actual Budget operations, dynamically loading `@actual-app/api`.

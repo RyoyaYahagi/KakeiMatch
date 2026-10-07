@@ -360,6 +360,14 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   updateTransfer(id: string, input: TransferUpdateInput): Promise<ActualTransaction>;
   getTransactionTree(id: string): Promise<NativeTransactionSnapshot[]>;
   deleteTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
+  /** Imports one external transaction without itemization; a null category means unclassified. */
+  importExternalTransaction(input: {
+    accountId: string; date: string; amountYen: number; kind: "expense" | "income";
+    payeeName: string; memo?: string | null; categoryId: string | null; importedId: string;
+  }): Promise<{ transaction: ActualTransaction; snapshot: NativeTransactionSnapshot[]; alreadyExisted: boolean }>;
+  hasImportedId(importedId: string): Promise<boolean>;
+  listImportedIds(): Promise<Set<string>>;
+  getImportedTransaction(importedId: string): Promise<{ transaction: ActualTransaction; snapshot: NativeTransactionSnapshot[] } | null>;
   restoreTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
   applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
@@ -1207,6 +1215,98 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         rows = await allRows(api, "0001-01-01", "9999-12-31");
         const saved = rows.find(row => row.imported_id === parsed.importedId && !row.is_child && !row.parent_id);
         return verifyManualReadback(saved, parsed, parsed.importedId, api);
+      });
+    },
+
+    async importExternalTransaction(input) {
+      const parsed = z.object({
+        accountId: idSchema,
+        date: dateSchema,
+        amountYen: z.number().int().safe().positive(),
+        kind: z.enum(["expense", "income"]),
+        payeeName: z.string().trim().min(1).max(200),
+        memo: z.string().max(2000).nullable().optional(),
+        categoryId: idSchema.nullable(),
+        importedId: z.string().trim().min(1).max(200),
+      }).strict().safeParse(input);
+      if (!parsed.success) throw new ActualMasterValidationError("取引の内容を確認してください。");
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const existing = rows.find(row => row.imported_id === parsed.data.importedId && !row.is_child && !row.parent_id);
+        if (existing) {
+          const snapshot = nativeTree(rows, existing.id);
+          const [payees, categories] = await Promise.all([api.getPayees(), api.getCategories()]);
+          return {
+            transaction: mapTransaction(existing, {
+              payees: new Map(payees.map(row => [row.id, row.name])),
+              categories: new Map(categories.map(row => [row.id, row.name])),
+              incomeCategoryIds: new Set(categories.filter(row => row.is_income).map(row => row.id)),
+            }),
+            snapshot,
+            alreadyExisted: true,
+          };
+        }
+        const accounts = await api.getAccounts();
+        if (!accounts.some(account => account.id === parsed.data.accountId && !account.closed)) {
+          throw new ActualMasterValidationError("利用中の口座を選び直してください。");
+        }
+        if (parsed.data.categoryId !== null && !(await api.getCategories()).some(category => category.id === parsed.data.categoryId)) {
+          throw new ActualMasterValidationError("カテゴリを選び直してください。");
+        }
+        const payees = await api.getPayees();
+        const payeeId = payees.find(payee => payee.name === parsed.data.payeeName)?.id
+          ?? await api.createPayee({ name: parsed.data.payeeName });
+        const amount = parsed.data.kind === "expense" ? -parsed.data.amountYen : parsed.data.amountYen;
+        await api.addTransactions(parsed.data.accountId, [{
+          date: parsed.data.date,
+          amount,
+          payee: payeeId,
+          ...(parsed.data.categoryId ? { category: parsed.data.categoryId } : {}),
+          notes: parsed.data.memo ?? "",
+          imported_id: parsed.data.importedId,
+          cleared: false,
+        }], { learnCategories: false, runTransfers: false });
+        const savedRows = await api.getTransactions(parsed.data.accountId, parsed.data.date, parsed.data.date) as NativeTransaction[];
+        const saved = savedRows.find(row => row.imported_id === parsed.data.importedId && !row.is_child && !row.parent_id);
+        if (!saved || saved.account !== parsed.data.accountId || saved.date !== parsed.data.date || saved.amount !== amount || (saved.category ?? null) !== parsed.data.categoryId) {
+          throw new ActualBrowserUnavailableError("invalid_data");
+        }
+        const [savedPayees, categories] = await Promise.all([api.getPayees(), api.getCategories()]);
+        return {
+          transaction: mapTransaction(saved, {
+            payees: new Map(savedPayees.map(row => [row.id, row.name])),
+            categories: new Map(categories.map(row => [row.id, row.name])),
+            incomeCategoryIds: new Set(categories.filter(row => row.is_income).map(row => row.id)),
+          }),
+          snapshot: [scalarSnapshot(saved)],
+          alreadyExisted: false,
+        };
+      });
+    },
+    hasImportedId(importedId) {
+      const parsed = z.string().trim().min(1).max(200).safeParse(importedId);
+      if (!parsed.success) throw new ActualMasterValidationError("登録識別子を確認してください。");
+      return withBudget(async api => (await allRows(api, "0001-01-01", "9999-12-31"))
+        .some(row => row.imported_id === parsed.data && !row.is_child && !row.parent_id));
+    },
+    listImportedIds() {
+      return withBudget(async api => new Set((await allRows(api, "0001-01-01", "9999-12-31"))
+        .filter(row => row.imported_id && !row.is_child && !row.parent_id).map(row => row.imported_id!)));
+    },
+    getImportedTransaction(importedId) {
+      const parsed = z.string().trim().min(1).max(200).safeParse(importedId);
+      if (!parsed.success) throw new ActualMasterValidationError("登録識別子を確認してください。");
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const found = rows.find(row => row.imported_id === parsed.data && !row.is_child && !row.parent_id);
+        if (!found) return null;
+        const snapshot = nativeTree(rows, found.id);
+        const [payees, categories] = await Promise.all([api.getPayees(), api.getCategories()]);
+        return { transaction: mapTransaction(found, {
+          payees: new Map(payees.map(row => [row.id, row.name])),
+          categories: new Map(categories.map(row => [row.id, row.name])),
+          incomeCategoryIds: new Set(categories.filter(row => row.is_income).map(row => row.id)),
+        }), snapshot };
       });
     },
 

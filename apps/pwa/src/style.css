@@ -799,6 +799,7 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 
   .page-header h2 { font-size: 1.5rem; }
   /* The spread in the page color hides the form scrolling behind the rounded corners. */
+  .moneyforward-page .page-actions { left: var(--sidebar-width); max-width: var(--content-max); bottom: var(--space-4); margin: 0 auto; border: 1px solid var(--border); border-radius: var(--radius-xl); }
   .form-actions { bottom: var(--space-4); margin: var(--space-6) 0 0; border: 1px solid var(--border); border-radius: var(--radius-xl); box-shadow: 0 0 0 var(--space-4) var(--bg); }
   form .form-actions button { width: auto; min-width: 240px; margin-left: auto; display: block; }
 
@@ -840,3 +841,15 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .screen-lock-code { display: block; overflow-wrap: anywhere; font-size: 1.1rem; letter-spacing: .08em; text-align: center; }
 .screen-lock-acknowledge { display: flex !important; grid-template-columns: auto 1fr; align-items: center; gap: var(--space-2) !important; color: var(--text) !important; }
 .screen-lock-acknowledge input { width: 22px; height: 22px; }
+
+/* CSV migration follows the settings ledger, with one mapping per ruled row. */
+.moneyforward-page { max-width: var(--content-max); padding-bottom: calc(var(--space-8) * 3); }
+.moneyforward-page .page-actions { position: fixed; left: 0; right: 0; max-width: 640px; margin: 0 auto; }
+.moneyforward-mapping-row, .moneyforward-preview-row, .moneyforward-history-row {
+  padding-block: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.moneyforward-mapping-row label { display: grid; gap: var(--space-2); }
+.moneyforward-mapping-row select, .moneyforward-mapping-row input { width: 100%; min-height: 44px; }
+.moneyforward-page > p, .moneyforward-page .muted { overflow-wrap: anywhere; }
+.moneyforward-preview-row { font-size: .875rem; overflow-wrap: anywhere; }

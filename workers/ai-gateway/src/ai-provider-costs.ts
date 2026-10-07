@@ -57,7 +57,9 @@ export function beginCostEventStatement(db: Db, user: string, flow: string, prov
   const model = safeModel(requestedModel) ?? "unknown";
   const p = pricingFor(provider, model, now);
   const statement = db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,flow_id,provider,requested_model,model,pricing_version,billing_mode,input_usd_per_million_micros,output_usd_per_million_micros,metering_status,dispatched_at,reserved_cost_usd_micros)
-    SELECT ?,?,?,?,?,?,?,?,?,?,'unknown',?,? WHERE ${admission.predicate} AND EXISTS(SELECT 1 FROM ai_receipt_flows WHERE user_id=? AND flow_id=?)`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now,admission.reservation,...admission.parameters,user,flow);
+    SELECT ?,?,?,?,?,?,?,?,?,?,'unknown',?,? WHERE ${admission.predicate} AND (
+      EXISTS(SELECT 1 FROM ai_receipt_flows WHERE user_id=? AND flow_id=?) OR
+      EXISTS(SELECT 1 FROM ai_category_suggestion_flows WHERE user_id=? AND flow_id=?))`).bind(id,user,flow,provider,model,model,p?.version ?? null,p?.billingMode ?? null,p?.inputUsdPerMillionMicros ?? null,p?.outputUsdPerMillionMicros ?? null,now,admission.reservation,...admission.parameters,user,flow,user,flow);
   return { id, statement };
 }
 /** Builds the UPDATE that records the provider outcome; check it with `assertCostEventCompleted`. */

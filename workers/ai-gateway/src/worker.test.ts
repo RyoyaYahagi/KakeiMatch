@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { flowUsage, monthKey, reserveFlow } from "./receipt-ai-usage";
+import { flowUsage, guestDayUsage, monthKey, reserveCategorySuggestionFlow, reserveFlow } from "./receipt-ai-usage";
 import { deleteAccountData } from "./account-auth";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
 import { sqliteD1 } from "./test-support/sqlite-d1";
@@ -31,7 +31,7 @@ function request(stage: string, body: unknown, token = bearer(), headers = {}) {
 }
 const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async () => Response.json(value, { status })) as typeof fetch;
 const limits = (monthlyDefault: number) => ({ monthlyDefault, guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 });
-const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
+const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql", "0016_category_suggestion_flows.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
@@ -200,6 +200,66 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(row?.image_mac).toMatch(/^[a-f0-9]{64}$/);
     expect(row?.category_mac).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(row)).not.toContain("Synthetic");
+  });
+  it("suggests a MoneyForward category using only the source name and local category choices", async () => {
+    const flowId = crypto.randomUUID();
+    const choices = [{ id: "local-food", name: "食費" }, { id: "local-home", name: "日用品" }];
+    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 0.92, "local-home": 0.08 }, confidence: 0.92 } } });
+    const result = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "スーパーマーケット", categories: choices }), env, options(provider));
+    expect(result.status).toBe(200);
+    expect(await result.json()).toEqual({ categoryId: "local-food" });
+    const providerPayload = JSON.parse(String(vi.mocked(provider).mock.calls[0]?.[1]?.body));
+    expect(providerPayload.state).toEqual({ sourceCategoryName: "スーパーマーケット" });
+    expect(providerPayload.state).not.toHaveProperty("receipt");
+    expect(providerPayload.questions.category.criteria).toEqual({ "local-food": "食費", "local-home": "日用品" });
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE provider='jev'").bind().first()).toEqual({ count: 1 });
+  });
+  it("validates standalone category suggestions and binds retries to the same choices", async () => {
+    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
+    const flowId = crypto.randomUUID();
+    const invalid = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "Source", categories: [{ id: "local-food", name: "食費" }], receipt: { merchant: "private" } }), env, options(provider));
+    expect(invalid.status).toBe(400);
+    expect(provider).not.toHaveBeenCalled();
+    const body = { flowId, sourceCategoryName: "Source", categories: [{ id: "local-food", name: "食費" }] };
+    expect((await handleRequest(request("category-suggestion", body), env, options(provider))).status).toBe(200);
+    expect((await handleRequest(request("category-suggestion", { ...body, sourceCategoryName: "Changed" }), env, options(provider))).status).toBe(409);
+    expect(provider).toHaveBeenCalledTimes(1);
+  });
+  it("counts category suggestions in plan usage and shares the monthly quota with receipts", async () => {
+    env.AI_FREE_MONTHLY_LIMIT = "1";
+    const categories = [{ id: "local-food", name: "食費" }];
+    const suggestion = (flowId: string, user = "synthetic-user") => handleRequest(
+      request("category-suggestion", { flowId, sourceCategoryName: "Market", categories }, bearer(user)), env,
+      options(fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } })),
+    );
+    expect((await suggestion(crypto.randomUUID())).status).toBe(200);
+    expect(await usage()).toMatchObject({ used: 1, remaining: 0, limit: 1 });
+    expect((await gemini()).status).toBe(429);
+
+    accountState.userId = "other-user";
+    const otherReceipt = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("other-user")), env, options());
+    expect(otherReceipt.status).toBe(200);
+    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
+    const blockedSuggestion = await handleRequest(request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "Market", categories }, bearer("other-user")), env, options(provider));
+    expect(blockedSuggestion.status).toBe(429);
+    expect(provider).not.toHaveBeenCalled();
+  });
+  it("applies guest daily and shared address quotas to category reservations", async () => {
+    const day = "2026-09-30";
+    for (const user of ["synthetic-user", "other-user"]) {
+      await db.prepare("INSERT INTO guest_devices(user_id,secret_hash,created_at,created_day,created_ip_day_mac,last_used_at) VALUES (?, ?, ?, ?, ?, ?)")
+        .bind(user, `synthetic-${user}-hash`, now, day, "creation-address", now).run();
+    }
+    const onePerGuestDay = { ...limits(1), guestDaily: 1, guestAddressDaily: 20 };
+    expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-a", now, onePerGuestDay, "usage-address-a")).toBe("reserved");
+    expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-b", now, onePerGuestDay, "usage-address-a")).toBe("ai_quota_exceeded");
+    await db.prepare("UPDATE ai_category_suggestion_flows SET dispatched=1 WHERE user_id='synthetic-user'").bind().run();
+    expect(await guestDayUsage(db, "synthetic-user", day)).toBe(1);
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "receipt-mac", now, onePerGuestDay, "receipt", "usage-address-a")).toBe("ai_quota_exceeded");
+
+    const onePerAddress = { ...limits(30), guestDaily: 5, guestAddressDaily: 1 };
+    expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-c", now, onePerAddress, "shared-address")).toBe("reserved");
+    expect(await reserveCategorySuggestionFlow(db, "other-user", crypto.randomUUID(), "mac-d", now, onePerAddress, "shared-address")).toBe("ai_quota_exceeded");
   });
   it("limits replay to three attempts per stage and expires image retries after ten minutes", async () => {
     const flowId = crypto.randomUUID();

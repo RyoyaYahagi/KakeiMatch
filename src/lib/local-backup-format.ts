@@ -4,6 +4,7 @@ import { CATEGORY_IDS } from "./category";
 import { recurringCatchUpAuditSchema, scheduleAuditSchema } from "./recurring-schedule";
 import { categoryLearningObservationSchema, normalizeLearningName } from "./category-learning";
 import { monthlyBudgetSettingsSchema } from "./monthly-budget-settings";
+import { moneyForwardImportSettingsSchema } from "./moneyforward-import-format";
 import { accountMetadataRecordId, nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 import { LOCAL_DATA_SCHEMA_VERSION, type LocalDataBackupV2, type LocalDataKind, type LocalDataRecord, type LocalBlob } from "./local-data";
 
@@ -150,6 +151,7 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
       if (id.startsWith("settings:basic-categories:")) return z.object({ budgetId: z.string().min(1).max(128), version: z.number().int().positive() }).strict();
       if (id.startsWith("category-rule-override:")) return z.object({ targetType: z.enum(["merchant", "item"]), normalizedName: z.string().min(1).max(1000).refine(value => normalizeLearningName(value) === value),
         disabled: z.boolean().optional(), deleted: z.boolean().optional(), categoryId: z.string().min(1).max(128).optional() }).strict();
+      if (id === "settings:moneyforward-import") return moneyForwardImportSettingsSchema;
       if (id === "reconciliation:latest-run") return z.object({ runId: z.string().min(1) }).strict();
       if (id === "settings:backup") return z.object({ lastExportAt: isoDateTime }).strict();
       return z.never();

@@ -1028,6 +1028,30 @@ describe("Actual browser ledger", () => {
     await expect(ledger.getTransactionTree("split-a")).rejects.toBeInstanceOf(ActualMasterValidationError);
   });
 
+  it("imports external transactions directly, keeps uncategorized rows null, and searches imported IDs across accounts", async () => {
+    const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
+    await expect(ledger.hasImportedId("receipt:1")).resolves.toBe(true);
+    const result = await ledger.importExternalTransaction({
+      accountId: "bank", date: "2026-09-30", amountYen: 2400, kind: "income",
+      payeeName: "Synthetic Refund", categoryId: null, importedId: "moneyforward:id:mf-900",
+    });
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.transaction).toMatchObject({ kind: "income", amountYen: 2400, accountId: "bank", categoryId: null });
+    expect(api.addTransactions).toHaveBeenCalledWith("bank", [expect.objectContaining({
+      amount: 2400, imported_id: "moneyforward:id:mf-900", payee: expect.any(String),
+    })], { learnCategories: false, runTransfers: false });
+    await expect(ledger.hasImportedId("moneyforward:id:mf-900")).resolves.toBe(true);
+    await ledger.deleteTransactionTree(result.snapshot);
+    expect(rows.some(row => row.imported_id === "moneyforward:id:mf-900")).toBe(false);
+    // Existing IDs are recognized before attempting an import, regardless of their account.
+    const duplicate = await ledger.importExternalTransaction({
+      accountId: "bank", date: "2026-09-29", amountYen: 3284, kind: "expense",
+      payeeName: "Synthetic Store", categoryId: "food", importedId: "receipt:1",
+    });
+    expect(duplicate.alreadyExisted).toBe(true);
+    expect(duplicate.transaction.accountId).toBe("cash");
+  });
+
 });
 
 it("handles Actual's grouped split response with nullable parent IDs and counts children once", async () => {
