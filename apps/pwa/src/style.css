@@ -11,6 +11,7 @@
   --primary: #A94C16;
   --on-primary: #FFFFFF;
   --primary-soft: #FCE9DC;
+  --primary-press: #8F3F11;
   --success: #B3361F;
   --success-soft: #FBE7E1;
   --warning: #3F55B5;
@@ -57,6 +58,7 @@
     --primary: #FFA56B;
     --on-primary: #2A1205;
     --primary-soft: #3D2414;
+    --primary-press: #F08F50;
     --success: #FF8C72; --success-soft: #3B1D17;
     --warning: #AEB6FF; --warning-soft: #262C55;
     --missing: #F0A6DA; --missing-soft: #3A1E33;
@@ -107,12 +109,19 @@ li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .surface-section { background: transparent; border-block: 1px solid var(--border); border-radius: 0; padding: var(--space-4) 0; }
 .surface-section h2 { margin: 0; font-size: .9375rem; }
 
-/* Buttons: primary by default, then secondary / text / destructive. */
-button { font: inherit; min-height: 44px; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-md); background: var(--primary); color: var(--on-primary); font-weight: 700; cursor: pointer; }
+/* Buttons: primary by default, then secondary / text / destructive.
+   docs/DESIGN.md ボタン: only the primary button is filled; the others carry no frame or fill. */
+button { font: inherit; min-height: 44px; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-md); background: var(--primary); color: var(--on-primary); font-weight: 700; cursor: pointer; word-break: keep-all; overflow-wrap: anywhere; transition: transform .08s ease, background-color .12s ease; }
+@supports (word-break: auto-phrase) { button { word-break: auto-phrase; } }
 button:disabled { opacity: .55; cursor: default; }
-.secondary { background: var(--surface); color: var(--primary); border: 1px solid var(--border-strong); font-weight: 500; margin: var(--space-2) var(--space-2) 0 0; }
+.secondary { background: transparent; color: var(--primary); border: 0; padding-inline: var(--space-2); font-weight: 700; margin: var(--space-2) var(--space-2) 0 0; }
 .text-button { background: transparent; color: var(--primary); padding: var(--space-1) var(--space-2); font-weight: 500; }
-button.destructive { background: var(--surface); color: var(--danger); border: 1px solid var(--danger); font-weight: 500; }
+button.destructive { background: transparent; color: var(--danger); border: 0; padding-inline: var(--space-2); font-weight: 700; }
+.secondary:active:not(:disabled), .text-button:active:not(:disabled) { background: var(--primary-soft); }
+button.destructive:active:not(:disabled) { background: var(--danger-soft); }
+/* Unclassed buttons are the filled primary ones, except where a container restyles its buttons. */
+:where(button:not([class]), button[class=""]):not(.segmented button, .master-row button, .record-list button, .date-shortcuts button):active:not(:disabled) { background: var(--primary-press); transform: translateY(1px) scale(.985); }
+:where(button:not([class]), button[class=""]):not(.segmented button, .master-row button, .record-list button, .date-shortcuts button):disabled { opacity: 1; background: var(--sunken); color: var(--muted); }
 form button { margin-top: var(--space-5); }
 .note-edit { background: transparent; color: var(--primary); border: 1px solid var(--border-strong); margin-top: var(--space-2); min-height: 36px; font-weight: 500; }
 
