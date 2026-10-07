@@ -18,7 +18,7 @@ Never commit API keys, passwords, production environment files, Actual credentia
 
 Better Auth and its Passkey plugin authenticate Cloud account routes. The account cookie is HttpOnly and SameSite=Lax, and Secure over HTTPS. Authentication routes validate trusted origins and protect state-changing requests against CSRF. AI JWTs are signed by the Worker, are limited to the AI audience, and expire within 10 minutes. The signing secret never enters the PWA bundle.
 
-AI quota checks run independently of short-window abuse limits. The monthly counter increments after request validation and immediately before a provider request. Provider failures after dispatch count as usage; authentication, validation, and quota rejections do not. A client retry is another provider attempt. Family entitlement removes the product quota only and does not remove the abuse rate limit.
+AI quota checks run independently of short-window abuse limits. The monthly counter increments after request validation and immediately before a provider request. Provider failures after dispatch count as usage; authentication, validation, and quota rejections do not. A client retry is another provider attempt. Plus (`family`) entitlement removes the product quota only and does not remove the abuse rate limit.
 
 Receipt analysis is an explicit user action. The browser sends the selected, locally saved image to the same-origin AI gateway, which forwards it to Gemini. The PWA accepts JPEG, PNG, or WebP images up to 10 MiB for local storage; the gateway accepts at most 6 MiB. The gateway does not persist request or response bodies, and the Gemini request uses `store: false`. Do not send a user's name, email, Actual data, household history, or other receipts.
 

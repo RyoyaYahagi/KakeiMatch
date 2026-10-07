@@ -25,9 +25,9 @@ Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。
 
 ## AI entitlementと利用量
 
-planは `free`、`pro`、`family` です。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとfamilyはclientから設定できません。課金処理はこのIssueの範囲外です。
+planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。
 
-Familyは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitはfamilyでも有効です。管理者はCloudflare D1に対する `account:set-plan` 運用commandでfamilyを割り当てます。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
+Plusは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitはPlusでも有効です。管理者はCloudflare D1に対する `account:set-plan` 運用commandでPlus（`family`）を割り当てます。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
 
 月間利用量はAsia/Tokyoの暦月単位で集計し、1レシート解析フローを1回として表示します。Geminiだけの読み取りでも、同じフロー内でJevのカテゴリ提案を使っても合計1回です。利用者が「AIで読み取る」を押すたびに新しいフローを作ります。形式検証後、最初のGemini送信直前に利用枠を予約します。認証失敗、形式検証失敗、利用枠超過は計上しません。provider呼び出し開始後のtimeoutと、壊れた応答は計上します（providerが処理して料金がかかった可能性があるため）。providerがエラーの状態コード（408・504を除く）を返した時は、読み取りが行われていないため計上しません。この場合も費用の記録は残し、全体の費用上限に含めます。同じフロー内の内部再試行は追加計上しません。
 
@@ -88,6 +88,6 @@ npx wrangler@4.144.0 preview secret bulk /private/path/preview-secrets.json \
 
 ## サービス全体の費用制限（Issue #56）
 
-利用者の製品利用枠と別に、全利用者合計の費用予算とprovider別の要求件数・費用上限を適用します。Familyも対象です。処理中・コスト不明の要求には予約額を残し、同時要求にも上限を適用します。障害・不明要求の増加ではprovider単位で停止します。停止は `503 ai_temporarily_paused` を返します。停止判定は製品利用回数の予約前に行います。並行要求が最終送信予約で競合した場合も、未送信のフロー予約を解放します。中断された未送信予約は120秒後に回収します。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)
+利用者の製品利用枠と別に、全利用者合計の費用予算とprovider別の要求件数・費用上限を適用します。Plusも対象です。処理中・コスト不明の要求には予約額を残し、同時要求にも上限を適用します。障害・不明要求の増加ではprovider単位で停止します。停止は `503 ai_temporarily_paused` を返します。停止判定は製品利用回数の予約前に行います。並行要求が最終送信予約で競合した場合も、未送信のフロー予約を解放します。中断された未送信予約は120秒後に回収します。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)
 
 AI停止中も画像と確認値は端末に残り、手入力、カテゴリ選択、家計簿への登録を続けられます。停止設定と全利用者の費用は通常ユーザーへ公開しません。開発者表示を有効にしても自分の料金だけを取得できます。運用者向けの設定・停止・再開は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。
