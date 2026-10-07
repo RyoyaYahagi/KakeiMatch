@@ -15,6 +15,7 @@ import { initializeDiagnosticsUi } from './local-diagnostics-ui';
 import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
 import { downloadLocalDataRescue } from './local-data-rescue';
+import { initializeThemeSettings } from './theme-settings';
 import './style.css';
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
@@ -81,11 +82,24 @@ root.innerHTML = `
       </section>
       <h3 class="settings-group-title">アプリ</h3>
       <section class="surface-section settings-list" aria-label="アプリの設定">
+        <button class="master-entry" type="button" data-settings-page="settings-page-theme" aria-label="外観"><span class="master-entry-name">外観</span><span id="theme-row-value" class="master-entry-value"></span></button>
         <button id="settings-contact" class="master-entry" type="button" aria-label="お問い合わせ"><span class="master-entry-name">お問い合わせ</span><span class="master-entry-value">声でも送れます</span></button>
         <button class="master-entry" type="button" data-settings-page="settings-page-app" aria-label="アプリ情報"><span class="master-entry-name">アプリ情報</span><span class="master-entry-value">診断・ライセンス</span></button>
       </section>
       <p class="settings-foot">家計簿と画像はこの端末に保存されます。ログアウトしても消えません。</p>
       </div>
+      <section id="settings-page-theme" class="settings-page" hidden aria-labelledby="settings-page-theme-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-theme-title" class="page-title">外観</h2>
+        <label for="theme-preference">表示モード</label>
+        <select id="theme-preference" aria-describedby="theme-description">
+          <option value="light">ライト</option>
+          <option value="dark">ダーク</option>
+          <option value="system">システム</option>
+        </select>
+        <p id="theme-description" class="muted">「システム」は端末の外観設定に合わせて切り替えます。この設定はこの端末のブラウザーに保存されます。</p>
+        <p id="theme-status" class="status" role="status"></p>
+      </section>
       <section id="settings-page-ledger" class="settings-page" hidden aria-labelledby="settings-page-ledger-title">
         <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
         <h2 id="settings-page-ledger-title" class="page-title">家計簿の読み込み・切り替え</h2>
@@ -176,6 +190,7 @@ root.innerHTML = `
 
 const element = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 renderOssLicenses(element<HTMLElement>('oss-licenses'));
+initializeThemeSettings();
 initializeDiagnosticsUi(element<HTMLElement>('app-info'));
 initializeLocalScreenLock(element<HTMLElement>('app-shell'), element<HTMLElement>('settings-content'));
 const message = element<HTMLParagraphElement>('message');
