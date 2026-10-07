@@ -109,8 +109,9 @@ try {
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Changed Shop');
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   assert.equal(await page.locator('#receipt-merchant').count(), 0);
-  await page.getByRole('heading', { name: 'Synthetic Changed Shop' }).waitFor();
-  await page.getByText('支出 ¥1,500', { exact: true }).waitFor();
+  await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').filter({ hasText: 'Synthetic Changed Shop' }).waitFor();
+  assert.equal(await page.locator('.transaction-detail .detail-amount dd').innerText(), '¥1,500');
   await page.reload(); await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   assert.equal(await page.locator('#transactions li').count(), 1);
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Changed Shop/ }).click();

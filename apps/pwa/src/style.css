@@ -422,10 +422,7 @@ form .category-picker button { margin: 0; }
 .category-choice-icon .icon { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .category-choice-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-width: 100%; overflow: hidden; overflow-wrap: anywhere; line-height: 1.25; text-align: center; }
 .category-more { border-style: dashed; color: var(--primary); }
-.receipt-summary { margin-bottom: var(--space-3); }
-.receipt-summary p { margin: var(--space-1) 0; overflow-wrap: anywhere; }
-.receipt-summary-amount { font-family: var(--font-num); font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
-.registered-note { display: flex; align-items: center; gap: var(--space-1); color: var(--success); font-weight: 500; }
+.registered-note { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--success); font-weight: 500; }
 .registered-note .icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
 .detail-disclosure { margin-bottom: var(--space-3); padding: 0; }
 .detail-disclosure > summary { color: var(--primary); font-weight: 500; }
