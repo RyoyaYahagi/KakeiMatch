@@ -298,8 +298,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     header.append(text('h2', '記録'), search);
     const filters = document.createElement('div'); filters.className = 'segmented'; filters.setAttribute('role', 'group'); filters.setAttribute('aria-label', '種類で絞り込む');
     const accountsLink = button('口座・残高を見る', accountBalancesPage); accountsLink.className = 'text-button link-row'; accountsLink.prepend(icon('wallet')); accountsLink.append(icon('chevronRight'));
-    const groups = document.createElement('div'); groups.className = 'record-groups';
-    const empty = text('p', '記録を読み込んでいます…', 'empty');
+    const groups = document.createElement('div'); groups.className = 'record-groups'; groups.setAttribute('aria-busy', 'true');
+    const empty = text('p', '', 'empty'); empty.hidden = true;
     view.append(header, filters, accountsLink, groups, empty);
     for (const [value, label] of [['all', 'すべて'], ['expense', '支出'], ['income', '収入'], ['transfer', '振替']] as const) {
       const option = document.createElement('button'); option.type = 'button'; option.textContent = label; option.dataset.filter = value; option.disabled = true;
@@ -353,6 +353,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         needsReview: row => reviewTransactionIds.has(row.id),
         open: row => { const receipt = receiptFor(row); void (receipt ? receiptEditor(receipt) : transactionDetail(row)).catch(report); },
       });
+      groups.setAttribute('aria-busy', 'false');
       empty.hidden = shown > 0 || (recordsFilter === 'all' && pending.length > 0);
       empty.textContent = recordsFilter === 'all' ? 'まだ記録がありません。' : 'この種類の記録はありません。';
       filters.querySelectorAll('button').forEach(option => option.setAttribute('aria-pressed', String(option.dataset.filter === recordsFilter)));
