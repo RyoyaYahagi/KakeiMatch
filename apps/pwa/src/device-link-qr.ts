@@ -29,9 +29,19 @@ export function qrSvg(code: string, label: string): SVGSVGElement {
   return svg;
 }
 
+type Detector = { detect(source: CanvasImageSource): Promise<Array<{ rawValue: string }>> };
+/** The browser's own reader where it has one (Chrome on Mac and Android): faster and more forgiving of blur than jsQR. */
+async function nativeDetector(): Promise<Detector | null> {
+  const Native = (globalThis as { BarcodeDetector?: { new(options: { formats: string[] }): Detector; getSupportedFormats(): Promise<string[]> } }).BarcodeDetector;
+  if (!Native) return null;
+  try { return (await Native.getSupportedFormats()).includes('qr_code') ? new Native({ formats: ['qr_code'] }) : null; } catch { return null; }
+}
+
 /** Reads QR codes from the rear camera until `accept` takes one. `stop()` releases the camera. */
 export async function scanQr(video: HTMLVideoElement, accept: (value: string) => boolean): Promise<{ stop(): void }> {
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+  // A dense code needs detail: laptop cameras default to a low resolution unless asked.
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+  const detector = await nativeDetector();
   video.srcObject = stream;
   video.muted = true;
   video.setAttribute('playsinline', '');
@@ -44,18 +54,24 @@ export async function scanQr(video: HTMLVideoElement, accept: (value: string) =>
     for (const track of stream.getTracks()) track.stop();
     video.srcObject = null;
   };
-  const frame = () => {
+  const frame = async () => {
     if (!running) return;
     if (video.readyState >= video.HAVE_CURRENT_DATA && video.videoWidth > 0) {
-      // Decoding a downscaled frame keeps phones responsive; connection codes still read reliably.
-      const scale = Math.min(1, 720 / Math.max(video.videoWidth, video.videoHeight));
-      canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const found = jsQR(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, { inversionAttempts: 'dontInvert' });
-      if (found?.data && accept(found.data)) { stop(); return; }
+      let value: string | null = null;
+      if (detector) {
+        try { value = (await detector.detect(video))[0]?.rawValue ?? null; } catch { value = null; }
+      } else {
+        // jsQR on a frame of up to 1280px: enough detail for a dense code, still quick on phones.
+        const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
+        canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        value = jsQR(context.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height, { inversionAttempts: 'dontInvert' })?.data ?? null;
+      }
+      if (!running) return;
+      if (value && accept(value)) { stop(); return; }
     }
-    requestAnimationFrame(frame);
+    requestAnimationFrame(() => { void frame(); });
   };
-  requestAnimationFrame(frame);
+  requestAnimationFrame(() => { void frame(); });
   return { stop };
 }

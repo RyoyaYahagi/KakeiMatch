@@ -37,9 +37,20 @@ async function transform(bytes: Uint8Array, stream: CompressionStream | Decompre
   return result;
 }
 
+/**
+ * Drops what two browsers on one network do not need, so the QR code is coarser and quicker to read:
+ * TCP candidates, and optional candidate attributes and session lines that only matter elsewhere.
+ */
+export function compactDescription(description: string): string {
+  return description.split('\r\n')
+    .filter(line => !/^a=(extmap-allow-mixed|msid-semantic)\b/.test(line) && !/^a=candidate:\S+ \d+ tcp /i.test(line))
+    .map(line => line.startsWith('a=candidate:') ? line.replace(/ (generation|network-id|network-cost|ufrag) \S+/g, '') : line)
+    .join('\r\n');
+}
+
 /** `KM1O.<deflated SDP>` for an offer, `KM1A.` for an answer. */
 export async function encodeLinkCode(kind: LinkCodeKind, description: string): Promise<string> {
-  const compressed = await transform(new TextEncoder().encode(description), new CompressionStream('deflate-raw'), MAX_CODE_LENGTH);
+  const compressed = await transform(new TextEncoder().encode(compactDescription(description)), new CompressionStream('deflate-raw'), MAX_CODE_LENGTH);
   return `${VERSION}${KIND_LETTER[kind]}.${toBase64Url(compressed)}`;
 }
 

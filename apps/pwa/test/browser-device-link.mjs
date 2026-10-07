@@ -39,6 +39,9 @@ try {
 
   // The first device shows its code; the second reads it as text and shows a reply.
   const dialogA = await openLink(a);
+  // Before any sync, the row and the dialog say so.
+  await a.locator('#device-link-state').getByText('未同期', { exact: true }).waitFor();
+  await dialogA.getByText('まだほかの端末と同期していません。', { exact: true }).waitFor();
   await dialogA.getByRole('button', { name: 'この端末から始める', exact: true }).click();
   const offer = await textCode(dialogA, '最初のコード');
   assert.match(offer, /^KM1O\./);
@@ -72,16 +75,30 @@ try {
   const reload = b.waitForEvent('load');
   await dialogB.getByRole('button', { name: '置き換える', exact: true }).click();
   await dialogA.getByText('相手の端末の家計簿を、この端末の家計簿にそろえました。', { exact: true }).waitFor({ timeout: 30_000 });
+  await dialogA.getByText('✓ そろいました', { exact: true }).waitFor();
   await reload;
   await b.getByText('今月の支出', { exact: false }).first().waitFor();
+  // After reloading, the replaced device says what happened.
+  assert.match(await b.locator('#message').innerText(), /^✓ 相手の端末の家計簿にそろえました（取引1件・最新 \d+月\d+日）。$/);
   await b.locator('#receipt-tab').click();
   await b.getByRole('button', { name: /^Synthetic Linked Expense ·/ }).waitFor();
   // The previous household can still be restored on the device that was replaced.
   await b.locator('#settings-tab').click();
   assert.equal(await b.locator('#restore-previous').isDisabled(), false);
+  await b.locator('#device-link-state').getByText(/^\d+月\d+日にそろえました$/).waitFor();
 
   // When the reply never reaches the first device, the second stops waiting and says what to check.
   await dialogA.getByRole('button', { name: '閉じる', exact: true }).click();
+  await a.locator('#device-link-state').getByText(/^\d+月\d+日にそろえました$/).waitFor();
+  // A change after the sync shows on the row.
+  await a.locator('#home-tab').click(); await click(a, '記録を追加'); await click(a, '支出を手入力');
+  await a.locator('#manual-transaction-payee').fill('Synthetic Later Expense');
+  await a.locator('#manual-transaction-amount').fill('500');
+  await a.locator('#manual-transaction-category').selectOption({ label: '食費' });
+  await a.locator('#manual-transaction-account').selectOption({ label: 'Synthetic Link Wallet' });
+  await click(a, '登録する'); await a.getByText('登録しました。', { exact: true }).waitFor();
+  await a.locator('#settings-tab').click();
+  await a.locator('#device-link-state').getByText(/^\d+月\d+日のあと変更あり$/).waitFor();
   const retryA = await openLink(a);
   await retryA.getByRole('button', { name: 'この端末から始める', exact: true }).click();
   const unusedOffer = await textCode(retryA, '最初のコード');
@@ -94,7 +111,7 @@ try {
   await retryB.getByText(/ローカルネットワーク/).waitFor();
   if (process.env.PWA_DEVICE_LINK_UNREACHABLE_SCREENSHOT_PATH) await b.screenshot({ path: process.env.PWA_DEVICE_LINK_UNREACHABLE_SCREENSHOT_PATH });
   assert.deepEqual([...first.errors, ...second.errors], []);
-  console.log('PASS: two devices connect with text codes, explain a code read at the wrong step, compare households, and the replaced device confirms, adopts the other household, can return to its previous one, and a device that never connects stops waiting with what to check.');
+  console.log('PASS: two devices connect with text codes, explain a code read at the wrong step, compare households, and the replaced device confirms, adopts the other household, can return to its previous one, both show the sync state and later changes, and a device that never connects stops waiting with what to check.');
 } catch (error) {
   for (const { page } of [first, second]) console.log(await page.locator('body').innerText());
   throw error;

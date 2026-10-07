@@ -4,7 +4,8 @@
 import { decodeLinkCode, encodeLinkCode, sha256Hex } from './device-link-code';
 
 export type LinkRole = 'offerer' | 'answerer';
-export type HouseholdSummary = { device: string; transactions: number; latestDate: string | null };
+/** `fingerprint` hashes every transaction, so two devices can tell whether their households already match. */
+export type HouseholdSummary = { device: string; transactions: number; latestDate: string | null; fingerprint?: string };
 type Message =
   | { t: 'hello'; version: 1; summary: HouseholdSummary }
   | { t: 'choose'; source: LinkRole }

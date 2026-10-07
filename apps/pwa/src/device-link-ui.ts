@@ -2,11 +2,12 @@
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import { createLocalSnapshot, restoreLocalBackup, type BackupLedger } from './local-backup';
 import { DeviceLink, type FailureReason, type HouseholdSummary, type LinkRole } from './device-link';
-import { LinkCodeError } from './device-link-code';
+import { LinkCodeError, sha256Hex } from './device-link-code';
+import { markJustReceived, readLastSync, saveLastSync, syncDetailText, syncRowText, syncState, takeJustReceived } from './device-link-status';
 import { qrSvg, scanQr } from './device-link-qr';
 import { recordLocalDiagnostic } from './local-diagnostics';
 
-type LinkLedger = BackupLedger & { getSearchTransactions(): Promise<Array<{ transaction: { date: string } }>> };
+type LinkLedger = BackupLedger & { getSearchTransactions(): Promise<Array<{ transaction: { id: string; date: string } }>> };
 
 const text = (tag: string, value: string, className = '') => {
   const element = document.createElement(tag); element.textContent = value; if (className) element.className = className; return element;
@@ -34,15 +35,29 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
   const summary = async (): Promise<HouseholdSummary> => {
     const rows = await ledger.getSearchTransactions();
     const latest = rows.reduce<string | null>((max, row) => (max === null || row.transaction.date > max ? row.transaction.date : max), null);
-    return { device: deviceName(), transactions: rows.length, latestDate: latest };
+    // Any change to any transaction changes the fingerprint, so "changed since the last sync" is exact.
+    const ordered = rows.map(row => row.transaction).sort((a, b) => a.id.localeCompare(b.id));
+    const fingerprint = await sha256Hex(new TextEncoder().encode(JSON.stringify(ordered)).buffer as ArrayBuffer);
+    return { device: deviceName(), transactions: rows.length, latestDate: latest, fingerprint };
+  };
+  /** Compares this household with the last sync; right after receiving, the reloaded household becomes the baseline. */
+  const currentState = async () => {
+    const own = await summary();
+    let last = readLastSync();
+    if (last && last.fingerprint === null) { last = { ...last, fingerprint: own.fingerprint ?? null }; saveLastSync(last); }
+    return syncState(last, own.fingerprint ?? '');
   };
 
   // docs/UX.md 設定: one entry in データ; the explanation and the steps are in the dialog it opens.
   const entry = document.createElement('button');
   entry.type = 'button'; entry.className = 'master-entry'; entry.id = 'device-link-entry'; entry.setAttribute('aria-label', 'ほかの端末と同期');
-  entry.append(text('span', 'ほかの端末と同期', 'master-entry-name'), text('span', '同じWi-Fiの2台', 'master-entry-value'));
+  const entryValue = text('span', '', 'master-entry-value'); entryValue.id = 'device-link-state';
+  entry.append(text('span', 'ほかの端末と同期', 'master-entry-name'), entryValue);
   entry.addEventListener('click', () => open());
   document.getElementById('data-rows')!.prepend(entry);
+  const refreshEntry = () => { void currentState().then(state => { entryValue.textContent = syncRowText(state); }).catch(() => { entryValue.textContent = ''; }); };
+  refreshEntry();
+  document.getElementById('settings-tab')!.addEventListener('click', refreshEntry);
 
   function open() {
     const dialog = document.createElement('dialog');
@@ -56,6 +71,8 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
     dialog.showModal();
 
     let link: DeviceLink | null = null;
+    let ownSummary: HouseholdSummary | null = null;
+    let peerSummary: HouseholdSummary | null = null;
     let scanner: { stop(): void } | null = null;
     let restoring = false;
     const stopScanner = () => { scanner?.stop(); scanner = null; };
@@ -100,7 +117,7 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
     };
 
     const events = {
-      onPeerSummary: (peer: HouseholdSummary) => { void summary().then(own => choose(own, peer)); },
+      onPeerSummary: (peer: HouseholdSummary) => { void summary().then(own => { ownSummary = own; peerSummary = peer; choose(own, peer); }); },
       onChoice: (source: LinkRole, chosenHere: boolean) => {
         if (!link) return;
         if (source === link.role) {
@@ -113,7 +130,12 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       },
       onProgress: (fraction: number) => { status.textContent = `${Math.round(fraction * 100)}%`; },
       onSnapshot: (snapshot: Blob) => { if (pendingConfirm) confirmReplace(snapshot); else void replace(snapshot); },
-      onPeerReceived: () => { show(text('p', '相手の端末の家計簿を、この端末の家計簿にそろえました。')); },
+      onPeerReceived: () => {
+        const own = ownSummary!;
+        saveLastSync({ at: new Date().toISOString(), peerDevice: peerSummary?.device ?? '', direction: 'sent', transactions: own.transactions, latestDate: own.latestDate, fingerprint: own.fingerprint ?? null });
+        refreshEntry();
+        show(text('p', '✓ そろいました', 'device-link-done'), text('p', '相手の端末の家計簿を、この端末の家計簿にそろえました。'), text('p', summaryLine(own), 'muted'));
+      },
       onFailed: (reason: FailureReason) => {
         if (restoring) return;
         if (reason === 'unreachable') {
@@ -139,7 +161,8 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       for (const [who, item] of [[named('この端末', own.device), own], [named('相手の端末', peer.device), peer]] as const) {
         const row = document.createElement('li'); row.append(text('span', who), text('span', summaryLine(item), 'muted')); rows.append(row);
       }
-      show(text('p', 'つながりました。どちらの家計簿にそろえますか？'), rows,
+      const same = Boolean(own.fingerprint) && own.fingerprint === peer.fingerprint;
+      show(text('p', same ? 'つながりました。2台の家計簿は同じです。そろえる必要はありません。' : 'つながりました。どちらの家計簿にそろえますか？'), rows,
         button('この端末の家計簿にそろえる', () => { link?.choose(link.role); status.textContent = '相手の端末の応答を待っています…'; }, 'primary'),
         button('相手の家計簿にそろえる', () => { link?.choose(link.role === 'offerer' ? 'answerer' : 'offerer'); status.textContent = '相手の端末の応答を待っています…'; }),
         text('p', 'そろえられた側の元の家計簿は、その端末の設定の「切り替え前の家計データに戻る」で戻せます。', 'muted'));
@@ -154,6 +177,9 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       show(text('p', '家計簿を切り替えています。この画面を閉じずにお待ちください。'));
       try {
         await restoreLocalBackup(snapshot, ledger);
+        const peer = peerSummary;
+        saveLastSync({ at: new Date().toISOString(), peerDevice: peer?.device ?? '', direction: 'received', transactions: peer?.transactions ?? 0, latestDate: peer?.latestDate ?? null, fingerprint: null });
+        markJustReceived(`✓ ${peer?.device || '相手の端末'}の家計簿にそろえました（${peer ? summaryLine(peer) : ''}）。`);
         link?.confirmReceived();
         recordLocalDiagnostic('restore');
         status.textContent = '切り替えました。読み込み直します。';
@@ -168,7 +194,9 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
     }
 
     function begin() {
-      show(text('p', '同じWi-Fiにつないだ自分の2台の間で、家計簿をどちらか一方にそろえます。サーバーを通さず、2台の間で直接、暗号化して送ります。'),
+      const state = document.createElement('div'); state.className = 'device-link-state'; state.setAttribute('aria-live', 'polite');
+      void currentState().then(current => { state.replaceChildren(...syncDetailText(current).map(line => text('p', line))); }).catch(() => undefined);
+      show(state, text('p', '同じWi-Fiにつないだ自分の2台の間で、家計簿をどちらか一方にそろえます。サーバーを通さず、2台の間で直接、暗号化して送ります。', 'muted'),
         button('この端末から始める', () => { void startHere(); }, 'primary'),
         button('相手の端末のコードを読む', () => { joinOther(); }));
     }
@@ -196,4 +224,13 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
     }
     begin();
   }
+
+  return {
+    /** After the first screen has rendered (it clears the message), say that this device was just replaced. */
+    announceReceived() {
+      const received = takeJustReceived();
+      const message = document.getElementById('message');
+      if (received && message) message.textContent = received;
+    },
+  };
 }

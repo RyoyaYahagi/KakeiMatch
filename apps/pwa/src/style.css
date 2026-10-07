@@ -739,6 +739,9 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .device-link-households li { display: flex; justify-content: space-between; gap: var(--space-3); padding-block: var(--space-3); }
 .device-link-households li + li { border-top: 1px solid var(--border); }
 .device-link-status { min-height: 1.5em; }
+.device-link-state { padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.device-link-state p { margin: 0 0 var(--space-1); }
+.device-link-done { margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--success); }
 .device-link-help { margin: 0; padding-left: 1.25em; display: grid; gap: var(--space-2); }
 .bot-check-dialog { width: min(100% - 32px, 420px); border: 1px solid var(--border); border-radius: var(--radius-xl); padding: var(--space-5); color: inherit; background: var(--surface); }
 .bot-check-dialog::backdrop { background: var(--scrim); }
