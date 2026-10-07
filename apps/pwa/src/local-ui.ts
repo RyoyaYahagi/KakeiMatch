@@ -363,6 +363,16 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     });
     render();
   }
+  /** 記録の詳細の行（項目名を左、値を右）。先頭の行は金額として大きく出す。docs/UX.md 記録の詳細。 */
+  function recordDetailRows(rows: Array<[string, string | HTMLElement]>) {
+    const detail = document.createElement('dl'); detail.className = 'transaction-detail surface-section';
+    for (const [index, [label, value]] of rows.entries()) {
+      const group = document.createElement('div'); group.className = index === 0 ? 'detail-amount' : 'detail-row';
+      const definition = text('dd', typeof value === 'string' ? value : ''); if (typeof value !== 'string') definition.append(value);
+      group.append(text('dt', label), definition); detail.append(group);
+    }
+    return detail;
+  }
   async function transactionDetail(transaction: ActualTransaction) {
     const linked = (await receipts.list()).find(receipt => receipt.registration.actualTransactionId === transaction.id);
     if (linked) { await receiptEditor(linked); return; }
@@ -372,18 +382,13 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (!current) throw new Error('記録が見つかりません。記録一覧を読み込み直してください。');
     const back = button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords); back.className = 'text-button back-link'; back.prepend(icon('chevronLeft'));
     view.append(back, text('h2', current.kind === 'income' ? '収入の記録' : current.kind === 'transfer' ? '振替の記録' : '支出の記録'));
-    const detail = document.createElement('dl'); detail.className = 'transaction-detail surface-section';
-    const values = current.kind === 'transfer' ? [
+    const values: Array<[string, string | HTMLElement]> = current.kind === 'transfer' ? [
       ['金額', yen(current.amountYen)], ['日付', current.date],
       ['振替元口座', accounts.find(account => account.id === current.accountId)?.name || '利用不可'],
       ['振替先口座', accounts.find(account => account.id === current.transferAccountId)?.name || '利用不可'],
       ['メモ', current.memo || 'なし'],
     ] : [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']];
-    for (const [index, [label, value]] of values.entries()) {
-      const group = document.createElement('div'); group.className = index === 0 ? 'detail-amount' : 'detail-row';
-      group.append(text('dt', label), text('dd', value)); detail.append(group);
-    }
-    view.append(detail);
+    view.append(recordDetailRows(values));
     const actions = document.createElement('div'); actions.className = 'detail-actions';
     if (current.kind === 'transfer') actions.append(button('編集する', () => manualEditor('transfer', current), false));
     if (current.kind !== 'transfer' && !current.isSplit) actions.append(button('編集する', () => manualEditor(current.kind === 'income' ? 'income' : 'expense', current), false));
@@ -401,11 +406,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const categoryName = (id: string | null) => categories.find(category => category.id === id)?.name ?? (isCategoryId(id) ? CATEGORY_LABELS[id] : '未分類');
     // docs/UX.md 記録の詳細: same layout as other records; the receipt image and items open step by step.
     const back = button(searchOrigin ? '検索結果へ戻る' : '記録一覧へ戻る', returnToRecords); back.className = 'text-button back-link'; back.prepend(icon('chevronLeft'));
-    const summary = document.createElement('section'); summary.className = 'surface-section receipt-summary';
-    const registered = text('p', '家計簿へ登録済みです。', 'registered-note'); registered.prepend(icon('check'));
-    summary.append(text('p', `支出 ${yen(value.totalAmountYen)}`, 'receipt-summary-amount'), text('p', `${value.purchasedDate}${value.purchasedTime ? ` ${value.purchasedTime}` : ''}`, 'muted'),
-      text('p', `${categoryName(value.categoryId)} · ${accounts.find(account => account.id === value.accountId)?.name ?? '利用不可'}`), registered);
-    view.append(back, text('h2', value.merchant), summary);
+    const registered = text('span', '家計簿へ登録済みです。', 'registered-note'); registered.prepend(icon('check'));
+    const summary = recordDetailRows([
+      ['金額', yen(value.totalAmountYen)],
+      [value.purchasedTime ? '日時' : '日付', `${value.purchasedDate}${value.purchasedTime ? ` ${value.purchasedTime}` : ''}`],
+      ['店名・支払先', value.merchant],
+      ['カテゴリ', categoryName(value.categoryId)],
+      ['支払元', accounts.find(account => account.id === value.accountId)?.name ?? '利用不可'],
+      ['メモ', value.memo || 'なし'],
+      ['状態', registered],
+    ]);
+    view.append(back, text('h2', '支出の記録'), summary);
     if (pending) view.append(text('p', '前回の変更は保存結果を確認中です。編集画面で同じ内容を再試行してください。', 'notice notice-warning'));
     if (receipt.aiSuggestion.categoryRules?.length) {
       const reasons = document.createElement('details'); reasons.className = 'surface-section detail-disclosure';
@@ -423,7 +434,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       image.addEventListener('toggle', () => { if (!image.open || image.childElementCount > 1) return; void repository.getBlob(receipt.image!.blobId).then(blob => { if (!image.isConnected) return; if (!blob) { image.append(text('p', 'レシート画像の原本はありません。')); return; } imageUrl = URL.createObjectURL(blob.blob); const img = document.createElement('img'); img.src = imageUrl; img.alt = '保存したレシート'; img.className = 'receipt-preview'; image.append(img); }).catch(report); });
       view.append(image);
     }
-    if (value.memo) summary.append(text('p', `メモ：${value.memo}`));
     if (value.items?.length) {
       const items = document.createElement('details'); items.className = 'surface-section detail-disclosure'; items.append(text('summary', '購入内容'));
       const list = document.createElement('ul'); list.className = 'record-list';

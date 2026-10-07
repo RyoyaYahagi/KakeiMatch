@@ -135,7 +135,7 @@ try {
   assert.match(await page.locator('.transaction-search-active').innerText(), /口座：Synthetic Search Wallet/);
   const selectedAccount = await page.locator('#transaction-search-account').inputValue();
   await page.locator('#transaction-search-results > li > button').click();
-  await page.getByRole('heading', { name: 'Synthetic Search Merchant', exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').getByText('Synthetic Search Merchant', { exact: true }).waitFor();
   await click('検索結果へ戻る');
   await page.locator('#transaction-search-count').getByText('1件', { exact: true }).waitFor();
   assert.equal(await page.locator('#transaction-search-kind').inputValue(), 'expense');

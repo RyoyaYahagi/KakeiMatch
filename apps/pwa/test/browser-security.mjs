@@ -60,8 +60,8 @@ try {
 
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Xss Store/i }).click();
-  await page.getByRole('heading', { name: merchant, exact: true }).waitFor();
-  await page.getByText(`メモ：${memo}`, { exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').getByText(merchant, { exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').getByText(memo, { exact: true }).waitFor();
   await page.locator('details.detail-disclosure summary').filter({ hasText: '購入内容' }).click();
   await page.getByText(`${itemName} · ¥1,280 · 食費`, { exact: true }).waitFor();
   assert.equal(await page.locator('img[src="x"]').count(), 0);
@@ -79,8 +79,8 @@ try {
   await page.getByText('今月の支出 ¥1,280', { exact: false }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Xss Store/i }).click();
-  await page.getByRole('heading', { name: merchant, exact: true }).waitFor();
-  await page.getByText(`メモ：${memo}`, { exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').getByText(merchant, { exact: true }).waitFor();
+  await page.locator('.transaction-detail .detail-row dd').getByText(memo, { exact: true }).waitFor();
   await page.locator('details.detail-disclosure summary').filter({ hasText: '購入内容' }).click();
   await page.getByText(`${itemName} · ¥1,280 · 食費`, { exact: true }).waitFor();
   assert.equal(await page.locator('img[src="x"]').count(), 0);
