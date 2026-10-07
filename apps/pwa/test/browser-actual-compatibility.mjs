@@ -39,7 +39,7 @@ async function importArchive(bytes) {
 async function exportArchive() {
   await settings();
   const downloaded = page.waitForEvent('download');
-  await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloaded;
   assert.match(download.suggestedFilename(), /\.kmb$/);
   await page.waitForFunction(() => document.querySelector('#backup-settings [role=status]')?.textContent?.includes('バックアップを生成しました。')
@@ -123,7 +123,7 @@ try {
     await page.reload(); await ready(); await checkHousehold();
     const exported = await exportArchive();
     await importArchive(exported); await checkHousehold();
-    await settings('家計簿の読み込み・切り替え');
+    await settings('バックアップと復元');
     const navigation = page.waitForNavigation({ waitUntil: 'load' });
     page.once('dialog', dialog => dialog.accept()); await page.locator('#restore-previous').click();
     await navigation; await ready(); await checkHousehold();

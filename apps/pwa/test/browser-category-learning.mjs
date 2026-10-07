@@ -190,7 +190,7 @@ try {
 
   // Portable backup/restore must retain local item votes and their native category IDs.
   await page.locator('#settings-tab').click();
-  const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const file = await download.path(); assert.ok(file); const buffer = await readFile(file);
   await waitForBackupExportReady(page);
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());

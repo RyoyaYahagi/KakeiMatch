@@ -165,10 +165,10 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       show(text('p', same ? 'つながりました。2台の家計簿は同じです。そろえる必要はありません。' : 'つながりました。どちらの家計簿にそろえますか？'), rows,
         button('この端末の家計簿にそろえる', () => { link?.choose(link.role); status.textContent = '相手の端末の応答を待っています…'; }, 'primary'),
         button('相手の家計簿にそろえる', () => { link?.choose(link.role === 'offerer' ? 'answerer' : 'offerer'); status.textContent = '相手の端末の応答を待っています…'; }),
-        text('p', 'そろえられた側の元の家計簿は、その端末の設定の「切り替え前の家計データに戻る」で戻せます。', 'muted'));
+        text('p', 'そろえられた側の元の家計簿は、その端末の設定の「変更前のデータに戻す」で戻せます。', 'muted'));
     }
     function confirmReplace(snapshot: Blob) {
-      show(text('p', '受け取った家計簿で、この端末の家計簿を置き換えますか？元の家計簿は「切り替え前の家計データに戻る」で戻せます。'),
+      show(text('p', '受け取った家計簿で、この端末の家計簿を置き換えますか？元の家計簿は「変更前のデータに戻す」で戻せます。'),
         button('置き換える', () => { void replace(snapshot); }, 'primary'),
         button('やめる', () => { link?.reportFailure(); close(); }));
     }

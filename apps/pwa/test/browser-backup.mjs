@@ -217,7 +217,7 @@ async function seedAuditAndPreferences() {
 async function exportBackup() {
   await page.locator('#settings-tab').click();
   const downloadPromise = page.waitForEvent('download', { timeout: 15000 });
-  await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   let download;
   try { download = await downloadPromise; }
   catch (error) {
@@ -243,6 +243,7 @@ async function exportBackup() {
 
 async function importBackup(buffer, filename = 'synthetic.kmb') {
   await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
   const navigation = page.waitForNavigation({ waitUntil: 'load' });
   const confirmationPromise = page.waitForEvent('dialog');
   const fileSelection = page.locator('#backup-file').setInputFiles({ name: filename, mimeType: 'application/vnd.kakeimatch.backup', buffer });
@@ -273,6 +274,7 @@ function assertPayPayCardStatementMapping(snapshot) {
 }
 
 async function wipeLocalData() {
+  await page.locator('#settings-tab').click();
   const navigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', async dialog => {
     assert.equal(dialog.type(), 'confirm');
@@ -290,6 +292,17 @@ async function wipeLocalData() {
 try {
   await page.goto(url);
   await waitForReady();
+  await page.locator('#settings-tab').click();
+  assert.equal(await page.locator('#backup-export').isVisible(), false);
+  await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
+  assert.equal(await page.locator('#budget-section').isVisible(), false);
+  assert.equal(await page.locator('#restore-previous').isVisible(), false);
+  assert.equal(await page.locator('#import-button').isVisible(), false);
+  await page.locator('summary').filter({ hasText: '既存の家計簿を取り込む' }).click();
+  assert.equal(await page.locator('#import-button').isVisible(), true);
+  await page.locator('summary').filter({ hasText: '既存の家計簿を取り込む' }).click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  if (process.env.PWA_BACKUP_SETTINGS_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_BACKUP_SETTINGS_SCREENSHOT_PATH, fullPage: true });
   await setupLedger();
   await addReceipt('Synthetic Corner', 1280);
   await addReceipt('Synthetic Corner Market', 1280);
@@ -315,6 +328,7 @@ try {
   const corrupt = Buffer.from(originalBackup);
   corrupt[corrupt.length - 1] ^= 0xff;
   await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
   const corruptConfirmationPromise = page.waitForEvent('dialog');
   const corruptFileSelection = page.locator('#backup-file').setInputFiles({ name: 'synthetic-corrupt.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer: corrupt });
   const corruptConfirmation = await corruptConfirmationPromise;
@@ -331,7 +345,7 @@ try {
   assert.deepEqual(restoredSnapshot, sourceSnapshot, 'restored KakeiMatch records and rendered Actual transactions should match');
   await assertDeletedDefaultCategoryAbsent();
   assert.equal(await page.locator('#restore-previous').isEnabled(), true, 'successful import should preserve a return path to the previous profile');
-  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '家計簿の読み込み・切り替え', exact: true }).click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
   const returnNavigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#restore-previous').click();
@@ -339,7 +353,7 @@ try {
   await waitForReady();
   const previousSnapshot = await exportSnapshot();
   assert.deepEqual(previousSnapshot, beforeCorruptImport, 'the prior profile should still be intact and selectable after staging restore');
-  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: '家計簿の読み込み・切り替え', exact: true }).click();
+  await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
   const restoreNavigation = page.waitForNavigation({ waitUntil: 'load' });
   page.once('dialog', dialog => dialog.accept());
   await page.locator('#restore-previous').click();

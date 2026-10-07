@@ -47,7 +47,7 @@ root.innerHTML = `
     <section id="household-view">
     <section id="import-section" hidden>
       <p>既存の家計簿があれば、記録を始める前にZIPファイルを読み込めます。</p>
-      <button id="import-button" class="secondary" type="button">家計簿を読み込む</button>
+      <button id="import-button" class="secondary" type="button">既存の家計簿を取り込む</button>
       <input id="import-file" type="file" accept=".zip,application/zip" hidden />
     </section>
     <section id="budget-section" hidden>
@@ -70,9 +70,9 @@ root.innerHTML = `
       <h3 class="settings-group-title">家計簿</h3>
       <section id="local-settings" class="surface-section settings-list" aria-label="家計簿の設定"></section>
       <h3 class="settings-group-title">データ</h3>
-      <section id="backup-quick" class="surface-section backup-quick" aria-label="バックアップ"></section>
+      <section id="backup-quick" class="surface-section backup-quick" aria-label="バックアップの状況"></section>
       <section id="data-rows" class="surface-section settings-list" aria-label="データの設定">
-        <button class="master-entry" type="button" data-settings-page="settings-page-ledger" aria-label="家計簿の読み込み・切り替え"><span class="master-entry-name">家計簿の読み込み・切り替え</span></button>
+        <button class="master-entry" type="button" data-settings-page="settings-page-ledger" aria-label="バックアップと復元"><span class="master-entry-name">バックアップと復元</span></button>
         <button class="master-entry" type="button" data-settings-page="settings-page-lock" aria-label="画面ロック"><span class="master-entry-name">画面ロック</span><span id="screen-lock-row-value" class="master-entry-value"></span></button>
         <button class="master-entry destructive-text" type="button" data-settings-page="settings-page-cleanup" aria-label="原本の整理・全削除"><span class="master-entry-name">原本の整理・全削除</span></button>
       </section>
@@ -102,7 +102,7 @@ root.innerHTML = `
       </section>
       <section id="settings-page-ledger" class="settings-page" hidden aria-labelledby="settings-page-ledger-title">
         <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
-        <h2 id="settings-page-ledger-title" class="page-title">家計簿の読み込み・切り替え</h2>
+        <h2 id="settings-page-ledger-title" class="page-title">バックアップと復元</h2>
       <div id="data-settings" class="settings-stack">
         <section class="surface-section storage-location" aria-labelledby="storage-location-title">
           <h4 id="storage-location-title">保存先</h4>

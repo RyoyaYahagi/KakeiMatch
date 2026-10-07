@@ -57,7 +57,7 @@ try {
   await page.locator('#manual-transaction-destination').waitFor();
   assert.deepEqual(await groups('#manual-transaction-destination'), ['銀行口座', '現金', 'その他 / 未分類', 'クレジットカード']);
   await noOverflow();
-  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#backup-export').click();
+  await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const buffer = await readFile(await download.path());
   await waitForBackupExportReady(page);
   page.once('dialog', dialog => dialog.accept()); const navigation = page.waitForNavigation({ waitUntil: 'load' });

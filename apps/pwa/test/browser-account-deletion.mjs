@@ -78,7 +78,9 @@ try {
   await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   await page.locator('#transactions').getByText('Synthetic Shop', { exact: true }).waitFor();
   await page.locator('#settings-tab').click();
+  await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click();
   assert.equal(await page.locator('#backup-export').isVisible(), true, 'local backup remains available');
+  await page.locator('#settings-tab').click();
   assert.equal(await page.getByRole('button', { name: '原本の整理・全削除', exact: true }).isVisible(), true, 'local original management and clear-all remain available');
   console.log(`PASS: explicit cancel and confirmation, bodyless account deletion, local synthetic ledger and backup remain available; screenshot ${screenshotPath}`);
 } catch (error) {
