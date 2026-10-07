@@ -21,7 +21,7 @@ type Category = Awaited<ReturnType<Ledger['listExpenseCategories']>>[number];
 const yen = (amount: number) => `¥${Math.abs(amount).toLocaleString('ja-JP')}`;
 function node<K extends keyof HTMLElementTagNameMap>(tag: K, value = '') { const result = document.createElement(tag); result.textContent = value; return result; }
 function button(label: string, action: () => void | Promise<void>, primary = false) {
-  const result = node('button', label); result.type = 'button'; if (!primary) result.className = 'secondary';
+  const result = node('button', label); result.type = 'button'; result.className = primary ? 'primary' : 'secondary';
   result.addEventListener('click', () => {
     result.disabled = true;
     void Promise.resolve().then(action).catch(error => { result.textContent = errorText(error); }).finally(() => { result.disabled = false; });
@@ -44,10 +44,10 @@ function chooseCatchUp(preview: Awaited<ReturnType<Service['previewCatchUp']>>):
     dialog.append(heading, node('p', `${preview.startDate}〜${preview.endDate}の未登録分があります。`),
       node('p', `${preview.dates.length.toLocaleString('ja-JP')}件 · 合計 ${yenBig(preview.totalAmountYen)}`));
     const choose = (dates: string[] | null) => { dialog.close(); dialog.remove(); resolve(dates); };
-    const all = node('button', '全件を記録'); all.type = 'button'; all.dataset.catchUpAll = '';
+    const all = node('button', '全件を記録'); all.type = 'button'; all.className = 'primary'; all.dataset.catchUpAll = '';
     all.addEventListener('click', () => choose(preview.dates));
     const currentMonthDates = preview.dates.filter(date => date.slice(0, 7) === new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo' }).format(new Date()).slice(0, 7));
-    const month = node('button', '今月分から記録'); month.type = 'button'; month.dataset.catchUpCurrentMonth = '';
+    const month = node('button', '今月分から記録'); month.type = 'button'; month.className = 'primary'; month.dataset.catchUpCurrentMonth = '';
     month.addEventListener('click', () => choose(currentMonthDates));
     const cancel = node('button', 'キャンセル'); cancel.type = 'button'; cancel.className = 'secondary'; cancel.dataset.catchUpCancel = '';
     cancel.addEventListener('click', () => choose(null));
@@ -213,14 +213,14 @@ export async function showRecurringSchedules(options: {
     category.replaceChildren(new Option('選択してください', ''), ...masters.categories.map(item => new Option(item.name, item.id)));
     account.replaceChildren(new Option('選択してください', ''), ...accountOptions(masters.accounts, kind));
     if (existing) { category.value = existing.categoryId; account.value = existing.accountId; }
-    const submit = node('button', '保存する'); submit.type = 'submit';
+    const submit = node('button', '保存する'); submit.type = 'submit'; submit.className = 'primary';
     form.append(nameLabel, name, kindLabel, kindSelect, amountLabel, amount, categoryLabel, category, accountLabel, account,
       frequencyLabelNode, frequency, startLabel, start, autoLabel, auto, submit);
     const retry = button('再試行する', async () => {
       status.textContent = '再試行しています。';
       try { await service.retry(); if (await service.pending()) { status.textContent = '処理がまだ保留中です。もう一度お試しください。'; return; } await overview('定期登録を保存しました。'); }
       catch (error) { status.textContent = errorText(error); }
-    }); retry.hidden = true; form.append(retry);
+    }); retry.prepend(icon('repeat')); retry.hidden = true; form.append(retry);
     form.addEventListener('submit', event => {
       event.preventDefault();
       const input: RecurringScheduleInput = { name: name.value.trim(), kind, amountYen: Number(amount.value), categoryId: category.value,

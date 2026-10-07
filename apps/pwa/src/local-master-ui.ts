@@ -36,7 +36,7 @@ function nameForm(labelText: string, initialValue: string, submitText: string, s
   input.required = true;
   input.maxLength = 100;
   input.value = initialValue;
-  const submit = element('button', submitText);
+  const submit = element('button', submitText, 'primary');
   submit.type = 'submit';
   form.append(label, input, submit);
   form.addEventListener('submit', event => {
@@ -73,7 +73,7 @@ export function createMasterShortcut(options: {
   request: MasterCreation;
   origin: { field: HTMLSelectElement; beforeOpen: () => Promise<void>; onCreated: (id: string) => Promise<void> };
 }): HTMLButtonElement {
-  const launch = element('button', options.request.kind === 'category' ? 'カテゴリを追加' : '支払元・口座を追加', 'secondary text-button');
+  const launch = element('button', options.request.kind === 'category' ? 'カテゴリを追加' : '支払元・口座を追加', 'secondary text-button'); launch.prepend(icon('add'));
   launch.type = 'button';
   launch.dataset.masterShortcutFor = options.origin.field.id;
   launch.addEventListener('click', () => {
@@ -99,7 +99,7 @@ export function createMasterShortcut(options: {
         else if (options.origin.field.isConnected && options.origin.field.getAttribute('aria-hidden') !== 'true') options.origin.field.focus();
       };
       const form = masterCreationForm(options.ledger, options.request, async id => { await options.origin.onCreated(id); close(); }, showError);
-      const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button';
+      const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button'; back.prepend(icon('chevronLeft'));
       back.addEventListener('click', () => { if (form.dataset.saving !== 'true') close(); });
       dialog.addEventListener('cancel', event => { event.preventDefault(); if (form.dataset.saving !== 'true') close(); });
       dialog.append(heading, form, status, back);
@@ -155,7 +155,7 @@ export function initializeMasterUi(
     settingsStatus.hidden = false;
   }
   function button(label: string, action: () => Promise<void> | void, primary = false) {
-    const node = element('button', label, primary ? '' : 'secondary');
+    const node = element('button', label, primary ? 'primary' : 'secondary');
     node.type = 'button';
     node.addEventListener('click', () => {
       node.disabled = true;

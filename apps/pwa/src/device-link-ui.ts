@@ -14,7 +14,7 @@ const text = (tag: string, value: string, className = '') => {
 };
 const button = (label: string, onClick: () => void, kind: 'primary' | 'secondary' | 'text' = 'secondary') => {
   const element = document.createElement('button'); element.type = 'button'; element.textContent = label;
-  if (kind !== 'primary') element.className = kind === 'text' ? 'text-button' : 'secondary';
+  element.className = kind === 'primary' ? 'primary' : kind === 'text' ? 'text-button' : 'secondary';
   element.addEventListener('click', onClick); return element;
 };
 

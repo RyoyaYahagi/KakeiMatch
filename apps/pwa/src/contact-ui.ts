@@ -1,3 +1,4 @@
+import { iconMarkup } from './ui-icons';
 import { getAiAccessToken } from './ai-auth';
 import { getSanitizedDiagnosticContext, recordDiagnosticAction, recordDiagnosticFailure, type SanitizedDiagnosticContext } from './contact-diagnostics';
 
@@ -23,8 +24,8 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       <div class="contact-meta"><span id="contact-count">0 / 4000文字</span><span id="contact-recording-time" aria-live="polite"></span></div>
       <div class="contact-actions">
         <button id="contact-record" class="secondary" type="button">音声を録音</button>
-        <button id="contact-discard-audio" class="secondary" type="button" hidden>録音を破棄して録り直す</button>
-        <button id="contact-retry-transcription" class="secondary" type="button" hidden>録音を再試行する</button>
+        <button id="contact-discard-audio" class="secondary" type="button" hidden>${iconMarkup('repeat')}録音を破棄して録り直す</button>
+        <button id="contact-retry-transcription" class="secondary" type="button" hidden>${iconMarkup('repeat')}録音を再試行する</button>
       </div>
       <p id="contact-audio-status" class="muted" role="status"></p>
       <label class="contact-interview-consent">
@@ -46,7 +47,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         <label for="contact-interview-answer">あなたの回答</label>
         <textarea id="contact-interview-answer" maxlength="1200" placeholder="わかる範囲で大丈夫です"></textarea>
         <div class="contact-interview-actions">
-          <button id="contact-interview-next" type="button">回答して続ける</button>
+          <button id="contact-interview-next" class="primary" type="button">回答して続ける</button>
           <button id="contact-interview-finish" class="secondary" type="button">ここまででまとめる</button>
         </div>
       </section>
@@ -56,13 +57,13 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         <label for="contact-review-message">GitHubへ送る内容</label>
         <textarea id="contact-review-message" maxlength="4000"></textarea>
         <div class="contact-interview-actions">
-          <button id="contact-confirm-send" type="button">この内容で送信する</button>
-          <button id="contact-review-edit" class="secondary" type="button">元の内容を直す</button>
+          <button id="contact-confirm-send" class="primary" type="button">この内容で送信する</button>
+          <button id="contact-review-edit" class="secondary" type="button">${iconMarkup('pencil')}元の内容を直す</button>
         </div>
       </section>
       <p id="contact-status" class="status" role="status" aria-live="polite"></p>
       <a id="contact-issues-link" class="contact-issues-link" href="https://github.com/RyoyaYahagi/KakeiMatch/issues" target="_blank" rel="noreferrer" hidden>GitHubの課題一覧を確認する</a>
-      <div class="form-actions contact-send-bar"><button id="contact-send" type="button" disabled>送信する</button></div>
+      <div class="form-actions contact-send-bar"><button id="contact-send" class="primary" type="button" disabled>送信する</button></div>
       <button id="contact-login-path" class="text-button" type="button" hidden>設定でログインする</button>
       <section id="contact-result" class="contact-result" aria-live="polite" hidden>
         <h3 id="contact-result-title"></h3>
@@ -70,7 +71,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         <h4>送信した内容</h4>
         <p id="contact-result-message"></p>
         <a id="contact-issue-link" target="_blank" rel="noreferrer" hidden>GitHubで内容を見る</a>
-        <button id="contact-edit-result" class="secondary" type="button">内容を編集する</button>
+        <button id="contact-edit-result" class="secondary" type="button">${iconMarkup('pencil')}内容を編集する</button>
       </section>
     </section>`;
 
