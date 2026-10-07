@@ -40,13 +40,13 @@ root.innerHTML = `
       <p>更新に失敗した場合や、新しい版のデータをこのアプリが開けない場合に、対応済みのKakeiMatch記録を読み取り専用で書き出せます。</p>
       <p>このファイルを読み込んで復元することはできません。救出後はアプリを修正版へ更新し、再読み込みして開き直してください。</p>
       <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿と未対応の新しい種類のデータは含まず、このファイルから復元できません。画面ロック設定、クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
-      <button id="migration-rescue-export" class="secondary" type="button">救出データを書き出す</button>
+      <button id="migration-rescue-export" class="secondary" type="button">${iconMarkup('income')}救出データを書き出す</button>
       <p id="migration-rescue-status" role="status" aria-live="polite"></p>
     </section>
     <section id="household-view">
     <section id="import-section" hidden>
       <p>既存の家計簿があれば、記録を始める前にZIPファイルを読み込めます。</p>
-      <button id="import-button" class="secondary" type="button">既存の家計簿を取り込む</button>
+      <button id="import-button" class="secondary" type="button">${iconMarkup('upload')}既存の家計簿を取り込む</button>
       <input id="import-file" type="file" accept=".zip,application/zip" hidden />
     </section>
     <section id="budget-section" hidden>
@@ -137,15 +137,15 @@ root.innerHTML = `
       </div>
       <div id="signed-out-actions" hidden>
         <p>ログインしなくても、AIを1日5回まで使えます。初めて使う時だけ、ロボットでないことを確かめます。サーバーに記録するのはAIの利用回数だけで、家計データは保存しません。家計簿の閲覧や編集はこの端末で引き続き利用できます。</p>
-        <button id="passkey-login" type="button">Passkeyで続ける</button>
-        <button id="invite-register" class="secondary" type="button">招待コードで登録</button>
+        <button id="passkey-login" class="primary" type="button">Passkeyで続ける</button>
+        <button id="invite-register" class="secondary" type="button">${iconMarkup('key')}招待コードで登録</button>
         <button id="manual-entry" class="secondary" type="button">家計簿に戻る</button>
       </div>
       <div id="signed-in-actions" hidden>
         <button id="use-ai" class="secondary" type="button">AI利用を確認</button>
         <h5>Passkey</h5>
         <ul id="passkey-list"></ul>
-        <button id="add-passkey" class="secondary" type="button">Passkeyを追加</button>
+        <button id="add-passkey" class="secondary" type="button">${iconMarkup('add')}Passkeyを追加</button>
         <button id="logout" class="text-button" type="button">ログアウト</button>
         <p class="muted">ログアウトしても、この端末の家計簿はそのまま使えます。</p>
         <div class="account-delete-zone">

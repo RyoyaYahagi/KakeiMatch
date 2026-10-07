@@ -126,7 +126,7 @@ function action(label: string, handler: () => void | Promise<void>, secondary = 
   const button = document.createElement('button');
   button.type = 'button';
   button.textContent = label;
-  button.className = secondary ? 'secondary' : '';
+  button.className = secondary ? 'secondary' : 'primary';
   button.addEventListener('click', () => { void handler(); });
   return button;
 }

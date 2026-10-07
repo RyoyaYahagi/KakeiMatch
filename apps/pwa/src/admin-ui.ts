@@ -302,7 +302,7 @@ async function showFeedback(id: string) {
       const draftBody = element<HTMLTextAreaElement>('textarea'); draftBody.maxLength = 8000; draftBody.required = true; draftBody.rows = 14;
       draftBody.value = `## 概要\n${seed}\n\n## ユーザーがやりたかったこと\n（確認できた内容を記入）\n\n## 実際に起きたこと\n（確認できた内容を記入）\n\n## 再現手順\n（分かる範囲で記入）\n\n## 期待する動作\n（確認できた内容を記入）`;
       draftBodyLabel.append(draftBody);
-      const draftSubmit = element<HTMLButtonElement>('button', '', '内容を確認してIssueを作成'); draftSubmit.type = 'submit';
+      const draftSubmit = element<HTMLButtonElement>('button', 'primary', '内容を確認してIssueを作成'); draftSubmit.type = 'submit';
       draft.append(draftTitleLabel, draftBodyLabel, draftSubmit);
       draft.addEventListener('submit', event => {
         event.preventDefault();

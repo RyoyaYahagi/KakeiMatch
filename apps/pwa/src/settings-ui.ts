@@ -83,7 +83,7 @@ export function pageActions(...buttons: HTMLButtonElement[]) {
 }
 
 export function mainAction(label: string, iconName: IconName | null, action: () => unknown, spokenName?: string) {
-  const button = node('button', label);
+  const button = node('button', label, 'primary');
   button.type = 'button';
   if (iconName) button.prepend(icon(iconName));
   if (spokenName && spokenName !== label) button.setAttribute('aria-label', spokenName);

@@ -1,3 +1,4 @@
+import { iconMarkup } from './ui-icons';
 import { getAiAccessToken } from './ai-auth';
 import { getSanitizedDiagnosticContext, recordDiagnosticAction, recordDiagnosticFailure, type SanitizedDiagnosticContext } from './contact-diagnostics';
 
@@ -23,8 +24,8 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
       <div class="contact-meta"><span id="contact-count">0 / 4000文字</span><span id="contact-recording-time" aria-live="polite"></span></div>
       <div class="contact-actions">
         <button id="contact-record" class="secondary" type="button">音声を録音</button>
-        <button id="contact-discard-audio" class="secondary" type="button" hidden>録音を破棄して録り直す</button>
-        <button id="contact-retry-transcription" class="secondary" type="button" hidden>録音を再試行する</button>
+        <button id="contact-discard-audio" class="secondary" type="button" hidden>${iconMarkup('repeat')}録音を破棄して録り直す</button>
+        <button id="contact-retry-transcription" class="secondary" type="button" hidden>${iconMarkup('repeat')}録音を再試行する</button>
       </div>
       <p id="contact-audio-status" class="muted" role="status"></p>
       <label class="contact-diagnostic-consent">
@@ -32,7 +33,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         <span><strong>直前のアプリ動作情報を添付する</strong><small>画面名・操作種別・安全なエラーコード・オンライン状態だけを使います。入力内容、金額、店名、レシートや明細の内容は含みません。</small></span>
       </label>
       <p id="contact-status" class="status" role="status" aria-live="polite"></p>
-      <div class="form-actions contact-send-bar"><button id="contact-send" type="button" disabled>送信する</button></div>
+      <div class="form-actions contact-send-bar"><button id="contact-send" class="primary" type="button" disabled>送信する</button></div>
       <button id="contact-login-path" class="text-button" type="button" hidden>設定でログインする</button>
       <section id="contact-result" class="contact-result" aria-live="polite" hidden>
         <h3 id="contact-result-title"></h3>
@@ -41,7 +42,7 @@ export function initializeContactUi(container: HTMLElement, options: ContactOpti
         <h4>送信した内容</h4>
         <p id="contact-result-message"></p>
         <p id="contact-inbox-note">お問い合わせを受け付けました。必要な場合のみ、確認後に開発用のIssueを作成します。</p>
-        <button id="contact-edit-result" class="secondary" type="button">内容を編集する</button>
+        <button id="contact-edit-result" class="secondary" type="button">${iconMarkup('pencil')}内容を編集する</button>
       </section>
     </section>`;
 
