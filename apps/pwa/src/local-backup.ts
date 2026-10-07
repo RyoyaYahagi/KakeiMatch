@@ -34,6 +34,13 @@ function directories(storage: Dependencies['storage']): string[] {
 
 /** Called only for an explicit user export. A timestamp records generation, never file-save success. */
 export async function exportLocalBackup(repository: LocalDataRepository, ledger: BackupLedger, now = new Date()): Promise<Blob> {
+  const result = await createLocalSnapshot(repository, ledger);
+  await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
+  return result;
+}
+
+/** The household as a portable backup, without marking a backup as exported (device sync sends it instead). */
+export async function createLocalSnapshot(repository: LocalDataRepository, ledger: BackupLedger): Promise<Blob> {
   const localData = await repository.serialize();
   const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
@@ -41,9 +48,7 @@ export async function exportLocalBackup(repository: LocalDataRepository, ledger:
     && (!record.id.startsWith('settings:basic-categories:') || record.id === (budgetId ? basicCategorySettingsRecordId(budgetId) : ''))
     && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
     && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
-  const result = await createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
-  await repository.put({ id: 'settings:backup', kind: 'app-settings', value: { lastExportAt: now.toISOString() }, updatedAt: now.toISOString() });
-  return result;
+  return createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
 }
 
 /** Validate all bytes before creating a target. Publish one profile pointer only after both stores succeed. */
