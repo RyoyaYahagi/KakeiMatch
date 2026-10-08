@@ -177,7 +177,7 @@ try {
   await recordNames();
   await page.locator('.record-row[data-date="2026-08-01"]').filter({ hasText: 'Synthetic Catch-up Monthly' }).click();
   await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
-  await click('編集する');
+  await page.getByRole('button', { name: /^金額を編集:/ }).click();
   await page.locator('#manual-transaction-amount').fill('1800');
   await click('変更を保存する');
   await page.getByText('変更を保存しました。', { exact: true }).waitFor();
