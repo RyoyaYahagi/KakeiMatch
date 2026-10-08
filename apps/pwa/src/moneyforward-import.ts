@@ -1,4 +1,4 @@
-import { categoryKey, type MoneyForwardRow } from "./moneyforward-parser";
+import { categoryKey, moneyForwardDescription, type MoneyForwardRow } from "./moneyforward-parser";
 import type { NativeTransactionSnapshot } from "../../../src/lib/actual-browser-ledger";
 import type { ActualTransaction } from "../../../src/lib/actual-ledger";
 import type { LocalDataRepository, LocalDataRecord } from "../../../src/lib/local-data";
@@ -274,13 +274,13 @@ export class MoneyForwardImportService {
           await this.save(state);
           const result = await this.ledger.importExternalTransaction({
             accountId, date: item.row.date, amountYen: Math.abs(item.row.amountYen), kind: item.row.kind,
-            payeeName: item.row.description.trim() || "Money Forwardの明細", memo: item.row.memo,
+            payeeName: moneyForwardDescription(item.row), memo: item.row.memo,
             categoryId, importedId: item.importedId,
           });
           const matchingRecovered = wasRecovering && result.alreadyExisted
             && result.transaction.accountId === accountId && result.transaction.date === item.row.date
             && Math.abs(result.transaction.amountYen) === Math.abs(item.row.amountYen)
-            && result.transaction.kind === item.row.kind && result.transaction.payeeName === item.row.description.trim()
+            && result.transaction.kind === item.row.kind && result.transaction.payeeName === moneyForwardDescription(item.row)
             && (result.transaction.categoryId ?? null) === categoryId && (result.transaction.memo ?? "") === item.row.memo;
           if (result.alreadyExisted && !matchingRecovered) {
             item.status = "duplicate";
@@ -334,7 +334,7 @@ export class MoneyForwardImportService {
             const categoryId = categoryChoice?.kind === "existing" ? categoryChoice.categoryId : categoryChoice?.kind === "unclassified" ? null : undefined;
             if (!accountId || recovered.transaction.accountId !== accountId || recovered.transaction.date !== item.row.date
               || Math.abs(recovered.transaction.amountYen) !== Math.abs(item.row.amountYen) || recovered.transaction.kind !== item.row.kind
-              || recovered.transaction.payeeName !== item.row.description.trim()
+              || recovered.transaction.payeeName !== moneyForwardDescription(item.row)
               || (recovered.transaction.memo ?? "") !== item.row.memo || categoryId === undefined
               || (recovered.transaction.categoryId ?? null) !== categoryId) {
               throw new Error("登録途中の取引を安全に特定できません。取引一覧で内容を確認してください。");

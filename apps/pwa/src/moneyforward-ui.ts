@@ -1,7 +1,7 @@
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { backLink, pageTitle, groupTitle, detailList, pageActions } from './settings-ui';
-import { parseMoneyForwardBlob, categoryKey, resolveMoneyForwardCategory, type MoneyForwardParseResult } from './moneyforward-parser';
+import { parseMoneyForwardBlob, moneyForwardDescription, categoryKey, resolveMoneyForwardCategory, type MoneyForwardParseResult } from './moneyforward-parser';
 import { MoneyForwardImportService, type CategoryChoice, type AccountChoice, type ImportPlan } from './moneyforward-import';
 import { icon } from './ui-icons';
 import { suggestMoneyForwardCategory } from './moneyforward-category-suggestion';
@@ -160,7 +160,7 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
       ['新規カテゴリ', `${unique(ready.flatMap(item => { const choice = mappings.categories[categoryKey(item.row)]; return choice.kind === 'new' && !categories.some(c => c.name === choice.name && c.isIncome === (item.row.kind === 'income')) ? [`${item.row.kind}:${choice.name}`] : []; }))}件`],
       ['新規支払元', `${unique(ready.flatMap(item => { const choice = mappings.accounts[item.row.accountName ?? '']; const name = choice.kind === 'new' ? choice.name : choice.kind === 'unset' ? '移行元未設定' : null; return name && !accounts.some(a => !a.closed && a.name === name) ? [name] : []; }))}件`],
     ]));
-    for (const item of ready.slice(0, 5)) body.append(node('p', `${item.row.date} · ${item.row.description} · ${item.row.amountYen < 0 ? '−' : '+'}${yen(Math.abs(item.row.amountYen))} · ${item.categoryName} · ${item.accountName}`, 'moneyforward-preview-row'));
+    for (const item of ready.slice(0, 5)) body.append(node('p', `${item.row.date} · ${moneyForwardDescription(item.row)} · ${item.row.amountYen < 0 ? '−' : '+'}${yen(Math.abs(item.row.amountYen))} · ${item.categoryName} · ${item.accountName}`, 'moneyforward-preview-row'));
     const issues = node('details', undefined, 'settings-inner-disclosure'); issues.append(node('summary', '除外・エラー行の理由'));
     for (const row of parsed.excludedRows) issues.append(node('p', `${row.rowNumber}行: ${row.reason === 'transfer' ? '振替のため除外' : '計算対象外のため除外'}`));
     for (const row of parsed.rowErrors) issues.append(node('p', `${row.rowNumber}行: ${row.reason}`));

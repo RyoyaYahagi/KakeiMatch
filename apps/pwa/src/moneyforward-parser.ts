@@ -171,6 +171,10 @@ function parseFlag(value: string, defaultValue: boolean): boolean | null {
   return null;
 }
 
+export function moneyForwardDescription(row: Pick<MoneyForwardRow, "description">): string {
+  return row.description.trim() || "内容なし";
+}
+
 export function categoryKey(row: Pick<MoneyForwardRow, "kind" | "majorCategory" | "minorCategory">): string {
   return JSON.stringify([row.kind, row.majorCategory.trim(), row.minorCategory.trim()]);
 }
@@ -232,6 +236,11 @@ export async function parseMoneyForwardBlob(file: Blob): Promise<MoneyForwardPar
     return emptyResult("limit_exceeded", encoding);
   }
 
+  const nonempty = records.map((record, index) => ({ record, lineEnd: lineEnds[index]! }))
+    .filter(({ record }, index) => index === 0 || record.some(field => field.trim() !== ""));
+  records = nonempty.map(value => value.record);
+  lineEnds = nonempty.map(value => value.lineEnd);
+
   const headers = records[0]!;
   if (records.length === 1) return { ...emptyResult("header_only", encoding), headerSignature: JSON.stringify(headers.map(headerKey)) };
   const columns = Object.fromEntries(Object.entries(HEADER_ALIASES).map(([key, aliases]) => [key, findColumn(headers, aliases)])) as Record<keyof typeof HEADER_ALIASES, number>;
@@ -262,7 +271,6 @@ export async function parseMoneyForwardBlob(file: Blob): Promise<MoneyForwardPar
     const description = get(columns.description);
     const amountYen = parseYen(get(columns.amount));
     if (!date) { rowErrors.push({ rowNumber, reason: "日付を確認できません" }); return; }
-    if (!description) { rowErrors.push({ rowNumber, reason: "内容がありません" }); return; }
     if (amountYen === null || amountYen === 0) { rowErrors.push({ rowNumber, reason: "金額を確認できません" }); return; }
 
     const majorCategory = get(columns.major);
