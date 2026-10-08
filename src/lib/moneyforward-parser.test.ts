@@ -26,7 +26,7 @@ describe("Money Forward CSV parser", () => {
 
   it("reads dates across a year, accepts blank descriptions and IDs, and skips empty records", async () => {
     const text = `${headers},ID\n2026/1/2,,-1200,合成口座,食費,食料品,,0,1,id-jan\n,,,,,,,,,\n2026/12/31,   ,-900,合成口座,食費,食料品,,0,1,\n2026/12/31,   ,-900,合成口座,食費,食料品,,0,1,\n , , , , , , , , , \n2026/2/30,,-100,合成口座,食費,食料品,,0,1,`;
-    const result = await parseMoneyForwardBlob(new Blob([text]));
+    const result = await parseMoneyForwardBlob(new Blob([text]), new Date("2026-12-31T03:00:00Z"));
     expect(result.fatalErrors).toEqual([]);
     expect(result.totalRows).toBe(4);
     expect(result.transactions.map(row => [row.date, row.description, row.sourceTransactionId])).toEqual([
@@ -106,5 +106,17 @@ describe("Money Forward CSV parser", () => {
     const result = await parseMoneyForwardBlob(new Blob([`${headers}\n2025/1/2,架空スーパー,-1200,合成口座,食費,食料品,,不明,1`]));
     expect(result.transactions).toEqual([]);
     expect(result.rowErrors).toEqual([{ rowNumber: 2, reason: "振替の値を確認できません" }]);
+  });
+});
+
+
+describe("future MoneyForward dates", () => {
+  it("uses Japan's calendar day, keeps today and excludes tomorrow with a reason", async () => {
+    const csv = "日付,内容,金額（円）,大項目\n2026/10/08,合成過去,-100,食費\n2026/10/09,合成今日,-200,食費\n2026/10/10,合成未来,-300,食費";
+    const result = await parseMoneyForwardBlob(new Blob([csv]), new Date("2026-10-08T15:00:00Z"));
+    expect(result.transactions.map(row => row.date)).toEqual(["2026-10-08", "2026-10-09"]);
+    expect(result.excludedRows).toEqual([{ rowNumber: 4, reason: "future_date" }]);
+    expect(result.totalRows).toBe(3);
+    expect(result.rowErrors).toEqual([]);
   });
 });

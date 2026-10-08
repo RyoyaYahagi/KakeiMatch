@@ -1,8 +1,8 @@
-import { categoryKey, moneyForwardDescription, type MoneyForwardRow } from "./moneyforward-parser";
+import { categoryKey, moneyForwardDescription, moneyForwardToday, type MoneyForwardRow } from "./moneyforward-parser";
 import type { NativeTransactionSnapshot } from "../../../src/lib/actual-browser-ledger";
 import type { ActualTransaction } from "../../../src/lib/actual-ledger";
 import type { LocalDataRepository, LocalDataRecord } from "../../../src/lib/local-data";
-import { moneyForwardImportSettingsSchema, moneyForwardRowSchema } from "../../../src/lib/moneyforward-import-format";
+import { moneyForwardImportSettingsSchema, moneyForwardRowSchema, moneyForwardRecordChoiceSchema } from "../../../src/lib/moneyforward-import-format";
 
 export type CategoryChoice =
   | { kind: "existing"; categoryId: string }
@@ -18,6 +18,8 @@ export type MoneyForwardImportRules = {
   categories: Record<string, CategoryChoice>;
   accounts: Record<string, AccountChoice>;
 };
+export type RecordChoice = { kind: "separate" } | { kind: "keep"; transactionId: string };
+
 export type MoneyForwardImportRowStatus = "pending" | "importing" | "created" | "duplicate" | "excluded" | "failed" | "undoing" | "undone";
 export type MoneyForwardImportBatch = {
   id: string;
@@ -30,6 +32,7 @@ export type MoneyForwardImportBatch = {
     row: MoneyForwardRow;
     importedId: string;
     status: MoneyForwardImportRowStatus;
+    recordChoice?: RecordChoice;
     transactionSnapshot: NativeTransactionSnapshot[] | null;
     error: string | null;
   }>;
@@ -41,6 +44,7 @@ type Ledger = {
   listCategories(): Promise<Array<{ id: string; name: string; isIncome: boolean }>>;
   addAccount(name: string, accountType?: "bank" | "credit_card" | "cash" | "other"): Promise<string>;
   addCategory(name: string, isIncome: boolean): Promise<string>;
+  getTransactions(params: { startDate: string; endDate: string }): Promise<ActualTransaction[]>;
   listImportedIds(): Promise<Set<string>>;
   getImportedTransaction(importedId: string): Promise<{ transaction: ActualTransaction; snapshot: NativeTransactionSnapshot[] } | null>;
   importExternalTransaction(input: {
@@ -54,14 +58,16 @@ type ImportRepository = Pick<LocalDataRepository, "get" | "put">;
 export type ImportPreviewRow = {
   row: MoneyForwardRow;
   importedId: string;
-  status: "ready" | "duplicate" | "excluded" | "unresolved";
+  status: "ready" | "duplicate" | "excluded" | "unresolved" | "review";
+  candidates: ActualTransaction[];
+  recordChoice?: RecordChoice;
   accountName: string;
   categoryName: string | null;
 };
 export type ImportPlan = {
   batchId: string;
   mappings: MoneyForwardImportRules;
-  summary: { total: number; ready: number; excluded: number; duplicates: number; unresolved: number };
+  summary: { total: number; ready: number; excluded: number; duplicates: number; unresolved: number; review: number };
   previewRows: ImportPreviewRow[];
 };
 
@@ -75,8 +81,8 @@ function importedId(row: MoneyForwardRow): string {
   if (result.length > 200) throw new Error(`行 ${row.rowNumber}: 明細識別子が長すぎます。`);
   return result;
 }
-function defaultStatus(row: MoneyForwardRow, category: CategoryChoice | undefined): ImportPreviewRow["status"] {
-  if (row.isTransfer || !row.isIncludedInCalculation || category?.kind === "exclude") return "excluded";
+function defaultStatus(row: MoneyForwardRow, category: CategoryChoice | undefined, today: string): ImportPreviewRow["status"] {
+  if (row.date > today || row.isTransfer || !row.isIncludedInCalculation || category?.kind === "exclude") return "excluded";
   if (!category || category.kind === "unresolved") return "unresolved";
   return "ready";
 }
@@ -85,6 +91,29 @@ function choiceName(choice: CategoryChoice | undefined, categories: Array<{ id: 
   if (choice?.kind === "new") return choice.name;
   if (choice?.kind === "unclassified") return "未分類";
   return null;
+}
+
+function indexRecordsByAmount(transactions: ActualTransaction[]): Map<number, ActualTransaction[]> {
+  const index = new Map<number, ActualTransaction[]>();
+  for (const transaction of transactions) {
+    const bucket = index.get(transaction.amountYen) ?? [];
+    bucket.push(transaction);
+    index.set(transaction.amountYen, bucket);
+  }
+  return index;
+}
+
+// Equal signed amounts and mapped categories within three calendar days are review
+// candidates, never automatic matches. Transfers and split parents are excluded.
+export function similarMoneyForwardRecords(row: MoneyForwardRow, choice: CategoryChoice | undefined, transactions: ActualTransaction[]): ActualTransaction[] {
+  const categoryMatches = (transaction: ActualTransaction) => choice?.kind === "existing"
+    ? transaction.categoryId === choice.categoryId
+    : choice?.kind === "new" ? transaction.categoryName === choice.name.trim()
+    : choice?.kind === "unclassified" && !transaction.categoryId;
+  return transactions.filter(transaction => transaction.kind === row.kind && !transaction.isSplit
+    && transaction.amountYen === row.amountYen && categoryMatches(transaction)
+    && Math.abs(Date.parse(`${transaction.date}T00:00:00Z`) - Date.parse(`${row.date}T00:00:00Z`)) <= 3 * 86_400_000)
+    .sort((a, b) => Math.abs(Date.parse(a.date) - Date.parse(row.date)) - Math.abs(Date.parse(b.date) - Date.parse(row.date)) || a.id.localeCompare(b.id));
 }
 
 /** Local, resumable Money Forward import with an Actual transaction journal. */
@@ -127,7 +156,7 @@ export class MoneyForwardImportService {
     });
   }
 
-  async plan(rows: MoneyForwardRow[], mappings?: Partial<MoneyForwardImportRules>): Promise<ImportPlan> {
+  async plan(rows: MoneyForwardRow[], mappings?: Partial<MoneyForwardImportRules>, choices: Record<string, RecordChoice> = {}): Promise<ImportPlan> {
     return this.lock(async () => {
       const state = await this.state();
       if (!Array.isArray(rows) || rows.length > 20_000 || rows.some(row => !moneyForwardRowSchema.safeParse(row).success)) {
@@ -136,22 +165,29 @@ export class MoneyForwardImportService {
       const rules = { categories: { ...state.rules.categories, ...(mappings?.categories ?? {}) }, accounts: { ...state.rules.accounts, ...(mappings?.accounts ?? {}) } };
       if (!moneyForwardImportSettingsSchema.safeParse({ version: 1, rules, batches: [] }).success) throw new Error("Money Forwardの移行設定を確認してください。");
       const [accounts, categories] = await Promise.all([this.ledger.listAccounts(), this.ledger.listCategories()]);
+      const today = moneyForwardToday(this.options.now?.() ?? new Date());
+      const transactions = await this.ledger.getTransactions({ startDate: "0001-01-01", endDate: today });
+      const candidatesByAmount = indexRecordsByAmount(transactions);
       const importedIds = await this.ledger.listImportedIds();
       const seenFileIds = new Set<string>();
       const previewRows = rows.map(row => {
         const category = rules.categories[categoryKey(row)];
         const sourceAccount = row.accountName ?? "";
         const accountChoice = rules.accounts[sourceAccount] ?? { kind: "unset" as const };
-        const status = defaultStatus(row, category);
+        const status = defaultStatus(row, category, today);
         const id = importedId(row);
         const duplicate = status !== "excluded" && (importedIds.has(id) || seenFileIds.has(id));
         if (status === "ready") seenFileIds.add(id);
         let accountName = "移行元未設定";
         if (accountChoice.kind === "existing") accountName = accounts.find(account => account.id === accountChoice.accountId)?.name ?? "未解決の口座";
         else if (accountChoice.kind === "new") accountName = accountChoice.name;
+        const candidates = status === "ready" && !duplicate ? similarMoneyForwardRecords(row, category, candidatesByAmount.get(row.amountYen) ?? []) : [];
+        const recordChoice = status === "ready" && !duplicate ? choices[id] : undefined;
+        if (recordChoice && !moneyForwardRecordChoiceSchema.safeParse(recordChoice).success) throw new Error("記録の確認方法を選んでください。");
+        if (recordChoice?.kind === "keep" && !candidates.some(candidate => candidate.id === recordChoice.transactionId)) throw new Error("統一先の記録が変更されています。候補を確認し直してください。");
         return {
-          row, importedId: id,
-          status: duplicate ? "duplicate" as const : status,
+          row, importedId: id, candidates, recordChoice,
+          status: duplicate || recordChoice?.kind === "keep" ? "duplicate" as const : candidates.length && !recordChoice ? "review" as const : status,
           accountName,
           categoryName: choiceName(category, categories),
         };
@@ -161,6 +197,7 @@ export class MoneyForwardImportService {
       const batch: MoneyForwardImportBatch = {
         id: batchId, budgetId: this.options.getBudgetId()!, createdAt: timestamp, updatedAt: timestamp, status: "planned", mappings: clone(rules),
         rows: previewRows.map(preview => ({ row: preview.row, importedId: preview.importedId,
+          recordChoice: preview.recordChoice,
           status: preview.status === "excluded" ? "excluded" : preview.status === "duplicate" ? "duplicate" : "pending",
           transactionSnapshot: null, error: null })),
       };
@@ -173,6 +210,7 @@ export class MoneyForwardImportService {
         ready: previewRows.filter(row => row.status === "ready").length,
         excluded: previewRows.filter(row => row.status === "excluded").length,
         duplicates: previewRows.filter(row => row.status === "duplicate").length,
+        review: previewRows.filter(row => row.status === "review").length,
         unresolved: previewRows.filter(row => row.status === "unresolved").length,
       }, previewRows };
     });
@@ -240,7 +278,21 @@ export class MoneyForwardImportService {
       const batch = state.batches.find(row => row.id === batchId);
       if (!batch || batch.budgetId !== budgetId) throw new Error("移行バッチが見つからないか、別の家計簿の履歴です。");
       if (batch.status === "undone" || batch.status === "undoing" || batch.status === "undo-partial") throw new Error("取り消し中または取り消し済みのバッチは確定できません。");
-      const unresolved = batch.rows.some(item => item.status === "pending" && defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)]) === "unresolved");
+      const today = moneyForwardToday(this.options.now?.() ?? new Date());
+      const transactions = await this.ledger.getTransactions({ startDate: "0001-01-01", endDate: today });
+      const candidatesByAmount = indexRecordsByAmount(transactions);
+      const knownIds = await this.ledger.listImportedIds();
+      const reviewedIds = new Set<string>();
+      for (const item of batch.rows) {
+        if (!["pending", "failed", "duplicate"].includes(item.status) || defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)], today) !== "ready") continue;
+        if (reviewedIds.has(item.importedId)) continue;
+        reviewedIds.add(item.importedId);
+        const candidates = similarMoneyForwardRecords(item.row, batch.mappings.categories[categoryKey(item.row)], candidatesByAmount.get(item.row.amountYen) ?? []);
+        const recordChoice = item.recordChoice;
+        if (recordChoice?.kind === "keep" && !candidates.some(candidate => candidate.id === recordChoice.transactionId)) throw new Error("統一先の記録が変更されています。CSVを選び直して候補を確認してください。");
+        if (!knownIds.has(item.importedId) && candidates.length && !item.recordChoice) throw new Error("似ている既存記録があります。取り込み前に統一するか選んでください。");
+      }
+      const unresolved = batch.rows.some(item => item.status === "pending" && defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)], today) === "unresolved");
       if (unresolved) throw new Error("未解決のカテゴリがあります。カテゴリを選んでから確定してください。");
       batch.status = "processing";
       batch.updatedAt = (this.options.now?.() ?? new Date()).toISOString();
@@ -248,16 +300,17 @@ export class MoneyForwardImportService {
       const importedIds = await this.ledger.listImportedIds();
       const seenFileIds = new Set<string>();
       for (const item of batch.rows) {
-        if (defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)]) !== "ready") continue;
+        if (defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)], today) !== "ready") continue;
         if (seenFileIds.has(item.importedId)) { item.status = "duplicate"; continue; }
         seenFileIds.add(item.importedId);
+        if (item.recordChoice?.kind === "keep") { item.status = "duplicate"; continue; }
         if (["pending", "failed", "duplicate"].includes(item.status)) {
           item.status = importedIds.has(item.importedId) ? "duplicate" : "pending";
         }
       }
       for (const item of batch.rows) {
         if (item.status !== "pending" && item.status !== "failed" && item.status !== "importing") continue;
-        const previewStatus = defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)]);
+        const previewStatus = defaultStatus(item.row, batch.mappings.categories[categoryKey(item.row)], today);
         if (previewStatus === "excluded") { item.status = "excluded"; continue; }
         const wasRecovering = item.status === "importing";
         try {

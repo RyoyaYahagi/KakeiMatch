@@ -2,7 +2,7 @@ import type { LocalDataRepository } from '../../../src/lib/local-data';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { backLink, pageTitle, groupTitle, detailList, pageActions } from './settings-ui';
 import { parseMoneyForwardBlob, moneyForwardDescription, categoryKey, resolveMoneyForwardCategory, type MoneyForwardParseResult } from './moneyforward-parser';
-import { MoneyForwardImportService, type CategoryChoice, type AccountChoice, type ImportPlan } from './moneyforward-import';
+import { MoneyForwardImportService, type CategoryChoice, type AccountChoice, type ImportPlan, type RecordChoice } from './moneyforward-import';
 import { icon } from './ui-icons';
 import { suggestMoneyForwardCategory } from './moneyforward-category-suggestion';
 
@@ -25,11 +25,12 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
   let categories: Awaited<ReturnType<Ledger['listCategories']>> = [];
   let accounts: Awaited<ReturnType<Ledger['listAccounts']>> = [];
   let mappings: { categories: Record<string, CategoryChoice>; accounts: Record<string, AccountChoice> } = { categories: {}, accounts: {} };
+  let recordChoices: Record<string, RecordChoice> = {};
   let pending = false;
   let revision = 0;
   const close = () => { page.hidden = true; settings.hidden = false; revision++; };
   page.append(backLink('戻る', 'バックアップと復元へ戻る', close), title,
-    node('p', 'CSVはこの端末だけで読み込みます。振替と計算対象外は除外します。登録前にカテゴリと支払元を確認してください。', 'muted'), body, status);
+    node('p', 'CSVはこの端末だけで読み込みます。将来日付・振替・計算対象外は除外します。登録前にカテゴリと支払元を確認してください。', 'muted'), body, status);
   async function run(action: () => Promise<void>) {
     if (pending) return;
     pending = true; page.setAttribute('aria-busy', 'true');
@@ -58,7 +59,7 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
     return section;
   }
   async function selectFile() {
-    parsed = null; body.replaceChildren();
+    parsed = null; recordChoices = {}; body.replaceChildren();
     const input = node('input'); input.type = 'file'; input.accept = '.csv,text/csv'; input.id = 'moneyforward-file';
     const label = node('label', 'MoneyForward CSVを選択'); label.htmlFor = input.id;
     body.append(label, input, node('p', 'UTF-8・Shift_JIS形式に対応。ファイルは5MB、取引は20,000行までです。', 'muted'), await history());
@@ -141,7 +142,7 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
   }
   async function preview() {
     if (!parsed) return;
-    const plan = await service.plan(parsed.transactions, mappings);
+    const plan = await service.plan(parsed.transactions, mappings, recordChoices);
     renderPreview(plan);
   }
   function renderPreview(plan: ImportPlan) {
@@ -154,20 +155,45 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
       ['対象期間', dates.length ? `${dates[0]} 〜 ${dates.at(-1)}` : '対象なし'],
       ['取引件数', `${ready.length}件`], ['収入', `${incomes.length}件 / ${yen(incomes.reduce((sum, item) => sum + item.row.amountYen, 0))}`],
       ['支出', `${expenses.length}件 / ${yen(expenses.reduce((sum, item) => sum - item.row.amountYen, 0))}`],
+      ['将来日付（除外）', `${parsed.excludedRows.filter(row => row.reason === 'future_date').length}件`],
+      ['似ている記録（要確認）', `${plan.summary.review}件`],
       ['振替（除外）', `${parsed.excludedRows.filter(row => row.reason === 'transfer').length}件`],
       ['除外予定', `${parsed.excludedRows.length + plan.summary.excluded}件`], ['重複（スキップ）', `${plan.summary.duplicates}件`],
       ['エラー', `${parsed.rowErrors.length}件`], ['未解決カテゴリ', `${unique(plan.previewRows.filter(item => item.status === 'unresolved').map(item => categoryKey(item.row)))}件`],
       ['新規カテゴリ', `${unique(ready.flatMap(item => { const choice = mappings.categories[categoryKey(item.row)]; return choice.kind === 'new' && !categories.some(c => c.name === choice.name && c.isIncome === (item.row.kind === 'income')) ? [`${item.row.kind}:${choice.name}`] : []; }))}件`],
       ['新規支払元', `${unique(ready.flatMap(item => { const choice = mappings.accounts[item.row.accountName ?? '']; const name = choice.kind === 'new' ? choice.name : choice.kind === 'unset' ? '移行元未設定' : null; return name && !accounts.some(a => !a.closed && a.name === name) ? [name] : []; }))}件`],
     ]));
+    const similar = plan.previewRows.filter(item => item.candidates.length);
+    if (similar.length) {
+      body.append(groupTitle('似ている既存記録を確認'), node('p', '金額・カテゴリが同じで日付が3日以内の記録です。同じ取引なら既存記録に統一し、CSVの行を取り込みません。既存の品目や画像は保持します。別の取引なら両方を残します。', 'muted'));
+      for (const item of similar) {
+        const container = node('div', undefined, 'moneyforward-mapping-row');
+        container.append(node('p', `CSV ${item.row.rowNumber}行: ${item.row.date} · ${moneyForwardDescription(item.row)} · ${yen(item.row.amountYen)} · ${item.categoryName} · ${item.accountName}`, 'moneyforward-preview-row'));
+        const select = node('select'); select.setAttribute('aria-label', `CSV ${item.row.rowNumber}行の既存記録との扱い`);
+        select.append(new Option('統一するか選んでください', ''), new Option('別の記録として取り込む（両方残す）', 'separate'));
+        for (const candidate of item.candidates) {
+          const account = accounts.find(account => account.id === candidate.accountId)?.name ?? '支払元未設定';
+          container.append(node('p', `既存: ${candidate.date} · ${candidate.payeeName ?? '内容なし'} · ${yen(candidate.amountYen)} · ${candidate.categoryName ?? '未分類'} · ${account}`, 'moneyforward-preview-row'));
+          select.append(new Option(`既存記録に統一: ${candidate.date} · ${candidate.payeeName ?? '内容なし'} · ${yen(candidate.amountYen)} · ${candidate.categoryName ?? '未分類'} · ${account}`, candidate.id));
+        }
+        select.value = item.recordChoice?.kind === 'keep' ? item.recordChoice.transactionId : item.recordChoice?.kind === 'separate' ? 'separate' : '';
+        select.addEventListener('change', () => { void run(async () => {
+          if (!select.value) delete recordChoices[item.importedId];
+          else recordChoices[item.importedId] = select.value === 'separate' ? { kind: 'separate' } : { kind: 'keep', transactionId: select.value };
+          await preview();
+        }); });
+        const label = node('label', 'この行の取り込み方法'); label.append(select); container.append(label); body.append(container);
+      }
+    }
     for (const item of ready.slice(0, 5)) body.append(node('p', `${item.row.date} · ${moneyForwardDescription(item.row)} · ${item.row.amountYen < 0 ? '−' : '+'}${yen(Math.abs(item.row.amountYen))} · ${item.categoryName} · ${item.accountName}`, 'moneyforward-preview-row'));
     const issues = node('details', undefined, 'settings-inner-disclosure'); issues.append(node('summary', '除外・エラー行の理由'));
-    for (const row of parsed.excludedRows) issues.append(node('p', `${row.rowNumber}行: ${row.reason === 'transfer' ? '振替のため除外' : '計算対象外のため除外'}`));
+    for (const row of parsed.excludedRows) issues.append(node('p', `${row.rowNumber}行: ${row.reason === 'future_date' ? '将来日付のため除外' : row.reason === 'transfer' ? '振替のため除外' : '計算対象外のため除外'}`));
     for (const row of parsed.rowErrors) issues.append(node('p', `${row.rowNumber}行: ${row.reason}`));
     body.append(issues);
     const rememberLabel = node('label', undefined, 'category-rule-toggle'); const remember = node('input'); remember.type = 'checkbox'; rememberLabel.append(remember, node('span', 'この対応を今後も使用する')); body.append(rememberLabel);
     if (plan.summary.unresolved) body.append(node('p', '未解決のカテゴリがあります。変換先を選ぶか、未分類・除外を選んでください。'));
-    else if (ready.length) body.append(pageActions(action(`${ready.length}件を取り込む`, async () => {
+    else if (plan.summary.review) body.append(node('p', '似ている記録について、統一するか別の記録として取り込むかを選んでください。'));
+    else if (ready.length || similar.length) body.append(pageActions(action(ready.length ? `${ready.length}件を取り込む` : '既存記録への統一を確定する', async () => {
       status.textContent = '取引をこの端末に登録しています…';
       const result = await service.confirm(plan.batchId);
       body.replaceChildren(groupTitle('取り込み結果'));
@@ -179,7 +205,7 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
       if (remember.checked) await service.saveRules(result.mappings);
       parsed = null; body.append(await history(), action('別のCSVを選ぶ', selectFile));
     }, true)));
-    body.append(action('対応を変更する', async () => { renderMappings(); }));
+    body.append(action('対応を変更する', async () => { recordChoices = {}; renderMappings(); }));
   }
   entry.addEventListener('click', () => { settings.hidden = true; page.hidden = false; title.focus(); status.textContent = ''; void run(selectFile); });
   document.getElementById('settings-tab')!.addEventListener('click', close);
