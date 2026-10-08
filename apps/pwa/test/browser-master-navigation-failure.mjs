@@ -89,6 +89,29 @@ try {
   assert.equal(await page.locator('.page-title').textContent(), '支払元・口座');
   assert.equal(await page.locator('.master-settings [data-master-status]').textContent(), '');
   assert.equal(await page.locator('[data-master-settings-status]').textContent(), '');
+
+  await settingsTop();
+  // A direct entry must keep its caller on failure and skip activation if cancelled.
+  await page.evaluate(async () => {
+    const state = window.masterNavigationFailureState;
+    state.failAccountBalances = true;
+    let activated = false;
+    let failure;
+    try { await window.masterNavigationUi.openAccounts(() => { activated = true; }); }
+    catch (error) { failure = error.message; }
+    if (activated || failure !== '合成口座残高の取得に失敗しました。') throw new Error('Direct account entry lost its failure');
+    state.failAccountBalances = false;
+    state.deferAccountBalances = true;
+    const pending = window.masterNavigationUi.openAccounts(() => { activated = true; });
+    window.masterNavigationUi();
+    state.resolveAccountBalances([]);
+    await pending;
+    if (activated) throw new Error('Cancelled account entry activated its tab');
+    state.deferAccountBalances = false;
+    // The activation callback mirrors a tab switch, which resets management.
+    await window.masterNavigationUi.openAccounts(() => window.masterNavigationUi());
+  });
+  await page.locator('.account-total').waitFor();
   assert.deepEqual(errors, []);
 
   console.log('master navigation failure E2E passed: visible retry for category/account failures and stale failure suppression');
