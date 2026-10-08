@@ -27,7 +27,7 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
   const contextNote = row.kind === 'transfer' ? accountName : memo || accountName;
   const noteParts = [options.showDate === false ? null : shortDate(row.date),
     ...(expenseMemoTitle ? [row.payeeName, accountName] : [kindLabel ?? row.categoryName, contextNote]),
-    options.hasReceipt ? 'レシート' : null].filter(Boolean);
+    row.excludedFromSpending ? '支出集計の対象外' : null, options.hasReceipt ? 'レシート' : null].filter(Boolean);
   const note = span('record-note', noteParts.join(' · '));
   if (options.needsReview) { const mark = span('note-warning', '△ 要確認'); note.prepend(mark, document.createTextNode(noteParts.length ? ' · ' : '')); }
   main.append(span('record-title', title), note);

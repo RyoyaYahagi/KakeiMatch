@@ -30,6 +30,17 @@ function makeLedger() {
     listAccounts: async () => accounts,
     listOpenAccounts: async () => accounts.map(({ id, name, accountType }) => ({ id, name, accountType })),
     listExpenseCategories: async () => [{ id: "category-1", name: "食費" }],
+    setSpendingExclusion: async (id: string, excluded: boolean) => { transactions.set(id, { ...transactions.get(id)!, excludedFromSpending: excluded }); },
+    createTransfer: async (input: { sourceAccountId: string; destinationAccountId: string; date: string; amountYen: number; memo: string | null; importedId: string }) => {
+      let transaction = [...transactions.values()].find(row => row.importedId === input.importedId);
+      if (!transaction) {
+        importCount++;
+        transaction = { id: `transfer-${input.importedId}`, date: input.date, amountYen: -input.amountYen, kind: "transfer", payeeName: null,
+          categoryName: null, accountId: input.sourceAccountId, transferAccountId: input.destinationAccountId, cleared: false, importedId: input.importedId };
+        transactions.set(transaction.id, transaction);
+      }
+      return transaction;
+    },
     importReceipt: async (input: { accountId: string; date: string; amountYen: number; merchant: string; categoryId: string; importedId: string }) => {
       if (failNextImport) { failNextImport = false; throw new Error("synthetic import failure"); }
       let transaction = [...transactions.values()].find((item) => (item as ActualTransaction & { importedId?: string }).importedId === input.importedId);
@@ -547,5 +558,62 @@ describe("LocalReconciliationService", () => {
     await expect(service.noReceipt(latest.runId, "refund-1", { accountId: "account-1", categoryId: "category-1" })).rejects.toMatchObject({ code: "decision_unavailable" });
     await expect(service.rejectPair(latest.runId, "refund-1", "missing-receipt")).rejects.toMatchObject({ code: "candidate_unavailable" });
     expect(await service.resolutions()).toEqual([]);
+  });
+});
+
+describe("statement registration options", () => {
+  it("keeps an ignored purchase resolved across reruns without writing a transaction", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("cancelled")]);
+    const service = createLocalReconciliationService(repo, mock);
+    const run = await service.run();
+    await expect(service.ignore(run.runId, "cancelled")).resolves.toMatchObject({ resolution: "ignored", status: "applied", actualTransactionId: null });
+    expect((await service.run()).statementResults).toEqual([]);
+    expect(mock.transactions.size).toBe(0);
+    await expect(service.ignore(run.runId, "cancelled")).rejects.toMatchObject({ code: "stale_run" });
+  });
+  it("can ignore a statement with candidates without clearing its existing expense", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("cancelled")]);
+    mock.transactions.set("candidate", { id: "candidate", date: "2026-09-10", amountYen: -1150, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
+    const service = createLocalReconciliationService(repo, mock), run = await service.run();
+    expect(run.candidates.length).toBeGreaterThan(0);
+    await service.ignore(run.runId, "cancelled");
+    expect(mock.transactions.get("candidate")?.cleared).toBe(false);
+  });
+  it("registers a linked transfer without category and retries without duplicates", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("charge")]);
+    const service = createLocalReconciliationService(repo, mock), run = await service.run();
+    mock.failUpdate();
+    const failed = await service.noReceipt(run.runId, "charge", { accountId: "account-1", destinationAccountId: "account-2" });
+    expect(failed).toMatchObject({ resolution: "transfer", status: "failed", categoryId: null });
+    await expect(service.retry(failed.id)).resolves.toMatchObject({ status: "applied" });
+    expect(mock.importedCount()).toBe(1);
+    expect([...mock.transactions.values()][0]).toMatchObject({ kind: "transfer", transferAccountId: "account-2", amountYen: -1200, cleared: true });
+  });
+  it("rejects a transfer to its source account or a missing destination", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("charge")]);
+    const service = createLocalReconciliationService(repo, mock), run = await service.run();
+    for (const destinationAccountId of ["account-1", "missing"]) await expect(service.noReceipt(run.runId, "charge", { accountId: "account-1", destinationAccountId })).rejects.toMatchObject({ code: "destination_unavailable" });
+    expect(mock.transactions.size).toBe(0);
+  });
+  it("preserves expense amount and records the exclusion preference", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("investment")]);
+    const service = createLocalReconciliationService(repo, mock), run = await service.run();
+    const saved = await service.noReceipt(run.runId, "investment", { accountId: "account-1", categoryId: "category-1", excludedFromSpending: true });
+    expect(saved.status).toBe("applied");
+    expect(mock.transactions.get(saved.actualTransactionId!)!).toMatchObject({ amountYen: -1200, excludedFromSpending: true });
+  });
+  it("fixes registration to the provider account regardless of supplied source", async () => {
+    const repo = await repository(), mock = makeLedger();
+    await seed(repo, [makeStatement("purchase")]);
+    const service = new LocalReconciliationService(repo, mock.ledger as unknown as ConstructorParameters<typeof LocalReconciliationService>[1],
+      async id => id === "account-2" ? "paypay" : null, async () => {});
+    const run = await service.run();
+    const saved = await service.noReceipt(run.runId, "purchase", { accountId: "account-1", categoryId: "category-1" });
+    expect(saved).toMatchObject({ accountId: "account-2", status: "applied" });
   });
 });

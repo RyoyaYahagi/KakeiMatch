@@ -9,7 +9,7 @@ import {
   type ActualBrowserLedgerOptions,
 } from "@/lib/actual-browser-ledger";
 
-function fixture(initialBudgets: Array<{ id: string; name: string }> = [], accountMetadata: Pick<ActualBrowserLedgerOptions, "getAccountType" | "saveAccountType"> = {}) {
+function fixture(initialBudgets: Array<{ id: string; name: string }> = [], accountMetadata: Pick<ActualBrowserLedgerOptions, "getAccountType" | "saveAccountType" | "getExcludedSpendingIds" | "saveSpendingExclusion"> = {}) {
   const budgets = [...initialBudgets];
   const budgetsByDir = new Map<string, Array<{ id: string; name: string }>>([["/documents", budgets]]);
   const sendHandlers: Array<ReturnType<typeof vi.fn>> = [];
@@ -1061,4 +1061,29 @@ it("handles Actual's grouped split response with nullable parent IDs and counts 
   expect(await ledger.getMonthlySpending({ yearMonth: '2026-09' })).toBe(1000);
   expect(await ledger.getTransactions({ startDate: '2026-09-01', endDate: '2026-09-30' })).toEqual([expect.objectContaining({ id: 'grouped-parent', amountYen: -1000 })]);
   expect(await ledger.getTransactionById('grouped-parent')).toMatchObject({ amountYen: -1000 });
+});
+
+describe("spending exclusions", () => {
+  it("keeps ledger amounts while removing parent and split expense from monthly totals and budgets", async () => {
+    const excluded = new Set<string>();
+    const { ledger, rows } = fixture([{ id: "budget", name: "Test" }], {
+      getExcludedSpendingIds: async () => [...excluded],
+      saveSpendingExclusion: async (_budget, id, selected) => { if (selected) excluded.add(id); else excluded.delete(id); },
+    });
+    const original = await ledger.getMonthlySummary({ yearMonth: "2026-09" });
+    await ledger.setSpendingExclusion("expense", true);
+    await ledger.setSpendingExclusion("parent", true);
+    const summary = await ledger.getMonthlySummary({ yearMonth: "2026-09" });
+    expect(summary.expenseYen).toBe(original.expenseYen - 4284);
+    expect(summary.incomeYen).toBe(original.incomeYen);
+    expect(summary.categories.reduce((sum, row) => sum + row.amountYen, 0)).toBe(summary.expenseYen);
+    expect((await ledger.getMonthlyBudgets({ yearMonth: "2026-09" })).categories.find(row => row.categoryId === "food")?.spentYen).toBe(summary.categories.find(row => row.categoryId === "food")?.amountYen ?? 0);
+    expect(await ledger.getTransactionById("expense")).toMatchObject({ amountYen: -3284, excludedFromSpending: true });
+    expect((await ledger.getTransactions({ startDate: "2026-09-01", endDate: "2026-09-30" })).find(row => row.id === "parent")).toMatchObject({ excludedFromSpending: true });
+    expect(rows.find(row => row.id === "expense")?.amount).toBe(-3284);
+    await ledger.setSpendingExclusion("expense", false);
+    await ledger.setSpendingExclusion("parent", false);
+    expect(await ledger.getMonthlySummary({ yearMonth: "2026-09" })).toEqual(original);
+    await expect(ledger.setSpendingExclusion("transfer-out", true)).rejects.toThrow();
+  });
 });

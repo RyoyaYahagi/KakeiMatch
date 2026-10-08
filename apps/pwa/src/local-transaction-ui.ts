@@ -20,6 +20,7 @@ type FormValue = {
   categoryId: string;
   accountId: string;
   memo: string | null;
+  excludedFromSpending?: boolean;
   destinationAccountId?: string;
 };
 type ManualTransactionDraft = {
@@ -30,6 +31,7 @@ type ManualTransactionDraft = {
   categoryId: string;
   accountId: string;
   manualKind?: TransactionKind;
+  excludedFromSpending?: boolean;
   destinationAccountId?: string;
   manualMemo?: string | null;
   manualImportedId?: string;
@@ -130,7 +132,7 @@ export function showManualTransactionEditor(options: {
     const draftSnapshot: FormValue | null = draft ? {
       kind, date: draft.purchasedDate, amountYen: draft.totalAmountYen,
       payeeName: draft.merchant, categoryId: draft.categoryId, accountId: draft.accountId,
-      memo: draft.manualMemo ?? null, destinationAccountId: draft.destinationAccountId,
+      memo: draft.manualMemo ?? null, destinationAccountId: draft.destinationAccountId, excludedFromSpending: draft.excludedFromSpending ?? false,
     } : null;
     const dateLabel = shortLabel('manual-transaction-date', '日付');
     const date = node('input'); date.id = dateLabel.htmlFor; date.type = 'date'; date.required = true;
@@ -190,6 +192,11 @@ export function showManualTransactionEditor(options: {
     const rows = document.createElement('div'); rows.className = 'entry-rows';
     rows.append(entryRow(amountLabel, amount), ...(transfer ? [] : [entryRow(payeeLabel, payee)]), entryRow(dateLabel, date, dateShortcuts(date, localToday())),
       ...(categoryUi ? [categoryUi.row] : []), entryRow(accountLabel, account), ...(transfer ? [entryRow(destinationLabel, destination)] : []), optional);
+    const excluded = node('input'); excluded.type = 'checkbox'; excluded.id = 'manual-transaction-excluded';
+    excluded.checked = draftSnapshot?.excludedFromSpending ?? transaction?.excludedFromSpending ?? false;
+    if (kind === 'expense') {
+      const exclusion = node('div'); exclusion.className = 'entry-row'; exclusion.append(excluded, fieldLabel('label', '支出の計算に含めない', excluded.id)); rows.append(exclusion);
+    }
     // Schedules hold expenses and incomes only; a transfer or an edit stays one record.
     const recurrence = kind === 'income' && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
     if (recurrence) rows.append(recurrence.row);
@@ -239,9 +246,10 @@ export function showManualTransactionEditor(options: {
       categoryId: category.value,
       accountId: account.value,
       memo: memo.value.trim() || null,
+      ...(kind === "expense" ? { excludedFromSpending: excluded.checked } : {}),
       ...(transfer ? { destinationAccountId: destination.value } : {}),
     });
-    const fields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = transfer ? [date, amount, account, destination, memo] : [date, amount, payee, category, account, memo];
+    const fields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = transfer ? [date, amount, account, destination, memo] : [date, amount, payee, category, account, memo, excluded];
     let submittedSnapshot: FormValue | null = draft?.manualStatus === 'processing' || draft?.manualStatus === 'failed' ? draftSnapshot : null;
     let frozenAfterUnknownFailure = submittedSnapshot !== null;
     let savedResult: ActualTransaction | null = null;
@@ -253,6 +261,7 @@ export function showManualTransactionEditor(options: {
         merchant: value.payeeName, purchasedDate: value.date, purchasedTime: null,
         totalAmountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId,
         manualKind: kind, manualMemo: value.memo, manualImportedId: importedId,
+        ...(kind === "expense" ? { excludedFromSpending: value.excludedFromSpending ?? false } : {}),
         manualTransactionId: transaction?.id ?? null, manualStatus,
         ...(transfer ? { destinationAccountId: value.destinationAccountId } : {}),
       };
@@ -423,6 +432,7 @@ export function showManualTransactionEditor(options: {
               if (editing) saved = await ledger.updateTransaction(transaction!.id, manualValue);
               else saved = await ledger.createTransaction({ ...manualValue, importedId });
             }
+            if (kind === "expense") await ledger.setSpendingExclusion(saved.id, value.excludedFromSpending ?? false);
             if (editAudit) {
               const timestamp = new Date().toISOString();
               const audit = { ...editAudit, after: saved, status: 'applied' as const, appliedAt: timestamp };

@@ -8,6 +8,7 @@ export type ActualTransaction = {
   categoryName: string | null;
   accountId: string;
   cleared: boolean;
+  excludedFromSpending?: boolean;
   categoryId?: string | null;
   memo?: string | null;
   importedId?: string | null;

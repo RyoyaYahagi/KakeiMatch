@@ -88,7 +88,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   const categoryLearning = new LocalCategoryLearning(repository);
   const statements = new LocalStatementService(repository);
   const reconciliation = new LocalReconciliationService(repository, ledger,
-    accountId => budgetId ? accountMetadata.getStatementProvider(budgetId, accountId) : Promise.resolve(null));
+    accountId => budgetId ? accountMetadata.getStatementProvider(budgetId, accountId) : Promise.resolve(null),
+    async (accountId, provider) => { if (!budgetId) throw new Error("家計簿が選択されていません。"); await accountMetadata.saveStatementProvider(budgetId, accountId, provider, "credit_card"); });
   const deletions = new LocalTransactionDeletionService(repository, ledger);
   const recurring = new LocalRecurringService(repository, ledger);
   const view = el('local-view');
@@ -383,6 +384,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     return detail;
   }
+  function spendingExclusionControl(transaction: ActualTransaction) {
+    const group = document.createElement('div'); group.className = 'entry-row';
+    const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = `spending-exclusion-${transaction.id}`; checkbox.checked = transaction.excludedFromSpending ?? false;
+    const label = fieldLabel('label', '支出の計算に含めない', checkbox.id);
+    const status = text('p', ''); status.setAttribute('role', 'status');
+    checkbox.addEventListener('change', () => {
+      const selected = checkbox.checked; checkbox.disabled = true;
+      void ledger.setSpendingExclusion(transaction.id, selected).then(() => { status.textContent = '保存しました。'; }, () => { checkbox.checked = !selected; status.textContent = '保存できませんでした。もう一度お試しください。'; }).finally(() => { checkbox.disabled = false; });
+    });
+    group.append(checkbox, label, status); return group;
+  }
   async function transactionDetail(transaction: ActualTransaction) {
     const linked = (await receipts.list()).find(receipt => receipt.registration.actualTransactionId === transaction.id);
     if (linked) { await receiptEditor(linked); return; }
@@ -401,6 +413,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const fields = ['amount', 'date', 'payee', 'category', 'account', 'memo'] as const;
     view.append(recordDetailRows(values, current.kind !== 'transfer' && !current.isSplit
       ? index => manualEditor(current.kind === 'income' ? 'income' : 'expense', current, fields[index]) : undefined));
+    if (current.kind === "expense" && current.amountYen < 0) view.append(spendingExclusionControl(current));
     const actions = document.createElement('div'); actions.className = 'detail-actions';
     if (current.kind === 'transfer') actions.append(button('編集する', () => manualEditor('transfer', current), false));
     const remove = deleteButton(current.id); remove.className = 'text-button destructive-text';
@@ -428,6 +441,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       ['状態', registered],
     ], index => receiptEditor(receipt, { edit: true, focusField: (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const)[index] }));
     view.append(back, text('h2', '支出の記録'), summary);
+    const actual = receipt.registration.actualTransactionId ? await ledger.getTransactionById(receipt.registration.actualTransactionId) : null;
+    ensureScreen(screen);
+    if (actual) view.append(spendingExclusionControl(actual));
     if (pending) view.append(text('p', '前回の変更は保存結果を確認中です。編集画面で同じ内容を再試行してください。', 'notice notice-warning'));
     if (receipt.aiSuggestion.categoryRules?.length) {
       const reasons = document.createElement('details'); reasons.className = 'surface-section detail-disclosure';
@@ -1274,16 +1290,6 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     ]);
     const importsById = new Map(imports.map(item => [item.id, item.value]));
     const accountsById = new Map(allAccounts.map(account => [account.id, account]));
-    const registrationAccounts = (await ledger.listOpenAccounts()).filter(account => account.accountType !== 'cash');
-    const mappedProviders = new Map(await Promise.all(registrationAccounts.map(async account =>
-      [account.id, budgetId ? await accountMetadata.getStatementProvider(budgetId, account.id) : null] as const)));
-    const defaultRegistrationAccount = (statement: Awaited<ReturnType<typeof statements.list>>[number]) => {
-      const legacyAccountId = importsById.get(statement.importId)?.accountId;
-      if (legacyAccountId && registrationAccounts.some(account => account.id === legacyAccountId)) return legacyAccountId;
-      const mapped = registrationAccounts.filter(account => mappedProviders.get(account.id) === statement.provider);
-      if (mapped.length === 1) return mapped[0].id;
-      return registrationAccounts.length === 1 ? registrationAccounts[0].id : '';
-    };
     const list = document.createElement('ul'); list.className = 'review-list';
     const reviewOrder = (status: string) => status === 'needs_review' ? 0 : 1;
     for (const row of pending.filter(r => r.status !== 'matched').sort((a, b) => reviewOrder(a.status) - reviewOrder(b.status) || a.statementTransactionId.localeCompare(b.statementTransactionId))) {
@@ -1349,24 +1355,16 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           category.append(new Option('カテゴリを選択してください', ''), ...expenseCategories.map(c => new Option(c.name, c.id)));
           const suggestion = await categoryLearning.suggest({ merchant: statement.merchant, items: [], categories: expenseCategories });
           if (suggestion.merchantCategoryId) category.value = suggestion.merchantCategoryId;
-          // The payment source is asked for only here, because a new ledger transaction needs an account.
-          const account = document.createElement('select'); account.id = `account-${statement.id}`; account.required = true;
-          const accountLabel = fieldLabel('label', '支払元', account.id);
-          const fillAccounts = (rows: typeof registrationAccounts, selected: string) => {
-            account.replaceChildren(new Option(rows.length ? '支払元を選択してください' : '支払元がありません', ''), ...accountOptions(rows));
-            account.value = rows.some(row => row.id === selected) ? selected : '';
-          };
-          fillAccounts(registrationAccounts, defaultRegistrationAccount(statement));
-          body.append(text('p', `記録が見つかりません。${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} を支出として登録できます。`), categoryLabel, category, accountLabel, account);
-          const noAccountNote = text('p', '支払元がありません。登録するには支払元を追加してください。');
-          if (!registrationAccounts.length) account.before(noAccountNote);
-          account.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
-            field: account, beforeOpen: async () => {}, onCreated: async id => {
-              const refreshed = (await ledger.listOpenAccounts()).filter(row => row.accountType !== 'cash');
-              fillAccounts(refreshed, refreshed.some(row => row.id === id) ? id : account.value);
-              if (refreshed.length) noAccountNote.remove();
-            },
-          } }));
+          const kind = document.createElement('select'); kind.id = `kind-${statement.id}`;
+          kind.append(new Option('支出', 'expense'), new Option('振替', 'transfer'));
+          const destination = document.createElement('select'); destination.id = `destination-${statement.id}`;
+          destination.append(new Option('振替先を選択してください', ''), ...accountOptions(await ledger.listOpenAccounts()));
+          const destinationLabel = fieldLabel('label', '振替先', destination.id);
+          const excluded = document.createElement('input'); excluded.type = 'checkbox'; excluded.id = `excluded-${statement.id}`;
+          const excludedLabel = fieldLabel('label', '支出の計算に含めない', excluded.id);
+          const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row'; exclusionRow.append(excluded, excludedLabel);
+          body.append(text('p', '記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。'), fieldLabel('label', '取引の種類', kind.id), kind,
+            categoryLabel, category, destinationLabel, destination, exclusionRow);
           category.after(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
             field: category, beforeOpen: async () => {}, onCreated: async id => {
               const previous = category.value;
@@ -1375,14 +1373,36 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
               category.value = refreshed.some(c => c.id === previous) ? previous : id;
             },
           } }));
-          body.append(button('支出として登録', async () => {
-            if (!category.value) throw new Error('カテゴリを選択してください。');
-            if (!account.value) throw new Error('支払元を選択してください。');
-            await reconciliation.noReceipt(run.runId, statement.id, { categoryId: category.value, accountId: account.value });
+          const register = button('支出として登録', async () => {
+            if (kind.value === 'expense' && !category.value) throw new Error('カテゴリを選択してください。');
+            if (kind.value === 'transfer' && !destination.value) throw new Error('振替先を選択してください。');
+            await reconciliation.noReceipt(run.runId, statement.id, kind.value === 'transfer'
+              ? { destinationAccountId: destination.value }
+              : { categoryId: category.value, excludedFromSpending: excluded.checked });
             await rerun();
-          }, false));
+          }, false);
+          const syncKind = () => {
+            const transfer = kind.value === 'transfer';
+            category.hidden = categoryLabel.hidden = transfer; category.required = !transfer;
+            destination.hidden = destinationLabel.hidden = !transfer; destination.required = transfer;
+            exclusionRow.hidden = transfer;
+            register.textContent = transfer ? '振替として登録' : '支出として登録';
+            const shortcut = category.nextElementSibling; if (shortcut instanceof HTMLButtonElement) shortcut.hidden = transfer;
+          };
+          kind.addEventListener('change', syncKind); syncKind();
+          destination.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {
+            field: destination, beforeOpen: async () => {}, onCreated: async id => {
+              destination.replaceChildren(new Option('振替先を選択してください', ''), ...accountOptions(await ledger.listOpenAccounts())); destination.value = id;
+            },
+          } }));
+          const destinationShortcut = destination.nextElementSibling;
+          kind.addEventListener('change', () => { if (destinationShortcut instanceof HTMLElement) destinationShortcut.hidden = kind.value !== 'transfer'; });
+          if (destinationShortcut instanceof HTMLElement) destinationShortcut.hidden = true;
+          body.append(register);
         }
       }
+      const skip = button('登録しない', async () => { await reconciliation.ignore(run.runId, statement.id); await rerun(); }); skip.className = 'text-button';
+      body.append(skip);
       item.append(detail); list.append(item);
     }
     ensureScreen(screen);
@@ -1391,6 +1411,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       section.append(text('h3', '確認してください'), list); view.append(section);
     } else if (!decisions.some(d => d.status !== 'applied')) {
       const clear = document.createElement('p'); clear.className = 'review-clear'; clear.append(icon('check'), document.createTextNode('確認が必要な明細はありません')); view.append(clear);
+    }
+    const ignored = decisions.filter(row => row.resolution === 'ignored' && row.status === 'applied');
+    if (ignored.length) {
+      const history = document.createElement('details'); history.className = 'surface-section review-history'; history.append(text('summary', `登録しないと判断した明細（${ignored.length}件）`));
+      for (const decision of ignored) {
+        const statement = allStatements.find(row => row.id === decision.statementId);
+        if (statement) history.append(text('p', `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · 登録しない`));
+      }
+      view.append(history);
     }
     if (automatic.length) {
       const history = document.createElement('details'); history.className = 'surface-section review-history';

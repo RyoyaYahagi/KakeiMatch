@@ -48,6 +48,7 @@ export async function createLocalSnapshot(repository: LocalDataRepository, ledge
   localData.records = localData.records.filter(record => record.id !== 'settings:budget'
     && (!record.id.startsWith('settings:basic-categories:') || record.id === (budgetId ? basicCategorySettingsRecordId(budgetId) : ''))
     && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
+    && (!record.id.startsWith('settings:spending-exclusion:') || (record.value as { budgetId?: unknown }).budgetId === budgetId)
     && (record.kind !== 'account-metadata' || Boolean(budgetId) && (record.value as { budgetId?: unknown }).budgetId === budgetId));
   return createPortableBackup({ actualBackup: await ledger.exportBackup(), localData });
 }
@@ -97,6 +98,10 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     const localData = {
       ...backup.localData,
       records: backup.localData.records.map(record => {
+        if (record.id.startsWith('settings:spending-exclusion:')) {
+          const value = record.value as { budgetId: string; transactionId: string };
+          return { ...record, id: `settings:spending-exclusion:${encodeURIComponent(budgetId)}:${encodeURIComponent(value.transactionId)}`, value: { ...value, budgetId } };
+        }
         if (record.kind === 'account-metadata') {
           const metadata = record.value as { budgetId: string; accountId: string };
           return { ...record, id: accountMetadataRecordId(budgetId, metadata.accountId), value: { ...metadata, budgetId } };
