@@ -847,3 +847,11 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .moneyforward-mapping-row select, .moneyforward-mapping-row input { width: 100%; min-height: 44px; }
 .moneyforward-page > p, .moneyforward-page .muted { overflow-wrap: anywhere; }
 .moneyforward-preview-row { font-size: .875rem; overflow-wrap: anywhere; }
+
+/* Editing stays in the selected detail row; actions follow the field. */
+.transaction-detail .inline-record-editor { width: 100%; min-width: 0; }
+.inline-record-editor .form-actions { position: static; display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0 0; padding: var(--space-2) 0; box-shadow: none; border: 0; background: transparent; }
+.inline-record-editor .form-actions button { flex: 1; width: auto; min-width: 0; margin: 0; font-size: 1rem; }
+.inline-record-editor .entry-row { border: 0; }
+.inline-record-editor .optional-fields > summary { display: none; }
+.inline-record-editor .status:empty { display: none; }

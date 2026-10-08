@@ -1,3 +1,4 @@
+import { showInlineFields } from './inline-record-editor';
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
@@ -71,6 +72,7 @@ export function showManualTransactionEditor(options: {
   kind: TransactionKind;
   transaction?: ActualTransaction;
   focusField?: TransactionEditField;
+  inline?: boolean;
   /** Called with the schedule to create when "くり返し" was chosen. */
   onSaved: (schedule?: RecurringScheduleInput) => Promise<void>;
   recurringNames?: () => Promise<string[]>;
@@ -513,6 +515,9 @@ export function showManualTransactionEditor(options: {
       fields.forEach(field => { field.disabled = true; });
       submit.textContent = '同じ内容で再試行する';
       status.textContent = '前回の保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';
+    }
+    if (options.inline && options.focusField) {
+      showInlineFields(options.view, [({ amount, date, payee, category: categoryUi!.row, account, memo })[options.focusField]], cancel);
     }
     if (options.focusField === 'category') {
       categoryUi?.row.querySelector<HTMLButtonElement>('.entry-row-more')?.click();

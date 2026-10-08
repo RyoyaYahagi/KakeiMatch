@@ -93,8 +93,14 @@ try {
     await page.getByRole('button', { name: new RegExp(`^${label}を編集:`) }).click();
     const input = page.locator(`#manual-transaction-${field}`);
     await input.waitFor();
+    assert.equal(await page.getByRole('heading', { name: '収入の記録', exact: true }).isVisible(), true);
+    assert.equal(await page.locator('.transaction-detail').isVisible(), true);
+    assert.equal(await page.locator('.detail-edit').filter({ visible: true }).first().isEnabled(), false);
+    assert.equal(await page.locator(`#manual-transaction-${field === 'amount' ? 'payee' : 'amount'}`).isVisible(), false);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.equal(await input.evaluate(node => node === document.activeElement), true);
     if (field === 'memo') {
+      if (process.env.PWA_INLINE_DETAIL_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_INLINE_DETAIL_SCREENSHOT_PATH, fullPage: true });
       await input.fill('Synthetic tapped memo'); await click('変更を保存する');
       await page.getByRole('button', { name: 'メモを編集: Synthetic tapped memo', exact: true }).waitFor();
     } else await click('キャンセル');
