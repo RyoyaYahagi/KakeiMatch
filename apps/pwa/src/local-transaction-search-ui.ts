@@ -109,7 +109,7 @@ export async function showTransactionSearch(options: {
     filters = { ...next }; options.onFiltersChange({ ...filters }); updateActive(filters);
     details.open = false;
     results.replaceChildren(); resultsCount.textContent = `${rows.length}件`;
-    const total = rows.filter(row => row.kind !== 'transfer').reduce((sum, row) => sum + row.amountYen, 0);
+    const total = rows.filter(row => row.kind !== 'transfer' && !row.excludedFromSpending).reduce((sum, row) => sum + row.amountYen, 0);
     resultsTotal.textContent = rows.length && total ? `${total < 0 ? '−' : '+'}${yen(total)}` : '';
     if (!rows.length) results.append(Object.assign(node('li', entries.length ? '条件に一致する記録はありません。' : '記録がありません。'), { className: 'empty muted' }));
     for (const row of rows) {
