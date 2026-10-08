@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseStatement, parseStatementText } from "./statement-parser";
+import { parseStatementBlob } from "../../apps/pwa/src/statement-parser";
 
 const PAYPAY_CARD_HEADER = [
   "利用日/キャンセル日", "利用店名・商品名", "利用者", "決済方法", "支払区分", "利用金額", "手数料",
@@ -8,6 +9,10 @@ const PAYPAY_CARD_HEADER = [
 const RAKUTEN_2026_09_HEADER = [
   "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
   "9月支払金額", "当月請求額", "10月繰越残高", "新規サイン",
+];
+const RAKUTEN_12_COLUMN_HEADER = [
+  "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
+  "支払月", "10月支払金額", "当月請求額", "11月繰越残高", "11月以降請求額",
 ];
 const smbcMetadata = ["SYNTHETIC MEMBER", "SYNTHETIC CARD", "SYNTHETIC STATEMENT"];
 const smbcPurchase = (merchant = "Synthetic Store", amount = "1200") => ["2026/09/28", merchant, amount, "１", "１", amount, ""];
@@ -134,6 +139,57 @@ describe("parseStatement", () => {
     expect(parseStatement(csv([changedMonth, ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""]]), "rakuten_card").fatalErrors).toEqual([]);
     changedMonth[7] = "13月支払金額";
     expect(parseStatement(csv([changedMonth]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+  });
+
+  it("imports the 12-column e-NAVI layout through the PWA using purchase amounts", async () => {
+    const bytes = csv([RAKUTEN_12_COLUMN_HEADER,
+      ["2026/09/01", "人工商店", "本人", "1回払い", "1200", "0", "1200", "10月", "1000", "800", "0", ""],
+    ]);
+    const result = await parseStatementBlob(new Blob([new Uint8Array(bytes)]), "rakuten_card");
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toMatchObject([{ merchant: "人工商店", usedDate: "2026-09-01", amountYen: 1200 }]);
+    expect(parseStatement(bytes, "rakuten_card")).toEqual(result);
+  });
+
+  it("validates every 12-column header, monthly suffix, and row width", () => {
+    const normal = ["2026/09/01", "人工商店", "本人", "1回払い", "1200", "0", "1200", "10月", "1200", "1200", "0", ""];
+    for (const index of [7, 8, 9, 10, 11]) {
+      const changed = [...RAKUTEN_12_COLUMN_HEADER];
+      changed[index] = index === 7 || index === 9 ? "未知列" : changed[index].replace(/\d+月/, "13月");
+      expect(parseStatement(csv([changed, normal]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
+    }
+    const december = [...RAKUTEN_12_COLUMN_HEADER];
+    december[8] = "12月支払金額";
+    december[10] = "1月繰越残高";
+    december[11] = "1月以降請求額";
+    expect(parseStatement(csv([december, normal]), "rakuten_card").fatalErrors).toEqual([]);
+    expect(parseStatement(csv([RAKUTEN_12_COLUMN_HEADER, normal.slice(0, 11)]), "rakuten_card").fatalErrors[0].code).toBe("unsupported_layout");
+  });
+
+  it("preserves purchases before empty separators and separately dated incomplete 12-column rows", () => {
+    const normal = ["2026/09/01", "人工商店", "本人", "1回払い", "1200", "0", "1200", "10月", "1200", "1200", "0", ""];
+    const deferred = ["2026/09/02", "人工翌月店", "本人", "1回払い", "900", "0", "900", "翌月", "", "", "", "900"];
+    const section = ["人工セクション", ...Array<string>(11).fill("")];
+    const result = parseStatement(csv([RAKUTEN_12_COLUMN_HEADER, normal, deferred, Array<string>(12).fill(""), section]), "rakuten_card");
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toMatchObject([{ merchant: "人工商店" }]);
+    expect(result.excludedRows).toEqual([{ rowNumber: 4, reason: "non_expense" }]);
+    expect(result.needsReviewRows?.map(({ rowNumber }) => rowNumber)).toEqual([3, 5]);
+    const continuation = ["", "人工商品内訳", ...Array<string>(10).fill("")];
+    expect(parseStatement(csv([RAKUTEN_12_COLUMN_HEADER, normal, continuation]), "rakuten_card").transactions).toEqual([]);
+  });
+
+  it("keeps uncertain 12-column purchases for review without using future billing as purchase amounts", () => {
+    const normal = ["2026/09/01", "人工商店", "本人", "1回払い", "1200", "0", "1200", "10月", "1200", "1200", "0", ""];
+    const overrides: Array<[number, string]> = [[3, "分割払い"], [3, "１回"], [4, "-1200"], [5, "100"], [7, "13月"], [11, "abc"], [11, "900"], [11, "9007199254740992"]];
+    for (const [index, value] of overrides) {
+      const changed = [...normal];
+      changed[index] = value;
+      const result = parseStatement(csv([RAKUTEN_12_COLUMN_HEADER, changed]), "rakuten_card");
+      expect(result.fatalErrors).toEqual([]);
+      expect(result.transactions).toEqual([]);
+      expect(result.needsReviewRows).toHaveLength(1);
+    }
   });
 
   it("keeps split, revolving, bonus, refunds, cancellation, and continuation rows out of canonical purchases", () => {

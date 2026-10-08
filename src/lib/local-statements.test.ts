@@ -34,6 +34,19 @@ async function openService(): Promise<{ repository: LocalDataRepository; service
 afterEach(() => repos.splice(0).forEach((repository) => repository.close()));
 
 describe("LocalStatementService", () => {
+  it("imports 12-column Rakuten files and deduplicates purchases shared with the 11-column layout", async () => {
+    const { service } = await openService();
+    await service.importFile(csv([rakutenHeaders, rakutenPurchase]), "rakuten_card");
+    const currentHeaders = [...rakutenHeaders.slice(0, 7), "支払月", "10月支払金額", "当月請求額", "11月繰越残高", "11月以降請求額"];
+    const currentPurchase = [...rakutenPurchase.slice(0, 7), "10月", ...rakutenPurchase.slice(7, 10), ""];
+    const newPurchase = [...currentPurchase];
+    newPurchase[1] = "Synthetic New Market";
+    const file = csv([currentHeaders, currentPurchase, newPurchase]);
+    expect(await service.importFile(file, "rakuten_card")).toMatchObject({ added: 1, duplicates: 1, needsReviewRows: [] });
+    expect(await service.importFile(file, "rakuten_card")).toMatchObject({ added: 0, duplicates: 2 });
+    expect(await service.list()).toHaveLength(2);
+  });
+
   it("uses standard SHA-256 output for both canonical fingerprints and raw files", () => {
     expect(sha256Hex(new TextEncoder().encode("abc"))).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     expect(sha256Hex(new Uint8Array())).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
