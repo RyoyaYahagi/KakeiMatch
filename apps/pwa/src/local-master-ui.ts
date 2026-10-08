@@ -1,3 +1,4 @@
+import { dismissOnBackdrop } from './dialog-backdrop';
 import { accountTypeField, accountTypeLabels, accountBalanceLabel, type AccountType } from './local-account-ui';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
@@ -102,6 +103,7 @@ export function createMasterShortcut(options: {
       const back = element('button', '入力へ戻る', 'secondary'); back.type = 'button'; back.prepend(icon('chevronLeft'));
       back.addEventListener('click', () => { if (form.dataset.saving !== 'true') close(); });
       dialog.addEventListener('cancel', event => { event.preventDefault(); if (form.dataset.saving !== 'true') close(); });
+      dismissOnBackdrop(dialog, () => { if (form.dataset.saving !== 'true') close(); });
       dialog.append(heading, form, status, back);
       document.body.append(dialog); dialog.showModal();
       const controls = form.querySelectorAll<HTMLInputElement | HTMLButtonElement | HTMLSelectElement>('input,button,select');
