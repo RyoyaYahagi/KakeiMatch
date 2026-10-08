@@ -1,5 +1,6 @@
 import { betterAuth } from "better-auth";
 import { passkey } from "@better-auth/passkey";
+import { readRequestBytes } from './request-body';
 
 export interface AccountD1Database {
   prepare(query: string): {
@@ -321,8 +322,10 @@ async function handleDeleteAccountRequest(request: Request, env: AccountEnv): Pr
   const originUrl = configuredOrigin(env, request);
   if (!originUrl) return json(403, { error: "untrusted_origin" });
   if (request.headers.get("origin") !== originUrl.origin) return json(403, { error: "forbidden_origin" });
-  // Cloudflare gives a bodiless DELETE an empty stream, so check the bytes rather than the stream.
-  if (request.body !== null && (await request.arrayBuffer()).byteLength > 0) return json(400, { error: "invalid_request" });
+  // Cloudflare gives a bodiless DELETE an empty stream. Stop at the first non-empty chunk.
+  try {
+    if (await readRequestBytes(request, 0) === null) return json(400, { error: "invalid_request" });
+  } catch { return json(400, { error: "invalid_request" }); }
 
   let account: AccountSession | null;
   try {

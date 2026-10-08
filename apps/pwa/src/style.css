@@ -805,6 +805,8 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .diagnostics-preview { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; padding: var(--space-3); background: var(--sunken); border-radius: var(--radius-md); }
 
 .screen-lock-overlay { position: fixed; z-index: 10000; inset: 0; display: grid; place-items: center; overflow-y: auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) max(var(--space-4), env(safe-area-inset-bottom)); background: var(--bg); }
+/* A modal can enter the top layer before the lock's observer closes it. Hide it immediately. */
+.screen-locked dialog { visibility: hidden; }
 .screen-lock-content { width: min(100%, 420px); padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow); }
 .screen-lock-content .page-title { margin: 0 0 var(--space-3); font-size: 1.375rem; }
 .screen-lock-form, .screen-lock-enrollment { display: grid; gap: var(--space-3); margin-top: var(--space-4); }

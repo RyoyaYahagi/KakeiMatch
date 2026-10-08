@@ -1,5 +1,6 @@
 import type { AccountD1BatchResult, AccountEnv } from "./account-auth";
 import { dayKey } from "./receipt-ai-usage";
+import { readRequestBytes } from './request-body';
 
 type Db = AccountEnv["ACCOUNT_DB"];
 interface RateLimitBinding { limit(input: { key: string }): Promise<{ success: boolean }> }
@@ -89,10 +90,12 @@ export async function handleGuestRequest(request: Request, env: GuestEnv, option
   try {
     if (!(await env.AI_USER_RATE_LIMIT.limit({ key: `guest-create:${addressMac}` })).success) return json(429, { error: "rate_limited" });
   } catch { return json(503, { error: "temporarily_unavailable" }); }
-  const length = request.headers.get("content-length");
-  if (length !== null && Number(length) > 4096) return json(413, { error: "request_too_large" });
   let body: unknown;
-  try { body = await request.json(); } catch { return json(400, { error: "invalid_request" }); }
+  try {
+    const bytes = await readRequestBytes(request, 4096);
+    if (bytes === null) return json(413, { error: "request_too_large" });
+    body = JSON.parse(new TextDecoder().decode(bytes));
+  } catch { return json(400, { error: "invalid_request" }); }
   const token = body !== null && typeof body === "object" ? (body as Record<string, unknown>).turnstileToken : undefined;
   let human: boolean;
   try { human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, token, url.hostname, request.headers.get("cf-connecting-ip"), options.fetchImpl ?? fetch); } catch { return json(503, { error: "turnstile_unavailable" }); }

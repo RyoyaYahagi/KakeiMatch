@@ -153,6 +153,13 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
   overlay.setAttribute('aria-labelledby', 'screen-lock-title');
   document.body.append(overlay);
 
+  function closeOpenDialogs() {
+    document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach(dialog => dialog.close());
+  }
+  // Async UI work can finish after relocking. Remove its modal from the top layer before paint.
+  new MutationObserver(() => { if (locked) closeOpenDialogs(); })
+    .observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['open'] });
+
   function renderLock(message = '') {
     overlay.replaceChildren();
     const content = document.createElement('div');
@@ -249,7 +256,7 @@ export function initializeLocalScreenLock(application: HTMLElement, settingsCont
     application.inert = value;
     overlay.hidden = !value;
     document.body.classList.toggle('screen-locked', value);
-    if (value) renderLock();
+    if (value) { closeOpenDialogs(); renderLock(); }
     else overlay.replaceChildren();
     if (broadcast) announce(value ? 'lock' : 'unlock');
   }

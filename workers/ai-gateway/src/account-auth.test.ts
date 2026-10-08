@@ -175,6 +175,27 @@ describe("Cloud account bootstrap and recovery", () => {
     expect(batches).toHaveLength(2);
   });
 
+  it('rejects a non-empty DELETE stream without consuming the remainder or touching account data', async () => {
+    authState.session = null;
+    const { database, batches } = testDatabase();
+    const cancel = vi.fn();
+    let chunksRead = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunksRead++;
+        if (chunksRead <= 5) controller.enqueue(new Uint8Array(4096));
+        else controller.close();
+      }, cancel,
+    }, { highWaterMark: 0 });
+    const request = new Request('https://kakeimatch.example/api/account/delete', {
+      method: 'DELETE', headers: { origin: 'https://kakeimatch.example' }, body, duplex: 'half',
+    } as RequestInit);
+    expect((await handleAccountRequest(request, envFor(database))).status).toBe(400);
+    expect(chunksRead).toBe(1);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(batches).toHaveLength(0);
+  });
+
   it("rejects missing sessions, external origins, and caller-supplied user IDs", async () => {
     authState.session = null;
     const { database, batches } = testDatabase();
