@@ -34,6 +34,22 @@ try {
   await page.evaluate(() => { window.manualRetry.state.failReadback = true; });
   await page.getByRole('button', { name: '登録する', exact: true }).click();
   await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).waitFor();
+  // Cancelling an uncertain save leaves the fixed draft and identity intact.
+  const pendingDraft = await page.evaluate(() => window.manualRetry.records.get('manual-draft:income:new'));
+  const cancel = page.getByRole('button', { name: 'キャンセル', exact: true });
+  assert.equal(await cancel.isEnabled(), true, 'An unknown save result must still allow cancelling the editor');
+  await cancel.click();
+  await page.waitForFunction(() => window.manualRetry.state.cancels === 1);
+  assert.deepEqual(await page.evaluate(() => window.manualRetry.records.get('manual-draft:income:new')), pendingDraft);
+  await page.evaluate(() => window.manualRetry.open());
+  await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).waitFor();
+  assert.equal(await cancel.isEnabled(), true, 'A restored failed draft must allow cancelling');
+  assert.equal(await page.locator('#manual-transaction-amount').isDisabled(), true);
+  await cancel.click();
+  await page.waitForFunction(() => window.manualRetry.state.cancels === 2);
+  assert.deepEqual(await page.evaluate(() => window.manualRetry.records.get('manual-draft:income:new')), pendingDraft);
+  await page.evaluate(() => window.manualRetry.open());
+  await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).waitFor();
   await page.evaluate(() => { document.querySelector('#editor').replaceChildren(); });
   await page.evaluate(() => window.manualRetry.open());
   await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).waitFor();
@@ -66,6 +82,8 @@ try {
     document.querySelector('#editor').replaceChildren();
   });
   await page.evaluate(() => window.manualRetry.open());
+  await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).waitFor();
+  assert.equal(await cancel.isEnabled(), true, 'A restored processing draft must allow cancelling');
   await page.getByRole('button', { name: '同じ内容で再試行する', exact: true }).click();
   await page.waitForFunction(() => window.manualRetry.state.saves === 2);
   assert.equal(await page.evaluate(() => window.manualRetry.rows.length), 2);

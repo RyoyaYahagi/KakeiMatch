@@ -268,7 +268,9 @@ export function showManualTransactionEditor(options: {
     function setBusy(busy: boolean) {
       for (const shortcut of shortcuts) shortcut.disabled = busy || frozenAfterUnknownFailure;
       for (const field of fields) field.disabled = busy || frozenAfterUnknownFailure;
-      cancel.disabled = busy || frozenAfterUnknownFailure;
+      // Leaving the editor keeps the fixed draft and its imported ID intact.
+      // Only an in-flight save needs to block cancellation.
+      cancel.disabled = busy;
       submit.disabled = busy;
     }
     function validate(value: FormValue): string | null {
@@ -433,7 +435,6 @@ export function showManualTransactionEditor(options: {
       fields.forEach(field => { field.disabled = true; });
       submit.textContent = '同じ内容で再試行する';
       status.textContent = '前回の保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';
-      cancel.disabled = true;
     }
   }).catch(error => {
     if (!heading.isConnected) return;
