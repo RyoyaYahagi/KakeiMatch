@@ -67,7 +67,12 @@ const PAYPAY_CARD_HEADERS = [
 
 const RAKUTEN_HEADER_TEMPLATE = [
   "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
-  null, "当月請求額", null, "新規サイン",
+  "{month}月支払金額", "当月請求額", "{month}月繰越残高", "新規サイン",
+] as const;
+
+const RAKUTEN_12_COLUMN_HEADER_TEMPLATE = [
+  "利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額",
+  "支払月", "{month}月支払金額", "当月請求額", "{month}月繰越残高", "{month}月以降請求額",
 ] as const;
 
 const SMBC_HEADER_SIGNATURE = "smbc-vpass-cp932-v1";
@@ -307,22 +312,20 @@ const rakutenParser: StatementParser = {
   provider: "rakuten_card",
   parse(rows, encoding) {
     const [headers, ...bodyRows] = rows;
-    const expectedSignature = RAKUTEN_HEADER_TEMPLATE.map((header, index) => {
-      if (header !== null) return header;
-      return index === 7 ? "{month}月支払金額" : "{month}月繰越残高";
-    });
-    const validHeaders = headers.length === RAKUTEN_HEADER_TEMPLATE.length &&
-      RAKUTEN_HEADER_TEMPLATE.every((header, index) => header !== null
-        ? headers[index] === header
-        : /^(?:[1-9]|1[0-2])月(?:支払金額|繰越残高)$/.test(headers[index] ?? "") &&
-          (index === 7 ? headers[index].endsWith("月支払金額") : headers[index].endsWith("月繰越残高")));
-    if (!validHeaders) {
+    const template = [RAKUTEN_HEADER_TEMPLATE, RAKUTEN_12_COLUMN_HEADER_TEMPLATE].find((candidate) =>
+      headers.length === candidate.length && candidate.every((header, index) =>
+        header.includes("{month}")
+          ? new RegExp(`^${header.replace("{month}", "(?:[1-9]|1[0-2])")}$`).test(headers[index])
+          : headers[index] === header));
+    if (!template) {
       return { ...EMPTY_RESULT("header_mismatch", encoding), totalRows: bodyRows.length, headerSignature: null };
     }
-    const headerSignature = JSON.stringify(expectedSignature);
+    const is12Column = template === RAKUTEN_12_COLUMN_HEADER_TEMPLATE;
+    const headerSignature = JSON.stringify(template);
     if (bodyRows.length === 0) return { ...EMPTY_RESULT("header_only", encoding), headerSignature };
 
     const transactions: CanonicalStatementTransaction[] = [];
+    const excludedRows: StatementParseResult["excludedRows"] = [];
     const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
     const fingerprintOrdinals = new Map<string, number>();
     let priorCandidate: { rowNumber: number; transactionIndex: number } | null = null;
@@ -341,16 +344,28 @@ const rakutenParser: StatementParser = {
 
     bodyRows.forEach((row, index) => {
       const rowNumber = index + 2;
-      if (row.length !== RAKUTEN_HEADER_TEMPLATE.length) return;
+      if (row.length !== template.length) return;
       if (row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) return;
+      // e-NAVI separates sections with an all-empty CSV record. This is not a
+      // continuation of the preceding purchase; preserve its transaction.
+      if (is12Column && row.every((field) => field.trim() === "")) {
+        excludedRows.push({ rowNumber, reason: "non_expense" });
+        priorCandidate = null;
+        return;
+      }
 
-      const [rawDate, rawMerchant, , rawPaymentMethod, rawAmount, rawFee, rawTotal, rawMonthlyPayment, rawCurrentAmount, rawCarry, rawNewSign] = row;
+      const [rawDate, rawMerchant, , rawPaymentMethod, rawAmount, rawFee, rawTotal] = row;
+      const rawMonthlyPayment = row[is12Column ? 8 : 7];
+      const rawCurrentAmount = row[is12Column ? 9 : 8];
+      const rawCarry = row[is12Column ? 10 : 9];
+      const rawNewSign = is12Column ? "" : row[10];
+      const rawFutureAmount = is12Column ? row[11] : "";
       const date = parseSlashDate(rawDate);
       const amount = parseYen(rawAmount);
-      const parsedOtherAmounts = [rawFee, rawTotal, rawMonthlyPayment, rawCurrentAmount, rawCarry]
+      const parsedOtherAmounts = [rawFee, rawTotal, rawMonthlyPayment, rawCurrentAmount, rawCarry, rawFutureAmount]
         .map((value) => value.trim() === "" ? 0 : parseYen(value));
       const missingPurchaseColumns = [rawTotal, rawMonthlyPayment, rawCurrentAmount].some((value) => value.trim() === "");
-      const continuation = rawDate.trim() === "" || rawMerchant.trim() === "" || missingPurchaseColumns;
+      const continuation = rawDate.trim() === "" || rawMerchant.trim() === "" || (!is12Column && missingPurchaseColumns);
 
       let reason: string | null = null;
       if (!rawDate.trim() || !rawMerchant.trim()) reason = "継続行または部分行の可能性があります";
@@ -359,7 +374,8 @@ const rakutenParser: StatementParser = {
       else if (rawPaymentMethod !== "1回払い") reason = "1回払い以外の可能性があります";
       else if (amount === null || amount <= 0) reason = "利用金額を確認できません";
       else if (parsedOtherAmounts.some((value) => value === null)) reason = "支払金額欄を確認できません";
-      else if ((parseYen(rawFee) ?? 0) > 0 || rawNewSign.trim() !== "") reason = "通常購入の形式ではありません";
+      else if (is12Column && !/^(?:[1-9]|1[0-2])月$/.test(row[7])) reason = "支払月を確認できません";
+      else if ((parseYen(rawFee) ?? 0) > 0 || rawNewSign.trim() !== "" || (parseYen(rawFutureAmount) ?? 0) > 0) reason = "通常購入の形式ではありません";
       else if (missingPurchaseColumns) reason = "複数行明細または部分行の可能性があります";
 
       if (reason) {
@@ -379,7 +395,7 @@ const rakutenParser: StatementParser = {
       priorCandidate = { rowNumber, transactionIndex: transactions.length - 1 };
     });
 
-    if (bodyRows.some((row) => row.length !== RAKUTEN_HEADER_TEMPLATE.length)) {
+    if (bodyRows.some((row) => row.length !== template.length)) {
       return { ...EMPTY_RESULT("unsupported_layout", encoding), totalRows: bodyRows.length, headerSignature };
     }
     if (bodyRows.some((row) => row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH))) {
@@ -387,7 +403,7 @@ const rakutenParser: StatementParser = {
     }
 
     return {
-      transactions, excludedRows: [], needsReviewRows, duplicateRowsInFile: 0, totalRows: bodyRows.length,
+      transactions, excludedRows, needsReviewRows, duplicateRowsInFile: 0, totalRows: bodyRows.length,
       encoding, fatalErrors: [], headerSignature,
     };
   },
