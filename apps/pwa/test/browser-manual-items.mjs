@@ -110,7 +110,7 @@ try {
   await page.locator('.category-list').getByText(/^食費 · ¥900 ·/).waitFor();
   await page.locator('.category-list').getByText(/^日用品 · ¥500 ·/).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click();
-  await click('編集する'); await click('品目一覧'); await item(0).locator('summary').click();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await click('品目一覧'); await item(0).locator('summary').click();
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   await item(0).getByRole('button', { name: '品目を削除', exact: true }).click();
@@ -124,7 +124,7 @@ try {
   const navigation = page.waitForNavigation({ waitUntil: 'load' }); page.once('dialog', dialog => dialog.accept());
   await page.locator('#backup-file').setInputFiles({ name: 'synthetic-manual-items.kmb', mimeType: 'application/vnd.kakeimatch.backup', buffer });
   await navigation; await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
-  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click(); await click('編集する');
+  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Manual Items ·/ }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click();
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic memo');
   assert.equal(await page.locator('[data-receipt-item]').count(), 1);

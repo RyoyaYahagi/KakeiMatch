@@ -32,7 +32,7 @@ async function fill(name, amount, categoryName, accountName, memo) {
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill(memo);
 }
 async function save(editing = false) { await click(editing ? '変更を保存する' : '登録する'); await page.getByText(editing ? '変更を保存しました。' : '登録しました。', { exact: true }).waitFor(); }
-async function detail(name) { await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click(); await click('編集する'); await page.locator('#manual-transaction-payee').waitFor(); }
+async function detail(name) { await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#manual-transaction-payee').waitFor(); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   assert.deepEqual(await page.locator('nav .nav-button').allTextContents(), ['ホーム', '記録', '照合', '設定']);

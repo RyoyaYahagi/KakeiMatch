@@ -96,7 +96,7 @@ try {
   assert.equal(await page.locator('[data-receipt-item]').count(), 2); assert.equal(await page.locator('#receipt-amount').inputValue(), '900');
   await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
-  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Entry Receipt ·/ }).click(); await click('編集する');
+  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Entry Receipt ·/ }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click();
   await page.locator('#receipt-merchant').fill('Synthetic Receipt Edited');
   await create('receipt-category', 'Synthetic Edit Category', true); await create('receipt-account', 'Synthetic Edit Wallet');
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Receipt Edited'); assert.equal(await page.locator('[data-receipt-item]').count(), 2);

@@ -164,7 +164,7 @@ try {
   await settings('カテゴリ'); await click('収入カテゴリ'); await page.getByRole('button', { name: /^Synthetic Salary ·/ }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Draft Shop/ }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
-  await click('編集する');
+  await page.getByRole('button', { name: /^支払元を編集:/ }).click();
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Cash');
   assert.equal(await page.locator('#receipt-category option:checked').textContent(), 'Synthetic Hobby');
   await page.locator('#home-tab').click(); assert.equal(await page.locator('#transactions li').count(), 1);
