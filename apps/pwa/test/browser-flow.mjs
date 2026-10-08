@@ -186,9 +186,12 @@ try {
   const unmatchedStatement = page.locator('#local-view details').filter({ hasText: 'Synthetic New Store' });
   await unmatchedStatement.locator('summary').click();
   await unmatchedStatement.locator('select[id^="category-"]').selectOption({ label: '日用品' });
-  assert.equal(await unmatchedStatement.locator('select[id^="account-"]').locator('option:checked').textContent(), 'Synthetic Wallet');
+  assert.equal(await unmatchedStatement.locator('select[id^="account-"]').count(), 0, 'the statement provider fixes the payment source');
   await unmatchedStatement.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/記録なし 0件/).waitFor();
+  await page.locator('#receipt-tab').click();
+  await page.getByRole('button', { name: /Synthetic New Store.*−¥500/ }).click();
+  await page.getByRole('button', { name: '支払元を編集: Synthetic Wallet', exact: true }).waitFor();
   await page.locator('#home-tab').click();
   await page.getByText('今月の支出 ¥1,780', { exact: false }).waitFor();
   await page.evaluate(async () => {

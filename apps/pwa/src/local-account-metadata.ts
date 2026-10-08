@@ -39,6 +39,19 @@ async function withMetadataLock<T>(key: string, task: () => Promise<T>): Promise
 /** Adapts profile-local records to the browser ledger's budget-scoped account metadata hooks. */
 export function createAccountMetadataAccess(repository: LocalDataRepository) {
   return {
+    async getExcludedSpendingIds(budgetId: string): Promise<string[]> {
+      const records = await repository.list('app-settings');
+      return records.filter(row => row.id.startsWith('settings:spending-exclusion:')).flatMap(row => {
+        const value = z.object({ budgetId: z.string().min(1), transactionId: z.string().min(1), excluded: z.literal(true) }).strict().parse(row.value);
+        if (row.id !== `settings:spending-exclusion:${encodeURIComponent(value.budgetId)}:${encodeURIComponent(value.transactionId)}`) throw new Error('支出集計の設定が不正です。');
+        return value.budgetId === budgetId ? [value.transactionId] : [];
+      });
+    },
+    async saveSpendingExclusion(budgetId: string, transactionId: string, excluded: boolean): Promise<void> {
+      const id = `settings:spending-exclusion:${encodeURIComponent(budgetId)}:${encodeURIComponent(transactionId)}`;
+      if (!excluded) { await repository.delete(id); return; }
+      await repository.put({ id, kind: 'app-settings', value: { budgetId, transactionId, excluded: true }, updatedAt: new Date().toISOString() });
+    },
     async getAccountType(budgetId: string, accountId: string): Promise<ActualAccountType | null> {
       const id = accountMetadataRecordId(budgetId, accountId);
       const record = await repository.get<unknown>(id);

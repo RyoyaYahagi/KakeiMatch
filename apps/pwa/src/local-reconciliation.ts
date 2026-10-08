@@ -56,7 +56,9 @@ export type LocalResolution = {
   id: string;
   runId: string;
   statementId: string;
-  resolution: "same_expense" | "no_receipt";
+  resolution: "same_expense" | "no_receipt" | "transfer" | "ignored";
+  destinationAccountId?: string;
+  excludedFromSpending?: boolean;
   source: "automatic" | "user";
   receiptId: string | null;
   categoryId: string | null;
@@ -111,6 +113,8 @@ export class LocalReconciliationError extends Error {
       record_unavailable: "レシートまたは明細を利用できません。画面を更新してください。",
       candidates_remaining: "似たレシート候補を先に確認してください。",
       decision_unavailable: "この明細は支出として登録できません。",
+      account_mapping_ambiguous: "同じカードの支払元が複数あります。設定の支払元で明細サービスの対応を1件にしてください。",
+      destination_unavailable: "振替元と異なる利用中の振替先を選んでください。",
       account_unavailable: "支払元を選択してください。現金以外の利用中の支払元を選べます。",
       category_unavailable: "選択したカテゴリを利用できません。",
       retry_unavailable: "再試行できる判断記録がありません。",
@@ -160,6 +164,7 @@ export class LocalReconciliationService {
     private readonly repo: LocalDataRepository,
     private readonly ledger: BrowserLedger,
     private readonly getStatementProvider: (accountId: string) => Promise<StatementProvider | null> = async () => null,
+    private readonly setStatementProvider?: (accountId: string, provider: StatementProvider) => Promise<void>,
   ) {}
 
   private async prepareInput(): Promise<PreparedInput> {
@@ -390,7 +395,36 @@ export class LocalReconciliationService {
     });
   }
 
-  async noReceipt(runId: string, statementId: string, options: { accountId: string; categoryId: string }): Promise<LocalResolution> {
+  async registrationAccount(provider: StatementProvider): Promise<string> {
+    const accounts = (await this.ledger.listOpenAccounts()).filter(row => row.accountType !== "cash");
+    const mapped = (await Promise.all(accounts.map(async row => ({ row, provider: await this.getStatementProvider(row.id) })))).filter(item => item.provider === provider);
+    if (mapped.length > 1) throw new LocalReconciliationError("account_mapping_ambiguous");
+    if (mapped.length === 1) return mapped[0]!.row.id;
+    if (!this.setStatementProvider) throw new LocalReconciliationError("account_unavailable");
+    const names: Record<StatementProvider, string> = { rakuten_card: "楽天カード", smbc_card: "三井住友カード", paypay_card: "PayPayカード", paypay: "PayPay", aeon_card: "イオンカード" };
+    const named = accounts.filter(row => row.name === names[provider]);
+    if (named[0] && await this.getStatementProvider(named[0].id)) throw new LocalReconciliationError("account_mapping_ambiguous");
+    if (named.length > 1) throw new LocalReconciliationError("account_mapping_ambiguous");
+    const accountId = named[0]?.id ?? await this.ledger.addAccount(names[provider], "credit_card");
+    await this.setStatementProvider(accountId, provider);
+    return accountId;
+  }
+
+  async ignore(runId: string, statementId: string): Promise<LocalResolution> {
+    return serialize(this.repo.profileId, async () => {
+      const { run } = await this.requireLatest(runId);
+      if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
+      const result = run.statementResults.find(row => row.statementTransactionId === statementId);
+      const statement = (await this.findStatement(statementId))?.value;
+      if (!result || result.status === "matched" || !statement) throw new LocalReconciliationError("decision_unavailable");
+      const timestamp = now();
+      return this.storeResolution({ id: resolutionRecordId(statementId), runId, statementId, resolution: "ignored", source: "user",
+        receiptId: null, categoryId: null, accountId: null, statementAmountYen: statement.amountYen, importedId: null,
+        status: "applied", actualTransactionId: null, errorCode: null, createdAt: timestamp, updatedAt: timestamp });
+    });
+  }
+
+  async noReceipt(runId: string, statementId: string, options: { accountId?: string; categoryId?: string; destinationAccountId?: string; excludedFromSpending?: boolean }): Promise<LocalResolution> {
     return serialize(this.repo.profileId, async () => {
       const { run } = await this.requireLatest(runId);
       const result = run.statementResults.find((item) => item.statementTransactionId === statementId);
@@ -402,14 +436,17 @@ export class LocalReconciliationService {
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
       const [accounts, categories] = await Promise.all([this.ledger.listOpenAccounts(), this.ledger.listExpenseCategories()]);
       // A payment source is needed only here, because a new ledger transaction must belong to an account.
-      const accountId = options.accountId;
-      if (!accountId || !accounts.some((account) => account.id === accountId && account.accountType !== "cash")) throw new LocalReconciliationError("account_unavailable");
-      if (!categories.some((category) => category.id === options.categoryId)) throw new LocalReconciliationError("category_unavailable");
+      const accountId = this.setStatementProvider ? await this.registrationAccount(statementRecord.value.provider as StatementProvider) : options.accountId;
+      if (!accountId || !(await this.ledger.listOpenAccounts()).some((account) => account.id === accountId && account.accountType !== "cash")) throw new LocalReconciliationError("account_unavailable");
+      if (options.destinationAccountId && (options.destinationAccountId === accountId || !accounts.some(row => row.id === options.destinationAccountId))) throw new LocalReconciliationError("destination_unavailable");
+      if (!options.destinationAccountId && !categories.some((category) => category.id === options.categoryId)) throw new LocalReconciliationError("category_unavailable");
       const statement = statementRecord.value;
       const timestamp = now();
       const resolution: LocalResolution = {
-        id: resolutionRecordId(statementId), runId, statementId, resolution: "no_receipt", source: "user",
-        receiptId: null, categoryId: options.categoryId, accountId,
+        id: resolutionRecordId(statementId), runId, statementId, resolution: options.destinationAccountId ? "transfer" : "no_receipt", source: "user",
+        ...(options.destinationAccountId ? { destinationAccountId: options.destinationAccountId } : {}),
+        ...(options.excludedFromSpending !== undefined ? { excludedFromSpending: options.excludedFromSpending } : {}),
+        receiptId: null, categoryId: options.destinationAccountId ? null : options.categoryId!, accountId,
         statementAmountYen: statement.amountYen, importedId: `kakeimatch:statement:${statement.id}`,
         status: "pending", actualTransactionId: null, errorCode: null, createdAt: timestamp, updatedAt: timestamp,
         statementSnapshot: { usedDate: statement.usedDate, merchant: statement.merchant, kind: statement.kind },
@@ -499,19 +536,24 @@ export class LocalReconciliationService {
           throw new LocalReconciliationError("actual_readback_mismatch");
         }
       } else {
-        if (!resolution.accountId || !resolution.categoryId || !resolution.importedId) throw new LocalReconciliationError("resolution_snapshot_invalid");
+        if (!resolution.accountId || (resolution.resolution !== "transfer" && !resolution.categoryId) || !resolution.importedId) throw new LocalReconciliationError("resolution_snapshot_invalid");
         const statement = resolution.statementSnapshot ?? (await this.findStatement(resolution.statementId))?.value;
         if (!statement || statement.kind !== "purchase") throw new LocalReconciliationError("statement_unavailable");
-        const imported = await this.ledger.importReceipt({ accountId: resolution.accountId, date: statement.usedDate,
+        if (resolution.resolution === "transfer" && !resolution.destinationAccountId) throw new LocalReconciliationError("resolution_snapshot_invalid");
+        const imported = resolution.resolution === "transfer"
+          ? await this.ledger.createTransfer({ sourceAccountId: resolution.accountId, destinationAccountId: resolution.destinationAccountId!, date: statement.usedDate,
+            amountYen: resolution.statementAmountYen, memo: statement.merchant, importedId: resolution.importedId })
+          : await this.ledger.importReceipt({ accountId: resolution.accountId, date: statement.usedDate,
           amountYen: -resolution.statementAmountYen, merchant: statement.merchant,
-          categoryId: resolution.categoryId, importedId: resolution.importedId });
+          categoryId: resolution.categoryId!, importedId: resolution.importedId });
         await this.ledger.applyTransactionUpdates([{ transactionId: imported.id, cleared: true }]);
         const actual = await this.ledger.getTransactionById(imported.id);
-        if (!actual || actual.kind !== "expense" || !actual.cleared || actual.amountYen !== -resolution.statementAmountYen ||
-          actual.accountId !== resolution.accountId || actual.date !== statement.usedDate || actual.payeeName === null ||
-          normalizeReconciliationMerchant(actual.payeeName) !== normalizeReconciliationMerchant(statement.merchant)) {
+        if (!actual || actual.kind !== (resolution.resolution === "transfer" ? "transfer" : "expense") || !actual.cleared || actual.amountYen !== -resolution.statementAmountYen ||
+          actual.accountId !== resolution.accountId || actual.date !== statement.usedDate ||
+          (resolution.resolution === "transfer" ? actual.transferAccountId !== resolution.destinationAccountId : actual.payeeName === null || normalizeReconciliationMerchant(actual.payeeName) !== normalizeReconciliationMerchant(statement.merchant))) {
           throw new LocalReconciliationError("actual_readback_mismatch");
         }
+        if (resolution.resolution === "no_receipt" && resolution.excludedFromSpending !== undefined) await this.ledger.setSpendingExclusion(imported.id, resolution.excludedFromSpending);
         resolution = { ...resolution, actualTransactionId: imported.id };
       }
       return this.storeResolution({ ...resolution, status: "applied", errorCode: null });

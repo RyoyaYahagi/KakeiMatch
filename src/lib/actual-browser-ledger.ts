@@ -148,6 +148,8 @@ export type ActualBrowserLedgerOptions = {
   /** Account kinds live in the active local profile and are scoped by Actual budget and account IDs. */
   getAccountType?: (budgetId: string, accountId: string) => ActualAccountType | null | Promise<ActualAccountType | null>;
   saveAccountType?: (budgetId: string, accountId: string, type: ActualAccountType | null) => void | Promise<void>;
+  getExcludedSpendingIds?: (budgetId: string) => Promise<string[]>;
+  saveSpendingExclusion?: (budgetId: string, transactionId: string, excluded: boolean) => Promise<void>;
   /** Browser Actual virtual filesystem directory. Defaults to Actual's /documents. */
   getDataDir?: () => string;
   newBudgetName?: () => string;
@@ -305,6 +307,7 @@ function summarizeMonth(rows: NativeTransaction[], categories: Array<{ id: strin
  * when an operation runs, so this module never pulls the Node export into server code.
  */
 export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): ActualLedger & {
+  setSpendingExclusion(id: string, excluded: boolean): Promise<void>;
   getMonthlySummary(params: { yearMonth: string }): Promise<ActualMonthlySummary>;
   getMonthlyBudgets(params: { yearMonth: string }): Promise<ActualMonthlyBudgets>;
   setMonthlyBudget(params: { yearMonth: string; categoryId: string; budgetYen: number }): Promise<void>;
@@ -494,13 +497,20 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     return [...rows, ...children];
   };
 
+  const excludedSpendingIds = async () => new Set(await options.getExcludedSpendingIds?.(options.getBudgetId()!) ?? []);
+  const withSpendingFlags = async <T extends ActualTransaction>(transactions: T[]): Promise<T[]> => {
+    const excluded = await excludedSpendingIds();
+    return transactions.map(row => ({ ...row, excludedFromSpending: excluded.has(row.id) }));
+  };
+
   const monthlySummary = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlySummary> => {
     const endDate = lastDayOfMonth(yearMonth);
     const [rows, categories] = await Promise.all([
       allRows(api, `${yearMonth}-01`, endDate, account => account.offbudget !== true),
       api.getCategories(),
     ]);
-    return summarizeMonth(rows, categories, yearMonth);
+    const excluded = await excludedSpendingIds();
+    return summarizeMonth(rows.filter(row => !excluded.has(row.id) || row.amount >= 0), categories, yearMonth);
   };
 
   const monthlyBudgets = async (api: ActualApi, yearMonth: string): Promise<ActualMonthlyBudgets> => {
@@ -983,7 +993,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         const rows = visibleRows(await allRows(api, `${months[0]}-01`, "9999-12-31"));
         rows.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
         const names = await namesFor(api);
-        return rows.slice(0, limit).map(row => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null));
+        return withSpendingFlags(rows.slice(0, limit).map(row => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null)));
       });
     },
 
@@ -993,8 +1003,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       if (start > end) throw new Error("Start date must not follow end date.");
       return withBudget(async (api) => {
         const [rows, names] = await Promise.all([allRows(api, start, end), namesFor(api)]);
-        return visibleRows(rows).sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
-          .map((row) => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null));
+        return withSpendingFlags(visibleRows(rows).sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))
+          .map((row) => mapTransaction(row, names, row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null)));
       });
     },
 
@@ -1015,9 +1025,11 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           const children = childrenByParent.get(child.parent_id) ?? [];
           children.push(child); childrenByParent.set(child.parent_id, children);
         }
+        const excluded = await excludedSpendingIds();
         const visible = visibleRows(rows).filter(row => validRow(row) && (!row.transfer_id || row.amount < 0));
         return visible.sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id)).map(row => {
           const transaction = mapTransaction(row, names, row.transfer_id ? byId.get(row.transfer_id)?.account ?? null : null);
+          transaction.excludedFromSpending = excluded.has(row.id);
           const children = childrenByParent.get(row.id) ?? [];
           const categoryIds = [...new Set([row.category, ...children.map(child => child.category)]
             .filter((id): id is string => typeof id === "string" && id.length > 0))];
@@ -1038,7 +1050,19 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       return withBudget(async (api) => {
         const rows = await allRows(api, "0001-01-01", "9999-12-31");
         const row = rows.find((transaction) => transaction.id === parsedId.data && !transaction.is_child && !transaction.parent_id);
-        return row ? mapTransaction(row, await namesFor(api), row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null) : null;
+        return row ? (await withSpendingFlags([mapTransaction(row, await namesFor(api), row.transfer_id ? rows.find(peer => peer.id === row.transfer_id)?.account ?? null : null)]))[0]! : null;
+      });
+    },
+
+    setSpendingExclusion(id, excluded) {
+      idSchema.parse(id); z.boolean().parse(excluded);
+      return withBudget(async api => {
+        const rows = await allRows(api, "0001-01-01", "9999-12-31");
+        const row = rows.find(row => row.id === id && !row.is_child && !row.parent_id && !row.transfer_id && row.amount < 0);
+        if (!row) throw new ActualMasterValidationError("支出の記録が見つかりません。");
+        if (!options.saveSpendingExclusion) throw new Error("支出集計の設定を保存できません。");
+        await options.saveSpendingExclusion(options.getBudgetId()!, id, excluded);
+        if ((await excludedSpendingIds()).has(id) !== excluded) throw new Error("支出集計の設定を確認できません。");
       });
     },
 

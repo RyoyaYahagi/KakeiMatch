@@ -89,7 +89,7 @@ jobs:
             test:screen-lock-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e \
             test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e \
             test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e \
-            test:provider-only-reconciliation-e2e test:desktop-layout-e2e test:contact-e2e \
+            test:provider-only-reconciliation-e2e test:statement-options-e2e test:desktop-layout-e2e test:contact-e2e \
             test:diagnostics-e2e test:security-e2e test:encryption-e2e test:receipt-ai-warnings-e2e test:guest-ai-e2e test:device-link-e2e test:local-data-rescue-e2e test:receipt-total-check-e2e test:receipt-ai-reading-e2e test:recurring-catch-up-e2e test:idb-migration-e2e test:actual-compatibility-e2e \
             | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
       - name: Upload E2E logs
