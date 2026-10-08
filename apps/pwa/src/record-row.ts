@@ -12,7 +12,7 @@ export function signedAmount(row: Pick<ActualTransaction, 'kind' | 'amountYen'>)
   return `${sign}${yen(row.amountYen)}`;
 }
 
-export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void, options: { showDate?: boolean; hasReceipt?: boolean; needsReview?: boolean } = {}) {
+export function recordRow(row: ActualTransaction, accountName: string | null, open: () => void, options: { showDate?: boolean; hasReceipt?: boolean; needsReview?: boolean; expenseMemoTitle?: boolean } = {}) {
   const kindLabel = row.kind === 'transfer' ? '振替' : row.kind === 'income' ? '収入' : null;
   const visual = row.kind === 'income' ? { tone: 'income', icon: 'income' as const }
     : row.kind === 'transfer' ? { tone: 'other', icon: 'transfer' as const }
@@ -21,10 +21,13 @@ export function recordRow(row: ActualTransaction, accountName: string | null, op
   button.type = 'button'; button.className = 'record-row'; button.dataset.date = row.date;
   const badge = span(`record-icon tone-${visual.tone}`); badge.append(icon(visual.icon));
   const main = span('record-main');
-  const title = row.payeeName || (row.kind === 'transfer' ? '口座間振替' : kindLabel ?? '支出');
   const memo = row.memo?.trim();
+  const expenseMemoTitle = row.kind === 'expense' && options.expenseMemoTitle;
+  const title = expenseMemoTitle ? memo || row.categoryName || '支出' : row.payeeName || (row.kind === 'transfer' ? '口座間振替' : kindLabel ?? '支出');
   const contextNote = row.kind === 'transfer' ? accountName : memo || accountName;
-  const noteParts = [options.showDate === false ? null : shortDate(row.date), kindLabel ?? row.categoryName, contextNote, options.hasReceipt ? 'レシート' : null].filter(Boolean);
+  const noteParts = [options.showDate === false ? null : shortDate(row.date),
+    ...(expenseMemoTitle ? [row.payeeName, accountName] : [kindLabel ?? row.categoryName, contextNote]),
+    options.hasReceipt ? 'レシート' : null].filter(Boolean);
   const note = span('record-note', noteParts.join(' · '));
   if (options.needsReview) { const mark = span('note-warning', '△ 要確認'); note.prepend(mark, document.createTextNode(noteParts.length ? ' · ' : '')); }
   main.append(span('record-title', title), note);
