@@ -32,6 +32,7 @@
     "test:receipt-total-check-e2e": "node test/browser-receipt-total-check.mjs",
     "test:receipt-ai-reading-e2e": "node test/browser-receipt-ai-reading.mjs",
     "test:manual-items-e2e": "node test/browser-manual-items.mjs",
+    "test:manual-retry-e2e": "node test/browser-manual-retry.mjs",
     "test:manual-e2e": "node test/browser-manual-transactions.mjs",
     "test:transfers-e2e": "node test/browser-transfers.mjs",
     "test:receipt-edits-e2e": "node test/browser-receipt-edits.mjs",
