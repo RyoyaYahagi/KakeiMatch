@@ -1,4 +1,5 @@
 import { configureInlineEditor } from './inline-record-editor';
+import { dismissOnBackdrop } from './dialog-backdrop';
 import { initializeMoneyForwardUi } from './moneyforward-ui';
 import { createAccountMetadataAccess } from './local-account-metadata';
 import { accountOptions } from './local-account-ui';
@@ -203,7 +204,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   // docs/UX.md ＋追加: a bottom sheet over the current screen chooses the kind of record.
   const recordSheet = document.createElement('dialog'); recordSheet.id = 'record-sheet'; recordSheet.className = 'record-sheet'; recordSheet.setAttribute('aria-labelledby', 'record-sheet-title');
   document.body.append(recordSheet);
-  recordSheet.addEventListener('click', event => { if (event.target === recordSheet) recordSheet.close(); });
+  dismissOnBackdrop(recordSheet, closeRecordSheet);
   function closeRecordSheet() { if (recordSheet.open) recordSheet.close(); }
   /** Entry screens return here: the screen the sheet was opened from, with the sheet on top again. */
   async function returnToChooser() { await chooserOrigin(); await recordChooser(); }

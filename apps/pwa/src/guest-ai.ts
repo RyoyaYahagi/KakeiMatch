@@ -1,3 +1,4 @@
+import { dismissOnBackdrop } from './dialog-backdrop';
 // Browser side of guest AI use: AI without an account, a few times a day.
 // The server decides every limit; nothing here is used for authorization.
 
@@ -66,6 +67,7 @@ function botCheck(siteKey: string): Promise<string> {
       dialog.close(); dialog.remove(); result();
     };
     cancel.addEventListener('click', () => finish(() => reject(new Error('bot_check_cancelled'))));
+    dismissOnBackdrop(dialog, () => finish(() => reject(new Error('bot_check_cancelled'))));
     dialog.addEventListener('cancel', event => { event.preventDefault(); finish(() => reject(new Error('bot_check_cancelled'))); });
     loadTurnstileScript().then(turnstile => {
       if (!dialog.isConnected) return;

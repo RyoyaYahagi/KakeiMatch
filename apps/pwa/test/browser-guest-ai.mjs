@@ -97,7 +97,10 @@ try {
   const dialog = page.getByRole('dialog', { name: '確認しています' });
   await dialog.waitFor();
   if (process.env.PWA_GUEST_BOT_CHECK_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_GUEST_BOT_CHECK_SCREENSHOT_PATH });
-  await dialog.getByRole('button', { name: 'やめる', exact: true }).click();
+  // Backdrop cancellation follows the same rejection/cleanup path as やめる.
+  const box = await dialog.boundingBox();
+  await page.mouse.click(187, box.y / 2);
+  await dialog.waitFor({ state: 'detached' });
   await page.getByText('確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。手で入力するか、もう一度読み取ってください。', { exact: true }).waitFor();
   assert.equal(calls.created, 1);
   assert.deepEqual(errors, []);

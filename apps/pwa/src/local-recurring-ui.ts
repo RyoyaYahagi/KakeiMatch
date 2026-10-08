@@ -1,3 +1,4 @@
+import { dismissOnBackdrop } from './dialog-backdrop';
 import { accountOptions } from './local-account-ui';
 import { categoryTone } from './category-tone';
 import { backLink, detailHero, detailList, entryRow, pageActions, pageTitle, rowList } from './settings-ui';
@@ -51,6 +52,7 @@ function chooseCatchUp(preview: Awaited<ReturnType<Service['previewCatchUp']>>):
     month.addEventListener('click', () => choose(currentMonthDates));
     const cancel = node('button', 'キャンセル'); cancel.type = 'button'; cancel.className = 'secondary'; cancel.dataset.catchUpCancel = '';
     cancel.addEventListener('click', () => choose(null));
+    dismissOnBackdrop(dialog, () => choose(null));
     dialog.append(all, month, cancel); document.body.append(dialog); dialog.showModal();
     dialog.addEventListener('cancel', event => { event.preventDefault(); choose(null); }, { once: true });
   });

@@ -1,3 +1,4 @@
+import { dismissOnBackdrop } from './dialog-backdrop';
 import { categoryRank, categoryTone } from './category-tone';
 import { icon } from './ui-icons';
 
@@ -118,7 +119,7 @@ export function categoryRow(options: {
   const picker = enhanceCategorySelect(select, label, options.usageReady, false);
   body.append(header, picker, ...(options.extras ?? []));
   sheet.append(body);
-  sheet.addEventListener('click', event => { if (event.target === sheet) sheet.close(); });
+  dismissOnBackdrop(sheet, () => sheet.close());
   open.addEventListener('click', () => sheet.showModal());
   // After a category is added from the sheet, the sheet has closed; focus returns to "すべて".
   sheet.addEventListener('return-focus', () => open.focus());
