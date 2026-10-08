@@ -176,7 +176,7 @@ try {
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
   await page.getByRole('button', { name: 'レシートを確認する', exact: true }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '編集する', exact: true }).click();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store corrected');
   await page.locator('#reconciliation-tab').click();
   // The latest run no longer contains the applied pair, but its history remains.

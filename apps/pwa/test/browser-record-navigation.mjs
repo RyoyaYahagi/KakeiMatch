@@ -70,7 +70,25 @@ try {
   await page.locator('#manual-transaction-account').selectOption({ label: 'Synthetic Navigation Wallet' });
   await save();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /Synthetic Employer ·/ }).click();
-  await click('編集する'); await click('キャンセル');
+  await page.getByRole('button', { name: /^金額を編集:/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '編集する', exact: true }).count(), 0);
+  await page.mouse.move(0, 0);
+  if (process.env.PWA_RECORD_DETAIL_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECORD_DETAIL_SCREENSHOT_PATH, fullPage: true });
+  for (const [label, field] of [['金額', 'amount'], ['日付', 'date'], ['入金元・内容', 'payee'], ['入金先口座', 'account'], ['メモ', 'memo']]) {
+    await page.getByRole('button', { name: new RegExp(`^${label}を編集:`) }).click();
+    const input = page.locator(`#manual-transaction-${field}`);
+    await input.waitFor();
+    assert.equal(await input.evaluate(node => node === document.activeElement), true);
+    if (field === 'memo') {
+      await input.fill('Synthetic tapped memo'); await click('変更を保存する');
+      await page.getByRole('button', { name: 'メモを編集: Synthetic tapped memo', exact: true }).waitFor();
+    } else await click('キャンセル');
+    await page.getByRole('heading', { name: '収入の記録', exact: true }).waitFor();
+  }
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('radio', { name: 'Synthetic Navigation Income', exact: true }).waitFor();
+  await page.keyboard.press('Escape'); await click('キャンセル');
   await page.getByRole('heading', { name: '収入の記録' }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);

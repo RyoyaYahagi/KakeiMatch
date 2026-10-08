@@ -205,7 +205,7 @@ try {
   // Editing one receipt replaces that receipt's vote instead of adding another vote.
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
-  await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   await click('品目一覧');
   for (const [index, categoryId] of [learningIds.home, learningIds.food].entries()) {
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
@@ -222,7 +222,7 @@ try {
   assert.equal((await readLearningAudits()).length, 4);
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
-  await click('編集する'); await click('品目一覧');
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await click('品目一覧');
   for (let index = 0; index < 2; index++) {
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
   }

@@ -11,6 +11,7 @@ import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 
 type TransactionKind = 'expense' | 'income' | 'transfer';
+export type TransactionEditField = 'amount' | 'date' | 'payee' | 'category' | 'account' | 'memo';
 type FormValue = {
   kind: TransactionKind;
   date: string;
@@ -67,6 +68,7 @@ export function showManualTransactionEditor(options: {
   repository: LocalDataRepository;
   kind: TransactionKind;
   transaction?: ActualTransaction;
+  focusField?: TransactionEditField;
   /** Called with the schedule to create when "くり返し" was chosen. */
   onSaved: (schedule?: RecurringScheduleInput) => Promise<void>;
   recurringNames?: () => Promise<string[]>;
@@ -500,6 +502,13 @@ export function showManualTransactionEditor(options: {
       fields.forEach(field => { field.disabled = true; });
       submit.textContent = '同じ内容で再試行する';
       status.textContent = '前回の保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';
+    }
+    if (options.focusField === 'category') {
+      categoryUi?.row.querySelector<HTMLButtonElement>('.entry-row-more')?.click();
+    } else if (options.focusField) {
+      if (options.focusField === 'memo') optional.open = true;
+      const control = ({ amount, date, payee, account, memo })[options.focusField];
+      control?.focus();
     }
   }).catch(error => {
     if (!heading.isConnected) return;

@@ -188,6 +188,12 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .transaction-detail dt { flex: none; font-size: .875rem; color: var(--muted); }
 .transaction-detail dd { margin: 0; text-align: right; overflow-wrap: anywhere; }
 .transaction-detail .detail-amount dd { font-family: var(--font-num); font-size: 1.75rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.detail-editable { position: relative; min-height: 44px; }
+.detail-edit { display: inline-flex; align-items: center; gap: var(--space-2); padding: 0; margin: 0; min-height: 44px; border: 0; background: transparent; color: var(--text); font: inherit; text-align: right; }
+.detail-edit::before { content: ''; position: absolute; inset: 0; }
+.detail-edit .icon { flex: none; width: 18px; height: 18px; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.detail-editable:focus-within { outline: 2px solid var(--primary); outline-offset: 2px; }
+@media (hover: hover) { .detail-editable:hover { background: var(--sunken); } }
 .detail-actions { display: flex; flex-direction: column; gap: var(--space-2); }
 .detail-actions button { width: 100%; margin: 0; }
 .detail-actions button:not(.text-button) { min-height: 52px; border-radius: var(--radius-lg); }

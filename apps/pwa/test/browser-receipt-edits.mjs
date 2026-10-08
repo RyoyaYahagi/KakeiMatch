@@ -96,7 +96,29 @@ try {
   await page.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Bank'); await click('追加する');
   await page.getByRole('button', { name: 'Synthetic Bank · 利用中', exact: true }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
-  await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '編集する', exact: true }).count(), 0);
+  assert.equal(await page.locator('.detail-edit').count(), 6);
+  assert.equal(await page.locator('.detail-row').last().getByRole('button').count(), 0);
+  if (process.env.PWA_RECEIPT_DETAIL_SCREENSHOT_PATH) {
+    await page.setViewportSize({ width: 375, height: 1000 });
+    await page.mouse.move(0, 0);
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.screenshot({ path: process.env.PWA_RECEIPT_DETAIL_SCREENSHOT_PATH, fullPage: true });
+    await page.emulateMedia({ colorScheme: 'light' });
+    await page.setViewportSize({ width: 375, height: 812 });
+  }
+  for (const [label, field] of [['金額', 'amount'], ['日時', 'date'], ['店名・支払先', 'merchant'], ['支払元', 'account'], ['メモ', 'memo']]) {
+    await page.getByRole('button', { name: new RegExp(`^${label}を編集:`) }).click();
+    const input = page.locator(`#receipt-${field}`); await input.waitFor();
+    assert.equal(await input.evaluate(node => node === document.activeElement), true);
+    await click('キャンセル');
+    await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
+  }
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
+  assert.equal(await page.getByRole('button', { name: '品目一覧', exact: true }).getAttribute('aria-pressed'), 'true');
+  await click('キャンセル');
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   await page.locator('#receipt-merchant').fill('Synthetic Changed Shop');
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('13:15');
   await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
@@ -105,7 +127,7 @@ try {
   await row(0).locator('[data-item-amount]').fill('1100');
   await click('全体');
   await page.locator('#receipt-amount').fill('1500');
-  await click('キャンセル'); await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await click('キャンセル'); await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Changed Shop');
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   assert.equal(await page.locator('#receipt-merchant').count(), 0);
@@ -115,14 +137,14 @@ try {
   await page.reload(); await page.getByText('今月の支出 ¥1,500', { exact: false }).waitFor();
   assert.equal(await page.locator('#transactions li').count(), 1);
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Changed Shop/ }).click();
-  await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   assert.equal(await page.locator('#receipt-time').inputValue(), '13:15');
   assert.equal(await page.locator('#receipt-account option:checked').textContent(), 'Synthetic Bank');
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Corrected Apple');
   // Collapse the split to one category, preserving the parent Actual transaction ID.
   await click('品目一覧'); await click('全品目を同じカテゴリにする'); await page.getByRole('radio', { name: '食費', exact: true }).click(); await click('変更を保存する');
   await page.getByText('変更を保存しました。', { exact: true }).waitFor();
-  await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   await click('品目一覧');
   await row(1).locator('summary').click(); await row(1).locator('[data-item-category]').selectOption({ label: '日用品' });
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
@@ -138,7 +160,7 @@ try {
   await page.getByText('Synthetic Corrected Apple · ¥1,100 · 食費', { exact: true }).waitFor();
   if (process.env.PWA_RECEIPT_EDIT_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_EDIT_SCREENSHOT_PATH, fullPage: true });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  await click('編集する'); await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
   await context.setOffline(true); await page.locator('#receipt-date').fill('2026-09-29');
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   const audits = await page.evaluate(() => new Promise((resolve, reject) => {
