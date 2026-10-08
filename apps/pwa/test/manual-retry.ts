@@ -6,7 +6,7 @@ const rows: Array<Record<string, unknown>> = [];
 const accounts = [{ id: 'bank', name: '合成銀行', closed: false }];
 const categories = [{ id: 'income', name: '合成収入', is_income: true, hidden: false, group_id: 'income-group' }];
 const payees = [{ id: 'payee', name: '合成給与' }];
-const state = { saves: 0, failCleanup: false, failReadback: false };
+const state = { saves: 0, cancels: 0, failCleanup: false, failReadback: false };
 const api = {
   init: async () => ({ send: async () => [] }),
   getBudgets: async () => [{ id: 'budget', name: 'Synthetic' }],
@@ -35,7 +35,8 @@ const repository = {
 };
 function open() {
   showManualTransactionEditor({ view: document.querySelector<HTMLElement>('#editor')!, ledger, repository: repository as never,
-    kind: 'income', onSaved: async () => { state.saves++; document.querySelector('#editor')!.replaceChildren(); }, onCancel: async () => {} });
+    kind: 'income', onSaved: async () => { state.saves++; document.querySelector('#editor')!.replaceChildren(); },
+    onCancel: async () => { state.cancels++; document.querySelector('#editor')!.replaceChildren(); } });
 }
 Object.assign(window, { manualRetry: { state, rows, records, open } });
 open();
