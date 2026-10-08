@@ -278,6 +278,24 @@ describe("LocalReconciliationService", () => {
     expect(run.receiptResults).toEqual([]);
   });
 
+  it("uses current provider mappings to prioritize candidates from the same payment source", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    for (const [id, accountId] of [["other", "account-1"], ["same", "account-2"]]) {
+      mock.transactions.set(id!, { id: id!, date: "2026-09-10", amountYen: -1160,
+        kind: "expense", payeeName: "別表記の店", categoryName: null, accountId: accountId!, cleared: false });
+    }
+    await seed(repo, [makeStatement("statement-1")]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never,
+      async id => id === "account-2" ? "paypay" : null);
+    const run = await service.run();
+    expect(run.candidates.map(row => row.receiptId)).toEqual(["actual:same", "actual:other"]);
+    expect(run.candidates[0]?.reasons).toContain("payment_source_match");
+    expect(run.statementResults[0]?.status).toBe("needs_review");
+    expect(mock.transactions.get("other")?.cleared).toBe(false);
+    expect(mock.transactions.get("same")?.cleared).toBe(false);
+  });
+
   it("matches a provider-only import without any payment source mapping", async () => {
     const repo = await repository();
     const mock = makeLedger();
