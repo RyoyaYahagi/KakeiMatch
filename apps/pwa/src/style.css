@@ -329,6 +329,9 @@ button.entry-row-link { width: 100%; min-height: 52px; margin: 0; padding: var(-
 button.entry-row-link .icon { width: 18px; height: 18px; color: var(--muted); fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .receipt-total-check { flex: none; font-size: .8125rem; font-weight: 700; white-space: nowrap; }
 .category-sheet .category-picker { margin-bottom: var(--space-3); }
+.reconciliation-category-sheet .sheet-body { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom)); }
+.reconciliation-category-sheet .category-picker { gap: var(--space-1); }
+.reconciliation-category-sheet .category-choice { min-height: 64px; }
 
 /* Settings: docs/UX.md 設定 */
 .settings-group-title { margin: var(--space-5) var(--space-1) var(--space-2); font-size: .8125rem; font-weight: 700; color: var(--muted); }

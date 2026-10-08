@@ -127,7 +127,8 @@ try {
   assert.equal(await refreshedLearned.locator('select[id^="category-"]').locator('option:checked').textContent(), '食費');
 
   const newMerchant = page.locator('#local-view details').filter({ hasText: 'Synthetic New Merchant' }); await newMerchant.locator('summary').click();
-  await newMerchant.getByRole('button', { name: 'カテゴリを追加', exact: true }).click();
+  await newMerchant.getByRole('button', { name: 'すべてのカテゴリから選ぶ' }).click();
+  await page.locator('dialog.category-sheet[open]').getByRole('button', { name: 'カテゴリを追加', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('カテゴリ名', { exact: true }).fill('Synthetic Reconciliation Category');
   await dialog.getByRole('button', { name: '追加する', exact: true }).click();
