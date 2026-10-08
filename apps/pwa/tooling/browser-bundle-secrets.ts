@@ -7,7 +7,7 @@ export const browserBundleSecrets: Plugin = {
     // AI_EMERGENCY_STOP is a flag, not secret material; values like false occur in normal code.
     const secretBindingNames = [
       'BETTER_AUTH_SECRET', 'ACCOUNT_BOOTSTRAP_SECRET', 'AI_GATEWAY_AUTH_SECRET',
-      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY',
+      'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY',
       'FEEDBACK_ENCRYPTION_KEY',
     ];
     const buildSecrets = secretBindingNames.flatMap(name => {

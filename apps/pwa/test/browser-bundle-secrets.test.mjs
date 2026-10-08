@@ -4,7 +4,7 @@ import { browserBundleSecrets } from '../tooling/browser-bundle-secrets.ts';
 
 function check(code, env, environment = 'client') {
   const names = ['AI_EMERGENCY_STOP', 'BETTER_AUTH_SECRET', 'ACCOUNT_BOOTSTRAP_SECRET',
-    'AI_GATEWAY_AUTH_SECRET', 'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY', 'FEEDBACK_ENCRYPTION_KEY'];
+    'AI_GATEWAY_AUTH_SECRET', 'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY', 'FEEDBACK_ENCRYPTION_KEY'];
   const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
   try {
     // Isolate the check from developer and CI credentials.
@@ -30,7 +30,7 @@ test('ordinary emergency-stop values do not block browser builds', () => {
 
 test('provider and signing secrets still block browser builds, including short values', () => {
   for (const name of ['BETTER_AUTH_SECRET', 'ACCOUNT_BOOTSTRAP_SECRET', 'AI_GATEWAY_AUTH_SECRET',
-    'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY', 'FEEDBACK_ENCRYPTION_KEY']) {
+    'GEMINI_API_KEY', 'TYPESAFE_API_KEY', 'OPENROUTER_API_KEY', 'GITHUB_ISSUES_TOKEN', 'TURNSTILE_SECRET_KEY', 'FEEDBACK_ENCRYPTION_KEY']) {
     for (const value of ['synthetic-private-value-for-test', 'short-key']) {
       assert.throws(() => check(`const leaked = "${value}";`, { [name]: value }),
         new RegExp(`Build secret ${name} reached browser chunk app.js`));
