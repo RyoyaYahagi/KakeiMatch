@@ -38,7 +38,7 @@ export function renderRecordGroups(target: HTMLElement, rows: ActualTransaction[
     const list = document.createElement('ul'); list.className = 'record-rows';
     for (const row of dayRows) {
       const item = document.createElement('li');
-      item.append(recordRow(row, options.accountName(row.accountId), () => options.open(row), { showDate: false, hasReceipt: options.hasReceipt(row), needsReview: options.needsReview(row) }));
+      item.append(recordRow(row, options.accountName(row.accountId), () => options.open(row), { showDate: false, hasReceipt: options.hasReceipt(row), needsReview: options.needsReview(row), expenseMemoTitle: options.filter === 'expense' }));
       list.append(item);
     }
     section.append(header, list);
