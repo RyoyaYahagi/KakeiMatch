@@ -43,6 +43,39 @@ function tokenRequest(guest: string) {
 }
 
 describe("guest AI", () => {
+  it.each([undefined, '1', 'invalid'])('limits streamed bytes even with Content-Length %s', async declaredLength => {
+    const cancel = vi.fn();
+    let chunksRead = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        chunksRead++;
+        if (chunksRead <= 5) controller.enqueue(new TextEncoder().encode(' '.repeat(2048)));
+        else controller.close();
+      }, cancel,
+    }, { highWaterMark: 0 });
+    const request = new Request(`${origin}/api/ai/guest`, {
+      method: 'POST', headers: { origin, ...(declaredLength === undefined ? {} : { 'content-length': declaredLength }) },
+      body, duplex: 'half',
+    } as RequestInit);
+    const fetchImpl = turnstilePass();
+    const response = await handleRequest(request, env, { fetchImpl });
+    expect(response.status).toBe(413);
+    expect(chunksRead).toBe(3);
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM user').get()).toEqual({ count: 0 });
+  });
+
+  it('accepts a valid guest request at the byte limit and rejects malformed JSON', async () => {
+    const payload = JSON.stringify({ turnstileToken: 'synthetic-turnstile-token' });
+    const request = new Request(`${origin}/api/ai/guest`, {
+      method: 'POST', headers: { origin }, body: payload.padEnd(4096, ' '),
+    });
+    expect((await handleRequest(request, env, { fetchImpl: turnstilePass() })).status).toBe(201);
+    const invalid = new Request(`${origin}/api/ai/guest`, { method: 'POST', headers: { origin }, body: '{' });
+    expect((await handleRequest(invalid, env)).status).toBe(400);
+  });
+
   it("tells the PWA whether guests are available, with the public site key only", async () => {
     const config = await handleRequest(new Request(`${origin}/api/ai/guest`), env);
     expect(await config.json()).toEqual({ guestAvailable: true, turnstileSiteKey: "synthetic-site-key" });

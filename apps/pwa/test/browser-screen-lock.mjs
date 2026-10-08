@@ -80,6 +80,15 @@ try {
   await secondPage.locator('#screen-lock-pin').fill('135790');
   await secondPage.getByRole('button', { name: 'ロックを解除', exact: true }).click();
   await secondPage.locator('#screen-lock-overlay[hidden]').waitFor({ state: 'attached' });
+  // Open the real receipt viewer before relocking, rather than testing only the app shell.
+  await secondPage.locator('#receipt-tab').click();
+  await secondPage.getByRole('button', { name: '記録を追加', exact: true }).click();
+  await secondPage.locator('#record-sheet input[type=file]').first().setInputFiles({
+    name: 'synthetic-lock.png', mimeType: 'image/png',
+    buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64'),
+  });
+  await secondPage.getByRole('button', { name: 'レシート画像を拡大して見る', exact: true }).click();
+  await secondPage.getByRole('dialog', { name: 'レシート画像', exact: true }).waitFor();
   await context.setOffline(true);
   await secondPage.evaluate(() => {
     Object.defineProperty(document, 'hidden', { configurable: true, value: true });
@@ -91,9 +100,24 @@ try {
     document.dispatchEvent(new Event('visibilitychange'));
   });
   await secondPage.locator('#screen-lock-overlay:not([hidden])').waitFor();
+  assert.equal(await secondPage.locator('dialog[open]').count(), 0, 'relocking closes the receipt viewer above the app shell');
+  // A delayed completion must not reopen a modal over the PIN screen.
+  const delayedVisibility = await secondPage.evaluate(() => {
+    const dialog = document.createElement('dialog');
+    dialog.id = 'synthetic-delayed-modal'; dialog.textContent = 'Synthetic private content';
+    document.body.append(dialog); dialog.showModal();
+    return getComputedStyle(dialog).visibility;
+  });
+  assert.equal(delayedVisibility, 'hidden', 'a new modal is hidden even before the lock observer runs');
+  await secondPage.waitForFunction(() => !document.querySelector('#synthetic-delayed-modal').open);
+  assert.equal(await secondPage.locator('#synthetic-delayed-modal').isVisible(), false);
+  if (process.env.PWA_SCREEN_LOCK_MODAL_SCREENSHOT_PATH) await secondPage.screenshot({ path: process.env.PWA_SCREEN_LOCK_MODAL_SCREENSHOT_PATH });
   await secondPage.locator('#screen-lock-pin').fill('135790');
   await secondPage.getByRole('button', { name: 'ロックを解除', exact: true }).click();
   await secondPage.locator('#screen-lock-overlay[hidden]').waitFor({ state: 'attached' });
+  await secondPage.getByRole('button', { name: 'レシート画像を拡大して見る', exact: true }).click();
+  await secondPage.getByRole('dialog', { name: 'レシート画像', exact: true }).waitFor();
+  await secondPage.getByRole('dialog', { name: 'レシート画像', exact: true }).getByRole('button', { name: '閉じる', exact: true }).click();
 
   // Biometric unlock through a virtual platform authenticator; verification stays on the device.
   // WebAuthn rejects IP-address hosts, so this part uses a localhost origin with its own storage.
