@@ -191,7 +191,10 @@ export function showManualTransactionEditor(options: {
     // Schedules hold expenses and incomes only; a transfer or an edit stays one record.
     const recurrence = kind === 'income' && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
     if (recurrence) rows.append(recurrence.row);
-    form.append(rows, status, formActions(submit));
+    const savedResultPanel = node('div');
+    savedResultPanel.dataset.savedResult = '';
+    savedResultPanel.hidden = true;
+    form.append(rows, savedResultPanel, status, formActions(submit));
     const shortcuts: HTMLButtonElement[] = [];
     function addShortcut(field: HTMLSelectElement, request: { kind: 'category'; isIncome: boolean } | { kind: 'account' }) {
       const shortcut = createMasterShortcut({ ledger, request, origin: {
@@ -239,6 +242,7 @@ export function showManualTransactionEditor(options: {
     const fields: Array<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement> = transfer ? [date, amount, account, destination, memo] : [date, amount, payee, category, account, memo];
     let submittedSnapshot: FormValue | null = draft?.manualStatus === 'processing' || draft?.manualStatus === 'failed' ? draftSnapshot : null;
     let frozenAfterUnknownFailure = submittedSnapshot !== null;
+    let savedResult: ActualTransaction | null = null;
     const importedId = draft?.manualImportedId ?? `kakeimatch:${transfer ? 'transfer' : 'manual'}:${crypto.randomUUID()}`;
     let draftTail = pendingDraftWrites;
 
@@ -272,7 +276,66 @@ export function showManualTransactionEditor(options: {
       // Only an in-flight save needs to block cancellation.
       cancel.disabled = busy;
       submit.disabled = busy;
+      form.setAttribute('aria-busy', String(busy));
+      submit.textContent = busy ? '保存結果を確認しています…' : savedResult ? '登録済みの内容で完了する' : frozenAfterUnknownFailure ? '同じ内容で再試行する' : editing ? '変更を保存する' : '登録する';
     }
+
+    function showSavedResult(saved: ActualTransaction) {
+      savedResult = saved;
+      savedResultPanel.replaceChildren(node('h3', '登録済みの内容'),
+        node('p', `${saved.date} · ${saved.payeeName ?? '内容なし'} · ¥${Math.abs(saved.amountYen).toLocaleString('ja-JP')}`),
+        node('p', `${saved.categoryName ?? 'カテゴリなし'} · ${accounts.find(row => row.id === saved.accountId)?.name ?? '利用終了の口座'}`),
+        ...(saved.memo ? [node('p', saved.memo)] : []));
+      savedResultPanel.hidden = false;
+      submit.type = 'button';
+      status.textContent = 'この取引は登録済みです。下書きと内容が異なるため、登録済みの内容を確認して完了してください。';
+    }
+
+    // Resolve a failed retry by reading the same identity, never by generating
+    // a replacement ID or overwriting a transaction whose result differs.
+    async function recoverCreate(value: FormValue) {
+      if (editing || transfer) return;
+      try {
+        const result = await ledger.getImportedTransaction(importedId);
+        if (!heading.isConnected) return;
+        if (result) {
+          const saved = result.transaction;
+          if (saved.kind !== kind || saved.isSplit || saved.importedId !== importedId) throw new Error('Unexpected registered transaction');
+          showSavedResult(saved);
+        } else {
+          await persistDraft(value, 'draft');
+          if (!heading.isConnected) return;
+          submittedSnapshot = null;
+          frozenAfterUnknownFailure = false;
+          status.textContent = '未登録であることを確認しました。入力内容を修正して登録できます。';
+        }
+      } catch {
+        if (heading.isConnected) status.textContent = '保存結果をまだ確認できません。下書きを保持しています。もう一度再試行してください。';
+      }
+    }
+
+    submit.addEventListener('click', () => {
+      if (!savedResult || submit.disabled) return;
+      const confirmed = savedResult;
+      status.textContent = '登録済みの内容を確認しています…';
+      setBusy(true);
+      inFlightOperation = navigator.locks.request(`kakeimatch-manual-transaction:${confirmed.id}`, { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (!lock) throw new Error('別の画面で記録を保存中です。終わってからもう一度お試しください。');
+        const current = await ledger.getImportedTransaction(importedId);
+        if (!heading.isConnected) return;
+        const fields = ['id', 'date', 'amountYen', 'kind', 'payeeName', 'categoryId', 'categoryName', 'accountId', 'memo', 'isSplit', 'transferAccountId'] as const;
+        if (!current || current.transaction.importedId !== importedId) throw new Error('登録済みの取引を確認できませんでした。下書きは残しています。');
+        if (fields.some(field => (current.transaction[field] ?? null) !== (confirmed[field] ?? null))) {
+          if (current.transaction.kind !== kind || current.transaction.isSplit) throw new Error('登録済みの取引が変更されました。下書きは残しています。');
+          showSavedResult(current.transaction);
+          status.textContent = '登録済みの内容が変わりました。表示された内容を確認してください。';
+          return;
+        }
+        await pendingDraftWrites;
+        await options.repository.delete(draftId);
+        await options.onSaved();
+      }).then(() => undefined).catch(error => { if (heading.isConnected) status.textContent = messageFor(error); }).finally(() => { if (heading.isConnected) setBusy(false); });
+    });
     function validate(value: FormValue): string | null {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(value.date) || Number.isNaN(new Date(`${value.date}T00:00:00Z`).valueOf()) || new Date(`${value.date}T00:00:00Z`).toISOString().slice(0, 10) !== value.date) return '日付を選んでください。';
       if (!Number.isSafeInteger(value.amountYen) || value.amountYen <= 0) return '金額は1円以上の整数で入力してください。';
@@ -289,6 +352,7 @@ export function showManualTransactionEditor(options: {
 
     form.addEventListener('submit', event => {
       event.preventDefault();
+      if (submit.disabled || savedResult) return;
       const value = frozenAfterUnknownFailure && submittedSnapshot ? submittedSnapshot : readValue();
       const validationError = validate(value);
       if (validationError) { status.textContent = validationError; return; }
@@ -297,7 +361,7 @@ export function showManualTransactionEditor(options: {
       if (!navigator.locks) { status.textContent = 'この端末では安全に保存できません。対応ブラウザーで開き直してください。入力内容は残っています。'; return; }
       submittedSnapshot = { ...value };
       const wasFrozen = frozenAfterUnknownFailure;
-      status.textContent = '';
+      status.textContent = '保存結果を確認しています…';
       setBusy(true);
       inFlightOperation = (async () => {
       // A schedule name must be unique; check before the record is saved so nothing is half done.
@@ -390,6 +454,7 @@ export function showManualTransactionEditor(options: {
             submit.textContent = '同じ内容で再試行する';
             status.textContent = '保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';
           }
+          if (wasFrozen) await recoverCreate(value);
           setBusy(false);
           return;
         }
