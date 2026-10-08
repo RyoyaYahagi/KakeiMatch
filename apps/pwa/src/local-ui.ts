@@ -14,7 +14,7 @@ import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
 import { scheduleFromEntry } from './entry-recurrence';
-import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
+import { categoryRow, expenseCategoryUsage, lastUsedCategory, recentCategoryUsage } from './category-picker';
 import { icon } from './ui-icons';
 import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
@@ -1290,8 +1290,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const importer = await renderStatementImporter(true);
     ensureScreen(screen);
     view.append(importer);
-    const [allStatements, allReceipts, allAccounts, expenseCategories] = await Promise.all([
-      statements.list(), receipts.list(), ledger.listAccounts(), ledger.listExpenseCategories(),
+    const [allStatements, allReceipts, allAccounts, expenseCategories, categoryUsage] = await Promise.all([
+      statements.list(), receipts.list(), ledger.listAccounts(), ledger.listExpenseCategories(), expenseCategoryUsage(ledger),
     ]);
     const accountsById = new Map(allAccounts.map(account => [account.id, account]));
     const list = document.createElement('ul'); list.className = 'review-list';
@@ -1367,10 +1367,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           const excluded = document.createElement('input'); excluded.type = 'checkbox'; excluded.id = `excluded-${statement.id}`;
           const excludedLabel = fieldLabel('label', '支出の計算に含めない', excluded.id);
           const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row spending-exclusion'; exclusionRow.append(excluded, excludedLabel);
+          const categoryUi = categoryRow({ select: category, label: categoryLabel, usageReady: Promise.resolve(categoryUsage) });
+          categoryUi.sheet.classList.add('reconciliation-category-sheet');
           body.append(text('p', '記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。'), fieldLabel('label', '取引の種類', kind.id), kind,
-            categoryLabel, category, destinationLabel, destination, exclusionRow);
-          category.after(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
-            field: category, beforeOpen: async () => {}, onCreated: async id => {
+            categoryUi.row, destinationLabel, destination, exclusionRow);
+          categoryUi.sheet.querySelector('.sheet-body')!.append(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
+            field: category, beforeOpen: async () => { categoryUi.sheet.close(); }, onCreated: async id => {
               const previous = category.value;
               const refreshed = await ledger.listExpenseCategories();
               category.replaceChildren(new Option('カテゴリを選択してください', ''), ...refreshed.map(c => new Option(c.name, c.id)));
@@ -1387,11 +1389,10 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           }, false);
           const syncKind = () => {
             const transfer = kind.value === 'transfer';
-            category.hidden = categoryLabel.hidden = transfer; category.required = !transfer;
+            categoryUi.row.hidden = transfer;
             destination.hidden = destinationLabel.hidden = !transfer; destination.required = transfer;
             exclusionRow.hidden = transfer;
             register.textContent = transfer ? '振替として登録' : '支出として登録';
-            const shortcut = category.nextElementSibling; if (shortcut instanceof HTMLButtonElement) shortcut.hidden = transfer;
           };
           kind.addEventListener('change', syncKind); syncKind();
           destination.after(createMasterShortcut({ ledger, request: { kind: 'account' }, origin: {

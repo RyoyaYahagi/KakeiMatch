@@ -37,14 +37,30 @@ try {
   await upload(); await page.getByText('3件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   const excluded = await review('Synthetic Excluded Purchase');
   assert.equal(await excluded.locator('select[id^="account-"]').count(), 0);
-  await excluded.locator('select[id^="category-"]').selectOption({ label: '食費' });
+  await excluded.getByRole('button', { name: 'すべてのカテゴリから選ぶ' }).click();
+  const categorySheet = page.locator('dialog.reconciliation-category-sheet[open]');
+  await categorySheet.evaluate(sheet => Promise.all(sheet.getAnimations().map(animation => animation.finished)));
+  for (const viewport of [{ width: 375, height: 667 }, { width: 320, height: 568 }]) {
+    await page.setViewportSize(viewport);
+    assert.ok(await categorySheet.evaluate(sheet => sheet.scrollHeight <= sheet.clientHeight + 1), 'All basic categories fit without scrolling');
+    assert.ok(await categorySheet.getByRole('radio').last().evaluate(button => button.getBoundingClientRect().bottom <= innerHeight), 'Last category is visible');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  }
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.screenshot({ path: fileURLToPath(new URL('../../../docs/screenshots/ui-statement-category-menu-375.png', import.meta.url)) });
+  await categorySheet.getByRole('radio', { name: 'その他', exact: true }).click();
+  await categorySheet.waitFor({ state: 'hidden' });
   await excluded.getByLabel('支出の計算に含めない', { exact: true }).check();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   await page.screenshot({ path: fileURLToPath(new URL('../../../docs/screenshots/ui-statement-expense-options-375.png', import.meta.url)), fullPage: true });
   await excluded.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/記録なし 2件/).waitFor();
   const transfer = await review('Synthetic Suica Charge');
+  await transfer.getByRole('button', { name: 'すべてのカテゴリから選ぶ' }).click();
+  assert.equal(await categorySheet.getByRole('radio').first().innerText(), 'その他');
+  await categorySheet.getByRole('button', { name: '閉じる', exact: true }).click();
   await transfer.getByLabel('取引の種類').selectOption('transfer');
+  assert.equal(await transfer.locator('.category-row').isVisible(), false);
   await transfer.getByRole('button', { name: '支払元・口座を追加', exact: true }).click();
   const dialog = page.getByRole('dialog'); await dialog.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Suica');
   await dialog.getByRole('button', { name: '追加する', exact: true }).click(); await dialog.waitFor({ state: 'detached' });

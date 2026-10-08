@@ -17,6 +17,18 @@ export async function recentCategoryUsage(ledger: RecentTransactions) {
   return usage;
 }
 
+/** Count each category once per expense, including categories of split items. */
+export async function expenseCategoryUsage(ledger: {
+  getSearchTransactions(): Promise<Array<{ transaction: { kind: string }; categoryIds: string[] }>>;
+}) {
+  const usage = new Map<string, number>();
+  for (const row of await ledger.getSearchTransactions()) {
+    if (row.transaction.kind !== 'expense') continue;
+    for (const id of new Set(row.categoryIds)) usage.set(id, (usage.get(id) ?? 0) + 1);
+  }
+  return usage;
+}
+
 /** usage: recent use per category; frequently used categories come first once it resolves. */
 /** collapse: fold long lists behind "すべて表示"; the category sheet is already the full list, so it shows everything. */
 export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabelElement, usageReady: Promise<ReadonlyMap<string, number>> = Promise.resolve(new Map()), collapse = true) {
