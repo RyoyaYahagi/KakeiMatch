@@ -98,11 +98,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   function showDeletionToast(audit: { operationId: string; undoUntil: string }) {
     if (toastTimer) clearTimeout(toastTimer);
     const remaining = Date.parse(audit.undoUntil) - Date.now();
-    deletionToast.replaceChildren(text('span', '削除しました。'));
+    deletionToast.replaceChildren();
     if (remaining <= 0) return;
+    deletionToast.append(text('span', '削除しました。'));
     const undo = button('元に戻す', async () => { await deletions.undo(audit.operationId); if (toastTimer) clearTimeout(toastTimer); await returnToRecords(); deletionToast.replaceChildren(text('span', '削除を取り消しました。')); });
     deletionToast.append(undo, text('span', '10秒以内なら元に戻せます。'));
-    toastTimer = setTimeout(() => { deletionToast.replaceChildren(text('span', '削除しました。')); }, remaining);
+    toastTimer = setTimeout(() => { deletionToast.replaceChildren(); toastTimer = null; }, remaining);
   }
   function deleteButton(id: string) {
     const remove = button('削除する', async () => {
