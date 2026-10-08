@@ -1211,6 +1211,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (editorOptions.mount && focusField) {
       // Keep the category dialog outside the fields that collapse.
       form.append(categoryUi.sheet);
+      if (items.length) categoryUi.sheet.addEventListener('return-focus', () => applyCategory.focus());
       configureInlineEditor({ root: view,
         fields: [[amount], [date, time], [merchant], items.length ? [purchaseDetails, categoryUi.sheet] : [categoryUi.row, categoryUi.sheet], [account], [memo]],
         index: (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const).indexOf(focusField), select: selectField,
