@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { moneyForwardImportSettingsSchema, rebindMoneyForwardImportSettings } from "./moneyforward-import-format";
-import { MoneyForwardImportService } from "../../apps/pwa/src/moneyforward-import";
+import { MoneyForwardImportService, similarMoneyForwardRecords } from "../../apps/pwa/src/moneyforward-import";
 import type { MoneyForwardRow } from "../../apps/pwa/src/moneyforward-parser";
 import type { NativeTransactionSnapshot } from "./actual-browser-ledger";
 import type { ActualTransaction } from "./actual-ledger";
@@ -27,6 +27,7 @@ function fixture() {
   let nextId = 0;
   let failNextAfterWrite = false;
   const ledger = {
+    getTransactions: async () => [...transactions.values()].map(item => item.transaction),
     listAccounts: async () => accounts,
     listCategories: async () => categories,
     addAccount: async (name: string) => { const account = { id: `acct-${accounts.length + 1}`, name, closed: false }; accounts.push(account); return account.id; },
@@ -59,6 +60,7 @@ function fixture() {
   const service = new MoneyForwardImportService(repository, ledger, {
     getBudgetId: () => "budget-1",
     withLock: async (_name, work) => work(),
+    now: () => new Date("2026-10-08T03:00:00Z"),
     makeId: () => `batch-${++idSequence.value}`,
   });
   return { service, records, accounts, categories, transactions, interruptAfterWrite: () => { failNextAfterWrite = true; } };
@@ -197,5 +199,69 @@ describe("MoneyForwardImportService", () => {
     expect(second.rows.map(item => item.status)).toEqual(["created", "created"]);
     expect(transactions.size).toBe(2);
     expect([...transactions.values()].find(value => value.transaction.kind === "income")?.snapshot[0]?.amount).toBe(9000);
+  });
+});
+
+const foodMappings = { categories: { [JSON.stringify(["expense", "食費", "食料品"])]: { kind: "existing" as const, categoryId: "food" } } };
+const existingRecord: ActualTransaction = { id: "manual", date: "2026-09-22", amountYen: -1200, kind: "expense", accountId: "acct-existing", categoryId: "food", categoryName: "食費", payeeName: "合成店舗", cleared: false };
+function addExisting(transactions: ReturnType<typeof fixture>["transactions"]) {
+  transactions.set("manual-key", { transaction: existingRecord, snapshot: [{ id: "manual", account: "acct-existing", date: existingRecord.date, amount: -1200, category: "food" }] });
+}
+
+describe("MoneyForward existing record review", () => {
+  it("requires a decision, persists keeping the existing record, and leaves it intact on undo", async () => {
+    const { service, transactions, records } = fixture(); addExisting(transactions);
+    const plan = await service.plan([row()], foodMappings);
+    expect(plan.summary).toMatchObject({ review: 1, ready: 0 });
+    expect(plan.previewRows[0].candidates.map(item => item.id)).toEqual(["manual"]);
+    await expect(service.confirm(plan.batchId)).rejects.toThrow("似ている既存記録");
+    const selected = await service.plan([row(), row({ rowNumber: 3 })], foodMappings, { [plan.previewRows[0].importedId]: { kind: "keep", transactionId: "manual" } });
+    expect(selected.summary).toMatchObject({ duplicates: 2, review: 0 });
+    expect(moneyForwardImportSettingsSchema.safeParse(records.get("settings:moneyforward-import")?.value).success).toBe(true);
+    expect((await service.confirm(selected.batchId)).rows.map(item => item.status)).toEqual(["duplicate", "duplicate"]);
+    expect(transactions.size).toBe(1);
+    await service.undo(selected.batchId);
+    expect(transactions.size).toBe(1);
+    expect(transactions.get("manual-key")?.transaction).toEqual(existingRecord);
+  });
+
+  it("imports a separate record only after an explicit decision and undo removes only the new record", async () => {
+    const { service, transactions } = fixture(); addExisting(transactions);
+    const plan = await service.plan([row()], foodMappings, { [`moneyforward:${row().sourceKey}`]: { kind: "separate" } });
+    expect(plan.summary.ready).toBe(1);
+    expect((await service.confirm(plan.batchId)).rows[0].status).toBe("created");
+    expect(transactions.size).toBe(2);
+    await service.undo(plan.batchId); expect(transactions.size).toBe(1);
+  });
+
+  it("rejects a deleted or changed target at confirmation", async () => {
+    const { service, transactions } = fixture(); addExisting(transactions);
+    const plan = await service.plan([row()], foodMappings, { [`moneyforward:${row().sourceKey}`]: { kind: "keep", transactionId: "manual" } });
+    transactions.delete("manual-key");
+    await expect(service.confirm(plan.batchId)).rejects.toThrow("統一先の記録が変更");
+    expect(transactions.size).toBe(0);
+  });
+
+  it("requires review when an existing record appears after preview", async () => {
+    const { service, transactions } = fixture();
+    const plan = await service.plan([row()], foodMappings); addExisting(transactions);
+    await expect(service.confirm(plan.batchId)).rejects.toThrow("似ている既存記録");
+  });
+
+  it("excludes future rows even when the parser is bypassed", async () => {
+    const { service, transactions } = fixture();
+    const plan = await service.plan([row({ date: "2026-10-09" }), row({ date: "2026-10-08", sourceKey: "b".repeat(64), rowNumber: 3 })], foodMappings);
+    expect(plan.summary).toMatchObject({ excluded: 1, ready: 1 });
+    expect((await service.confirm(plan.batchId)).rows.map(item => item.status)).toEqual(["excluded", "created"]);
+    expect(transactions.size).toBe(1);
+  });
+
+  it("matches across accounts but excludes different amounts, categories, directions, split parents, transfers and distant dates", () => {
+    const candidates = [existingRecord, { ...existingRecord, id: "other-account", accountId: "another" },
+      { ...existingRecord, id: "amount", amountYen: -1201 }, { ...existingRecord, id: "category", categoryId: "other" },
+      { ...existingRecord, id: "income", kind: "income" as const, amountYen: 1200 },
+      { ...existingRecord, id: "split", isSplit: true }, { ...existingRecord, id: "transfer", kind: "transfer" as const },
+      { ...existingRecord, id: "far", date: "2026-09-25" }, { ...existingRecord, id: "boundary", date: "2026-09-18" }];
+    expect(similarMoneyForwardRecords(row(), { kind: "existing", categoryId: "food" }, candidates).map(item => item.id)).toEqual(["manual", "other-account", "boundary"]);
   });
 });

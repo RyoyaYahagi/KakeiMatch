@@ -30,6 +30,10 @@ export const moneyForwardAccountChoiceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("new"), name: z.string().trim().min(1).max(100) }).strict(),
   z.object({ kind: z.literal("unset") }).strict(),
 ]);
+export const moneyForwardRecordChoiceSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("separate") }).strict(),
+  z.object({ kind: z.literal("keep"), transactionId: z.string().min(1).max(128) }).strict(),
+]);
 const moneyForwardRulesSchema = z.object({
   categories: z.record(z.string().max(4096), moneyForwardCategoryChoiceSchema),
   accounts: z.record(z.string().max(2000), moneyForwardAccountChoiceSchema),
@@ -45,6 +49,7 @@ const moneyForwardBatchSchema = z.object({
     row: moneyForwardRowSchema,
     importedId: z.string().min(1).max(200),
     status: z.enum(["pending", "importing", "created", "duplicate", "excluded", "failed", "undoing", "undone"]),
+    recordChoice: moneyForwardRecordChoiceSchema.optional(),
     transactionSnapshot: z.array(nativeTransactionSnapshotSchema).max(102).nullable(),
     error: z.string().max(2000).nullable(),
   }).strict()).max(20_000),

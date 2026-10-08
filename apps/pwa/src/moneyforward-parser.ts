@@ -24,7 +24,7 @@ export type MoneyForwardRow = {
 
 export type MoneyForwardParseResult = {
   transactions: MoneyForwardRow[];
-  excludedRows: Array<{ rowNumber: number; reason: "transfer" | "excluded_from_calculation" }>;
+  excludedRows: Array<{ rowNumber: number; reason: "transfer" | "excluded_from_calculation" | "future_date" }>;
   rowErrors: Array<{ rowNumber: number; reason: string }>;
   totalRows: number;
   encoding: "utf-8" | "utf-8-bom" | "shift_jis";
@@ -200,8 +200,14 @@ export function resolveMoneyForwardCategory(
   return { categoryId: null, suggestedName, reason: "" };
 }
 
-export async function parseMoneyForwardBlob(file: Blob): Promise<MoneyForwardParseResult> {
+/** CSV dates are calendar dates; use Japan's day rather than the host's UTC day. */
+export function moneyForwardToday(now = new Date()): string {
+  return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+export async function parseMoneyForwardBlob(file: Blob, now = new Date()): Promise<MoneyForwardParseResult> {
   if (file.size > MAX_MONEY_FORWARD_FILE_BYTES) return emptyResult("limit_exceeded");
+  const today = moneyForwardToday(now);
   const bytes = new Uint8Array(await file.arrayBuffer());
   const bom = bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
   if (!bytes.length) return emptyResult("empty_file");
@@ -271,6 +277,7 @@ export async function parseMoneyForwardBlob(file: Blob): Promise<MoneyForwardPar
     const description = get(columns.description);
     const amountYen = parseYen(get(columns.amount));
     if (!date) { rowErrors.push({ rowNumber, reason: "日付を確認できません" }); return; }
+    if (date > today) { excludedRows.push({ rowNumber, reason: "future_date" }); return; }
     if (amountYen === null || amountYen === 0) { rowErrors.push({ rowNumber, reason: "金額を確認できません" }); return; }
 
     const majorCategory = get(columns.major);
