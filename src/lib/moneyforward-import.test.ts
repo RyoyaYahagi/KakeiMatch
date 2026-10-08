@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { moneyForwardImportSettingsSchema, rebindMoneyForwardImportSettings } from "./moneyforward-import-format";
 import { MoneyForwardImportService } from "../../apps/pwa/src/moneyforward-import";
 import type { MoneyForwardRow } from "../../apps/pwa/src/moneyforward-parser";
 import type { NativeTransactionSnapshot } from "./actual-browser-ledger";
@@ -32,15 +33,15 @@ function fixture() {
     addCategory: async (name: string, isIncome: boolean) => { const category = { id: `cat-${categories.length + 1}`, name, isIncome }; categories.push(category); return category.id; },
     listImportedIds: async () => new Set(transactions.keys()),
     getImportedTransaction: async (id: string) => transactions.get(id) ? structuredClone(transactions.get(id)!) : null,
-    importExternalTransaction: async (input: { accountId: string; date: string; amountYen: number; kind: "expense" | "income"; importedId: string; categoryId: string | null }) => {
+    importExternalTransaction: async (input: { accountId: string; date: string; amountYen: number; kind: "expense" | "income"; importedId: string; categoryId: string | null; payeeName: string; memo: string }) => {
       const existing = transactions.get(input.importedId);
       if (existing) return { ...structuredClone(existing), alreadyExisted: true };
       const id = `txn-${++nextId}`;
       const amountYen = input.kind === "expense" ? -input.amountYen : input.amountYen;
       const snapshot: NativeTransactionSnapshot[] = [{ id, account: input.accountId, date: input.date, amount: amountYen, category: input.categoryId, imported_id: input.importedId }];
       const transaction = { id, date: input.date, amountYen, kind: input.kind, accountId: input.accountId,
-        importedId: input.importedId, categoryId: input.categoryId, memo: "",
-        payeeName: "Synthetic Store", categoryName: input.categoryId ? "食費" : null, cleared: false };
+        importedId: input.importedId, categoryId: input.categoryId, memo: input.memo,
+        payeeName: input.payeeName, categoryName: input.categoryId ? "食費" : null, cleared: false };
       transactions.set(input.importedId, { transaction, snapshot });
       if (failNextAfterWrite) { failNextAfterWrite = false; throw new Error("simulated interrupted journal write"); }
       return { transaction, snapshot, alreadyExisted: false };
@@ -64,6 +65,28 @@ function fixture() {
 }
 
 describe("MoneyForwardImportService", () => {
+  it.each(["retry", "undo"])("recovers an interrupted blank-description import for %s", async action => {
+    const { service, records, transactions, interruptAfterWrite } = fixture();
+    const plan = await service.plan([row({ description: "", sourceTransactionId: null })], {
+      categories: { [JSON.stringify(["expense", "食費", "食料品"])]: { kind: "unclassified" } },
+      accounts: { "カードA": { kind: "existing", accountId: "acct-existing" } },
+    });
+    interruptAfterWrite();
+    expect((await service.confirm(plan.batchId)).rows[0]?.status).toBe("importing");
+    expect([...transactions.values()][0]?.transaction.payeeName).toBe("内容なし");
+    const stored = records.get("settings:moneyforward-import")!;
+    expect(moneyForwardImportSettingsSchema.safeParse(stored.value).success).toBe(true);
+    expect(rebindMoneyForwardImportSettings(stored.value, "restored-budget")).toMatchObject({
+      batches: [{ rows: [{ row: { description: "" } }] }],
+    });
+    if (action === "retry") {
+      expect((await service.confirm(plan.batchId)).rows[0]?.status).toBe("created");
+      expect(transactions.size).toBe(1);
+    }
+    expect((await service.undo(plan.batchId)).status).toBe("undone");
+    expect(transactions.size).toBe(0);
+  });
+
   it("counts repeated stable IDs in one file as duplicates", async () => {
     const { service, transactions } = fixture();
     const repeated = row({ sourceTransactionId: null, sourceKey: "f".repeat(64) });

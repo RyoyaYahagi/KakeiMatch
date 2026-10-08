@@ -10,7 +10,7 @@ await context.addInitScript(() => { navigator.serviceWorker.register = async () 
 const aiRequests = []; await context.route('**/api/**', route => { aiRequests.push(route.request().url()); return route.fulfill({ status: 403, json: { error: 'synthetic_signed_out' } }); });
 const page = await context.newPage(); const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
-const csv = '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n1,2026/10/01,架空スーパー,-1200,合成口座,食費,食料品,合成メモ,0,mf-expense\n1,2026/10/02,架空給与,200000,合成口座,給与,給与,,0,mf-income\n1,2026/10/03,架空振替,-500,合成口座,現金・カード,ATM引出,,1,mf-transfer\n0,2026/10/03,架空対象外,-900,合成口座,食費,食料品,,0,mf-excluded\n1,2026/10/04,架空独自用途,-300,合成口座,独自用途,試験,,0,mf-custom\n1,2026/99/01,架空不正日付,-100,合成口座,食費,食料品,,0,mf-invalid';
+const csv = '計算対象,日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,ID\n1,2026/10/01,架空スーパー,-1200,合成口座,食費,食料品,合成メモ,0,mf-expense\n1,2026/10/02,架空給与,200000,合成口座,給与,給与,,0,mf-income\n1,2026/10/03,架空振替,-500,合成口座,現金・カード,ATM引出,,1,mf-transfer\n0,2026/10/03,架空対象外,-900,合成口座,食費,食料品,,0,mf-excluded\n1,2026/10/04,,-300,合成口座,独自用途,試験,,0,\n,,,,,,,,,\n1,2026/99/01,架空不正日付,-100,合成口座,食費,食料品,,0,mf-invalid';
 async function open() { await page.locator('#settings-tab').click(); await click('バックアップと復元'); await click('マネーフォワードから移行'); }
 async function upload() { await page.locator('#moneyforward-file').setInputFiles({ name: 'synthetic.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) }); await click('取り込み内容を確認する'); }
 try {
@@ -25,6 +25,8 @@ try {
   await click('対応を変更する'); await unknown.selectOption('unclassified');
   await click('取り込み内容を確認する');
   await page.getByText('振替（除外）', { exact: true }).waitFor();
+  await page.locator('.moneyforward-preview-row').filter({ hasText: '内容なし' }).waitFor();
+  assert.equal(await page.getByText(/内容がありません|日付を確認できません/).count(), 1, 'only the intentionally invalid date should be reported');
   assert.equal(await page.getByRole('button', { name: '3件を取り込む', exact: true }).count(), 1);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.PWA_MONEYFORWARD_SCREENSHOT_PATH) {

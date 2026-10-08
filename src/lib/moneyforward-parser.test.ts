@@ -24,6 +24,30 @@ describe("Money Forward CSV parser", () => {
     expect(result.transactions[1]!.sourceKey).toBe(result.transactions[0]!.sourceKey);
   });
 
+  it("reads dates across a year, accepts blank descriptions and IDs, and skips empty records", async () => {
+    const text = `${headers},ID\n2026/1/2,,-1200,合成口座,食費,食料品,,0,1,id-jan\n,,,,,,,,,\n2026/12/31,   ,-900,合成口座,食費,食料品,,0,1,\n2026/12/31,   ,-900,合成口座,食費,食料品,,0,1,\n , , , , , , , , , \n2026/2/30,,-100,合成口座,食費,食料品,,0,1,`;
+    const result = await parseMoneyForwardBlob(new Blob([text]));
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.totalRows).toBe(4);
+    expect(result.transactions.map(row => [row.date, row.description, row.sourceTransactionId])).toEqual([
+      ["2026-01-02", "", "id-jan"], ["2026-12-31", "", null], ["2026-12-31", "", null],
+    ]);
+    expect(result.transactions[1]!.sourceKey).toBe(result.transactions[2]!.sourceKey);
+    expect(result.rowErrors).toEqual([{ rowNumber: 7, reason: "日付を確認できません" }]);
+  });
+
+  it("still validates partial records and excludes transfers with blank descriptions", async () => {
+    const text = `${headers}\n2026/1/2,,-300,合成口座,食費,食料品,,1,1\n2026/1/2,,-400,合成口座,食費,食料品,,0,0\n,,-100,合成口座,食費,食料品,,0,1\n2026/1/2,,,合成口座,食費,食料品,,0,1`;
+    const result = await parseMoneyForwardBlob(new Blob([text]));
+    expect(result.transactions).toEqual([]);
+    expect(result.excludedRows).toEqual([
+      { rowNumber: 2, reason: "transfer" }, { rowNumber: 3, reason: "excluded_from_calculation" },
+    ]);
+    expect(result.rowErrors).toEqual([
+      { rowNumber: 4, reason: "日付を確認できません" }, { rowNumber: 5, reason: "金額を確認できません" },
+    ]);
+  });
+
   it("decodes Shift-JIS and retains excluded row reasons and per-row validation errors", async () => {
     const sjisBytes = Uint8Array.from([
       0x93,0xfa,0x95,0x74,0x2c,0x93,0xe0,0x97,0x65,0x2c,0x8b,0xe0,0x8a,0x7a,0x28,0x89,0x7e,0x29,0x2c,

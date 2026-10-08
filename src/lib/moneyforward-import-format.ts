@@ -4,7 +4,7 @@ import { nativeTransactionSnapshotSchema } from "./actual-browser-ledger";
 export const moneyForwardRowSchema = z.object({
   rowNumber: z.number().int().min(2).max(5 * 1024 * 1024),
   date: z.iso.date(),
-  description: z.string().min(1).max(2000),
+  description: z.string().max(2000),
   amountYen: z.number().int().safe().refine(value => value !== 0),
   kind: z.enum(["expense", "income"]),
   accountName: z.string().max(2000).nullable(),
