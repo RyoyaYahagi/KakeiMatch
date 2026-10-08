@@ -1,3 +1,4 @@
+import { dismissOnBackdrop } from './dialog-backdrop';
 // docs/UX.md 端末間の同期: two of the user's devices connect directly and settle on one household.
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import { createLocalSnapshot, restoreLocalBackup, type BackupLedger } from './local-backup';
@@ -81,6 +82,7 @@ export function initializeDeviceLinkUi(repository: LocalDataRepository, ledger: 
       stopScanner(); link?.close(); dialog.close(); dialog.remove();
     }
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
+    dismissOnBackdrop(dialog, close);
     const show = (...nodes: Node[]) => { stopScanner(); body.replaceChildren(...nodes); status.textContent = ''; };
     const failMessage = (error: unknown) => error instanceof LinkCodeError ? error.message : 'つなげませんでした。2台が同じWi-Fiにつながっているか確かめて、はじめからやり直してください。';
 

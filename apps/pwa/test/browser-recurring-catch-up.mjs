@@ -69,7 +69,11 @@ async function recordNames() {
 }
 function occurrencesOf(text, value) { return text.toLowerCase().split(value.toLowerCase()).length - 1; }
 async function chooseCatchUp(action) {
-  await page.locator(`[data-catch-up-${action}]`).click();
+  if (action === 'cancel') {
+    const box = await page.locator('.recurring-catch-up-confirm').boundingBox();
+    await page.mouse.click(187, box.y / 2);
+    await page.locator('.recurring-catch-up-confirm').waitFor({ state: 'detached' });
+  } else await page.locator(`[data-catch-up-${action}]`).click();
 }
 
 try {
