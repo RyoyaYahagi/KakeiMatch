@@ -19,7 +19,7 @@ const receipt = { documentKind: "receipt", merchant: "Synthetic Shop", purchased
 const category = { receipt: { merchant: receipt.merchant, totalAmountYen: receipt.totalAmountYen, items: receipt.items } };
 const image = { contentType: "image/png", imageBase64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64") };
 const choice = { type: "choice", choice: "food", probabilities: { food: 0.9, household: 0.02, transport: 0.01, medical: 0.01, clothing: 0.01, entertainment: 0.01, utilities: 0.01, communications: 0.01, other: 0.02 }, confidence: 0.9 };
-const jev = { model: "jev-latest", answers: { item_0: choice } };
+const jev = { model: "typesafe/jev-1.13", answers: { item_0: choice } };
 const origin = "https://kakeimatch-pr-60.workers.dev";
 function bearer(user = "synthetic-user", at = now, claims = {}) {
   const head = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
@@ -91,7 +91,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       for (const migration of migrations) await d1.exec(migration.replace(/^--.*$/gm, "").replace(/\s+/g, " "));
     } else { ({ db, dispose } = sqliteDb()); }
     for (const user of ["synthetic-user", "other-user"]) await db.prepare("INSERT INTO user(id, name, email, createdAt, updatedAt) VALUES (?, 'Test', ?, 0, 0)").bind(user, `${user}@example.invalid`).run();
-    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", TYPESAFE_API_KEY: "synthetic-jev-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
+    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", OPENROUTER_API_KEY: "synthetic-jev-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
   });
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
@@ -204,18 +204,21 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   it("suggests a MoneyForward category using only the source name and local category choices", async () => {
     const flowId = crypto.randomUUID();
     const choices = [{ id: "local-food", name: "食費" }, { id: "local-home", name: "日用品" }];
-    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 0.92, "local-home": 0.08 }, confidence: 0.92 } } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 0.92, "local-home": 0.08 }, confidence: 0.92 } } });
     const result = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "スーパーマーケット", categories: choices }), env, options(provider));
     expect(result.status).toBe(200);
     expect(await result.json()).toEqual({ categoryId: "local-food" });
+    expect(vi.mocked(provider).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(vi.mocked(provider).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-jev-key" });
     const providerPayload = JSON.parse(String(vi.mocked(provider).mock.calls[0]?.[1]?.body));
+    expect(providerPayload.model).toBe("typesafe/jev-1.13");
     expect(providerPayload.state).toEqual({ sourceCategoryName: "スーパーマーケット" });
     expect(providerPayload.state).not.toHaveProperty("receipt");
     expect(providerPayload.questions.category.criteria).toEqual({ "local-food": "食費", "local-home": "日用品" });
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE provider='jev'").bind().first()).toEqual({ count: 1 });
   });
   it("validates standalone category suggestions and binds retries to the same choices", async () => {
-    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
     const flowId = crypto.randomUUID();
     const invalid = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "Source", categories: [{ id: "local-food", name: "食費" }], receipt: { merchant: "private" } }), env, options(provider));
     expect(invalid.status).toBe(400);
@@ -230,7 +233,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const categories = [{ id: "local-food", name: "食費" }];
     const suggestion = (flowId: string, user = "synthetic-user") => handleRequest(
       request("category-suggestion", { flowId, sourceCategoryName: "Market", categories }, bearer(user)), env,
-      options(fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } })),
+      options(fetchOk({ model: "typesafe/jev-1.13", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } })),
     );
     expect((await suggestion(crypto.randomUUID())).status).toBe(200);
     expect(await usage()).toMatchObject({ used: 1, remaining: 0, limit: 1 });
@@ -239,7 +242,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     accountState.userId = "other-user";
     const otherReceipt = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("other-user")), env, options());
     expect(otherReceipt.status).toBe(200);
-    const provider = fetchOk({ model: "jev-latest", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
     const blockedSuggestion = await handleRequest(request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "Market", categories }, bearer("other-user")), env, options(provider));
     expect(blockedSuggestion.status).toBe(429);
     expect(provider).not.toHaveBeenCalled();
@@ -336,14 +339,21 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini(geminiFlow, now, fetchOk(generateContent))).status).toBe(200);
     const jevFlow = crypto.randomUUID();
     expect((await gemini(jevFlow)).status).toBe(200);
-    const versionedJev = { model: "jev-1.13.0", answers: { item_0: choice }, usage: { input_tokens: 20, output_tokens: 3 } };
-    expect((await handleRequest(request("jev", { ...category, flowId: jevFlow }), env, options(fetchOk(versionedJev)))).status).toBe(200);
+    const versionedJev = { id: "synthetic-openrouter-id", provider: "TypeSafe", model: "typesafe/jev-1.13-20260917", answers: { item_0: choice }, usage: { input_tokens: 20, output_tokens: 3, cost: 0.00000084 } };
+    const jevProvider = fetchOk(versionedJev);
+    const classified = await handleRequest(request("jev", { ...category, flowId: jevFlow }), env, options(jevProvider));
+    expect(classified.status).toBe(200);
+    expect(await classified.json()).toEqual({ model: versionedJev.model, answers: versionedJev.answers });
+    const [providerUrl, providerInit] = vi.mocked(jevProvider).mock.calls[0]!;
+    expect(providerUrl).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(providerInit?.headers).toMatchObject({ authorization: "Bearer synthetic-jev-key" });
+    expect(JSON.parse(String(providerInit?.body))).toMatchObject({ model: "typesafe/jev-1.13", state: category });
     const geminiRow = await db.prepare("SELECT model, input_tokens, output_tokens, thinking_tokens, total_tokens, metering_status FROM ai_provider_cost_events WHERE flow_id=?")
       .bind(geminiFlow).first<{ model: string; input_tokens: number; output_tokens: number; thinking_tokens: number; total_tokens: number; metering_status: string }>();
     expect(geminiRow).toEqual({ model: "gemini-3.5-flash-lite", input_tokens: 12, output_tokens: 4, thinking_tokens: 2, total_tokens: 18, metering_status: "metered" });
     const jevRow = await db.prepare("SELECT requested_model, model, pricing_version, input_tokens, output_tokens, total_tokens, metering_status FROM ai_provider_cost_events WHERE flow_id=? AND provider='jev'")
       .bind(jevFlow).first<{ requested_model: string; model: string; pricing_version: string; input_tokens: number; output_tokens: number; total_tokens: number; metering_status: string }>();
-    expect(jevRow).toEqual({ requested_model: "jev-latest", model: "jev-1.13.0", pricing_version: "2026-10-02-jev-1.13", input_tokens: 20, output_tokens: 3, total_tokens: 23, metering_status: "metered" });
+    expect(jevRow).toEqual({ requested_model: "typesafe/jev-1.13", model: "typesafe/jev-1.13-20260917", pricing_version: "2026-10-08-openrouter-jev-1.13", input_tokens: 20, output_tokens: 3, total_tokens: 23, metering_status: "metered" });
   });
   it("keeps provider failures and missing usage unknown with safe operational metadata only", async () => {
     const failedFlow = crypto.randomUUID();
@@ -534,7 +544,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(row).toEqual({ estimated_cost_usd_micros: 300_000_000, reserved_cost_usd_micros: 50_000, metering_status: "metered" });
     // The Gemini-specific ceiling rejects a second Gemini dispatch while the global budget still has room.
     expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(receipt) }))).status).toBe(503);
-    const jevFlow = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-1.13.0", answers: { item_0: choice }, usage: { input_tokens: 1, output_tokens: 1 } })));
+    const jevFlow = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "typesafe/jev-1.13-20260917", answers: { item_0: choice }, usage: { input_tokens: 1, output_tokens: 1 } })));
     expect(jevFlow.status).toBe(200);
     env.AI_GUARDRAILS_JSON = JSON.stringify({ dailyCostUsdMicros: 250_000_000, monthlyCostUsdMicros: 250_000_000 });
     const sharedBlocked = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk(jev)));
@@ -551,7 +561,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const circuit = await db.prepare("SELECT opened_at, reason, resumed_at FROM ai_provider_circuits WHERE provider='gemini'")
       .bind().first<{ opened_at: number; reason: string; resumed_at: number }>();
     expect(circuit).toEqual({ opened_at: now, reason: "provider_failures", resumed_at: 0 });
-    expect((await handleRequest(request("jev", { ...category, flowId: siblingFlow }), env, options(fetchOk({ ...jev, model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 } })))).status).toBe(200);
+    expect((await handleRequest(request("jev", { ...category, flowId: siblingFlow }), env, options(fetchOk({ ...jev, model: "typesafe/jev-1.13-20260917", usage: { input_tokens: 1, output_tokens: 1 } })))).status).toBe(200);
     const paused = await gemini(crypto.randomUUID());
     expect(paused.status).toBe(503);
     expect(await eventCount()).toBe(3);
@@ -666,6 +676,17 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(503);
     expect(await usage()).toMatchObject({ used: 0 });
   });
+  it("does not dispatch either classification route without an OpenRouter key", async () => {
+    const flowId = crypto.randomUUID();
+    await gemini(flowId);
+    env.OPENROUTER_API_KEY = undefined;
+    const provider = fetchOk(jev);
+    const receiptResponse = await handleRequest(request("jev", { ...category, flowId }), env, options(provider));
+    expect(receiptResponse.status).toBe(503);
+    expect(await receiptResponse.json()).toEqual({ error: "not_configured" });
+    expect((await handleRequest(request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "合成カテゴリ", categories: [{ id: "food", name: "食費" }] }), env, options(provider))).status).toBe(503);
+    expect(provider).not.toHaveBeenCalled();
+  });
   it("maintains the separate per-user/provider rate limit for retries and Family", async () => {
     const flowId = crypto.randomUUID();
     await gemini(flowId);
@@ -691,7 +712,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await response.json()).toEqual(jev);
     const [, init] = vi.mocked(provider).mock.calls[0];
     expect(JSON.parse(String(init?.body)).state).toEqual(category);
-    const malformed = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "jev-latest", answers: { item_0: { ...choice, unexpected: true } } })));
+    const malformed = await handleRequest(request("jev", { ...category, flowId }), env, options(fetchOk({ model: "typesafe/jev-1.13", answers: { item_0: { ...choice, unexpected: true } } })));
     expect(malformed.status).toBe(502);
   });
   it("classifies every item in one Jev call and rejects incomplete indexed answers", async () => {
@@ -701,14 +722,14 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const extracted = await handleRequest(request("gemini", { ...image, flowId }), env, options(fetchOk({ output_text: JSON.stringify(twoItemReceipt) })));
     expect(extracted.status).toBe(200);
     const second = { ...choice, choice: "household" };
-    const provider = fetchOk({ model: "jev-latest", answers: { item_0: choice, item_1: second } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { item_0: choice, item_1: second } });
     const response = await handleRequest(request("jev", twoItems), env, options(provider));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ model: "jev-latest", answers: { item_0: choice, item_1: second } });
+    expect(await response.json()).toEqual({ model: "typesafe/jev-1.13", answers: { item_0: choice, item_1: second } });
     expect(provider).toHaveBeenCalledTimes(1);
     const [, init] = vi.mocked(provider).mock.calls[0];
     expect(Object.keys(JSON.parse(String(init?.body)).questions)).toEqual(["item_0", "item_1"]);
-    const incomplete = await handleRequest(request("jev", twoItems), env, options(fetchOk({ model: "jev-latest", answers: { item_0: choice } })));
+    const incomplete = await handleRequest(request("jev", twoItems), env, options(fetchOk({ model: "typesafe/jev-1.13", answers: { item_0: choice } })));
     expect(incomplete.status).toBe(502);
   });
   it("sends only requested unresolved items with original indexes and validates custom category choices", async () => {
@@ -722,10 +743,10 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify({ ...receipt, items }) }))).status).toBe(200);
     const choices = [{ id: "groceries", name: "食料品" }, { id: "home", name: "住まい用品" }];
     const customAnswer = { type: "choice", choice: "home", probabilities: { groceries: 0.1, home: 0.9 }, confidence: 0.9 };
-    const provider = fetchOk({ model: "jev-latest", answers: { item_2: customAnswer } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { item_2: customAnswer } });
     const response = await handleRequest(request("jev", { ...receiptBody, itemIndexes: [2], categories: choices }), env, options(provider));
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ model: "jev-latest", answers: { item_2: customAnswer } });
+    expect(await response.json()).toEqual({ model: "typesafe/jev-1.13", answers: { item_2: customAnswer } });
     const [, init] = vi.mocked(provider).mock.calls[0];
     const payload = JSON.parse(String(init?.body));
     expect(payload.state.receipt.items).toEqual([items[2]]);
@@ -757,15 +778,15 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const merchantOnly = { receipt: { merchant: "Synthetic Cafe", totalAmountYen: 900, items: [] }, flowId, categories: [{ id: "meals", name: "外食" }] };
     expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify({ ...receipt, merchant: "Synthetic Cafe", totalAmountYen: 900, items: [] }) }))).status).toBe(200);
     const answer = { type: "choice", choice: "food", probabilities: { food: 1 }, confidence: 1 };
-    const response = await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "jev-latest", answers: { category: answer } })));
+    const response = await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "typesafe/jev-1.13", answers: { category: answer } })));
     expect(response.status).toBe(502);
     const validAnswer = { type: "choice", choice: "meals", probabilities: { meals: 1 }, confidence: 1 };
-    const provider = fetchOk({ model: "jev-latest", answers: { category: validAnswer } });
+    const provider = fetchOk({ model: "typesafe/jev-1.13", answers: { category: validAnswer } });
     expect((await handleRequest(request("jev", merchantOnly), env, options(provider))).status).toBe(200);
     const [, init] = vi.mocked(provider).mock.calls[0];
     expect(JSON.parse(String(init?.body)).state).toEqual({ receipt: merchantOnly.receipt });
     expect(Object.keys(JSON.parse(String(init?.body)).questions)).toEqual(["category"]);
-    expect((await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "jev-latest", answers: { category: validAnswer }, extra: true })))).status).toBe(200);
+    expect((await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "typesafe/jev-1.13", answers: { category: validAnswer }, extra: true })))).status).toBe(200);
   });
   it("extracts receipt JSON from the current Gemini Interactions REST response", async () => {
     const flowId = crypto.randomUUID();

@@ -14,7 +14,9 @@ Issue #39では本番route、D1、secretを準備・検証せず、本番deploy�
 
 preview上ではActualブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`TYPESAFE_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL`、`JEV_MODEL`、`TYPESAFE_API_URL` です。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`OPENROUTER_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL`、`JEV_MODEL`、`OPENROUTER_API_URL` です。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+
+カテゴリ分類はOpenRouterの [Decisions API](https://openrouter.ai/docs/api-reference/alpha/decisions/submit-decisions)（`https://openrouter.ai/api/alpha/decisions`）から `typesafe/jev-1.13` を呼びます。レシート分類とマネーフォワード移行時のカテゴリ提案で同じ設定を使います。更新前に対象WorkerへOpenRouter発行のキーを `OPENROUTER_API_KEY` Secretとして登録してください。旧 `TYPESAFE_API_KEY` の値はOpenRouterへ転用できません。新構成では旧Secretを参照しません。`JEV_MODEL` と `OPENROUTER_API_URL` はconfigの既定値を使います。旧Next.jsのlegacy設定は従来のTypeSafe用のままです。Secret登録時は現行 `cf cli search` と対象commandのhelpを確認し、値をsourceやコマンド引数へ書かないでください。
 
 ## ローカル開発と確認
 
@@ -43,7 +45,7 @@ corepack pnpm install
 cp apps/pwa/.dev.vars.example apps/pwa/.dev.vars
 ```
 
-既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。実際の読み取りには `GEMINI_API_KEY`、カテゴリ提案には `TYPESAFE_API_KEY` を自分のAPIキーへ置き換えます。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
+既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。実際の読み取りには `GEMINI_API_KEY`、カテゴリ提案には `OPENROUTER_API_KEY` を自分のAPIキーへ置き換えます。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
 
 次に、開発サーバーと同じ保存先にあるローカルD1だけを更新します。IDは `cloudflare.config.ts` の開発用 `ACCOUNT_DB` と一致させます。`--local` と `--persist-to .wrangler/state` を省略しないでください。
 

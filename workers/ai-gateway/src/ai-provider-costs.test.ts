@@ -12,6 +12,15 @@ describe("provider cost snapshots", () => {
     expect(pricingFor("jev", "gemini-3.5-flash-lite", 100, history)).toBeNull();
   });
 
+  it("prices OpenRouter Jev and only its verified snapshot without guessing future prices", () => {
+    for (const model of ["typesafe/jev-1.13", "typesafe/jev-1.13-20260917"]) {
+      const price = pricingFor("jev", model, 100)!;
+      expect(price.version).toBe("2026-10-08-openrouter-jev-1.13");
+      expect(costUsdMicros({ input: 476, output: 70, thinking: 0, cached: 0, total: 546 }, price)).toBe(20);
+    }
+    expect(pricingFor("jev", "typesafe/jev-1.13-20990101", 100)).toBeNull();
+  });
+
   it("accepts the provider-specific Gemini and Jev usage shapes with consistent totals", () => {
     expect(tokenUsage("gemini", {
       modelVersion: "gemini-3.5-flash-lite",

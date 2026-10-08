@@ -40,15 +40,15 @@ export default defineConfig(({ mode, isPreview }) => {
         CF_ACCESS_TEAM_DOMAIN: bindings.secret(),
         CF_ACCESS_AUD: bindings.secret(),
         FEEDBACK_ENCRYPTION_KEY: bindings.secret(),
-        TYPESAFE_API_KEY: bindings.secret(),
+        OPENROUTER_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
         // Contact AI is not counted against a plan, so it gets its own tighter limit per identity and per address.
         CONTACT_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600146' : '600147', simple: { limit: 5, period: 60 } }),
         TURNSTILE_SITE_KEY: bindings.text(turnstileSiteKey),
         TURNSTILE_SECRET_KEY: bindings.secret(),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),
-        JEV_MODEL: bindings.text('jev-latest'),
-        TYPESAFE_API_URL: bindings.text('https://api.typesafe.ai/v1/systemone'),
+        JEV_MODEL: bindings.text('typesafe/jev-1.13'),
+        OPENROUTER_API_URL: bindings.text('https://openrouter.ai/api/alpha/decisions'),
       },
     },
   };

@@ -22,7 +22,7 @@ AI quota checks run independently of short-window abuse limits. The monthly coun
 
 Receipt analysis is an explicit user action. The browser sends the selected, locally saved image to the same-origin AI gateway, which forwards it to Gemini. The PWA accepts JPEG, PNG, or WebP images up to 10 MiB for local storage; the gateway accepts at most 6 MiB. The gateway does not persist request or response bodies, and the Gemini request uses `store: false`. Do not send a user's name, email, Actual data, household history, or other receipts.
 
-Category classification sends only validated merchant, total amount in yen, and at most 30 item names and amounts to TypeSafe Jev. Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Provider responses are schema-validated before application code can save a suggestion. Failures leave the user's confirmed data intact and the category available for review.
+Category classification sends only validated merchant, total amount in yen, and at most 30 item names and amounts to TypeSafe Jev through OpenRouter. Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Provider responses are schema-validated before application code can save a suggestion. Failures leave the user's confirmed data intact and the category available for review.
 
 ## Files and logs
 
