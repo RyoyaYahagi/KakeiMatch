@@ -345,7 +345,13 @@ export function showManualTransactionEditor(options: {
               if (editing) saved = await ledger.updateTransfer(transaction!.id, transferValue);
               else saved = await ledger.createTransfer({ ...transferValue, importedId });
             } else {
-              const manualValue = { ...value, kind: kind as 'expense' | 'income' };
+              // Restored drafts also carry transfer fields. Pass only the
+              // income/expense fields accepted by the ledger's strict schema.
+              const manualValue = {
+                kind: kind as 'expense' | 'income', date: value.date, amountYen: value.amountYen,
+                payeeName: value.payeeName, categoryId: value.categoryId,
+                accountId: value.accountId, memo: value.memo,
+              };
               if (editing) saved = await ledger.updateTransaction(transaction!.id, manualValue);
               else saved = await ledger.createTransaction({ ...manualValue, importedId });
             }
