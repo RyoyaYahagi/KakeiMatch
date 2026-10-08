@@ -47,6 +47,7 @@
     "test:category-learning-e2e": "node test/browser-category-learning.mjs",
     "test:entry-masters-e2e": "node test/browser-entry-masters.mjs",
     "test:record-navigation-e2e": "node test/browser-record-navigation.mjs",
+    "test:record-totals-e2e": "node test/browser-record-totals.mjs",
     "test:smbc-statements-e2e": "node test/browser-smbc-statements.mjs",
     "test:rakuten-statements-e2e": "node test/browser-rakuten-statements.mjs",
     "test:reconciliation-e2e": "node test/browser-reconciliation.mjs",

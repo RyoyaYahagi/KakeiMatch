@@ -14,7 +14,7 @@ function dayLabel(date: string) {
 }
 
 function dayTotal(rows: ActualTransaction[]) {
-  const total = rows.filter(row => row.kind !== 'transfer').reduce((sum, row) => sum + row.amountYen, 0);
+  const total = rows.filter(row => row.kind !== 'transfer' && !row.excludedFromSpending).reduce((sum, row) => sum + row.amountYen, 0);
   return total === 0 ? '' : `${total < 0 ? '−' : '+'}${yen(total)}`;
 }
 
