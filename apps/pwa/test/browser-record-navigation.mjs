@@ -57,8 +57,23 @@ try {
   await page.locator('#home-tab[aria-current="page"]').waitFor();
   await page.locator('#receipt-tab').click();
 
+  // Observe every DOM update: waiting only for the final heading misses a settings flash.
+  await page.evaluate(() => {
+    window.accountNavigationScreens = [];
+    window.accountNavigationObserver = new MutationObserver(() => {
+      const settings = document.getElementById('settings-view');
+      const masters = document.querySelector('.master-settings');
+      if (!settings.hidden && masters.hidden) window.accountNavigationScreens.push('settings');
+    });
+    window.accountNavigationObserver.observe(document.body, { subtree: true, attributes: true, childList: true });
+  });
   await click('口座・残高を見る');
   await page.getByRole('heading', { name: '支払元・口座' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => {
+    window.accountNavigationObserver.disconnect();
+    return window.accountNavigationScreens;
+  }), [], 'records-to-accounts must not briefly display the settings root');
+  if (process.env.PWA_ACCOUNT_NAVIGATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_ACCOUNT_NAVIGATION_SCREENSHOT_PATH, fullPage: true });
   await page.getByRole('button', { name: 'Synthetic Navigation Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#settings-tab').click(); await click('支払元');
   await page.getByRole('heading', { name: '支払元・口座' }).waitFor();

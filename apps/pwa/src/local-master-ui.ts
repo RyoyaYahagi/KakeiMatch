@@ -126,7 +126,7 @@ export function initializeMasterUi(
     getStatementProvider?: (id: string) => Promise<StatementProvider | null>;
     setStatementProvider?: (id: string, provider: StatementProvider | null, accountType: AccountType) => Promise<void>;
   },
-): (() => void) & { openAccounts: () => Promise<void> } {
+): (() => void) & { openAccounts: (beforeShow?: () => void) => Promise<void> } {
   const section = element('section');
   section.className = 'master-settings';
   section.hidden = true;
@@ -320,7 +320,7 @@ export function initializeMasterUi(
   const accountIcons: Record<AccountType, IconName> = { credit_card: 'card', bank: 'bank', cash: 'wallet', other: 'tag' };
   const accountTones: Record<AccountType, string> = { credit_card: 'transport', bank: 'daily', cash: 'util', other: 'other' };
 
-  async function accountsPage() {
+  async function accountsPage(beforeShow?: () => void) {
     const enteringFromSettings = !managing;
     const page = enteringFromSettings ? beginPage() : showPage('支払元・口座');
     if (enteringFromSettings) clearSettingsError();
@@ -331,13 +331,17 @@ export function initializeMasterUi(
       providers = new Map(await Promise.all(accounts.map(async account => [account.id, await options.getStatementProvider?.(account.id) ?? null] as const)));
     } catch (error) {
       if (page !== pageRevision) return;
+      if (beforeShow) throw error;
       if (enteringFromSettings) showSettingsError(error);
       else if (isCurrent(page)) showError(error);
       return;
     }
     if (enteringFromSettings) {
       if (page !== pageRevision) return;
-      showPage('支払元・口座', undefined, page);
+      // Switching tabs resets management. Check for cancellation first, then
+      // start a fresh revision and draw without yielding to another frame.
+      beforeShow?.();
+      showPage('支払元・口座', undefined, beforeShow ? beginPage() : page);
     } else if (!isCurrent(page)) return;
     const open = accounts.filter(account => !account.closed);
     const total = open.reduce((sum, account) => sum + account.balanceYen, 0);

@@ -116,7 +116,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   let imageUrl: string | null = null;
   let resetMasterUi = () => {};
-  let openAccountBalances: () => Promise<void> = () => Promise.resolve();
+  let openAccountBalances: (beforeShow: () => void) => Promise<void> = () => Promise.resolve();
   let flushReceiptDraft: () => Promise<void> = () => Promise.resolve();
   // Every screen switch takes a new number. Renders check theirs after each await, so only the latest switch is drawn.
   let screenRevision = 0;
@@ -251,9 +251,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (!recordSheet.open) recordSheet.showModal();
   }
   async function accountBalancesPage() {
-    await open('receipt');
-    el('settings-tab').click();
-    await openAccountBalances();
+    // Keep records visible while loading; activate settings only in the same
+    // synchronous render that shows the accounts, so its root cannot flash.
+    await openAccountBalances(() => el('settings-tab').click());
   }
   async function manualEditor(kind: 'expense' | 'income' | 'transfer', transaction?: ActualTransaction) {
     if (kind === 'expense' && !transaction) {

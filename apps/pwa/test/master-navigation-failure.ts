@@ -3,6 +3,7 @@ import { initializeMasterUi } from '../src/local-master-ui';
 declare global {
   interface Window {
     masterNavigationFailureState: typeof state;
+    masterNavigationUi: ReturnType<typeof initializeMasterUi>;
   }
 }
 
@@ -14,6 +15,8 @@ const state: {
   failAccountBalances: boolean;
   failProvider: boolean;
   deferCategories: boolean;
+  deferAccountBalances?: boolean;
+  resolveAccountBalances?: (accounts: typeof account[]) => void;
   rejectCategories?: (error: Error) => void;
 } = { failCategories: false, failCategoryUsage: false, failAccountBalances: false, failProvider: false, deferCategories: false };
 const ledger = {
@@ -27,12 +30,13 @@ const ledger = {
     return 0;
   },
   getAccountBalances: async () => {
+    if (state.deferAccountBalances) return new Promise<typeof account[]>(resolve => { state.resolveAccountBalances = resolve; });
     if (state.failAccountBalances) throw new Error('合成口座残高の取得に失敗しました。');
     return [account];
   },
 } as never;
 
-initializeMasterUi(document.querySelector<HTMLElement>('#settings-top')!, ledger, {
+const masterUi = initializeMasterUi(document.querySelector<HTMLElement>('#settings-top')!, ledger, {
   onBack: () => {},
   getStatementProvider: async () => {
     if (state.failProvider) throw new Error('合成明細サービスの取得に失敗しました。');
@@ -40,4 +44,4 @@ initializeMasterUi(document.querySelector<HTMLElement>('#settings-top')!, ledger
   },
 });
 
-Object.assign(window, { masterNavigationFailureState: state });
+Object.assign(window, { masterNavigationFailureState: state, masterNavigationUi: masterUi });
