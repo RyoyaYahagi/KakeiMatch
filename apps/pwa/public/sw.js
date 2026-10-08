@@ -46,6 +46,7 @@ self.addEventListener('fetch', event => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.pathname.startsWith('/api/') ||
+      url.pathname === '/cdn-cgi' || url.pathname.startsWith('/cdn-cgi/') ||
       url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname === '/admin.html') return;
   if (request.mode === 'navigate') {
     event.respondWith((async () => {
