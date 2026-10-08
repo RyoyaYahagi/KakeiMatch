@@ -33,15 +33,8 @@ try {
 
   const unrecorded = page.locator('#local-view details').filter({ hasText: 'Synthetic Unrecorded Market' });
   await unrecorded.locator('summary').click();
-  await unrecorded.getByText('支払元がありません。登録するには支払元を追加してください。', { exact: true }).waitFor();
+  assert.equal(await unrecorded.locator('select[id^="account-"]').count(), 0);
   await unrecorded.locator('select[id^="category-"]').selectOption({ label: '食費' });
-  await unrecorded.getByRole('button', { name: '支払元・口座を追加', exact: true }).click();
-  const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('支払元の名前', { exact: true }).fill('Synthetic Inline Card');
-  await dialog.locator('select[name="accountType"]').selectOption('credit_card');
-  await dialog.getByRole('button', { name: '追加する', exact: true }).click();
-  await dialog.waitFor({ state: 'detached' });
-  assert.equal(await unrecorded.locator('select[id^="account-"]').locator('option:checked').textContent(), 'Synthetic Inline Card');
   await unrecorded.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/要確認 0件 · 記録なし 0件/).waitFor();
 
@@ -59,7 +52,7 @@ try {
   await page.getByText('今月の支出 ¥1,200').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: zero payment sources → provider + CSV import → reconciliation results, and a payment source is asked only when registering an unrecorded statement at 375px.');
+  console.log('PASS: zero payment sources → provider + CSV import → reconciliation results, and registration automatically uses the provider card at 375px.');
 } catch (error) {
   console.log(await page.locator('body').innerText()); throw error;
 } finally { await browser.close(); }

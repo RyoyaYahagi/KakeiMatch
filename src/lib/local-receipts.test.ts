@@ -726,3 +726,20 @@ describe("pending receipt deletion", () => {
     expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
   });
 });
+
+describe('receipt spending exclusion', () => {
+  it('keeps the confirmed preference for retry if exclusion storage fails after ledger registration', async () => {
+    const setSpendingExclusion = vi.fn().mockRejectedValueOnce(new Error('synthetic metadata failure')).mockResolvedValue(undefined);
+    const { service, ledger, repository } = await setup(vi.fn(), { setSpendingExclusion });
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { merchant: 'Synthetic excluded expense', purchasedDate: '2026-09-30', purchasedTime: null,
+      totalAmountYen: 1200, categoryId: 'actual-food', accountId: 'cash', excludedFromSpending: true });
+    await expect(service.register(receipt.id)).rejects.toThrow();
+    expect(await service.get(receipt.id)).toMatchObject({ registration: { status: 'failed' }, confirmedValue: { excludedFromSpending: true } });
+    await expect(service.register(receipt.id)).resolves.toMatchObject({ registration: { status: 'applied' } });
+    expect(setSpendingExclusion.mock.calls).toEqual([['actual-tx', true], ['actual-tx', true]]);
+    expect(ledger.importReceipt.mock.calls[0]).toEqual(ledger.importReceipt.mock.calls[1]);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({ amountYen: -1200 }));
+    await repository.close();
+  });
+});

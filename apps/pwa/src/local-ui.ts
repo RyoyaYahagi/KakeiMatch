@@ -62,7 +62,7 @@ function report(error: unknown) {
   const message = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '操作を完了できませんでした。保存済みのデータを確認して再試行してください。';
   el('message').textContent = message;
 }
-type ReceiptDraft = { merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string; items: ReceiptItem[]; adjustments: ReceiptAdjustment[]; taxAmountYen: number | null; memo?: string | null };
+type ReceiptDraft = { merchant: string; purchasedDate: string; purchasedTime: string | null; totalAmountYen: number; categoryId: string; accountId: string; items: ReceiptItem[]; adjustments: ReceiptAdjustment[]; taxAmountYen: number | null; memo?: string | null; excludedFromSpending?: boolean };
 function fieldLabel<K extends keyof HTMLElementTagNameMap>(tag: K, value: string, id: string): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   node.textContent = value;
@@ -385,7 +385,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     return detail;
   }
   function spendingExclusionControl(transaction: ActualTransaction) {
-    const group = document.createElement('div'); group.className = 'entry-row';
+    const group = document.createElement('div'); group.className = 'entry-row spending-exclusion';
     const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.id = `spending-exclusion-${transaction.id}`; checkbox.checked = transaction.excludedFromSpending ?? false;
     const label = fieldLabel('label', '支出の計算に含めない', checkbox.id);
     const status = text('p', ''); status.setAttribute('role', 'status');
@@ -511,7 +511,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const usefulDraft = draft && (draft.merchant.trim() || draft.totalAmountYen > 0 || draft.items?.length) ? draft : null;
     const pendingEdit = editing ? await receipts.getPendingEdit(receipt.id) : null;
     const base = pendingEdit?.after ?? (useExtraction ? null : (receipt.registration.status === 'pending' || editing) ? usefulDraft ?? confirmed : confirmed);
+    const registeredActual = editing && receipt.registration.actualTransactionId ? await ledger.getTransactionById(receipt.registration.actualTransactionId) : null;
     const initial: ReceiptDraft = {
+      excludedFromSpending: pendingEdit?.after.excludedFromSpending ?? usefulDraft?.excludedFromSpending ?? registeredActual?.excludedFromSpending ?? base?.excludedFromSpending ?? false,
       memo: base?.memo !== undefined ? base.memo : usefulDraft?.memo ?? null,
       merchant: base?.merchant ?? extraction?.merchant ?? '',
       purchasedDate: base?.purchasedDate ?? extraction?.purchasedDate ?? today(),
@@ -704,6 +706,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const amountLabel = shortLabel(amount.id, '金額', '（円）');
     const categoryLabel = shortLabel(category.id, 'カテゴリ');
     const accountLabel = shortLabel(account.id, '支払元');
+    const excluded = document.createElement('input'); excluded.type = 'checkbox'; excluded.id = 'manual-transaction-excluded'; excluded.checked = initial.excludedFromSpending ?? false;
+    const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row spending-exclusion';
+    exclusionRow.append(excluded, fieldLabel('label', '支出の計算に含めない', excluded.id));
     const purchaseDetails = document.createElement('details'); purchaseDetails.className = 'purchase-details';
     purchaseDetails.open = Boolean(receipt.image) || items.length > 0 || adjustments.length > 0;
     const purchaseSummary = document.createElement('summary');
@@ -727,7 +732,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     categoryUi.row.querySelector('.entry-row-value')?.append(derivedValue);
     const overviewFields = document.createElement('div'); overviewFields.className = 'entry-overview-fields entry-rows';
     overviewFields.append(entryRow(amountLabel, amount, totalCheck), entryRow(merchantLabel, merchant), entryRow(dateLabel, date, dateShortcuts(date, today())),
-      categoryUi.row, entryRow(accountLabel, account), optional, itemsEntry);
+      categoryUi.row, entryRow(accountLabel, account), optional, itemsEntry, exclusionRow);
     // A new expense typed by hand can repeat (rent, subscriptions). Receipts and edits stay single records.
     const recurrence = !receipt.image && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
     if (recurrence) overviewFields.append(recurrence.row);
@@ -903,7 +908,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     function read(): ReceiptDraft {
       return { merchant: merchant.value, purchasedDate: date.value, purchasedTime: time.value || null,
         totalAmountYen: Number(amount.value), categoryId: category.value, accountId: account.value,
-        items: readItems(), adjustments: readAdjustments(), taxAmountYen: parseNullableInteger(tax.value), memo: memo.value.trim() || null };
+        excludedFromSpending: excluded.checked, items: readItems(), adjustments: readAdjustments(), taxAmountYen: parseNullableInteger(tax.value), memo: memo.value.trim() || null };
     }
     let saveTail: Promise<void> = Promise.resolve();
     let draftTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1285,10 +1290,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const importer = await renderStatementImporter(true);
     ensureScreen(screen);
     view.append(importer);
-    const [allStatements, allReceipts, imports, allAccounts, expenseCategories] = await Promise.all([
-      statements.list(), receipts.list(), statements.imports(), ledger.listAccounts(), ledger.listExpenseCategories(),
+    const [allStatements, allReceipts, allAccounts, expenseCategories] = await Promise.all([
+      statements.list(), receipts.list(), ledger.listAccounts(), ledger.listExpenseCategories(),
     ]);
-    const importsById = new Map(imports.map(item => [item.id, item.value]));
     const accountsById = new Map(allAccounts.map(account => [account.id, account]));
     const list = document.createElement('ul'); list.className = 'review-list';
     const reviewOrder = (status: string) => status === 'needs_review' ? 0 : 1;
@@ -1362,7 +1366,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           const destinationLabel = fieldLabel('label', '振替先', destination.id);
           const excluded = document.createElement('input'); excluded.type = 'checkbox'; excluded.id = `excluded-${statement.id}`;
           const excludedLabel = fieldLabel('label', '支出の計算に含めない', excluded.id);
-          const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row'; exclusionRow.append(excluded, excludedLabel);
+          const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row spending-exclusion'; exclusionRow.append(excluded, excludedLabel);
           body.append(text('p', '記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。'), fieldLabel('label', '取引の種類', kind.id), kind,
             categoryLabel, category, destinationLabel, destination, exclusionRow);
           category.after(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {

@@ -57,7 +57,8 @@
     "test:ai-paused-e2e": "node test/browser-ai-paused.mjs",
     "test:desktop-layout-e2e": "node test/browser-desktop-layout.mjs",
     "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs",
-    "test:moneyforward-e2e": "node test/browser-moneyforward.mjs"
+    "test:moneyforward-e2e": "node test/browser-moneyforward.mjs",
+    "test:statement-options-e2e": "node test/browser-statement-options.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

@@ -133,10 +133,8 @@ try {
   await dialog.getByRole('button', { name: '追加する', exact: true }).click();
   await dialog.waitFor({ state: 'detached' });
   assert.equal(await newMerchant.locator('select[id^="category-"]').locator('option:checked').textContent(), 'Synthetic Reconciliation Category');
-  // The payment source is asked for only when registering, preselected from the optional provider metadata.
-  const registrationAccount = newMerchant.locator('select[id^="account-"]');
-  assert.equal(await registrationAccount.locator('option:checked').textContent(), 'Synthetic PayPay Card');
-  assert.equal(await registrationAccount.locator('option', { hasText: 'Synthetic Cash Wallet' }).count(), 0);
+  // Registration fixes the source from the statement provider.
+  assert.equal(await newMerchant.locator('select[id^="account-"]').count(), 0);
   await context.setOffline(true);
   await newMerchant.getByRole('button', { name: '支出として登録', exact: true }).click();
   await page.getByText(/要確認 0件 · 記録なし 2件/).waitFor();

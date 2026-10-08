@@ -25,6 +25,7 @@ export type ConfirmedReceiptValue = {
   /** Current Actual category ID; older receipts may contain a base CategoryId key. */
   categoryId: string;
   accountId: string;
+  excludedFromSpending?: boolean;
   memo?: string | null;
   taxAmountYen?: number | null;
   items?: ReceiptItem[];
@@ -87,6 +88,7 @@ function isSafeYen(value: unknown): value is number { return typeof value === "n
 /** A 0 yen total is allowed only for photographed receipts, such as one paid entirely with points. */
 function validConfirmed(value: ConfirmedReceiptValue, allowZeroTotal: boolean): boolean {
   const items = value.items ?? [], adjustments = value.adjustments ?? [];
+  if (value.excludedFromSpending !== undefined && typeof value.excludedFromSpending !== "boolean") return false;
   if ((value.memo != null && (typeof value.memo !== "string" || value.memo.length > 2000)) || items.length > 100 || adjustments.length > 100 ||
       new Set([...items, ...adjustments].map(row => row.id)).size !== items.length + adjustments.length ||
       items.some(row => typeof row.id !== "string" || !row.id || typeof row.name !== "string" || !row.name.trim() ||
@@ -506,6 +508,7 @@ export class LocalReceiptService {
         ...(splits.length > 1 ? { splits } : {}),
       });
       if (transaction.id !== receipt.registration.actualTransactionId) throw new LocalReceiptServiceError("edit_readback_failed", "変更後の内容を家計簿で確認できませんでした。再試行してください。");
+      if (audit.after.excludedFromSpending !== undefined && audit.after.totalAmountYen > 0) await this.ledger.setSpendingExclusion(transaction.id, audit.after.excludedFromSpending);
       const appliedAt = nowIso(this.options);
       const updated: LocalReceipt = { ...receipt, confirmedValue: audit.after, updatedAt: appliedAt };
       const appliedAudit: ReceiptEditAudit = { ...audit, status: "applied", appliedAt };
@@ -553,6 +556,7 @@ export class LocalReceiptService {
           amountYen: expenseAmount(receipt.confirmedValue.totalAmountYen), merchant: receipt.confirmedValue.merchant,
           ...(receipt.confirmedValue.memo !== undefined ? { memo: receipt.confirmedValue.memo } : {}), categoryId: splits[0]?.categoryId ?? category.id, ...(splits.length > 1 ? { splits } : {}), importedId: `kakeimatch:${id}`,
         });
+        if (receipt.confirmedValue.excludedFromSpending !== undefined && receipt.confirmedValue.totalAmountYen > 0) await this.ledger.setSpendingExclusion(transaction.id, receipt.confirmedValue.excludedFromSpending);
         const applied = { ...processing, registration: { status: "applied" as const, actualTransactionId: transaction.id, lastError: null }, updatedAt: nowIso(this.options) };
         await this.save(applied);
         return applied;

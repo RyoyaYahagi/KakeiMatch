@@ -195,7 +195,7 @@ export function showManualTransactionEditor(options: {
     const excluded = node('input'); excluded.type = 'checkbox'; excluded.id = 'manual-transaction-excluded';
     excluded.checked = draftSnapshot?.excludedFromSpending ?? transaction?.excludedFromSpending ?? false;
     if (kind === 'expense') {
-      const exclusion = node('div'); exclusion.className = 'entry-row'; exclusion.append(excluded, fieldLabel('label', '支出の計算に含めない', excluded.id)); rows.append(exclusion);
+      const exclusion = node('div'); exclusion.className = 'entry-row spending-exclusion'; exclusion.append(excluded, fieldLabel('label', '支出の計算に含めない', excluded.id)); rows.append(exclusion);
     }
     // Schedules hold expenses and incomes only; a transfer or an edit stays one record.
     const recurrence = kind === 'income' && !editing ? recurrenceRow('manual-transaction-recurrence') : null;
@@ -312,6 +312,7 @@ export function showManualTransactionEditor(options: {
         if (result) {
           const saved = result.transaction;
           if (saved.kind !== kind || saved.isSplit || saved.importedId !== importedId) throw new Error('Unexpected registered transaction');
+          if (kind === "expense") await ledger.setSpendingExclusion(saved.id, value.excludedFromSpending ?? false);
           showSavedResult(saved);
         } else {
           await persistDraft(value, 'draft');
