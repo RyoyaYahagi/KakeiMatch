@@ -115,20 +115,22 @@ try {
     assert.equal(await page.locator('.transaction-detail').isVisible(), true);
     assert.equal(await page.locator(`#receipt-${field === 'amount' ? 'merchant' : 'amount'}`).isVisible(), false);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    assert.equal(await page.getByRole('button', { name: '変更を保存する', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 0);
     assert.equal(await input.evaluate(node => node === document.activeElement), true);
     if (field === 'merchant' && process.env.PWA_INLINE_EXPENSE_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_INLINE_EXPENSE_SCREENSHOT_PATH, fullPage: true });
-    await click('キャンセル');
+    await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
     await page.getByRole('heading', { name: '支出の記録', exact: true }).waitFor();
   }
   await page.getByRole('button', { name: /^店名・支払先を編集:/ }).click();
-  await page.locator('#receipt-merchant').fill('Synthetic Changed Shop'); await click('キャンセル');
+  await page.locator('#receipt-merchant').fill('Synthetic Changed Shop'); await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
   await page.getByRole('button', { name: /^日時を編集:/ }).click();
-  await page.locator('#receipt-time').fill('13:15'); await click('キャンセル');
+  await page.locator('#receipt-time').fill('13:15'); await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
   await page.getByRole('button', { name: /^支払元を編集:/ }).click();
-  await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' }); await click('キャンセル');
+  await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' }); await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
   await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
   await row(0).locator('summary').click(); await row(0).locator('[data-item-name]').fill('Synthetic Corrected Apple');
-  await row(0).locator('[data-item-amount]').fill('1100'); await click('キャンセル');
+  await row(0).locator('[data-item-amount]').fill('1100'); await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
   await page.getByRole('button', { name: /^金額を編集:/ }).click();
   await page.locator('#receipt-amount').fill('1500'); await click('変更を保存する');
   await page.getByText('変更を保存しました。', { exact: true }).waitFor();

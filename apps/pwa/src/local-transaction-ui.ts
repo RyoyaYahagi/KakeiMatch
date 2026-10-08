@@ -1,4 +1,4 @@
-import { showInlineFields } from './inline-record-editor';
+import { configureInlineEditor } from './inline-record-editor';
 import { accountOptions } from './local-account-ui';
 import { createMasterShortcut } from './local-master-ui';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
@@ -516,16 +516,18 @@ export function showManualTransactionEditor(options: {
       submit.textContent = '同じ内容で再試行する';
       status.textContent = '前回の保存結果を確認できませんでした。入力内容を固定し、同じ内容で再試行してください。';
     }
+    const editFields = ['amount', 'date', 'payee', 'category', 'account', 'memo'] as const;
+    const selectField = (index: number) => {
+      const field = editFields[index];
+      if (field === 'category') categoryUi?.open();
+      else { if (field === 'memo') optional.open = true; ({ amount, date, payee, account, memo })[field].focus(); }
+    };
     if (options.inline && options.focusField) {
-      showInlineFields(options.view, [({ amount, date, payee, category: categoryUi!.row, account, memo })[options.focusField]], cancel);
-    }
-    if (options.focusField === 'category') {
-      categoryUi?.row.querySelector<HTMLButtonElement>('.entry-row-more')?.click();
-    } else if (options.focusField) {
-      if (options.focusField === 'memo') optional.open = true;
-      const control = ({ amount, date, payee, account, memo })[options.focusField];
-      control?.focus();
-    }
+      configureInlineEditor({ root: options.view, fields: [[amount], [date], [payee], [categoryUi!.row], [account], [memo]],
+        index: editFields.indexOf(options.focusField), select: selectField,
+        summaries: () => [`¥${Number(amount.value).toLocaleString('ja-JP')}`, date.value, payee.value || '未設定', category.selectedOptions[0]?.text ?? '未設定', account.selectedOptions[0]?.text ?? '未設定', memo.value || 'なし'],
+      });
+    } else if (options.focusField) selectField(editFields.indexOf(options.focusField));
   }).catch(error => {
     if (!heading.isConnected) return;
     status.textContent = messageFor(error);

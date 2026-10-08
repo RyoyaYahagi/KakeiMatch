@@ -848,10 +848,12 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .moneyforward-page > p, .moneyforward-page .muted { overflow-wrap: anywhere; }
 .moneyforward-preview-row { font-size: .875rem; overflow-wrap: anywhere; }
 
-/* Editing stays in the selected detail row; actions follow the field. */
+/* Only the selected field is shown; the shared save action follows the details. */
 .transaction-detail .inline-record-editor { width: 100%; min-width: 0; }
-.inline-record-editor .form-actions { position: static; display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-3) 0 0; padding: var(--space-2) 0; box-shadow: none; border: 0; background: transparent; }
-.inline-record-editor .form-actions button { flex: 1; width: auto; min-width: 0; margin: 0; font-size: 1rem; }
 .inline-record-editor .entry-row { border: 0; }
 .inline-record-editor .optional-fields > summary { display: none; }
 .inline-record-editor .status:empty { display: none; }
+.inline-record-editor.is-collapsed { display: none; }
+.detail-save .form-actions { position: static; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.detail-save button { width: 100%; min-width: 0; margin: 0; }
+.detail-save:has(.is-collapsed) .status:empty { display: none; }
