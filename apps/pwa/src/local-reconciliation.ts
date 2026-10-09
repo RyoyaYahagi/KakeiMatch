@@ -247,9 +247,11 @@ export class LocalReconciliationService {
       statementTransactionId: statement.id, provider: statement.provider, externalId: statement.externalId,
       kind: statement.kind, usedDate: statement.usedDate, postedDate: statement.postedDate,
       merchant: statement.merchant, amountYen: statement.amountYen, paymentMethod: statement.paymentMethod,
+      preferredAccountIds: accounts.filter(account => accountProviders.get(account.id) === statement.provider
+        && !account.closed && account.accountType !== "cash").map(account => account.id),
     }));
-    // Matching uses statement data only (date, amount, merchant, aliases). Payment-source metadata is
-    // auxiliary: it decides which unmatched records are shown as waiting for this provider's statement.
+    // Current provider mappings boost review candidates, without excluding other payment sources.
+    // Legacy import account IDs remain auxiliary to the waiting-for-statement display.
     const waitsForWindow = (accountId: string, window: StatementWindow) => {
       const account = accountsById.get(accountId);
       return Boolean(account && account.accountType !== "cash" && !account.closed &&

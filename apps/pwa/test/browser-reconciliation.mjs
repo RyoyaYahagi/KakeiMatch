@@ -56,11 +56,13 @@ async function seedMerchantLearning(merchant, categoryId) {
 }
 
 const headers = '利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日';
+// Keep unrelated flows outside the 100-yen / 3% candidate amount tolerance.
+// Merchant names no longer exclude nearby-amount candidates.
 const rows = [
   ['2026/09/30', 1200, 'Synthetic Auto Market'],
   ['2026/09/30', 500, 'Synthetic Difference Shop'],
-  ['2026/09/30', 600, 'Synthetic Other Account Shop'],
-  ['2026/09/30', 700, 'Synthetic Learned Market'],
+  ['2026/09/30', 1600, 'Synthetic Other Account Shop'],
+  ['2026/09/30', 2700, 'Synthetic Learned Market'],
   ['2026/09/30', 800, 'Synthetic New Merchant'],
 ].map(([date, amount, merchant]) => `${date},${merchant},Synthetic User,PayPayクレジット,1回,${amount},0,${amount},${amount},0,0,2026/10/27`);
 const csv = `${headers}\n${rows.join('\n')}\n`;
@@ -76,7 +78,7 @@ try {
 
   await addExpense('Synthetic Auto Market', 1200, '食費', 'Synthetic PayPay Card');
   await addExpense('Synthetic Difference Shop', 550, '食費', 'Synthetic PayPay Card');
-  await addExpense('Synthetic Other Account Shop', 600, '食費', 'Synthetic SMBC Card');
+  await addExpense('Synthetic Other Account Shop', 1600, '食費', 'Synthetic SMBC Card');
   await addExpense('Synthetic Cash Store', 300, '食費', 'Synthetic Cash Wallet');
 
   await page.locator('#reconciliation-tab').click();
@@ -145,7 +147,7 @@ try {
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
   await page.getByText('自動で一致した内容を見る（2件）', { exact: true }).click();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Other Account Shop' }).click();
-  await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥600', { exact: true }).waitFor();
+  await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥1,600', { exact: true }).waitFor();
   assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
