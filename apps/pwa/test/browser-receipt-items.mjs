@@ -126,8 +126,8 @@ try {
   await navigation; await page.getByText('今月の支出 ¥1,400', { exact: false }).waitFor();
   await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Items Shop/ }).click();
   await page.getByText('家計簿へ登録済みです。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: /^金額を編集:/ }).click();
-  await page.locator('#receipt-merchant').waitFor();
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
+  await row(0).locator('summary').waitFor();
   assert.equal(await row(0).locator('[data-item-name]').inputValue(), 'Synthetic Apple Edited');
   assert.equal(await page.locator('[data-adjustment-amount]').inputValue(), '100');
   assert.equal(await page.locator('[data-adjustment-target]').inputValue(), await row(0).getAttribute('data-receipt-item'));

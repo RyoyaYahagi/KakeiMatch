@@ -11,8 +11,8 @@ const click = name => page.getByRole('button', { name, exact: true }).click();
 // The add dialog, not the category sheet that may be open under it.
 const dialog = () => page.locator('dialog.master-create-dialog');
 const masterDialog = dialog;
-// Category shortcuts sit at the end of the category sheet, opened from "すべて".
-const openCategorySheet = async field => { if (field.endsWith('category')) await click('すべてのカテゴリから選ぶ'); };
+// Category shortcuts sit at the end of the sheet opened from the visible category action.
+const openCategorySheet = async field => { if (field.endsWith('category')) await click(await page.getByRole('button', { name: '全品目を同じカテゴリにする', exact: true }).isVisible() ? '全品目を同じカテゴリにする' : 'すべてのカテゴリから選ぶ'); };
 const shortcut = async field => { await openCategorySheet(field); await page.locator(`[data-master-shortcut-for="${field}"]`).click(); };
 async function create(field, name, category = false) {
   const trigger = page.locator(`[data-master-shortcut-for="${field}"]`);
@@ -22,8 +22,11 @@ async function create(field, name, category = false) {
   await dialog().getByRole('button', { name: '追加する', exact: true }).click();
   await dialog().waitFor({ state: 'detached' });
   assert.equal(await page.locator(`#${field} option:checked`).textContent(), name);
-  // Choosing the new category closes the sheet, so focus returns to the "すべて" button that opened it.
-  if (field.endsWith('category')) assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'すべてのカテゴリから選ぶ');
+  // Choosing the new category closes the sheet and returns focus to the visible opener.
+  if (field.endsWith('category')) {
+    if (await page.locator('.inline-record-editor').count()) assert.equal(await page.getByRole('button', { name: '全品目を同じカテゴリにする', exact: true }).evaluate(node => node === document.activeElement), true);
+    else assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'すべてのカテゴリから選ぶ');
+  }
   else assert.equal(await trigger.evaluate(node => document.activeElement === node), true);
 }
 async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-amount').waitFor(); }
@@ -96,9 +99,12 @@ try {
   assert.equal(await page.locator('[data-receipt-item]').count(), 2); assert.equal(await page.locator('#receipt-amount').inputValue(), '900');
   await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
-  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Entry Receipt ·/ }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click();
+  await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: /^Synthetic Entry Receipt ·/ }).click(); await page.getByRole('button', { name: /^店名・支払先を編集:/ }).click();
   await page.locator('#receipt-merchant').fill('Synthetic Receipt Edited');
-  await create('receipt-category', 'Synthetic Edit Category', true); await create('receipt-account', 'Synthetic Edit Wallet');
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
+  await create('receipt-category', 'Synthetic Edit Category', true);
+  await page.getByRole('button', { name: /^支払元を編集:/ }).click();
+  await create('receipt-account', 'Synthetic Edit Wallet');
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Synthetic Receipt Edited'); assert.equal(await page.locator('[data-receipt-item]').count(), 2);
   await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
   await page.locator('#settings-tab').click(); await click('カテゴリ'); await page.getByRole('button', { name: /^Synthetic Edit Category ·/ }).waitFor();

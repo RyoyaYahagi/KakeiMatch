@@ -93,18 +93,40 @@ try {
     await page.getByRole('button', { name: new RegExp(`^${label}を編集:`) }).click();
     const input = page.locator(`#manual-transaction-${field}`);
     await input.waitFor();
+    assert.equal(await page.getByRole('heading', { name: '収入の記録', exact: true }).isVisible(), true);
+    assert.equal(await page.locator('.transaction-detail').isVisible(), true);
+    assert.equal(await page.getByRole('button', { name: '変更を保存する', exact: true }).count(), 1);
+    assert.equal(await page.getByRole('button', { name: 'キャンセル', exact: true }).count(), 0);
+    assert.equal(await page.locator(`#manual-transaction-${field === 'amount' ? 'payee' : 'amount'}`).isVisible(), false);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     assert.equal(await input.evaluate(node => node === document.activeElement), true);
     if (field === 'memo') {
-      await input.fill('Synthetic tapped memo'); await click('変更を保存する');
+      if (process.env.PWA_INLINE_DETAIL_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_INLINE_DETAIL_SCREENSHOT_PATH, fullPage: true });
+      await input.fill('Synthetic tapped memo');
+      await page.getByRole('heading', { name: '収入の記録', exact: true }).click();
       await page.getByRole('button', { name: 'メモを編集: Synthetic tapped memo', exact: true }).waitFor();
-    } else await click('キャンセル');
+      assert.equal(await input.isVisible(), false);
+      await click('変更を保存する');
+      await page.getByText('変更を保存しました。', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'メモを編集: Synthetic tapped memo', exact: true }).waitFor();
+    } else await page.getByRole('heading', { name: '収入の記録', exact: true }).click();
     await page.getByRole('heading', { name: '収入の記録', exact: true }).waitFor();
   }
   await page.getByRole('button', { name: /^カテゴリを編集:/ }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('radio', { name: 'Synthetic Navigation Income', exact: true }).waitFor();
-  await page.keyboard.press('Escape'); await click('キャンセル');
+  await page.keyboard.press('Escape'); await page.getByRole('heading', { name: '収入の記録', exact: true }).click();
   await page.getByRole('heading', { name: '収入の記録' }).waitFor();
+  await page.getByRole('button', { name: /^金額を編集:/ }).click();
+  await page.locator('#manual-transaction-amount').fill('1200');
+  // Tapping another row closes the first without dropping the shared draft.
+  await page.getByRole('button', { name: /^入金元・内容を編集:/ }).click();
+  await page.locator('#manual-transaction-payee').fill('Synthetic Changed Employer');
+  await page.getByRole('heading', { name: '収入の記録', exact: true }).click();
+  await page.getByRole('button', { name: '金額を編集: ¥1,200', exact: true }).waitFor();
+  await click('変更を保存する'); await page.getByText('変更を保存しました。', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '入金元・内容を編集: Synthetic Changed Employer', exact: true }).waitFor();
+  await page.getByRole('button', { name: '金額を編集: ¥1,200', exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);
   console.log('PASS: nested expense chooser, new-entry return targets, edit detail return, records-to-account-balances link, settings account management, and 375px horizontal overflow check');

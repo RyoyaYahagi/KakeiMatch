@@ -1,3 +1,4 @@
+import { configureInlineEditor } from './inline-record-editor';
 import { dismissOnBackdrop } from './dialog-backdrop';
 import { initializeMoneyForwardUi } from './moneyforward-ui';
 import { createAccountMetadataAccess } from './local-account-metadata';
@@ -257,21 +258,21 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     // synchronous render that shows the accounts, so its root cannot flash.
     await openAccountBalances(() => el('settings-tab').click());
   }
-  async function manualEditor(kind: 'expense' | 'income' | 'transfer', transaction?: ActualTransaction, focusField?: TransactionEditField) {
+  async function manualEditor(kind: 'expense' | 'income' | 'transfer', transaction?: ActualTransaction, focusField?: TransactionEditField, mount?: HTMLElement, close?: () => Promise<void>) {
     if (kind === 'expense' && !transaction) {
       const draft = (await receipts.list()).find(value => !value.image && value.registration.status !== 'applied' && value.registration.status !== 'deleted');
       await receiptEditor(draft ?? await receipts.createManual());
       return;
     }
-    await open('receipt');
-    await showManualTransactionEditor({ view, ledger, repository, kind, transaction, focusField,
+    if (!mount) await open('receipt');
+    await showManualTransactionEditor({ view: mount ?? view, ledger, repository, kind, transaction, focusField, inline: Boolean(mount),
       recurringNames: async () => (await ledger.listRecurringSchedules()).map(row => row.name.trim()),
       onSaved: async schedule => {
         ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords();
         el('message').textContent = transaction ? '変更を保存しました。' : '登録しました。';
         if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
       },
-      onCancel: transaction ? () => transactionDetail(transaction) : newEntryReturn });
+      onCancel: close ?? (transaction ? () => transactionDetail(transaction) : newEntryReturn) });
   }
   /** The record is already saved; a failed schedule is reported without hiding that. */
   async function saveScheduleAfterEntry(schedule: NonNullable<ReturnType<typeof scheduleFromEntry>>) {
@@ -370,19 +371,61 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     render();
   }
   /** 記録の詳細の行（項目名を左、値を右）。先頭の行は金額として大きく出す。docs/UX.md 記録の詳細。 */
-  function recordDetailRows(rows: Array<[string, string | HTMLElement]>, edit?: (index: number) => Promise<void>) {
+  const detailFooters = new WeakMap<HTMLElement, HTMLElement>();
+  function recordDetailRows(rows: Array<[string, string | HTMLElement]>, edit?: (index: number, mount: HTMLElement, close: () => Promise<void>) => Promise<void>) {
     const detail = document.createElement('dl'); detail.className = 'transaction-detail surface-section';
+    const footer = text('div', '', 'detail-save'); footer.id = `detail-save-${crypto.randomUUID()}`;
+    detailFooters.set(detail, footer);
+    if (edit) { const save = button('変更を保存する', () => {}, false); save.disabled = true; footer.append(save); }
+    const mount = text('div', '', 'inline-record-editor'); mount.dataset.actionsId = footer.id;
+    let selected: number | null = null;
+    let ready = false;
+    let loading = false;
+    const groups: HTMLElement[] = [];
+    const targets: HTMLButtonElement[] = [];
+    const close = async () => {
+      if (selected === null || loading || mount.querySelector('form[aria-busy="true"]') || footer.querySelector<HTMLButtonElement>('button[type="submit"]')?.disabled) return;
+      const summary = { values: undefined as string[] | undefined };
+      mount.dispatchEvent(new CustomEvent('inline-summary', { detail: summary }));
+      for (const [index, value] of (summary.values ?? []).entries()) {
+        if (!targets[index]) continue;
+        targets[index].replaceChildren(document.createTextNode(value), icon('chevronRight'));
+        targets[index].setAttribute('aria-label', `${rows[index][0]}を編集: ${value}`);
+      }
+      groups[selected].querySelector<HTMLElement>('dt')!.hidden = false;
+      groups[selected].querySelector<HTMLElement>('dd')!.hidden = false;
+      selected = null; mount.classList.add('is-collapsed'); footer.append(mount);
+      if (document.activeElement instanceof HTMLElement && mount.contains(document.activeElement)) document.activeElement.blur();
+    };
+    const select = async (index: number) => {
+      if (loading || selected === index) return;
+      await close();
+      if (selected !== null) return;
+      el('message').textContent = '';
+      selected = index; const group = groups[index];
+      group.querySelector<HTMLElement>('dt')!.hidden = true; group.querySelector<HTMLElement>('dd')!.hidden = true;
+      group.append(mount); mount.classList.remove('is-collapsed');
+      if (ready) mount.dispatchEvent(new CustomEvent('inline-select', { detail: index }));
+      else { loading = true; try { await edit!(index, mount, close); } catch (error) { loading = false; throw error; } }
+    };
     for (const [index, [label, value]] of rows.entries()) {
-      const group = document.createElement('div'); group.className = index === 0 ? 'detail-amount' : 'detail-row';
+      const group = text('div', '', index === 0 ? 'detail-amount' : 'detail-row'); groups.push(group);
       const definition = text('dd', typeof value === 'string' ? value : ''); if (typeof value !== 'string') definition.append(value);
       if (edit && typeof value === 'string') {
-        const target = button(value, () => edit(index)); target.className = 'detail-edit';
-        target.setAttribute('aria-label', `${label}を編集: ${value}`);
-        target.append(icon('chevronRight')); definition.replaceChildren(target);
-        group.classList.add('detail-editable');
+        const target = button(value, () => select(index)); target.className = 'detail-edit'; targets[index] = target;
+        target.setAttribute('aria-label', `${label}を編集: ${value}`); target.append(icon('chevronRight'));
+        definition.replaceChildren(target); group.classList.add('detail-editable');
       }
       group.append(text('dt', label), definition); detail.append(group);
     }
+    mount.addEventListener('inline-ready', event => { ready = true; loading = false; if (selected === null) void select((event as CustomEvent<number>).detail).catch(report); });
+    mount.addEventListener('inline-invalid', event => { void select((event as CustomEvent<number>).detail).catch(report); });
+    const outside = (event: MouseEvent) => {
+      if (!detail.isConnected) { document.removeEventListener('click', outside, true); return; }
+      if (selected === null || !(event.target instanceof Node) || groups[selected].contains(event.target) || document.querySelector('dialog[open]')) return;
+      void close().catch(report);
+    };
+    document.addEventListener('click', outside, true);
     return detail;
   }
   function spendingExclusionControl(transaction: ActualTransaction) {
@@ -412,10 +455,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       ['メモ', current.memo || 'なし'],
     ] : [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']];
     const fields = ['amount', 'date', 'payee', 'category', 'account', 'memo'] as const;
-    view.append(recordDetailRows(values, current.kind !== 'transfer' && !current.isSplit
-      ? index => manualEditor(current.kind === 'income' ? 'income' : 'expense', current, fields[index]) : undefined));
+    const summary = recordDetailRows(values, current.kind !== 'transfer' && !current.isSplit
+      ? (index, mount, close) => manualEditor(current.kind === 'income' ? 'income' : 'expense', current, fields[index], mount, close) : undefined);
+    view.append(summary);
     if (current.kind === "expense" && current.amountYen < 0) view.append(spendingExclusionControl(current));
     const actions = document.createElement('div'); actions.className = 'detail-actions';
+    actions.append(detailFooters.get(summary)!);
     if (current.kind === 'transfer') actions.append(button('編集する', () => manualEditor('transfer', current), false));
     const remove = deleteButton(current.id); remove.className = 'text-button destructive-text';
     actions.append(remove); view.append(actions);
@@ -440,12 +485,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       ['支払元', accounts.find(account => account.id === value.accountId)?.name ?? '利用不可'],
       ['メモ', value.memo || 'なし'],
       ['状態', registered],
-    ], index => receiptEditor(receipt, { edit: true, focusField: (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const)[index] }));
+    ], (index, mount, close) => receiptEditor(receipt, { edit: true, mount, close, focusField: (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const)[index] }));
     view.append(back, text('h2', '支出の記録'), summary);
     const actual = receipt.registration.actualTransactionId ? await ledger.getTransactionById(receipt.registration.actualTransactionId) : null;
     ensureScreen(screen);
     if (actual) view.append(spendingExclusionControl(actual));
-    if (pending) view.append(text('p', '前回の変更は保存結果を確認中です。編集画面で同じ内容を再試行してください。', 'notice notice-warning'));
+    if (pending) view.append(text('p', '前回の変更は保存結果を確認中です。項目をタップして同じ内容を再試行してください。', 'notice notice-warning'));
     if (receipt.aiSuggestion.categoryRules?.length) {
       const reasons = document.createElement('details'); reasons.className = 'surface-section detail-disclosure';
       reasons.append(text('summary', '分類の理由'));
@@ -474,14 +519,19 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       view.append(adjustments);
     }
     const actions = document.createElement('div'); actions.className = 'detail-actions';
+    actions.append(detailFooters.get(summary)!);
     if (receipt.registration.actualTransactionId) { const remove = deleteButton(receipt.registration.actualTransactionId); remove.className = 'text-button destructive-text'; actions.append(remove); }
     view.append(actions);
   }
-  async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean; focusField?: 'amount' | 'date' | 'merchant' | 'category' | 'account' | 'memo' } = {}) {
+  async function receiptEditor(receipt: LocalReceipt, editorOptions: { useExtraction?: boolean; preserveAccountId?: string; edit?: boolean; focusField?: 'amount' | 'date' | 'merchant' | 'category' | 'account' | 'memo'; mount?: HTMLElement; close?: () => Promise<void> } = {}) {
     if (receipt.registration.status === 'deleted') throw new Error('この取引は削除済みです。記録一覧を開き直してください。');
     if (receipt.registration.status === 'applied' && !editorOptions.edit) { await receiptDetail(receipt); return; }
     const editing = receipt.registration.status === 'applied';
-    const screen = await open('receipt'); view.append(text('h2', editing ? '支出の記録を編集' : receipt.image ? 'レシートを登録する' : '支出を入力'));
+    const editorView = editorOptions.mount ?? el('local-view');
+    if (editorOptions.mount) editorView.replaceChildren();
+    const screen = editorOptions.mount ? screenRevision : await open('receipt');
+    const view = editorView;
+    view.append(text('h2', editing ? '支出の記録を編集' : receipt.image ? 'レシートを登録する' : '支出を入力'));
     const confirmed = receipt.confirmedValue;
     const draftId = `receipt-draft:${receipt.id}`;
     const savedDraft = await repository.get<ReceiptDraft>(draftId);
@@ -1133,7 +1183,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           recordLocalDiagnostic('save');
         } catch (error) {
           const current = await receipts.get(receipt.id);
-          if (current && screenTab === 'receipt') await receiptEditor(current, { edit: editing });
+          if (current && screenTab === 'receipt') await receiptEditor(current, { edit: editing, mount: editorOptions.mount, close: editorOptions.close, focusField: editorOptions.focusField });
           throw error;
         }
         await saveTail;
@@ -1145,17 +1195,29 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         if (schedule) el('message').textContent = await saveScheduleAfterEntry(schedule);
       });
     });
-    const cancelEntry = button('キャンセル', editing ? () => receiptDetail(receipt) : newEntryReturn); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);
+    const cancelEntry = button('キャンセル', editorOptions.close ? async () => { await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve(); await editorOptions.close!(); } : (editing ? () => receiptDetail(receipt) : newEntryReturn)); cancelEntry.className = 'text-button back-link'; cancelEntry.prepend(icon('chevronLeft')); view.prepend(cancelEntry);
     if (!accounts.length || !categories.length) view.append(text('p', 'カテゴリと支払元は、それぞれの選択欄から追加できます。'));
     const focusField = editorOptions.focusField;
-    if (focusField === 'category') {
-      if (items.length) setEditorPane('items');
-      else categoryUi.row.querySelector<HTMLButtonElement>('.entry-row-more')?.click();
-    } else if (focusField) {
-      if (focusField === 'memo') optional.open = true;
-      const control = ({ amount, date, merchant, account, memo })[focusField];
-      control?.focus();
-    }
+    const selectField = (index: number) => {
+      const field = (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const)[index];
+      if (field === 'category') {
+        if (items.length) setEditorPane('items', false);
+        else categoryUi.open();
+      } else {
+        if (field === 'memo' || field === 'date') optional.open = true;
+        ({ amount, date, merchant, account, memo })[field].focus();
+      }
+    };
+    if (editorOptions.mount && focusField) {
+      // Keep the category dialog outside the fields that collapse.
+      form.append(categoryUi.sheet);
+      if (items.length) categoryUi.sheet.addEventListener('return-focus', () => applyCategory.focus());
+      configureInlineEditor({ root: view,
+        fields: [[amount], [date, time], [merchant], items.length ? [purchaseDetails, categoryUi.sheet] : [categoryUi.row, categoryUi.sheet], [account], [memo]],
+        index: (['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const).indexOf(focusField), select: selectField,
+        summaries: () => [yen(Number(amount.value)), `${date.value}${time.value ? ` ${time.value}` : ''}`, merchant.value || '未設定', items.length ? '品目ごと' : categoryName(category.value), account.selectedOptions[0]?.text ?? '未設定', memo.value || 'なし'],
+      });
+    } else if (focusField) selectField((['amount', 'date', 'merchant', 'category', 'account', 'memo'] as const).indexOf(focusField));
   }
   let selectedStatementProvider: StatementProvider = 'paypay_card';
   const statementProviderLabels: Record<StatementProvider, string> = { paypay: 'PayPay取引履歴（旧形式）', paypay_card: 'PayPayカード', smbc_card: '三井住友カード', rakuten_card: '楽天カード', aeon_card: 'イオンカード' };

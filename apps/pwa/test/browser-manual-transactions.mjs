@@ -23,16 +23,28 @@ async function category(name, income) {
   await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).waitFor();
 }
 async function chooser(kind) { await page.locator('#home-tab').click(); await click('記録を追加'); await click(kind === '支出' ? '支出を手入力' : kind); await page.locator('#manual-transaction-payee').waitFor(); }
+async function selectEditField(field) {
+  if (await page.locator('.transaction-detail').count() === 0) return;
+  const labels = { payee: /^(店名・支払先|入金元・内容)を編集:/, amount: /^金額を編集:/, date: /^日付を編集:/, category: /^カテゴリを編集:/, account: /^(支払元|入金先口座)を編集:/, memo: /^メモを編集:/ };
+  await page.getByRole('button', { name: labels[field] }).click();
+}
 async function fill(name, amount, categoryName, accountName, memo) {
+  await selectEditField('payee');
   await page.locator('#manual-transaction-payee').fill(name);
+  await selectEditField('amount');
   await page.locator('#manual-transaction-amount').fill(String(amount));
+  await selectEditField('date');
   await page.locator('#manual-transaction-date').fill('2026-10-01');
+  await selectEditField('category');
   await page.locator('#manual-transaction-category').selectOption({ label: categoryName });
+  await selectEditField('account');
   await page.locator('#manual-transaction-account').selectOption({ label: accountName });
-  for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#manual-transaction-memo').fill(memo);
+  await selectEditField('memo');
+  if (await page.locator('.transaction-detail').count() === 0) for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click();
+  await page.locator('#manual-transaction-memo').fill(memo);
 }
 async function save(editing = false) { await click(editing ? '変更を保存する' : '登録する'); await page.getByText(editing ? '変更を保存しました。' : '登録しました。', { exact: true }).waitFor(); }
-async function detail(name) { await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#manual-transaction-payee').waitFor(); }
+async function detail(name) { await page.locator('#receipt-tab').click(); await page.getByRole('button', { name: new RegExp(`^${name} ·`) }).click(); await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#manual-transaction-amount').waitFor(); }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
   assert.deepEqual(await page.locator('nav .nav-button').allTextContents(), ['ホーム', '記録', '照合', '設定']);
@@ -86,10 +98,12 @@ try {
   await detail('Synthetic Shop');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic expense memo');
   await fill('Synthetic Shop Edited', 2000, 'Synthetic Food', 'Synthetic Bank', 'Synthetic edited expense');
+  await selectEditField('date');
   await page.locator('#manual-transaction-date').fill('2026-10-02');
   await save(true);
   await detail('Synthetic Shop Edited');
   assert.equal(await page.locator('#manual-transaction-date').inputValue(), '2026-10-02');
+  await selectEditField('date');
   await page.locator('#manual-transaction-date').fill('2026-10-01');
   await save(true);
   await detail('Synthetic Employer');
@@ -102,7 +116,7 @@ try {
   await detail('Synthetic Employer Edited');
   assert.equal(await page.locator('#manual-transaction-account option:checked').textContent(), 'Synthetic Wallet');
   assert.equal(await page.locator('#manual-transaction-memo').inputValue(), 'Synthetic edited income');
-  await click('キャンセル');
+  await page.getByRole('heading', { name: '収入の記録', exact: true }).click();
   await page.locator('#settings-tab').click(); const downloadPromise = page.waitForEvent('download'); await page.locator('#settings-tab').click(); await page.getByRole('button', { name: 'バックアップと復元', exact: true }).click(); await page.locator('#backup-export').click();
   const download = await downloadPromise; const path = await download.path(); assert.ok(path); const buffer = await readFile(path);
   await waitForBackupExportReady(page);

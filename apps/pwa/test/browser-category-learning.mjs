@@ -205,8 +205,8 @@ try {
   // Editing one receipt replaces that receipt's vote instead of adding another vote.
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
-  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await page.locator('#receipt-merchant').waitFor();
-  await click('品目一覧');
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
+  await itemRow(0).locator('summary').waitFor();
   for (const [index, categoryId] of [learningIds.home, learningIds.food].entries()) {
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
     await itemRow(index).locator('[data-item-category]').selectOption(categoryId);
@@ -222,13 +222,13 @@ try {
   assert.equal((await readLearningAudits()).length, 4);
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: /^Synthetic Learning Shop · 9\/28 · .*レシート/ }).click();
-  await page.getByRole('button', { name: /^金額を編集:/ }).click(); await click('品目一覧');
+  await page.getByRole('button', { name: /^カテゴリを編集:/ }).click();
   for (let index = 0; index < 2; index++) {
     if (await itemRow(index).getAttribute('open') === null) await itemRow(index).locator('summary').click();
   }
   assert.equal(await itemRow(0).locator('[data-item-category]').inputValue(), learningIds.home);
   assert.equal(await itemRow(1).locator('[data-item-category]').inputValue(), learningIds.food);
-  await click('キャンセル');
+  await page.getByRole('heading', { name: '支出の記録', exact: true }).click();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []); await context.setOffline(false);
   await settings('分類ルール');
