@@ -78,7 +78,31 @@ unset ACCOUNT_BOOTSTRAP_SECRET
 
 旧Actual ServerからexportしたZIPにはActual Budgetの家計簿データだけが含まれます。PWAのブラウザー版Actualへimportしてください。旧Next.jsにはKakeiMatch `.kmb` export機能がなく、旧receipt/statement metadataも自動移行されません。local-first PWAで作成した `.kmb` には、Actual BudgetとKakeiMatch端末記録、残っているreceipt/statement原本が含まれます。PWAは旧server SQLiteや旧receipt/statement directoryを直接読みません。新しい端末profileを確認するまで旧環境の検証済みbackupを保管してください。対応するexportに含まれないlegacy記録は個別に手動移行してください。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。Actual orphan cleanupの特殊制約はIssue #58で管理します。
 
-## 本番更新の手順
+## GitHub Actionsによる本番更新
+
+通常の本番更新は、人間がPRをmainへSquash mergeした後に `.github/workflows/ci.yml` が行います。mainのcommitに対して検証job `ci` が成功した場合だけ、`deploy` jobが本番Workerを更新します。PRと `workflow_dispatch` ではデプロイしません。mainへの直接pushとAIによるmainへのマージは禁止です。
+
+GitHubのリポジトリ設定（または `production` Environment）に、次の設定を登録します。
+
+| 種類 | 名前 | 用途 |
+| --- | --- | --- |
+| Secret | `CLOUDFLARE_API_TOKEN` | 対象アカウントの本番Workerを更新するCI専用トークン |
+| Variable | `CLOUDFLARE_ACCOUNT_ID` | 本番Workerを持つCloudflareアカウント |
+| Variable | `ACCOUNT_D1_ID` | 既存の本番account専用D1のID |
+| Variable | `ACCOUNT_D1_NAME` | 同じ本番D1の名前 |
+| Variable | `TURNSTILE_SITE_KEY` | 本番用の公開site key |
+
+CIは設定が不足すると、値を出力せず設定名だけを表示して失敗します。トークンは必要なWorker更新・binding参照権限に限定してください。Gemini等のprovider keyやアプリの認証secretは、引き続き本番WorkerのSecret bindingで管理します。CIへ複製しません。
+
+デプロイjobはGitHub-hosted runner上の `production` Environmentで動きます。本番modeで `cf deploy --dry-run` によるbuildと検証を行い、同じ成果物を `cf deploy --prebuilt --mode production-deploy` で公開します。認証トークンは設定確認と公開stepだけに渡します。この認証・dry-run・prebuiltの使い方は[Cloudflare公式「Use cf in CI」](https://developers.cloudflare.com/cf/ci/)に従います。
+
+本番デプロイは直列化し、mainに次の変更が届いても進行中の公開を中断しません。CIはD1 migrationやSecretの新規登録を自動実行しません。schemaやbindingを変更するPRでは、人間が必要な準備を終えてからマージします。
+
+公開に失敗した場合は、Actionsの `deploy` jobのログを確認し、設定不足や権限を修正して失敗したjobを再実行します。古いcommitの再実行は、その版への差し戻しになります。再実行前に対象commitと現在のmain・公開版を確認してください。
+
+## 手動の本番更新・復旧手順
+
+以下は人間による初回準備と復旧用です。通常の更新は上記CIを使います。
 
 本番D1のIDと名前は運用者が管理し、下記の環境変数へ設定します。preview D1を流用しません。公開日時、Worker・D1・version・deploymentの識別子、個別の検証結果は、Git管理対象外のローカル運用記録で管理します。
 

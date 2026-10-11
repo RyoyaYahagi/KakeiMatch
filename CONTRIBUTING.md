@@ -35,7 +35,11 @@ docs/update-ux
 
 `main` は常に実行可能な状態を保ちます。
 
-初期セットアップ後は原則として直接pushせず、Pull Request経由で統合します。
+変更の大小を問わず直接pushは禁止です。Pull Request経由で統合します。
+
+GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、CIのpath filterは設けません。
+
+初回設定は `gh api --method POST repos/RyoyaYahagi/KakeiMatch/rulesets --input .github/main-ruleset.json` で作成します。更新時は `gh api repos/RyoyaYahagi/KakeiMatch/rulesets` で対象IDを確認し、同じJSONを `PUT repos/RyoyaYahagi/KakeiMatch/rulesets/<id>` へ渡します。
 
 ## Pull Request
 
@@ -55,12 +59,16 @@ PR本文には最低限、以下を含めます。
 
 原則Squash mergeを使用します。
 
+mainへのマージは人間が行います。AIエージェントの担当範囲と禁止事項は[AGENTS.mdのGit節](AGENTS.md#git)を参照してください。人間の操作と同じGitHub認証情報を使うAIはGitHub側では区別できないため、この制限はエージェントの運用規則として適用します。
+
 目的:
 
 - mainの履歴を機能単位で読みやすくする
 - AIエージェントの試行commitをmainへ持ち込まない
 
 merge後はfeature branchを削除します。
+
+main更新後はGitHub ActionsのCIで再検証し、成功したcommitを本番へデプロイします。必要なCI設定と失敗時の対応は[デプロイ手順](docs/DEPLOYMENT.md)を参照してください。
 
 ## Commit
 
