@@ -1,5 +1,4 @@
-import { sanitizeReceiptExtraction } from '../../../src/lib/receipt-privacy';
-import { validateReceiptExtraction } from '../../../src/lib/receipt-extraction';
+import { sanitizeReceiptExtraction, type ReceiptPrivacyInput } from '../../../src/lib/receipt-privacy';
 import { handleAdminRequest, type AdminEnv } from './admin';
 import { classificationPayload, parseClassification } from './contact';
 import { parseContactInput, parseContactInterviewInput, parseContactInterview, transcriptionPayload, contactInterviewPayload, type ContactEnv } from './contact';
@@ -170,6 +169,10 @@ function receiptResultProblem(value: unknown): string | null {
     }
   }
   return Object.keys(value).every((key) => RECEIPT_KEYS.includes(key)) ? null : "root";
+}
+/** Uses the gateway's complete field/schema checks before any privacy filtering. */
+function isReceiptResult(value: unknown): value is Record<string, unknown> & ReceiptPrivacyInput {
+  return receiptResultProblem(value) === null;
 }
 /**
  * Rewrites unambiguous notation variants to the stored format before validation:
@@ -623,13 +626,12 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     let extraction: unknown;
     try { extraction = normalizeReceiptExtraction(JSON.parse(outputText) as unknown); } catch { return invalidProviderResponse(env, eventId, provider, clock()); }
     const problem = receiptResultProblem(extraction);
-    if (problem !== null || !isRecord(extraction)) {
+    if (problem !== null || !isReceiptResult(extraction)) {
       // Only the field name is logged; receipt contents never reach logs.
       console.warn(JSON.stringify({ event: "receipt_extraction_rejected", field: problem }));
       return invalidProviderResponse(env, eventId, provider, clock());
     }
-    let sanitized;
-    try { sanitized = sanitizeReceiptExtraction(validateReceiptExtraction(extraction)); } catch { return invalidProviderResponse(env, eventId, provider, clock()); }
+    const sanitized = sanitizeReceiptExtraction(extraction);
     extraction = sanitized;
     const items = sanitized.items.slice(0, 30).map(item => ({ name: item.name.trim().slice(0, 200), amountYen: item.amountYen }));
     const categoryInput = parseCategoryInput({ receipt: { merchant: sanitized.merchant?.trim().slice(0, 200) || null, totalAmountYen: sanitized.totalAmountYen, items } });

@@ -1,4 +1,10 @@
-import type { ReceiptExtractionResult } from './receipt-extraction';
+/** Structural fields used by privacy filtering; independent of schema libraries and runtimes. */
+export type ReceiptPrivacyInput = {
+  merchant: string | null;
+  items: Array<{ name: string; amountYen: number | null }>;
+  adjustments?: Array<{ label: string }>;
+  warnings: Array<{ code: string; message: string }>;
+};
 
 /** Deliberately limited to explicit identifiers; prices, dates and product names stay intact. */
 const IDENTIFIER_LABEL = /(?:氏名|お名前|名義|住所|会員\s*(?:番号|[Ii][Dd])|顧客\s*(?:番号|[Ii][Dd])|カード\s*(?:番号|[Nn][Oo])|口座\s*番号|電話|携帯|(?:customer\s*name|member\s*(?:id|no|number)|card\s*(?:no|number)|account\s*(?:no|number)|address|phone|tel)\s*[:：]?)/i;
@@ -29,7 +35,7 @@ export function privateReceiptRegions(lines: ReceiptTextLine[]): ReceiptMask[] {
 }
 
 /** Never keep arbitrary provider prose (including quoted private text) in warning messages/codes. */
-export function sanitizeReceiptExtraction(value: ReceiptExtractionResult): ReceiptExtractionResult {
+export function sanitizeReceiptExtraction<T extends ReceiptPrivacyInput>(value: T): T {
   const safe = (text: string) => isReceiptPrivateText(text) ? '非公開' : text;
   return { ...value, merchant: value.merchant === null ? null : safe(value.merchant),
     items: value.items.map(item => ({ ...item, name: safe(item.name) })),
