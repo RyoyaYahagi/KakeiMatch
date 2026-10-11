@@ -84,8 +84,12 @@ Issue #30以降のCloudflare作業では、新しい公式 `cf` CLIを第一選�
 
 ## Git
 
-mainへ直接大規模実装を入れません。
+mainへの直接pushは禁止です。変更の大小を問わず、作業branchからPull Requestで統合します。
+
+AIエージェントによるmainへのマージは禁止です。PRの作成・更新と検証結果の報告までを担当し、マージは人間が行います。自動マージの有効化、merge queueへの登録、保護設定の迂回も行わないでください。
 
 作業branchを作り、小さいPR単位で進めてください。詳細はCONTRIBUTING.mdに従ってください。
 
-実装を依頼されたら、変更と検証を終えた後、作業branchをoriginへpushしてPull Requestを作成するところまで進めてください。既に同じ作業のPull Requestがあれば新規作成せず、その内容を確認して必要に応じて更新してください。検証できなかった項目や未解決事項はPull Request本文に明記してください。マージは依頼があった場合に行ってください。
+実装を依頼されたら、変更と検証を終えた後、作業branchをoriginへpushしてPull Requestを作成するところまで進めてください。既に同じ作業のPull Requestがあれば新規作成せず、その内容を確認して必要に応じて更新してください。検証できなかった項目や未解決事項はPull Request本文に明記してください。
+
+PRのGitHub Actions CI成功をmainへのマージ条件にします。本番デプロイは、人間がmainへマージした後にCloudflare Workers Buildsが行います。通常の実装作業では、AIエージェントから本番deployを実行しないでください。設定と復旧手順はdocs/DEPLOYMENT.mdを参照してください。

@@ -2,14 +2,10 @@ name: CI
 
 # Private-repository minutes are billed per job and rounded up to whole minutes,
 # so checks share one job instead of fanning out into many short jobs.
-# main is not re-checked on push: the merged PR has already passed this workflow.
+# Every PR returns the required ci check; Workers Builds deploys main after merge.
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'workers/ai-gateway/**'
   workflow_dispatch:
 
 permissions:
