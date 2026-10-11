@@ -134,6 +134,26 @@ async function assertDeletedDefaultCategoryAbsent() {
   await waitForReady();
 }
 
+/** Keep coverage of archives created by old versions that persisted receipt images. */
+async function seedLegacyReceiptImages() {
+  const snapshot = await readHouseholdSnapshot();
+  assert.equal(snapshot.blobs.filter(blob => blob.ownerKind === 'receipt').length, 0, 'new photos must never be persisted');
+  await page.evaluate(async imageBytes => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('kakeimatch-local-data'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const profileId = localStorage.getItem('kakeimatch.local-profile.v1');
+    const receipts = await new Promise(resolve => { const request = db.transaction('records').objectStore('records').index('profileId').getAll(profileId); request.onsuccess = () => resolve(request.result.filter(row => row.kind === 'receipt-metadata' && row.value.image)); });
+    const transaction = db.transaction('blobs', 'readwrite');
+    for (const row of receipts) {
+      const image = row.value.image;
+      transaction.objectStore('blobs').put({ id: image.blobId, ownerKind: 'receipt', ownerId: row.id,
+        blob: new Blob([new Uint8Array(imageBytes)], { type: image.contentType }), contentType: image.contentType,
+        createdAt: row.value.createdAt, profileId, key: `${profileId}\u0000${image.blobId}` });
+    }
+    await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
+    db.close();
+  }, [...syntheticPng]);
+}
+
 async function addReceipt(merchant, amount) {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
@@ -306,6 +326,7 @@ try {
   await setupLedger();
   await addReceipt('Synthetic Corner', 1280);
   await addReceipt('Synthetic Corner Market', 1280);
+  await seedLegacyReceiptImages();
   await importStatementCsv();
   await page.getByText(/要確認 1件/).waitFor();
   await page.locator('details.review-item').filter({ has: page.locator('summary .record-title', { hasText: 'Synthetic Corner' }) }).locator('summary').click();
