@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -57,7 +58,7 @@ async function readReceipt() {
   await page.locator('#receipt-tab').click();
   await click('記録を追加');
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: await photo() });
-  await click('AIで読み取る');
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
 }
 try {
   await page.goto(process.env.PWA_E2E_URL);
@@ -88,7 +89,7 @@ try {
   await page.locator('#settings-tab').click(); await click('ログイン・利用状況');
   await page.getByText('今日のAI読み取り 1 / 5回 · 登録なし', { exact: true }).waitFor();
 
-  // On a device without a guest, cancelling the bot check keeps the photo and explains what happened.
+  // On a device without a guest, cancelling the bot check discards the photo and explains what happened.
   await page.evaluate(() => localStorage.removeItem('kakeimatch.aiGuestSecret'));
   await page.reload(); await page.getByText('今月の支出', { exact: false }).first().waitFor();
   await page.evaluate(() => { window.__holdBotCheck = true; });
@@ -101,8 +102,8 @@ try {
   const box = await dialog.boundingBox();
   await page.mouse.click(187, box.y / 2);
   await dialog.waitFor({ state: 'detached' });
-  await page.getByText('確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。手で入力するか、もう一度読み取ってください。', { exact: true }).waitFor();
+  await page.getByText('確認をやめたので、AIでは読み取りませんでした。読み取り用の写真は破棄しました。手で入力するか、もう一度読み取ってください。', { exact: true }).waitFor();
   assert.equal(calls.created, 1);
   assert.deepEqual(errors, []);
-  console.log('PASS: guest AI runs a bot check once, reads without an account, explains the daily limit, shows today\'s count, and keeps the photo when the check is cancelled.');
+  console.log('PASS: guest AI runs a bot check once, reads without an account, explains the daily limit, shows today\'s count, and discards the photo when the check is cancelled.');
 } catch (error) { console.log(await page.locator('body').innerText()); throw error; } finally { await browser.close(); }

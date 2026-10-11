@@ -8,10 +8,10 @@ type StepText = { title: string; note: string };
 
 /** docs/DESIGN.md 読み取り中: the words of each step in each state. */
 export function readingStepText(step: 'saved' | ReadingStep, state: StepState, elapsedSeconds = 0): StepText {
-  if (step === 'saved') return { title: '写真を保存しました', note: 'この端末に。読み取れなくても消えません' };
+  if (step === 'saved') return { title: '写真を準備しました', note: '読み取り後に破棄します' };
   if (step === 'reading') {
     if (state === 'done') return { title: '文字を読み取りました', note: '' };
-    if (state === 'failed') return { title: '読み取れませんでした', note: '写真は残っています' };
+    if (state === 'failed') return { title: '読み取れませんでした', note: '写真は破棄しました' };
     return { title: '文字を読み取っています', note: elapsedSeconds >= LONG_READING_SECONDS ? '品目が多いレシートは時間がかかります' : '数秒かかります' };
   }
   return { title: state === 'now' ? '品目をカテゴリに分けています' : '品目をカテゴリに分けます', note: '' };

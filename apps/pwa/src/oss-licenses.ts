@@ -25,4 +25,10 @@ export function renderOssLicenses(container: HTMLElement) {
   license.textContent = licenseText;
   details.append(summary, license);
   container.append(name, description, attribution, link, details);
+  // Additional bundled OCR components carry their complete notices in the same shipped document.
+  const extra = document.createElement('details');
+  const extraTitle = document.createElement('summary'); extraTitle.textContent = '写真の個人情報検出に使用するソフトウェア';
+  const extraText = document.createElement('pre'); extraText.className = 'oss-license-text';
+  extraText.textContent = notices.slice(notices.indexOf('## Tesseract.js'));
+  extra.append(extraTitle, extraText); container.append(extra);
 }

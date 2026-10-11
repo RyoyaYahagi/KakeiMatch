@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -31,7 +32,24 @@ try {
     return canvas.toDataURL('image/png').split(',')[1];
   }), 'base64');
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: photo });
-  await click('AIで読み取る');
+  // The photo opens full screen; a tap zooms into that spot and another tap fits it again.
+  await click('レシート画像を拡大して見る');
+  const viewer = page.getByRole('dialog', { name: 'レシート画像' });
+  await viewer.waitFor();
+  const image = viewer.locator('img');
+  const fitted = await image.boundingBox();
+  await image.click({ position: { x: fitted.width * 0.8, y: fitted.height * 0.85 } });
+  await page.waitForFunction(() => document.querySelector('.receipt-image-viewer')?.classList.contains('is-zoomed'));
+  const zoomed = await image.boundingBox();
+  assert.ok(zoomed.width > fitted.width * 2, 'the photo is zoomed');
+  const stage = await page.evaluate(() => { const node = document.querySelector('.receipt-image-viewer-stage'); return { left: node.scrollLeft, top: node.scrollTop }; });
+  assert.ok(stage.left > 0 && stage.top > 0, 'the tapped point is scrolled into view');
+  if (process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH });
+  await image.click();
+  await page.waitForFunction(() => !document.querySelector('.receipt-image-viewer')?.classList.contains('is-zoomed'));
+  await viewer.getByRole('button', { name: '閉じる', exact: true }).click();
+  await viewer.waitFor({ state: 'detached' });
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Check Shop');
   // Items and adjustments add up to the total, so only the total needs comparing.
   const check = page.locator('#receipt-total-check');
@@ -56,24 +74,7 @@ try {
   await page.locator('#receipt-tax').fill('');
   await click('全体');
   await page.locator('#receipt-amount').fill('900');
-  // The photo opens full screen; a tap zooms into that spot and another tap fits it again.
-  await click('レシート画像を拡大して見る');
-  const viewer = page.getByRole('dialog', { name: 'レシート画像' });
-  await viewer.waitFor();
-  const image = viewer.locator('img');
-  const fitted = await image.boundingBox();
-  await image.click({ position: { x: fitted.width * 0.8, y: fitted.height * 0.85 } });
-  await page.waitForFunction(() => document.querySelector('.receipt-image-viewer')?.classList.contains('is-zoomed'));
-  const zoomed = await image.boundingBox();
-  assert.ok(zoomed.width > fitted.width * 2, 'the photo is zoomed');
-  const stage = await page.evaluate(() => { const node = document.querySelector('.receipt-image-viewer-stage'); return { left: node.scrollLeft, top: node.scrollTop }; });
-  assert.ok(stage.left > 0 && stage.top > 0, 'the tapped point is scrolled into view');
-  if (process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH });
-  await image.click();
-  await page.waitForFunction(() => !document.querySelector('.receipt-image-viewer')?.classList.contains('is-zoomed'));
-  await viewer.getByRole('button', { name: '閉じる', exact: true }).click();
-  await viewer.waitFor({ state: 'detached' });
-  assert.equal(await page.locator('#receipt-amount').inputValue(), '900');
+  assert.equal(await page.locator('.receipt-preview-open').count(), 0);
   assert.deepEqual(errors, []);
   console.log('PASS: a total that matches items is confirmed, a tax-exclusive total matches with its tax, a mismatch shows the difference, and the photo opens full screen with tap zoom.');
 } finally {

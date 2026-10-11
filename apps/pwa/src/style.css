@@ -857,3 +857,10 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .detail-save .form-actions { position: static; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
 .detail-save button { width: 100%; min-width: 0; margin: 0; }
 .detail-save:has(.is-collapsed) .status:empty { display: none; }
+
+.receipt-privacy-dialog { max-width: min(100% - 2rem, 36rem); max-height: 90dvh; overflow-y: auto; padding: var(--space-4, 1rem); background: var(--surface); color: var(--text); border: 1px solid var(--border); }
+.receipt-mask-canvas { display: block; width: auto; max-width: 100%; max-height: 60dvh; height: auto; margin-inline: auto; touch-action: none; }
+.receipt-privacy-dialog fieldset { margin-block: 1rem; border: 1px solid var(--border); }
+.receipt-privacy-dialog button { margin: .25rem; }
+
+.receipt-privacy-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; background: var(--surface); padding-block: .5rem; }

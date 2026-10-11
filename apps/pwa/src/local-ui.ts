@@ -30,7 +30,7 @@ import { initializeDeviceLinkUi } from './device-link-ui';
 import { restoreStandaloneBudget, type LocalBudgetSettings } from './local-backup';
 import { ActualBudgetSelectionRequiredError, createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { LocalDataRepository } from '../../../src/lib/local-data';
-import { LocalReceiptService, LocalReceiptServiceError, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
+import { LocalReceiptService, type LocalReceipt, type ReceiptItem, type ReceiptAdjustment } from './local-receipts';
 import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
 import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
@@ -118,6 +118,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     remove.classList.add('destructive'); remove.prepend(icon('trash')); return remove;
   }
   let imageUrl: string | null = null;
+  let cancelReceiptRead = () => {};
+  window.addEventListener('pagehide', () => { cancelReceiptRead(); receipts.discardTemporaryImages(); if (imageUrl) URL.revokeObjectURL(imageUrl); imageUrl = null; });
   let resetMasterUi = () => {};
   let openAccountBalances: (beforeShow: () => void) => Promise<void> = () => Promise.resolve();
   let flushReceiptDraft: () => Promise<void> = () => Promise.resolve();
@@ -136,6 +138,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     closeMoneyForward();
     await flushReceiptDraft(); flushReceiptDraft = () => Promise.resolve();
     ensureScreen(revision);
+    cancelReceiptRead();
     resetMasterUi(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
     el('household-view').hidden = tab !== 'home'; el('settings-view').hidden = true; view.hidden = tab === 'home';
     for (const id of ['home', 'receipt', 'reconciliation', 'settings']) {
@@ -218,11 +221,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     header.append(title, close);
     const capture = document.createElement('input'); capture.type = 'file'; capture.accept = 'image/jpeg,image/png,image/webp'; capture.setAttribute('capture', 'environment'); capture.hidden = true;
     const library = document.createElement('input'); library.type = 'file'; library.accept = capture.accept; library.hidden = true;
-    const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; closeRecordSheet(); void receipts.saveImage(file).then(receipt => receiptEditor(receipt)).catch(report); }); };
+    const saveFile = (input: HTMLInputElement) => { input.addEventListener('change', () => { const file = input.files?.[0]; if (!file) return; input.value = ''; closeRecordSheet(); void receipts.saveImage(file).then(receipt => receiptEditor(receipt)).catch(report); }); };
     saveFile(capture); saveFile(library);
     const camera = document.createElement('button'); camera.type = 'button'; camera.className = 'choice-primary'; camera.setAttribute('aria-label', 'レシートを撮る');
     const cameraBadge = document.createElement('span'); cameraBadge.className = 'choice-primary-icon'; cameraBadge.append(icon('camera'));
-    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真を残して、品目まで読み取れます'));
+    const cameraText = document.createElement('span'); cameraText.className = 'choice-primary-text'; cameraText.append(text('strong', 'レシートを撮る'), text('span', '写真から品目まで読み取れます'));
     camera.append(cameraBadge, cameraText, icon('chevronRight'));
     camera.addEventListener('click', () => capture.click());
     const choices = document.createElement('ul'); choices.className = 'choice-list';
@@ -240,7 +243,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       choice.replaceChildren(icon(symbol), words);
       item.append(choice); choices.append(item);
     }
-    body.append(grabber, header, capture, library, camera, choices, text('p', '写真と入力内容はこの端末に保存します。読み取りは「AIで読み取る」を選んだ時だけ行います。', 'muted'));
+    body.append(grabber, header, capture, library, camera, choices, text('p', '写真は一時的に扱い、保存しません。読み取りは「AIで読み取る」を選んだ時だけ行います。入力内容はこの端末に保存します。', 'muted'));
     recordSheet.replaceChildren(body);
     // Swiping the sheet down by more than 80px closes it, like other bottom sheets on the phone.
     let dragStart: number | null = null;
@@ -582,8 +585,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     if (lastUsed) initial.categoryId = lastUsed;
     let items = initial.items.map(item => ({ ...item }));
     let adjustments = initial.adjustments.map(item => ({ ...item }));
-    const blob = await repository.getBlob(receipt.image?.blobId ?? 'missing');
+    const blob = await receipts.getImage(receipt.id);
     ensureScreen(screen);
+    cancelReceiptRead = () => { receipts.discardTemporaryImage(receipt.id); };
     const editorTabs = document.createElement('div'); editorTabs.className = 'segmented entry-editor-tabs';
     editorTabs.setAttribute('role', 'group'); editorTabs.setAttribute('aria-label', '入力内容の表示');
     const overviewTab = document.createElement('button'); overviewTab.type = 'button'; overviewTab.textContent = '全体';
@@ -591,11 +595,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     editorTabs.append(overviewTab, itemsTab);
     const overviewExtras = document.createElement('div'); overviewExtras.className = 'entry-overview-extras';
     view.append(editorTabs, overviewExtras);
-    if (!blob && receipt.image) overviewExtras.append(text('p', 'レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。'));
+    if (!blob && receipt.image) overviewExtras.append(text('p', '読み取り用の写真は保存していません。読み取り直す場合は写真を選び直してください。保存済みの内容は利用できます。'));
     // The frame carries the reading motion over the photo while AI reads it.
     const previewFrame = document.createElement('div'); previewFrame.className = 'receipt-preview-frame';
     if (blob) {
-      imageUrl = URL.createObjectURL(blob.blob); const src = imageUrl;
+      imageUrl = URL.createObjectURL(blob); const src = imageUrl;
       const img = document.createElement('img'); img.src = src; img.alt = '保存したレシート'; img.className = 'receipt-preview';
       // The photo opens full screen, so the printed total can be checked up close.
       const open = document.createElement('button'); open.type = 'button'; open.className = 'receipt-preview-open'; open.setAttribute('aria-label', 'レシート画像を拡大して見る');
@@ -657,14 +661,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const readingBadge = text('span', '読み取り中', 'reading-badge'); readingBadge.hidden = true; previewFrame.append(readingBadge);
     const failure = document.createElement('div'); failure.className = 'reading-failure'; failure.hidden = true;
     // Failed reads worth trying again with the same photo; quota, sign-in and image limits are not.
-    const retryable = (error: unknown) => !(error instanceof LocalReceiptServiceError) || (!error.retryAfterWait && ['offline_or_unavailable', 'invalid_ai_response', 'unavailable'].includes(error.code));
     const retake = document.createElement('input'); retake.type = 'file'; retake.accept = 'image/jpeg,image/png,image/webp'; retake.setAttribute('capture', 'environment'); retake.hidden = true;
     retake.addEventListener('change', () => {
-      const file = retake.files?.[0]; if (!file) return;
+      const file = retake.files?.[0]; if (!file) return; retake.value = '';
       void (async () => {
-        const replacement = await receipts.saveImage(file);
-        // The new photo replaces this one; the old pending receipt goes away so it is not left waiting.
-        await receipts.deletePending(receipt.id);
+        const replacement = await receipts.replaceImage(receipt.id, file);
+        cancelReceiptRead = () => {};
         await receiptEditor(replacement);
       })().catch(report);
     });
@@ -687,6 +689,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       const submitLabel = submit.textContent;
       submit.textContent = '読み取り中…'; submit.hidden = false;
       submit.after(waitButton);
+      const readController = new AbortController();
+      readController.signal.addEventListener('abort', () => {
+        // The guest check belongs to this read and must not outlive a cancelled screen.
+        document.querySelector('.bot-check-dialog')?.dispatchEvent(new Event('cancel', { cancelable: true }));
+      }, { once: true });
       let abandoned = false;
       let stage: 'reading' | 'categorizing' = 'reading';
       const finish = (keepProgress = false) => {
@@ -699,16 +706,21 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         submit.textContent = submitLabel;
       };
       const stopWaiting = async () => {
-        abandoned = true; finish();
+        abandoned = true; readController.abort(); void receipts.discardImage(receipt.id).catch(report); finish();
+        previewFrame.replaceChildren(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
+        aiButton.hidden = true;
+        if (!aiArea.querySelector('[data-retake]')) { const choose = button('写真を選び直す', () => retake.click()); choose.dataset.retake = 'true'; aiArea.append(choose); }
         if (stage === 'categorizing') {
           // The text is already read: show it and let the categories be chosen by hand.
           const updated = await receipts.get(receipt.id);
           if (updated && form.isConnected) await receiptEditor(updated, { useExtraction: true, preserveAccountId: account.value });
           el('message').textContent = '読み取った内容を表示しました。カテゴリは自分で選べます。';
-        } else el('message').textContent = '読み取りを待たずに入力できます。読み取りが終わっても、入力した内容はそのままです。';
+        } else el('message').textContent = '読み取りを中止し、写真を破棄しました。手で入力できます。';
       };
+      cancelReceiptRead = () => { abandoned = true; readController.abort(); finish(); };
       try {
-        await receipts.analyze(receipt.id);
+        await receipts.analyze(receipt.id, readController.signal);
+        previewFrame.replaceChildren(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
         if (abandoned) return;
         stage = 'categorizing'; progress.setStep('categorizing');
         submit.textContent = '分類を待っています…'; waitButton.textContent = '分類を待たずに自分で選ぶ';
@@ -730,26 +742,20 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         if (!abandoned) finish();
       } catch (error) {
         if (abandoned) return;
+        previewFrame.replaceChildren(); if (imageUrl) { URL.revokeObjectURL(imageUrl); imageUrl = null; }
         report(error);
         finish(true); progress.fail(); aiButton.hidden = true;
         // docs/UX.md 読み取り中: say what failed and what to do next; try again first when it may work.
         const retakeButton = button('撮り直す', () => retake.click()); retakeButton.prepend(icon('camera'));
-        failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', 'ぼやけや反射があれば撮り直してください。'), retakeButton);
+        failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', '写真は破棄しました。読み取り直す場合は撮り直してください。'), retakeButton);
         if (error instanceof Error && /アカウント|ログイン|認証|サインイン/.test(error.message)) failure.append(button('アカウントを確認する', options.openAccount));
         failure.hidden = false;
-        if (retryable(error)) {
-          const retry = button('もう一度読み取る', async () => { clearFailure(); await readPhoto(); }, false);
-          const manual = button('手で入力して続ける', () => clearFailure()); manual.className = 'text-button';
-          const clearFailure = () => { retry.remove(); manual.remove(); submit.hidden = false; failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
-          submit.hidden = true; submit.after(retry, manual);
-        } else {
-          const close = () => { failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = false; };
-          const manual = button('手で入力して続ける', close); manual.className = 'text-button'; failure.append(manual);
-        }
+        const close = () => { failure.hidden = true; failure.replaceChildren(); progress.stop(); aiButton.hidden = true; };
+        const manual = button('手で入力して続ける', close); manual.className = 'text-button'; failure.append(manual);
       }
     };
     const aiButton = button(receipt.extraction ? '再読み取り' : 'AIで読み取る', readPhoto);
-    if (blob && !editing) { aiArea.append(aiButton, failure, retake); overviewExtras.append(aiArea); }
+    if (!editing && receipt.image) { if (blob) aiArea.append(aiButton); else aiArea.append(button('写真を選び直す', () => retake.click())); aiArea.append(failure, retake); overviewExtras.append(aiArea); }
     if (editing) aiArea.replaceChildren();
     const merchantLabel = shortLabel(merchant.id, '店名', receipt.image ? '' : '・支払先');
     const dateLabel = shortLabel(date.id, '日付');
@@ -1516,7 +1522,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
   // Settings is shown without open(), so leaving for it ends in-flight renders here.
-  el('settings-tab').addEventListener('click', () => { screenRevision++; screenTab = 'settings'; });
+  el('settings-tab').addEventListener('click', () => { cancelReceiptRead(); receipts.discardTemporaryImages(); if (imageUrl) URL.revokeObjectURL(imageUrl); imageUrl = null; screenRevision++; screenTab = 'settings'; });
   el('add-record').addEventListener('click', () => {
     const active = ['home', 'receipt', 'reconciliation', 'settings'].find(id => el(`${id}-tab`).classList.contains('active'));
     chooserOrigin = active === 'home' ? home : active === 'reconciliation' ? reviewPage : active === 'settings' ? async () => { el('settings-tab').click(); } : recordsPage;
