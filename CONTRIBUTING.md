@@ -68,7 +68,7 @@ mainへのマージは人間が行います。AIエージェントの担当範�
 
 merge後はfeature branchを削除します。
 
-main更新後はGitHub ActionsのCIで再検証し、成功したcommitを本番へデプロイします。必要なCI設定と失敗時の対応は[デプロイ手順](docs/DEPLOYMENT.md)を参照してください。
+PRのGitHub Actions CI成功を確認してから、人間がmainへマージします。main更新を検知したCloudflare Workers Buildsが本番へデプロイします。Cloudflare側の設定と失敗時の対応は[デプロイ手順](docs/DEPLOYMENT.md)を参照してください。
 
 ## Commit
 

@@ -2,10 +2,8 @@ name: CI
 
 # Private-repository minutes are billed per job and rounded up to whole minutes,
 # so checks share one job instead of fanning out into many short jobs.
-# Check merged commits before deployment; every PR returns the required ci check.
+# Every PR returns the required ci check; Workers Builds deploys main after merge.
 on:
-  push:
-    branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
@@ -15,8 +13,7 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Never interrupt a production deployment when another merge arrives.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # No Docker service, Actual Server, household SQLite, or legacy secret is provisioned.
 # Legacy integration tests create temporary synthetic fixtures only.
@@ -100,48 +97,3 @@ jobs:
             e2e-logs/
             ${{ runner.temp }}/kakeimatch-pwa-dev.log
           retention-days: 7
-
-  deploy:
-    needs: ci
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: production
-      url: https://kakeimatch.yhgry.workers.dev
-    concurrency:
-      group: deploy-production
-      cancel-in-progress: false
-    env:
-      CF_SEND_TELEMETRY: 'false'
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      ACCOUNT_D1_ID: ${{ vars.ACCOUNT_D1_ID }}
-      ACCOUNT_D1_NAME: ${{ vars.ACCOUNT_D1_NAME }}
-      TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.15.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - name: Validate production configuration
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        shell: bash
-        run: |
-          for name in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID ACCOUNT_D1_ID ACCOUNT_D1_NAME TURNSTILE_SITE_KEY; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing production configuration: $name"
-              exit 1
-            fi
-          done
-      - run: pnpm install --frozen-lockfile
-      - name: Validate production build without uploading
-        run: pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run
-      - name: Deploy validated production build
-        run: pnpm --dir apps/pwa exec cf deploy --prebuilt --mode production-deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

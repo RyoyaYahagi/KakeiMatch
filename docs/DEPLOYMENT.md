@@ -78,31 +78,39 @@ unset ACCOUNT_BOOTSTRAP_SECRET
 
 旧Actual ServerからexportしたZIPにはActual Budgetの家計簿データだけが含まれます。PWAのブラウザー版Actualへimportしてください。旧Next.jsにはKakeiMatch `.kmb` export機能がなく、旧receipt/statement metadataも自動移行されません。local-first PWAで作成した `.kmb` には、Actual BudgetとKakeiMatch端末記録、残っているreceipt/statement原本が含まれます。PWAは旧server SQLiteや旧receipt/statement directoryを直接読みません。新しい端末profileを確認するまで旧環境の検証済みbackupを保管してください。対応するexportに含まれないlegacy記録は個別に手動移行してください。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。Actual orphan cleanupの特殊制約はIssue #58で管理します。
 
-## GitHub Actionsによる本番更新
+## Cloudflare Workers Buildsによる本番更新
 
-通常の本番更新は、人間がPRをmainへSquash mergeした後に `.github/workflows/ci.yml` が行います。mainのcommitに対して検証job `ci` が成功した場合だけ、`deploy` jobが本番Workerを更新します。PRと `workflow_dispatch` ではデプロイしません。mainへの直接pushとAIによるmainへのマージは禁止です。
+通常の本番更新は、PRのGitHub Actions検証job `ci` が成功し、人間がmainへSquash mergeした後にCloudflare Workers Buildsが行います。GitHubのmain rulesetは、最新mainとの整合を満たしたPRの `ci` 成功を必須にします。mainへの直接pushとAIによるmainへのマージは禁止です。GitHub ActionsはPRの検証を担当し、本番公開は行いません。マージ後のCI成功を待つ構成ではありません。
 
-GitHubのリポジトリ設定（または `production` Environment）に、次の設定を登録します。
+既存Worker `kakeimatch` のSettings > Buildsから `RyoyaYahagi/KakeiMatch` を連携し、次の設定を使います。リポジトリ連携の手順は[Cloudflare公式「Workers Builds」](https://developers.cloudflare.com/workers/ci-cd/builds/)、各項目は[公式の設定資料](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)を参照してください。連携設定はCloudflare側で管理し、このリポジトリの変更だけでは連携は有効になりません。
 
-| 種類 | 名前 | 用途 |
-| --- | --- | --- |
-| Secret | `CLOUDFLARE_API_TOKEN` | 対象アカウントの本番Workerを更新するCI専用トークン |
-| Variable | `CLOUDFLARE_ACCOUNT_ID` | 本番Workerを持つCloudflareアカウント |
-| Variable | `ACCOUNT_D1_ID` | 既存の本番account専用D1のID |
-| Variable | `ACCOUNT_D1_NAME` | 同じ本番D1の名前 |
-| Variable | `TURNSTILE_SITE_KEY` | 本番用の公開site key |
+| 項目 | 設定 |
+| --- | --- |
+| Production branch | `main` |
+| Root directory | リポジトリroot（`apps/pwa`ではない） |
+| Build command | `pnpm install --frozen-lockfile && pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run` |
+| Deploy command | `pnpm --dir apps/pwa exec cf deploy --prebuilt --mode production-deploy` |
+| 非本番branchの自動build・preview | 無効（PR検証はGitHub Actionsで行う） |
 
-CIは設定が不足すると、値を出力せず設定名だけを表示して失敗します。トークンは必要なWorker更新・binding参照権限に限定してください。Gemini等のprovider keyやアプリの認証secretは、引き続き本番WorkerのSecret bindingで管理します。CIへ複製しません。
+Node.js 22.18以上と、リポジトリで固定したpnpm 10.15.0を使います。本番modeでbuildを検証し、その成果物をprebuiltで公開します。`cf` は `apps/pwa/package.json` に固定した版を使います。通常modeではpreview Workerを選ぶため、`production-deploy` を省略しません。
 
-デプロイjobはGitHub-hosted runner上の `production` Environmentで動きます。本番modeで `cf deploy --dry-run` によるbuildと検証を行い、同じ成果物を `cf deploy --prebuilt --mode production-deploy` で公開します。認証トークンは設定確認と公開stepだけに渡します。この認証・dry-run・prebuiltの使い方は[Cloudflare公式「Use cf in CI」](https://developers.cloudflare.com/cf/ci/)に従います。
+Cloudflare側のBuild variablesに、次の値を登録します。build用の環境変数とWorkerの実行時bindingは別設定です。[Cloudflare公式「Configuration」](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
 
-本番デプロイは直列化し、mainに次の変更が届いても進行中の公開を中断しません。CIはD1 migrationやSecretの新規登録を自動実行しません。schemaやbindingを変更するPRでは、人間が必要な準備を終えてからマージします。
+| 名前 | 用途 |
+| --- | --- |
+| `ACCOUNT_D1_ID` | 既存の本番account専用D1のID |
+| `ACCOUNT_D1_NAME` | 同じ本番D1の名前 |
+| `TURNSTILE_SITE_KEY` | 本番用の公開site key |
 
-公開に失敗した場合は、Actionsの `deploy` jobのログを確認し、設定不足や権限を修正して失敗したjobを再実行します。古いcommitの再実行は、その版への差し戻しになります。再実行前に対象commitと現在のmain・公開版を確認してください。
+GitHubへのデプロイ用Secret登録は不要です。公開用のAPI tokenはWorkers Builds側で設定します。Gemini等のprovider keyやアプリの認証secretは、引き続き本番WorkerのSecret bindingで管理し、build用に複製しません。[Cloudflare公式「Configuration」](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
+
+D1 migrationやSecretの新規登録は自動実行しません。schemaやbindingを変更するPRでは、人間が必要な準備を終えてからマージします。
+
+公開に失敗した場合は、Cloudflare側のBuild historyでログを確認し、設定不足や権限を修正して対象buildを再実行します。古いcommitの再実行は、その版への差し戻しになります。再実行前に対象commitと現在のmain・公開版を確認してください。
 
 ## 手動の本番更新・復旧手順
 
-以下は人間による初回準備と復旧用です。通常の更新は上記CIを使います。
+以下は人間による初回準備と復旧用です。通常の更新は上記Workers Buildsを使います。
 
 本番D1のIDと名前は運用者が管理し、下記の環境変数へ設定します。preview D1を流用しません。公開日時、Worker・D1・version・deploymentの識別子、個別の検証結果は、Git管理対象外のローカル運用記録で管理します。
 

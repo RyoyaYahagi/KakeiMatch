@@ -92,4 +92,4 @@ AIエージェントによるmainへのマージは禁止です。PRの作成・
 
 実装を依頼されたら、変更と検証を終えた後、作業branchをoriginへpushしてPull Requestを作成するところまで進めてください。既に同じ作業のPull Requestがあれば新規作成せず、その内容を確認して必要に応じて更新してください。検証できなかった項目や未解決事項はPull Request本文に明記してください。
 
-本番デプロイは、人間がmainへマージした後にGitHub ActionsのCIが検証成功時に行います。通常の実装作業では、AIエージェントから本番deployを実行しないでください。設定と復旧手順はdocs/DEPLOYMENT.mdを参照してください。
+PRのGitHub Actions CI成功をmainへのマージ条件にします。本番デプロイは、人間がmainへマージした後にCloudflare Workers Buildsが行います。通常の実装作業では、AIエージェントから本番deployを実行しないでください。設定と復旧手順はdocs/DEPLOYMENT.mdを参照してください。
