@@ -20,7 +20,8 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityDate: '2026-09-29',
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
-      triggers: [{ type: 'scheduled', schedule: '0 18 * * *' }],
+      // Build Output previews reject triggers; scheduled cleanup runs in production.
+      ...(production ? { triggers: [{ type: 'scheduled' as const, schedule: '0 18 * * *' }] } : {}),
       assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html'] },
       env: {
         ASSETS: bindings.assets(),
