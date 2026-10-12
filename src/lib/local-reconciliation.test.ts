@@ -22,7 +22,7 @@ function makeLedger() {
   let failNextImport = false;
   let failNextUpdate = false;
   let importCount = 0;
-  const calls: Array<{ transactionId: string; amountYen?: number; cleared: true }[]> = [];
+  const calls: Array<{ transactionId: string; amountYen?: number; cleared: boolean }[]> = [];
   const ledger = {
     getRecentTransactions: async () => [], getTransactions: async ({ startDate, endDate }: { startDate: string; endDate: string }) =>
       [...transactions.values()].filter(item => item.date >= startDate && item.date <= endDate), getMonthlySpending: async () => 0,
@@ -53,13 +53,13 @@ function makeLedger() {
       }
       return transaction;
     },
-    applyTransactionUpdates: async (updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>) => {
+    applyTransactionUpdates: async (updates: Array<{ transactionId: string; amountYen?: number; cleared: boolean }>) => {
       calls.push(updates);
       if (failNextUpdate) { failNextUpdate = false; throw new Error("synthetic update failure"); }
       for (const update of updates) {
         const existing = transactions.get(update.transactionId);
         if (!existing) throw new Error("missing transaction");
-        transactions.set(existing.id, { ...existing, ...(update.amountYen === undefined ? {} : { amountYen: update.amountYen }), cleared: true });
+        transactions.set(existing.id, { ...existing, ...(update.amountYen === undefined ? {} : { amountYen: update.amountYen }), cleared: update.cleared });
       }
     },
   };
@@ -633,5 +633,104 @@ describe("statement registration options", () => {
     const run = await service.run();
     const saved = await service.noReceipt(run.runId, "purchase", { accountId: "account-1", categoryId: "category-1" });
     expect(saved).toMatchObject({ accountId: "account-2", status: "applied" });
+  });
+});
+
+describe('reconciliation decisions after review', () => {
+  async function manualMatch(amountYen = -1150, merchant = 'Synthetic Receipt') {
+    const repo = await repository(); const mock = makeLedger();
+    mock.transactions.set('native', { id: 'native', date: '2026-09-10', amountYen, kind: 'expense', payeeName: merchant, categoryName: null, accountId: 'account-1', cleared: false });
+    await seed(repo, [makeStatement('statement-1', { merchant: 'Synthetic Statement' })]);
+    const service = createLocalReconciliationService(repo, mock);
+    const run = await service.run(); const decision = await service.sameExpense(run.runId, 'statement-1', 'actual:native');
+    return { repo, mock, service, decision };
+  }
+
+  it('undo restores the original amount and cleared state, removes learned aliases, and allows a different match without importing', async () => {
+    const { repo, mock, service, decision } = await manualMatch();
+    expect(await repo.list('merchant-mapping')).toHaveLength(1);
+    await service.undoSameExpense(decision.id);
+    expect(mock.transactions.get('native')).toMatchObject({ amountYen: -1150, cleared: false });
+    expect(await service.resolutions()).toEqual([]);
+    expect(await repo.list('merchant-mapping')).toEqual([]);
+    expect((await repo.list<{ targetType: string }>('correction-audit')).some(row => row.value.targetType === 'reconciliation-undo')).toBe(true);
+    mock.transactions.set('correct', { ...mock.transactions.get('native')!, id: 'correct', amountYen: -1200, payeeName: 'Synthetic Statement' });
+    const run = await service.run();
+    expect(run.statementResults[0].status).toBe('needs_review');
+    expect(run.candidates.map(row => row.receiptId)).toContain('actual:native');
+    const corrected = await service.sameExpense(run.runId, 'statement-1', 'actual:correct');
+    expect(corrected).toMatchObject({ source: 'user', actualTransactionId: 'correct', status: 'applied' });
+    expect(mock.importedCount()).toBe(0); expect(mock.transactions.size).toBe(2);
+  });
+
+  it('never automatically rematches an undone statement, even when the original pair exactly matches', async () => {
+    const { service, decision, mock } = await manualMatch(-1200);
+    await service.undoSameExpense(decision.id);
+    mock.transactions.set('native', { ...mock.transactions.get('native')!, payeeName: 'Synthetic Statement' });
+    for (let index = 0; index < 2; index++) {
+      const run = await service.run(); expect(run.statementResults[0].status).toBe('needs_review');
+      expect(await service.resolutions()).toEqual([]);
+    }
+  });
+
+  it('reserves the pair when rollback fails and retries safely after a service restart', async () => {
+    const { repo, mock, service, decision } = await manualMatch();
+    mock.failUpdate(); await expect(service.undoSameExpense(decision.id)).rejects.toThrow('synthetic update failure');
+    const stored = (await service.resolutions())[0];
+    expect(stored).toMatchObject({ status: 'failed', undoRequestedAt: expect.any(String) });
+    expect((await service.run()).candidates).toEqual([]);
+    const restarted = createLocalReconciliationService(repo, mock);
+    await restarted.undoSameExpense(decision.id);
+    expect(await restarted.resolutions()).toEqual([]);
+    expect(mock.transactions.get('native')).toMatchObject({ amountYen: -1150, cleared: false });
+    expect((await restarted.run()).statementResults[0].status).toBe('needs_review');
+  });
+
+  it('finishes a rollback whose ledger update already completed before interruption', async () => {
+    const { repo, mock, decision } = await manualMatch();
+    await repo.put({ id: decision.id, kind: 'reconciliation-resolution', value: { ...decision, status: 'processing', undoRequestedAt: timestamp }, updatedAt: timestamp });
+    mock.transactions.set('native', { ...mock.transactions.get('native')!, amountYen: -1150, cleared: false });
+    const before = mock.calls.length;
+    await createLocalReconciliationService(repo, mock).undoSameExpense(decision.id);
+    expect(mock.calls.length).toBe(before); expect(await repo.get(decision.id)).toBeNull();
+  });
+
+  it('refuses undo of later edits, deleted records, and automatic decisions', async () => {
+    const { mock, service, decision } = await manualMatch();
+    mock.transactions.set('native', { ...mock.transactions.get('native')!, amountYen: -1800 });
+    await expect(service.undoSameExpense(decision.id)).rejects.toMatchObject({ code: 'undo_record_changed' });
+    expect(mock.transactions.get('native')?.amountYen).toBe(-1800);
+    mock.transactions.delete('native');
+    await expect(service.undoSameExpense(decision.id)).rejects.toMatchObject({ code: 'undo_record_changed' });
+    const repo = await repository(); const autoMock = makeLedger();
+    autoMock.transactions.set('native', { id: 'native', date: '2026-09-10', amountYen: -1200, kind: 'expense', payeeName: '架空ストア新宿', categoryName: null, accountId: 'account-1', cleared: false });
+    await seed(repo, [makeStatement('auto')]); const automatic = createLocalReconciliationService(repo, autoMock); await automatic.run();
+    await expect(automatic.undoSameExpense((await automatic.resolutions())[0].id)).rejects.toMatchObject({ code: 'undo_unavailable' });
+  });
+
+  it('retains a shared alias until all supporting manual decisions have been undone', async () => {
+    const { repo, mock, service, decision } = await manualMatch();
+    const secondStatement = makeStatement('statement-2', { usedDate: '2026-09-20', merchant: 'Synthetic Statement' });
+    await seed(repo, [secondStatement]);
+    mock.transactions.set('native-2', { ...mock.transactions.get('native')!, id: 'native-2', date: '2026-09-20', amountYen: -1150, cleared: false });
+    const run = await service.run(); const second = await service.sameExpense(run.runId, 'statement-2', 'actual:native-2');
+    await service.undoSameExpense(decision.id); expect(await repo.list('merchant-mapping')).toHaveLength(1);
+    await service.undoSameExpense(second.id); expect(await repo.list('merchant-mapping')).toEqual([]);
+  });
+
+  it('keeps suspected use separate, persists through restart, releases candidates, and clears to manual review', async () => {
+    const repo = await repository(); const mock = makeLedger();
+    await seed(repo, [makeStatement('suspected')]); const service = createLocalReconciliationService(repo, mock);
+    const run = await service.run(); await service.markSuspectedUse(run.runId, 'suspected');
+    expect(await service.resolutions()).toEqual([]); expect(mock.calls).toEqual([]);
+    mock.transactions.set('later', { id: 'later', date: '2026-09-10', amountYen: -1200, kind: 'expense', payeeName: '架空ストア新宿', categoryName: null, accountId: 'account-1', cleared: false });
+    const restarted = createLocalReconciliationService(repo, mock);
+    expect(await restarted.suspectedUses()).toEqual([{ statementId: 'suspected', markedAt: expect.any(String) }]);
+    expect((await restarted.run()).statementResults).toEqual([]);
+    await restarted.clearSuspectedUse('suspected');
+    const review = await restarted.run(); expect(review.statementResults[0].status).toBe('needs_review');
+    expect(await restarted.suspectedUses()).toEqual([]);
+    await restarted.sameExpense(review.runId, 'suspected', 'actual:later');
+    expect(mock.importedCount()).toBe(0);
   });
 });

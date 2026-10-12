@@ -12,7 +12,7 @@ function span(className: string, value = '') { const node = document.createEleme
  * docs/UX.md ホーム: a box with up to three statements only while something needs a decision,
  * one quiet line for what matched by itself, and a hint before the first import.
  */
-export function renderHomeAttention(target: HTMLElement, counts: HomeAttentionCounts | null, items: HomeAttentionItem[], autoMatched: number, openReconciliation: () => Promise<unknown>) {
+export function renderHomeAttention(target: HTMLElement, counts: HomeAttentionCounts | null, items: HomeAttentionItem[], matchedCount: number, openReconciliation: () => Promise<unknown>) {
   target.replaceChildren();
   const open = () => { void openReconciliation(); };
   if (!counts) {
@@ -46,11 +46,11 @@ export function renderHomeAttention(target: HTMLElement, counts: HomeAttentionCo
     box.append(header, list);
     target.append(box);
   }
-  if (autoMatched > 0) {
+  if (matchedCount > 0) {
     const line = document.createElement('p'); line.className = 'auto-matched-line';
     const seal = span('seal', '済'); seal.setAttribute('aria-hidden', 'true');
     const words = span('');
-    words.append(document.createTextNode(`${autoMatched}件`), document.createTextNode(' は自動で照合済みです'));
+    words.append(document.createTextNode(`${matchedCount}件`), document.createTextNode(' は一致しています'));
     line.append(seal, words);
     target.append(line);
   }

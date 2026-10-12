@@ -321,6 +321,28 @@ describe("portable local backup format", () => {
     expect(restored.localData.records.find(({ kind }) => kind === "account-metadata")?.value).toMatchObject({ statementProvider: "paypay" });
   });
 
+  it("round-trips manual decisions, undo reservations/history, suspected use and attention acknowledgement", async () => {
+    const data = fixture();
+    const decision = { id: "reconciliation-resolution:synthetic", runId: "synthetic-run", statementId: "synthetic", resolution: "same_expense", source: "user",
+      receiptId: "receipt:synthetic-1", categoryId: null, accountId: null, statementAmountYen: 1200, importedId: null, status: "failed", actualTransactionId: "synthetic-native",
+      actualSnapshot: { date: "2026-09-28", amountYen: -1150, payeeName: "Synthetic Cafe", accountId: "synthetic-account", isSplit: false, cleared: false },
+      statementSnapshot: { usedDate: "2026-09-28", merchant: "Synthetic Store", kind: "purchase" },
+      undoRequestedAt: time, errorCode: "actual_apply_failed", createdAt: time, updatedAt: time };
+    const additions = [
+      { id: decision.id, kind: "reconciliation-resolution", value: decision, updatedAt: time },
+      { id: "reconciliation-undo:synthetic", kind: "correction-audit", value: { targetType: "reconciliation-undo", statementId: "synthetic", resolution: decision, undoneAt: time }, updatedAt: time },
+      { id: "settings:reconciliation-suspected:synthetic", kind: "app-settings", value: { statementId: "synthetic", markedAt: time }, updatedAt: time },
+      { id: "settings:reconciliation-manual:synthetic", kind: "app-settings", value: { statementId: "synthetic" }, updatedAt: time },
+      { id: "settings:reconciliation-attention", kind: "app-settings", value: { keys: ["synthetic-key"], updatedAt: time }, updatedAt: time },
+      { id: "merchant-alias:new", kind: "merchant-mapping", value: { merchant: "Synthetic Store", aliasMerchant: "Synthetic Cafe", learnedBy: decision.id + ":" + time }, updatedAt: time },
+    ] as LocalDataBackupV2["records"];
+    data.records.push(...additions);
+    const restored = await readPortableBackup(await create(data));
+    for (const row of additions) expect(restored.localData.records.find(item => item.id === row.id)).toEqual(row);
+    const invalid = fixture(); invalid.records.push({ ...additions[2], value: { statementId: "synthetic", markedAt: "not-a-time" } });
+    await expect(create(invalid)).rejects.toThrow();
+  });
+
   it("preserves deletion undo snapshots in archives and rejects unverified native fields", async () => {
     const data = fixture();
     const originalReceipt = data.records.find(record => record.kind === "receipt-metadata")!.value;

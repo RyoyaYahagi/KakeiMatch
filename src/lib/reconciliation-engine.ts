@@ -162,6 +162,7 @@ export function runReconciliationEngine(input: {
   excludedStatementIds?: ReadonlySet<string>;
   excludedReceiptIds?: ReadonlySet<string>;
   rejectedPairs?: ReadonlySet<string>;
+  manualStatementIds?: ReadonlySet<string>;
 }): ReconciliationEngineResult {
   const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
   const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
@@ -237,7 +238,7 @@ export function runReconciliationEngine(input: {
   for (const statement of statements) {
     const choices = allByStatement.get(statement.statementTransactionId) ?? [];
     const top = choices[0];
-    if (!top) continue;
+    if (!top || input.manualStatementIds?.has(statement.statementTransactionId)) continue;
     const receiptChoices = allByReceipt.get(top.receiptId) ?? [];
     const receiptTop = receiptChoices[0];
     const isMutualBest = receiptTop?.statementTransactionId === statement.statementTransactionId;

@@ -172,7 +172,7 @@ async function importStatementCsv() {
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-paypay-card.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await page.getByRole('button', { name: '取り込んで照合', exact: true }).click();
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動で一致 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
+  await page.getByText(/一致 0件 · 要確認 1件 · 記録なし 1件/).waitFor();
 }
 
 async function seedAuditAndPreferences() {
