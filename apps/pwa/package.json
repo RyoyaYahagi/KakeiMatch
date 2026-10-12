@@ -61,7 +61,7 @@
     "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs",
     "test:moneyforward-e2e": "node test/browser-moneyforward.mjs",
     "test:statement-options-e2e": "node test/browser-statement-options.mjs",
-    "test:receipt-privacy-e2e": "node test/browser-receipt-privacy.mjs"
+    "test:receipt-privacy-e2e": "node test/browser-receipt-privacy.mjs && node test/browser-receipt-privacy-response.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

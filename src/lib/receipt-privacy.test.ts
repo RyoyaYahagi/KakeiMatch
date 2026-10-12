@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isReceiptPrivateText, privateReceiptRegions, sanitizeReceiptExtraction } from './receipt-privacy';
 import { validateReceiptExtraction } from './receipt-extraction';
-import { barcodeRegions } from '../../apps/pwa/src/receipt-image-privacy';
+import { barcodeRegions } from '../../apps/pwa/src/receipt-code-detection';
 
 const receipt = { documentKind: 'receipt', merchant: '合成商店', purchasedDate: '2026-10-11', purchasedTime: '12:34',
   totalAmountYen: 1234, taxAmountYen: 112, items: [{ name: '合成パン', amountYen: 1234 }], warnings: [] };

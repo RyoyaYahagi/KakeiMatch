@@ -65,8 +65,13 @@ try {
     await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic-private.png', mimeType: 'image/png', buffer: photo });
     await page.getByRole('button', { name: 'AIで読み取る', exact: true }).waitFor(); await noImages();
   };
-  const review = async () => { await click('AIで読み取る'); await page.getByRole('heading', { name: '送信する写真を確認' }).waitFor({ timeout: 60000 }); };
-  await choose(); await review();
+  const review = async () => { await click('AIで読み取る'); await page.getByRole('heading', { name: '送信する写真を確認' }).waitFor({ timeout: 60000 }); await page.waitForFunction(() => !document.querySelector('.receipt-privacy-actions .primary')?.disabled); };
+  await choose(); await click('AIで読み取る');
+  await page.getByRole('heading', { name: '送信する写真を確認' }).waitFor();
+  await page.getByLabel('上端（%）').fill('85'); await page.getByLabel('下端（%）').fill('90'); await click('この範囲を隠す');
+  await page.waitForFunction(() => !document.querySelector('.receipt-privacy-actions .primary')?.disabled);
+  assert.deepEqual(await page.locator('.receipt-mask-canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(300, canvas.height * .87, 1, 1).data]), [0, 0, 0, 255], 'manual masks survive later detection results');
+  await click('1つ戻す');
   assert.equal(sent.length, 0, 'Review must precede external dispatch');
   assert.equal(await page.getByText('自動検出できなかった箇所があります。', { exact: false }).count(), 0);
   const bands = await page.locator('.receipt-mask-canvas').evaluate(canvas => {
