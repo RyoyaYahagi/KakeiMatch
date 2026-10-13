@@ -8,14 +8,14 @@
 - 対応環境: iPhoneのSafari（ホーム画面に追加して使用）を主な対象とし、PCのブラウザーにも対応しています
 
 <p>
-  <img src="docs/screenshots/ui-home-light-top-375.png" alt="ホーム画面。今月の支出、収入、収支、カテゴリ別の内訳を表示している" width="240">
-  <img src="docs/screenshots/ui-entry-receipt-light-375.png" alt="レシート登録画面。AIで読み取るボタンと、合計金額・店名・購入日の入力欄がある" width="240">
-  <img src="docs/screenshots/ui-reconciliation-list-light-375.png" alt="照合画面。要確認1件、記録なし2件、自動で一致2件と、確認が必要な明細の一覧を表示している" width="240">
+  <img src="docs/screenshots/readme-home-375.png" alt="ホーム画面。今月の支出・収入・収支、予算の進み具合と、照合で確認が必要な3件を表示している" width="240">
+  <img src="docs/screenshots/readme-receipt-375.png" alt="レシート登録画面。読み取ったレシート画像の下に、金額・店名・日付、品目ごとのカテゴリ（食費・日用品）、支払元が入力されている" width="240">
+  <img src="docs/screenshots/readme-reconciliation-375.png" alt="照合画面。要確認1件、記録なし2件、一致4件と、確認が必要な明細の一覧を表示している" width="240">
 </p>
 
-<img src="docs/screenshots/ui-desktop-home-light-1440.png" alt="PC幅のホーム画面。左にナビゲーション、中央に月の収支と最近の記録、右に支出の内訳がある" width="740">
+<img src="docs/screenshots/readme-desktop-home-1440.png" alt="PC幅のホーム画面。左にナビゲーション、中央に月の収支・予算・確認すること・最近の記録、右に支出の内訳がある" width="740">
 
-スクリーンショットはすべて合成データです。
+スクリーンショットはすべて合成データです。ローカルで起動したPWAのURLを `PWA_E2E_URL` に指定し、`pnpm --dir apps/pwa screenshots:readme` を実行すると撮り直せます。
 
 ## 作った理由
 
