@@ -16,6 +16,7 @@
     "test:screen-lock-e2e": "node test/browser-screen-lock.mjs",
     "build": "tsc --noEmit && cf build",
     "icons": "node scripts/render-icons.mjs",
+    "screenshots:readme": "node scripts/readme-screenshots.mjs",
     "test:e2e": "node test/browser-flow.mjs",
     "test:security-e2e": "node test/browser-security.mjs",
     "test:contact-e2e": "node test/browser-contact.mjs",
