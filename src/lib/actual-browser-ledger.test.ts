@@ -378,6 +378,8 @@ describe("Actual browser ledger", () => {
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
     expect(api.updateTransaction).toHaveBeenCalledWith("receipt-created", { category: "home", cleared: true });
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
+    await ledger.applyTransactionUpdates([{ transactionId: "expense", amountYen: -3284, cleared: false }]);
+    expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3284, cleared: false });
   });
 
   it("aggregates by amount sign, excludes off-budget and tombstoned rows, and reports null categories", async () => {

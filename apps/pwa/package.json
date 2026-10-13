@@ -60,7 +60,8 @@
     "test:desktop-layout-e2e": "node test/browser-desktop-layout.mjs",
     "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs",
     "test:moneyforward-e2e": "node test/browser-moneyforward.mjs",
-    "test:statement-options-e2e": "node test/browser-statement-options.mjs"
+    "test:statement-options-e2e": "node test/browser-statement-options.mjs",
+    "test:reconciliation-review-e2e": "node test/browser-reconciliation-review.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

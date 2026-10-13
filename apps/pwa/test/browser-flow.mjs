@@ -162,9 +162,9 @@ try {
   await page.getByText('2件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/自動で一致 1件/).waitFor();
+  await page.getByText(/一致 1件/).waitFor();
   const openAutomaticMatch = async () => {
-    const summary = page.locator('summary').filter({ hasText: '自動で一致した内容を見る（1件）' });
+    const summary = page.locator('summary').filter({ hasText: '一致した内容を見る（1件）' });
     await summary.waitFor();
     assert.equal(await summary.evaluate(node => node.parentElement.open), false);
     await summary.click();
@@ -183,7 +183,7 @@ try {
   await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
   await openAutomaticMatch();
-  const unmatchedStatement = page.locator('#local-view details').filter({ hasText: 'Synthetic New Store' });
+  const unmatchedStatement = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic New Store' });
   await unmatchedStatement.locator('summary').click();
   await unmatchedStatement.locator('select[id^="category-"]').selectOption({ label: '日用品' });
   assert.equal(await unmatchedStatement.locator('select[id^="account-"]').count(), 0, 'the statement provider fixes the payment source');

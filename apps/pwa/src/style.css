@@ -207,9 +207,13 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .notice .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .notice-danger { background: var(--danger-soft); color: var(--danger); }
 .notice-danger p { color: var(--text); }
-.review-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
-.review-tile { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-3); }
-.review-tile + .review-tile { border-left: 1px solid var(--border); }
+.review-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); overflow: hidden; }
+.review-tile { border: 0; border-radius: 0; text-align: left; background: transparent; color: var(--text); display: flex; flex-direction: column; gap: 2px; min-width: 0; padding: var(--space-3); }
+.review-tile:nth-child(even) { border-left: 1px solid var(--border); }
+.review-tile:nth-child(n+3) { border-top: 1px solid var(--border); }
+.reconciliation-attention { display: block; margin-top: var(--space-2); }
+.reconciliation-attention > summary { min-height: 44px; cursor: pointer; font-weight: 700; }
+.reconciliation-attention button { display: block; width: 100%; text-align: left; }
 .review-tile-label { display: flex; align-items: center; gap: var(--space-1); font-size: .8125rem; font-weight: 700; }
 .review-tile-label .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; flex: none; }
 .review-tile-count { color: inherit; font-family: var(--font-num); font-size: 1.625rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
@@ -232,6 +236,8 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .review-list > li { padding: 0; border-bottom: 0; border-top: 1px solid var(--border); }
 .review-row { display: flex; align-items: center; gap: var(--space-3); min-height: 64px; padding: var(--space-2) 0; list-style: none; }
 .review-row::-webkit-details-marker { display: none; }
+.tone-success { --tone: var(--success); --tone-soft: var(--success-soft); }
+.note-success { color: var(--success); }
 .note-warning { color: var(--warning); font-weight: 500; }
 .note-danger { color: var(--danger); font-weight: 500; }
 .note-missing { color: var(--missing); font-weight: 500; }
@@ -266,7 +272,7 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .review-clear { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--success-soft); color: var(--success); font-weight: 700; }
 .review-clear .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
 .review-history { padding: 0; }
-.review-history > summary { display: flex; align-items: center; gap: var(--space-2); color: var(--primary); font-weight: 500; }
+.review-history > summary { min-height: 44px; cursor: pointer; display: flex; align-items: center; gap: var(--space-2); color: var(--primary); font-weight: 500; }
 /* docs/DESIGN.md 「済」の印 */
 .seal { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1.5px solid var(--success); border-radius: var(--radius-full); color: var(--success); font-size: .75rem; font-weight: 900; line-height: 1; transform: rotate(-10deg); flex: none; }
 .app-nav .nav-button { position: relative; }

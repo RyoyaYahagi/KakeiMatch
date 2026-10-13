@@ -373,7 +373,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   getImportedTransaction(importedId: string): Promise<{ transaction: ActualTransaction; snapshot: NativeTransactionSnapshot[] } | null>;
   restoreTransactionTree(snapshot: NativeTransactionSnapshot[]): Promise<void>;
   updateReceipt(id: string, changes: { categoryId?: string; cleared?: boolean }): Promise<void>;
-  applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: true }>): Promise<void>;
+  applyTransactionUpdates(updates: Array<{ transactionId: string; amountYen?: number; cleared: boolean }>): Promise<void>;
   exportBackup(): Promise<Uint8Array>;
   restoreBackup(data: Uint8Array, dataDir: string): Promise<string>;
   listLocalBudgets(): Promise<Array<{ id: string; name: string }>>;
@@ -1783,7 +1783,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       const parsed = z.array(z.object({
         transactionId: idSchema,
         amountYen: z.number().int().safe().negative().optional(),
-        cleared: z.literal(true),
+        cleared: z.boolean(),
       }).strict()).min(1).max(500).safeParse(updates);
       if (!parsed.success || new Set(parsed.data.map(({ transactionId }) => transactionId)).size !== parsed.data.length) {
         throw new Error("Invalid Actual reconciliation batch.");
@@ -1803,7 +1803,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
           for (const update of parsed.data) {
             await api.updateTransaction(update.transactionId, {
               ...(update.amountYen === undefined ? {} : { amount: update.amountYen }),
-              cleared: true,
+              cleared: update.cleared,
             });
           }
         });

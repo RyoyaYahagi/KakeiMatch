@@ -35,6 +35,7 @@ import { LocalStatementService } from './local-statements';
 import type { StatementProvider } from './statement-parser';
 import { STATEMENT_DOWNLOAD_HELP } from './statement-download-help';
 import { LocalReconciliationService } from './local-reconciliation';
+import { statementAttention, attentionAcknowledgementId } from './reconciliation-review';
 import { LocalCategoryLearning } from './local-category-learning';
 import { ensureBasicExpenseCategories } from './local-category-defaults';
 import { initializeCategoryRulesUi } from './local-category-rules-ui';
@@ -45,6 +46,9 @@ import { recordLocalDiagnostic } from './local-diagnostics';
 
 const el = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const HOME_RECENT_LIMIT = 3;
+const statementSupportUrl = (provider: string) => provider === 'smbc_card' ? 'https://www.smbc-card.com/mem/info/meisai_inquiry.jsp'
+  : provider === 'rakuten_card' ? 'https://www.rakuten-card.co.jp/security/no-usage-bill/'
+  : provider === 'paypay_card' || provider === 'paypay' ? 'https://www.paypay-card.co.jp/service/004962.html' : null;
 const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`;
 const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 function text(tag: string, value: string, className = '') { const node = document.createElement(tag); node.textContent = value; node.className = className; return node; }
@@ -178,11 +182,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!rows.length) list.append(text('li', 'まだ記録がありません。', 'empty'));
 
-    const { run, decisions, pending, counts } = await reconciliationState();
+    const { run, decisions, pending, suspected, counts } = await reconciliationState();
     const allStatements = run ? await statements.list() : [];
     ensureScreen(screen);
-    renderHomeAttention(el('home-attention'), counts, homeAttentionItems(run, decisions, pending, allStatements),
-      decisions.filter(d => d.source === 'automatic' && d.status === 'applied').length, () => reviewPage().catch(report));
+    renderHomeAttention(el('home-attention'), counts, homeAttentionItems(run, decisions, pending, allStatements, suspected),
+      decisions.filter(d => d.resolution === 'same_expense' && d.status === 'applied' && !d.undoRequestedAt).length, () => reviewPage().catch(report));
   }
   async function budgetEditor(mode: 'default' | 'monthly' = 'default') {
     if (!monthlyBudgets) throw new Error('家計簿を選択してください。');
@@ -1292,13 +1296,17 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   }
   /** docs/UX.md ホーム: failed decisions first, then statements to review, then ones without a record. */
   function homeAttentionItems(run: Awaited<ReturnType<typeof reconciliationState>>['run'], decisions: Awaited<ReturnType<typeof reconciliationState>>['decisions'],
-    pending: Awaited<ReturnType<typeof reconciliationState>>['pending'], allStatements: Awaited<ReturnType<typeof statements.list>>): HomeAttentionItem[] {
+    pending: Awaited<ReturnType<typeof reconciliationState>>['pending'], allStatements: Awaited<ReturnType<typeof statements.list>>, suspected: Awaited<ReturnType<typeof reconciliationState>>['suspected']): HomeAttentionItem[] {
     if (!run) return [];
     const byId = new Map(allStatements.map(statement => [statement.id, statement]));
     const items: HomeAttentionItem[] = [];
     for (const decision of decisions.filter(d => d.status !== 'applied')) {
       const statement = byId.get(decision.statementId);
       items.push({ merchant: statement?.merchant ?? '保存済みの照合', amountYen: statement?.amountYen ?? decision.statementAmountYen, tone: 'danger', reason: '反映できませんでした' });
+    }
+    for (const flag of suspected) {
+      const statement = byId.get(flag.statementId); if (!statement) continue;
+      items.push({ merchant: statement.merchant, amountYen: statement.amountYen, tone: 'warning', reason: '不正利用？として確認待ち' });
     }
     for (const row of pending.filter(r => r.status === 'needs_review')) {
       const statement = byId.get(row.statementTransactionId); if (!statement) continue;
@@ -1315,11 +1323,11 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     return items;
   }
   async function reconciliationState() {
-    const [run, decisions] = await Promise.all([reconciliation.latest(), reconciliation.resolutions()]);
-    const pending = run?.statementResults.filter(row => row.status !== 'matched' && !decisions.some(d => d.statementId === row.statementTransactionId)) ?? [];
-    const counts: HomeAttentionCounts | null = run ? { needsReview: pending.filter(row => row.status === 'needs_review').length, unmatched: pending.filter(row => row.status !== 'needs_review').length, failed: decisions.filter(d => d.status !== 'applied').length } : null;
+    const [run, decisions, suspected] = await Promise.all([reconciliation.latest(), reconciliation.resolutions(), reconciliation.suspectedUses()]);
+    const pending = run?.statementResults.filter(row => row.status !== 'matched' && !decisions.some(d => d.statementId === row.statementTransactionId) && !suspected.some(d => d.statementId === row.statementTransactionId)) ?? [];
+    const counts: HomeAttentionCounts | null = run ? { needsReview: pending.filter(row => row.status === 'needs_review').length + suspected.length, unmatched: pending.filter(row => row.status !== 'needs_review').length, failed: decisions.filter(d => d.status !== 'applied').length } : null;
     updateReconciliationBadge(counts);
-    return { run, decisions, pending, counts };
+    return { run, decisions, suspected, pending, counts };
   }
   async function reviewPage() {
     const screen = await open('reconciliation');
@@ -1328,26 +1336,38 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const header = document.createElement('div'); header.className = 'page-header';
     const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact'; refresh.prepend(icon('repeat'));
     header.append(text('h2', '照合'), refresh); view.append(header);
-    const { run, decisions, pending } = await reconciliationState();
+    const { run, decisions, suspected, pending } = await reconciliationState();
     ensureScreen(screen);
     for (const decision of decisions.filter(d => d.status !== 'applied')) {
       const failure = document.createElement('div'); failure.className = 'notice notice-danger';
-      failure.append(icon('warning'), text('p', '家計簿への反映が完了していません。判断内容は保存されています。'), button('反映を再試行する', async () => { await reconciliation.retry(decision.id); await rerun(); }, false));
+      failure.append(icon('warning'), text('p', decision.undoRequestedAt ? '一致の取り消しが完了していません。判断内容は保存されています。' : '家計簿への反映が完了していません。判断内容は保存されています。'), button(decision.undoRequestedAt ? '取り消しを再試行する' : '反映を再試行する', async () => { if (decision.undoRequestedAt) await reconciliation.undoSameExpense(decision.id); else await reconciliation.retry(decision.id); await rerun(); }, false));
       view.append(failure);
     }
     if (!run) { const importer = await renderStatementImporter(false); ensureScreen(screen); view.append(text('p', '明細を取り込んでから照合してください。', 'muted'), importer); return; }
-    const automatic = decisions.filter(d => d.source === 'automatic' && d.status === 'applied');
-    const auto = automatic.length;
+    const matched = decisions.filter(d => d.resolution === 'same_expense' && d.status === 'applied' && !d.undoRequestedAt);
+    const matchCount = matched.length;
     const needsReview = pending.filter(r => r.status === 'needs_review').length, unmatched = pending.filter(r => r.status === 'unmatched_statement').length;
     const waiting = run.receiptResults.filter(r => r.status === 'unmatched_receipt').length;
-    const tiles = document.createElement('div'); tiles.className = 'review-tiles'; tiles.setAttribute('aria-hidden', 'true');
-    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['missing', 'unmatched', '記録なし', unmatched], ['success', 'check', '自動で一致', auto]] as const) {
-      const tile = document.createElement('div'); tile.className = `review-tile tile-${tone}`;
+    const tiles = document.createElement('div'); tiles.className = 'review-tiles'; tiles.setAttribute('aria-label', '照合の件数');
+    for (const [tone, symbol, label, count] of [['warning', 'warning', '要確認', needsReview], ['missing', 'unmatched', '記録なし', unmatched], ['success', 'check', '一致', matchCount], ['warning', 'warning', '不正利用？', suspected.length]] as const) {
+      const tile = document.createElement('button'); tile.type = 'button'; tile.className = `review-tile tile-${tone}`;
+      tile.setAttribute('aria-label', `${label} ${count}件`); tile.disabled = true;
+      tile.addEventListener('click', () => {
+        const target = document.getElementById(label === '一致' ? 'reconciliation-matched' : label === '不正利用？' ? 'reconciliation-suspected' : 'reconciliation-pending');
+        if (!target) return;
+        if (target instanceof HTMLDetailsElement) target.open = true;
+        if (label === '要確認' || label === '記録なし') {
+          const row = target.querySelector<HTMLElement>(label === '要確認' ? '[data-review-status="needs_review"]' : '[data-review-status="unmatched_statement"]');
+          if (row) { row.scrollIntoView({ block: 'start' }); const summary = row.querySelector('summary'); if (summary) { summary.tabIndex = -1; summary.focus(); } return; }
+        }
+        const focusTarget = target.querySelector<HTMLElement>('summary, h3') ?? target;
+        focusTarget.tabIndex = -1; focusTarget.focus(); target.scrollIntoView({ block: 'start' });
+      });
       const name = document.createElement('span'); name.className = 'review-tile-label'; name.append(icon(symbol), document.createTextNode(label));
       const value = document.createElement('span'); value.className = 'review-tile-count'; value.append(document.createTextNode(String(count)), text('small', '件'));
       tile.append(name, value); tiles.append(tile);
     }
-    const resultSummary = text('p', `照合の結果：自動で一致 ${auto}件 · 要確認 ${needsReview}件 · 記録なし ${unmatched}件 · 明細待ち ${waiting}件`, 'visually-hidden'); resultSummary.setAttribute('role', 'status');
+    const resultSummary = text('p', `照合の結果：一致 ${matchCount}件 · 要確認 ${needsReview}件 · 記録なし ${unmatched}件 · 不正利用？ ${suspected.length}件 · 明細待ち ${waiting}件`, 'visually-hidden'); resultSummary.setAttribute('role', 'status');
     view.append(tiles, resultSummary);
     if (waiting) view.append(text('p', `明細待ちの支出 ${waiting}件（明細を取り込むと照合します）`, 'muted review-waiting'));
     const importer = await renderStatementImporter(true);
@@ -1357,11 +1377,43 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       statements.list(), receipts.list(), ledger.listAccounts(), ledger.listExpenseCategories(), expenseCategoryUsage(ledger),
     ]);
     const accountsById = new Map(allAccounts.map(account => [account.id, account]));
+    const attention = statementAttention(allStatements, new Set([...pending.map(row => row.statementTransactionId), ...suspected.map(row => row.statementId)]));
+    const acknowledged = (await repository.get<{ keys: string[] }>(attentionAcknowledgementId))?.value.keys ?? [];
+    ensureScreen(screen);
+    const revealStatement = (id: string) => {
+      const detail = document.getElementById(`review-statement-${id}`);
+      if (!detail) return;
+      for (let parent = detail.parentElement; parent; parent = parent.parentElement) if (parent instanceof HTMLDetailsElement) parent.open = true;
+      if (detail instanceof HTMLDetailsElement) detail.open = true;
+      const summary = detail.querySelector('summary'); if (summary) { summary.tabIndex = -1; summary.focus(); }
+      detail.scrollIntoView({ block: 'start' });
+    };
+    if (attention.length) {
+      const notice = document.createElement('details'); notice.className = 'notice notice-warning reconciliation-attention';
+      notice.open = attention.some(row => !acknowledged.includes(row.key));
+      notice.append(text('summary', `△ 確認をおすすめする明細 ${attention.length}件`));
+      notice.append(text('p', '少額決済などの確認パターンに該当しています。不正利用と判定したものではありません。心当たりや利用先を確認してください。'));
+      notice.append(button('確認する', () => revealStatement(attention[0].statementId)));
+      const targets = document.createElement('details'); targets.append(text('summary', '対象明細を選ぶ'));
+      for (const row of attention) {
+        const statement = allStatements.find(item => item.id === row.statementId)!;
+        targets.append(button(`${shortDay(statement.usedDate)} · ${statement.merchant} · ${yen(statement.amountYen)}を確認する`, () => revealStatement(statement.id)));
+      }
+      notice.append(targets);
+      notice.append(button('注意文を確認した', async () => {
+        await repository.put({ id: attentionAcknowledgementId, kind: 'app-settings',
+          value: { keys: [...new Set([...acknowledged, ...attention.map(row => row.key)])], updatedAt: new Date().toISOString() }, updatedAt: new Date().toISOString() });
+        notice.open = false;
+      }));
+      // Before the import disclosure/list, so new targets enter the initial viewport.
+      tiles.after(notice);
+    }
     const list = document.createElement('ul'); list.className = 'review-list';
     const reviewOrder = (status: string) => status === 'needs_review' ? 0 : 1;
     for (const row of pending.filter(r => r.status !== 'matched').sort((a, b) => reviewOrder(a.status) - reviewOrder(b.status) || a.statementTransactionId.localeCompare(b.statementTransactionId))) {
       const statement = allStatements.find(s => s.id === row.statementTransactionId); if (!statement) continue;
       const item = document.createElement('li'); const detail = document.createElement('details'); detail.className = 'review-item';
+      detail.id = `review-statement-${statement.id}`; detail.dataset.reviewStatus = row.status;
       const needsDecision = row.status === 'needs_review';
       const summary = reviewSummaryRow(statement.merchant, yen(statement.amountYen), needsDecision ? 'warning' : 'missing');
       const setReason = (reason: string) => { summary.note.textContent = `${shortDay(statement.usedDate)} · ${reason}`; };
@@ -1469,16 +1521,49 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           body.append(register);
         }
       }
+      const warning = attention.find(row => row.statementId === statement.id);
+      if (warning) body.append(text('p', `確認の理由：${warning.reasons.join('・')}`, 'muted'));
+      body.append(button('不正利用？', async () => {
+        if (!window.confirm('心当たりがない利用としてマークしますか？不正利用と確定する操作ではありません。')) return;
+        await reconciliation.markSuspectedUse(run.runId, statement.id); await rerun();
+      }));
       const skip = button('登録しない', async () => { await reconciliation.ignore(run.runId, statement.id); await rerun(); }); skip.className = 'text-button';
       body.append(skip);
       item.append(detail); list.append(item);
     }
     ensureScreen(screen);
     if (list.children.length) {
-      const section = document.createElement('section'); section.className = 'surface-section review-section';
+      const section = document.createElement('section'); section.className = 'surface-section review-section'; section.id = 'reconciliation-pending';
       section.append(text('h3', '確認してください'), list); view.append(section);
-    } else if (!decisions.some(d => d.status !== 'applied')) {
+    } else if (!suspected.length && !decisions.some(d => d.status !== 'applied')) {
       const clear = document.createElement('p'); clear.className = 'review-clear'; clear.append(icon('check'), document.createTextNode('確認が必要な明細はありません')); view.append(clear);
+    }
+    if (suspected.length) {
+      const history = document.createElement('details'); history.id = 'reconciliation-suspected'; history.className = 'review-history';
+      history.append(text('summary', `不正利用？の明細（${suspected.length}件）`));
+      history.append(text('p', 'あなたが心当たりのない利用としてマークした明細です。KakeiMatchは不正利用と断定しません。', 'muted'));
+      const suspectedList = document.createElement('ul'); suspectedList.className = 'review-list';
+      for (const flag of suspected.sort((a, b) => b.markedAt.localeCompare(a.markedAt))) {
+        const statement = allStatements.find(row => row.id === flag.statementId); if (!statement) continue;
+        const item = document.createElement('li'), detail = document.createElement('details'); detail.id = `review-statement-${statement.id}`;
+        const row = reviewSummaryRow(statement.merchant, yen(statement.amountYen), 'warning');
+        row.note.textContent = `${shortDay(statement.usedDate)} · 不正利用？`; detail.append(row.element);
+        const body = document.createElement('div'); body.className = 'review-body';
+        body.append(text('p', `明細：${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}`),
+          text('p', `カード：${statementProviderLabels[statement.provider as StatementProvider] ?? statement.provider}`),
+          text('p', `マークした日時：${new Date(flag.markedAt).toLocaleString('ja-JP', { timeZoneName: 'short' })}`));
+        const warning = attention.find(row => row.statementId === statement.id);
+        if (warning) body.append(text('p', `確認の理由：${warning.reasons.join('・')}`));
+        body.append(text('p', 'カード会社の公式アプリやカード裏面の連絡先から、利用内容を確認してください。'));
+        const supportUrl = statementSupportUrl(statement.provider);
+        if (supportUrl) { const contact = document.createElement('a'); contact.href = supportUrl; contact.target = '_blank'; contact.rel = 'noopener noreferrer'; contact.textContent = 'カード会社の公式案内'; body.append(contact); }
+        for (const label of ['不正利用？を解除する', '自分の利用だった']) body.append(button(label, async () => {
+          await reconciliation.clearSuspectedUse(statement.id); await rerun();
+        }));
+        body.append(text('p', '解除すると要確認・記録なしに戻ります。既存の記録と照合するか、支出・振替として登録してください。', 'muted'));
+        detail.append(body); item.append(detail); suspectedList.append(item);
+      }
+      history.append(suspectedList); view.append(history);
     }
     const ignored = decisions.filter(row => row.resolution === 'ignored' && row.status === 'applied');
     if (ignored.length) {
@@ -1489,30 +1574,41 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       }
       view.append(history);
     }
-    if (automatic.length) {
-      const history = document.createElement('details'); history.className = 'surface-section review-history';
+    if (matched.length) {
+      const history = document.createElement('details'); history.className = 'review-history'; history.id = 'reconciliation-matched';
       const historySummary = document.createElement('summary'); const seal = text('span', '済', 'seal'); seal.setAttribute('aria-hidden', 'true');
-      historySummary.append(seal, text('span', `自動で一致した内容を見る（${auto}件）`)); history.append(historySummary);
-      const matchedList = document.createElement('ul');
+      historySummary.append(seal, text('span', `一致した内容を見る（${matchCount}件）`)); history.append(historySummary);
+      const matchedList = document.createElement('ul'); matchedList.className = 'review-list';
       const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
       const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));
-      automatic.sort((a, b) => (statementById.get(b.statementId)?.usedDate ?? b.createdAt).localeCompare(statementById.get(a.statementId)?.usedDate ?? a.createdAt));
-      for (const decision of automatic) {
+      matched.sort((a, b) => (statementById.get(b.statementId)?.usedDate ?? b.createdAt).localeCompare(statementById.get(a.statementId)?.usedDate ?? a.createdAt));
+      for (const decision of matched) {
         const statement = statementById.get(decision.statementId), receipt = receiptById.get(decision.receiptId ?? '');
         const item = document.createElement('li'), detail = document.createElement('details');
-        detail.append(text('summary', statement ? `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)}` : `保存済みの照合 · ${yen(decision.statementAmountYen)}`));
-        detail.append(text('p', '同じ支出として自動で一致しました。'));
+        const method = decision.source === 'automatic' ? '自動' : '手動';
+        const row = reviewSummaryRow(statement?.merchant ?? '保存済みの照合', yen(decision.statementAmountYen), 'success');
+        row.note.textContent = `${shortDay(statement?.usedDate ?? decision.createdAt.slice(0, 10))} · ${method}`;
+        detail.append(row.element);
+        detail.append(text('p', `判定：${method}で一致`));
         detail.append(text('p', statement ? `明細：${statement.usedDate}${statement.usedTime ? ` ${statement.usedTime.slice(0, 5)}` : ''} · ${statement.merchant} · ${yen(statement.amountYen)}${statement.paymentMethod ? ` · ${statement.paymentMethod}` : ''}` : '対応する明細を端末で見つけられませんでした。'));
         const value = receipt?.confirmedValue;
         const savedExpense = decision.actualSnapshot;
         detail.append(text('p', value ? `レシート：${value.purchasedDate}${value.purchasedTime ? ` ${value.purchasedTime}` : ''} · ${value.merchant} · ${yen(value.totalAmountYen)}`
-          : savedExpense ? `家計簿：${savedExpense.date} · ${savedExpense.payeeName || '店名なし'} · ${yen(Math.abs(savedExpense.amountYen))} · ${accountsById.get(savedExpense.accountId)?.name ?? '保存済みの支払元'}`
+          : savedExpense ? `${decision.source === 'user' ? '一致前の家計簿' : '家計簿'}：${savedExpense.date} · ${savedExpense.payeeName || '店名なし'} · ${yen(Math.abs(savedExpense.amountYen))} · ${accountsById.get(savedExpense.accountId)?.name ?? '保存済みの支払元'}`
           : '対応する支出の詳細を端末で見つけられませんでした。'));
+        if (savedExpense && decision.source === 'user' && Math.abs(savedExpense.amountYen) !== decision.statementAmountYen) detail.append(text('p', `一致後の金額：${yen(decision.statementAmountYen)}`));
         if (receipt) detail.append(button('レシートを確認する', () => receiptEditor(receipt)));
+        if (decision.source === 'user' && decision.actualSnapshot?.cleared !== undefined) detail.append(button('一致を取り消す', async () => {
+          if (!window.confirm('一致を取り消しますか？一致時に変更した金額と照合状態を戻し、もう一度候補を確認できます。')) return;
+          await reconciliation.undoSameExpense(decision.id); await rerun();
+        }));
+        else if (decision.source === 'user') detail.append(text('p', '変更前の金額・照合状態が残っていないため、この一致は取り消せません。', 'muted'));
         item.append(detail); matchedList.append(item);
       }
       history.append(matchedList); view.append(history);
     }
+    ensureScreen(screen);
+    tiles.querySelectorAll<HTMLButtonElement>('button').forEach(tile => { tile.disabled = false; });
   }
   for (const [tab, render] of [['home', home], ['receipt', recordsPage], ['reconciliation', reviewPage]] as const) el(`${tab}-tab`).addEventListener('click', () => { searchOrigin = false; void render().catch(report); });
   // Settings is shown without open(), so leaving for it ends in-flight renders here.

@@ -108,6 +108,30 @@ D1 migrationやSecretの新規登録は自動実行しません。schemaやbindi
 
 公開に失敗した場合は、Cloudflare側のBuild historyでログを確認し、設定不足や権限を修正して対象buildを再実行します。古いcommitの再実行は、その版への差し戻しになります。再実行前に対象commitと現在のmain・公開版を確認してください。
 
+### 非本番ブランチのビルドトリガーを確認する
+
+Cloudflare側のプレビュー設定だけでなく、Workerに紐づくビルドトリガーも確認します。既存の連携には旧プレビューモデルが残る場合があります。[Cloudflare公式「Build branches」](https://developers.cloudflare.com/workers/ci-cd/builds/build-branches/)
+
+2026年10月12日のPR #267では、`previews_enabled: false`でも、`Deploy non-production branches`という別トリガーが`branch_includes: ["*"]`、`branch_excludes: ["main"]`で残っていました。アプリのbuildは成功し、その後のpreview公開がBuild Outputの`triggers`非対応で失敗していました。非本番の自動buildを無効にする運用に合わせ、このトリガーだけを削除しました。
+
+確認には次のコマンドを使います。Worker名で検索した`id`を`build_worker_tag`へ設定します。
+
+```sh
+cf workers scripts search --name kakeimatch
+cf builds triggers list --external-script-id "$build_worker_tag"
+```
+
+非本番専用トリガーが残っている場合は、一覧の設定とbuild用環境変数をGit管理対象外の運用記録へ保存します。対象の`trigger_uuid`を`nonproduction_trigger_uuid`へ設定し、main専用トリガーと異なることを確認してから削除します。トリガーの削除は、そのトリガーで実行中のbuildも停止します。[Cloudflare公式「Delete a build trigger」](https://developers.cloudflare.com/api/resources/workers_builds/subresources/triggers/methods/delete/)
+
+```sh
+cf builds triggers environment-variables list --trigger-uuid "$nonproduction_trigger_uuid"
+cf builds triggers delete "$nonproduction_trigger_uuid" --dry-run
+cf builds triggers delete "$nonproduction_trigger_uuid"
+cf builds triggers list --external-script-id "$build_worker_tag"
+```
+
+読み戻しでmain専用トリガーだけが残り、ブランチ条件・build/deployコマンドが維持されていることを確認します。続いてPRブランチへのpushで不要なCloudflare buildが起動しないことを確認します。既存の失敗チェックは過去のcommitの記録として残します。
+
 ## 手動の本番更新・復旧手順
 
 以下は人間による初回準備と復旧用です。通常の更新は上記Workers Buildsを使います。

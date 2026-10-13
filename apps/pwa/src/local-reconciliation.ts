@@ -11,6 +11,7 @@ import type { ActualTransaction } from "../../../src/lib/actual-ledger";
 import { sha256Hex } from "./statement-parser";
 import type { StatementImportMetadata } from "./local-statements";
 import type { StatementProvider } from "./statement-parser";
+import { manualReviewId, suspectedUseId, type SuspectedUse } from "./reconciliation-review";
 
 export type LocalReceipt = {
   id: string;
@@ -49,7 +50,7 @@ export type LocalRun = ReconciliationEngineResult & {
   inputFingerprint?: string;
 };
 
-type ActualTransactionSnapshot = Pick<ActualTransaction, "date" | "amountYen" | "payeeName" | "accountId" | "isSplit">;
+type ActualTransactionSnapshot = Pick<ActualTransaction, "date" | "amountYen" | "payeeName" | "accountId" | "isSplit"> & { cleared?: boolean };
 type StatementSnapshot = Pick<LocalStatement, "usedDate" | "merchant" | "kind">;
 
 export type LocalResolution = {
@@ -69,6 +70,7 @@ export type LocalResolution = {
   actualTransactionId: string | null;
   actualSnapshot?: ActualTransactionSnapshot;
   statementSnapshot?: StatementSnapshot;
+  undoRequestedAt?: string;
   errorCode: string | null;
   createdAt: string;
   updatedAt: string;
@@ -89,7 +91,7 @@ const NATIVE_TRANSACTION_PREFIX = "actual:";
 const nativeCandidateId = (transactionId: string) => `${NATIVE_TRANSACTION_PREFIX}${transactionId}`;
 const actualSnapshot = (transaction: ActualTransaction): ActualTransactionSnapshot => ({
   date: transaction.date, amountYen: transaction.amountYen, payeeName: transaction.payeeName,
-  accountId: transaction.accountId, isSplit: transaction.isSplit,
+  accountId: transaction.accountId, isSplit: transaction.isSplit, cleared: transaction.cleared,
 });
 const matchesSnapshot = (transaction: ActualTransaction, snapshot: ActualTransactionSnapshot) =>
   transaction.kind === "expense" && transaction.date === snapshot.date && transaction.amountYen === snapshot.amountYen &&
@@ -106,6 +108,8 @@ function shiftDate(date: string, days: number): string {
 export class LocalReconciliationError extends Error {
   constructor(readonly code: string) {
     const messages: Record<string, string> = {
+      undo_unavailable: "この一致は取り消せません。自動一致や変更前の記録がない判断は確認のみ可能です。",
+      undo_record_changed: "一致後に家計簿の記録が変更されています。内容を確認してから取り消してください。",
       stale_run: "照合結果が更新されています。画面を更新してください。",
       candidate_unavailable: "この候補は現在の照合結果にありません。画面を更新してください。",
       decision_conflict: "この明細はすでに判断されています。画面を更新してください。",
@@ -168,7 +172,7 @@ export class LocalReconciliationService {
   ) {}
 
   private async prepareInput(): Promise<PreparedInput> {
-    const [statementRecords, receiptRecords, resolutionRecords, rejectionRecords, aliasRecords, importRecords, accounts] = await Promise.all([
+    const [statementRecords, receiptRecords, resolutionRecords, rejectionRecords, aliasRecords, importRecords, accounts, settings] = await Promise.all([
       this.repo.list<LocalStatement>("statement-transaction"),
       this.repo.list<LocalReceipt>("receipt-metadata"),
       this.repo.list<LocalResolution>("reconciliation-resolution"),
@@ -176,12 +180,15 @@ export class LocalReconciliationService {
       this.repo.list<{ merchant: string; aliasMerchant: string }>("merchant-mapping"),
       this.repo.list<StatementImportMetadata>("statement-import"),
       this.ledger.listAccounts(),
+      this.repo.list<{ statementId?: string }>("app-settings"),
     ]);
     const statements = statementRecords.map(({ value }) => value);
     const statementById = new Map(statements.map((statement) => [statement.id, statement]));
     const importsById = new Map(importRecords.map(({ id, value }) => [id, value]));
     const priorResolutions = resolutionRecords.map(({ value }) => value);
-    const excludedStatementIds = new Set(priorResolutions.map((item) => item.statementId));
+    const flagged = settings.filter(row => row.id.startsWith("settings:reconciliation-suspected:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []);
+    const manualStatementIds = new Set(settings.filter(row => row.id.startsWith("settings:reconciliation-manual:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []));
+    const excludedStatementIds = new Set([...priorResolutions.map((item) => item.statementId), ...flagged]);
     const excludedActualIds = new Set(priorResolutions.flatMap((item) => item.actualTransactionId ? [item.actualTransactionId] : []));
     const excludedImportedIds = new Set(priorResolutions.flatMap((item) => item.importedId ? [item.importedId] : []));
     const excludedReceiptIds = new Set(priorResolutions.filter((item) => item.resolution === "same_expense" && item.receiptId).map((item) => item.receiptId!));
@@ -269,7 +276,7 @@ export class LocalReconciliationService {
 
     const engineResult = runReconciliationEngine({
       statements: engineStatements, receipts: engineReceipts, aliases,
-      excludedStatementIds, excludedReceiptIds,
+      excludedStatementIds, excludedReceiptIds, manualStatementIds,
       rejectedPairs: new Set(rejected.map((item) => pairKey(item.statementId, item.receiptId))),
     });
     const result: ReconciliationEngineResult = {
@@ -294,9 +301,9 @@ export class LocalReconciliationService {
         account.accountType, account.closed, accountProviders.get(account.id) ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       resolutions: priorResolutions.map((item) => [item.statementId, item.resolution, item.receiptId, item.status,
         item.actualTransactionId, item.accountId, item.categoryId, item.statementAmountYen, item.importedId,
-        item.actualSnapshot ?? null, item.statementSnapshot ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+        item.actualSnapshot ?? null, item.statementSnapshot ?? null, item.undoRequestedAt ?? null]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
       rejected: rejected.map((item) => [item.runId, item.statementId, item.receiptId]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
-      aliases: [...aliases].sort(),
+      aliases: [...aliases].sort(), flagged: flagged.sort(), manualStatementIds: [...manualStatementIds].sort(),
     };
     const fingerprint = sha256Hex(new TextEncoder().encode(JSON.stringify(inputSnapshot)));
     return { result, fingerprint, sourcesByCandidateId, statementsById: statementById };
@@ -358,6 +365,7 @@ export class LocalReconciliationService {
     return serialize(this.repo.profileId, async () => {
       if (await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
       const { run, prepared } = await this.requireLatest(runId);
+      if (await this.repo.get(suspectedUseId(statementId))) throw new LocalReconciliationError("decision_conflict");
       const candidate = run.candidates.find((item) => item.statementTransactionId === statementId && item.receiptId === receiptId);
       if (!candidate) throw new LocalReconciliationError("candidate_unavailable");
       const [statementRecord, existing, priorResolutions] = await Promise.all([
@@ -376,10 +384,10 @@ export class LocalReconciliationService {
         id: resolutionRecordId(statementId), runId, statementId, resolution: "same_expense", source: "user",
         receiptId, categoryId: null, accountId: null, statementAmountYen: statement.amountYen, importedId: null,
         status: "pending", actualTransactionId: transaction.id, actualSnapshot: actualSnapshot(transaction), errorCode: null,
+        statementSnapshot: { usedDate: statement.usedDate, merchant: statement.merchant, kind: statement.kind },
         createdAt: timestamp, updatedAt: timestamp,
       };
       await this.repo.put({ id: resolution.id, kind: "reconciliation-resolution", value: resolution, updatedAt: timestamp });
-      if (transaction.payeeName && statement.merchant !== transaction.payeeName) await this.saveAlias(statement.merchant, transaction.payeeName);
       const updated = await this.applyOne(resolution);
       return updated;
     });
@@ -461,11 +469,85 @@ export class LocalReconciliationService {
   async retry(resolutionId: string): Promise<LocalResolution> {
     return serialize(this.repo.profileId, async () => {
       const record = await this.repo.get<LocalResolution>(resolutionId);
-      if (!record || record.value.status === "applied") throw new LocalReconciliationError("retry_unavailable");
+      if (!record) throw new LocalReconciliationError("retry_unavailable");
+      if (record.value.undoRequestedAt) throw new LocalReconciliationError("undo_unavailable");
+      if (record.value.status === "applied") throw new LocalReconciliationError("retry_unavailable");
       const run = await this.repo.get<LocalRun>(runRecordId(record.value.runId));
       if (!run) throw new LocalReconciliationError("stale_run");
       return this.applyOne(record.value);
     });
+  }
+
+  async suspectedUses(): Promise<SuspectedUse[]> {
+    return (await this.repo.list<SuspectedUse>("app-settings"))
+      .filter(row => row.id.startsWith("settings:reconciliation-suspected:")).map(row => row.value);
+  }
+
+  async markSuspectedUse(runId: string, statementId: string): Promise<void> {
+    return serialize(this.repo.profileId, async () => {
+      const { run } = await this.requireLatest(runId);
+      if (!run.statementResults.some(row => row.statementTransactionId === statementId && row.status !== "matched") ||
+        await this.repo.get(resolutionRecordId(statementId))) throw new LocalReconciliationError("decision_conflict");
+      if (await this.repo.get(suspectedUseId(statementId))) return;
+      const timestamp = now();
+      // Returning to one's own use always requires review, rather than an immediate automatic match.
+      await this.repo.put({ id: manualReviewId(statementId), kind: "app-settings", value: { statementId }, updatedAt: timestamp });
+      await this.repo.put({ id: suspectedUseId(statementId), kind: "app-settings", value: { statementId, markedAt: timestamp }, updatedAt: timestamp });
+    });
+  }
+
+  async clearSuspectedUse(statementId: string): Promise<void> {
+    return serialize(this.repo.profileId, async () => { await this.repo.delete(suspectedUseId(statementId)); });
+  }
+
+  async undoSameExpense(resolutionId: string): Promise<void> {
+    return serialize(this.repo.profileId, async () => {
+      const resolution = (await this.repo.get<LocalResolution>(resolutionId))?.value;
+      if (!resolution || resolution.source !== "user" || resolution.resolution !== "same_expense" ||
+        !resolution.actualSnapshot || resolution.actualSnapshot.cleared === undefined || !resolution.actualTransactionId || (resolution.status !== "applied" && !resolution.undoRequestedAt)) {
+        throw new LocalReconciliationError("undo_unavailable");
+      }
+      await this.applyUndo(resolution);
+    });
+  }
+
+  private async applyUndo(input: LocalResolution): Promise<void> {
+    const snapshot = input.actualSnapshot!;
+    const current = await this.ledger.getTransactionById(input.actualTransactionId!);
+    const restored = current && matchesSnapshot(current, snapshot) && current.cleared === (snapshot.cleared ?? false);
+    const applied = current && matchesSnapshotFields(current, snapshot) && current.amountYen === -input.statementAmountYen && current.cleared;
+    if (!current || (!applied && !(input.undoRequestedAt && restored))) throw new LocalReconciliationError("undo_record_changed");
+    // Keep the decision reserved until rollback and readback complete, including after a crash.
+    const resolution = await this.storeResolution({ ...input, status: "processing", undoRequestedAt: input.undoRequestedAt ?? now(), errorCode: null });
+    try {
+      await this.repo.put({ id: manualReviewId(input.statementId), kind: "app-settings", value: { statementId: input.statementId }, updatedAt: now() });
+      if (!restored) await this.ledger.applyTransactionUpdates([{ transactionId: input.actualTransactionId!,
+        ...(current.amountYen !== snapshot.amountYen ? { amountYen: snapshot.amountYen } : {}), cleared: snapshot.cleared ?? false }]);
+      const readback = await this.ledger.getTransactionById(input.actualTransactionId!);
+      if (!readback || !matchesSnapshot(readback, snapshot) || readback.cleared !== (snapshot.cleared ?? false)) throw new LocalReconciliationError("actual_readback_mismatch");
+      const statement = input.statementSnapshot ?? (await this.findStatement(input.statementId))?.value;
+      if (statement && snapshot.payeeName) {
+        const key = merchantAliasKey(statement.merchant, snapshot.payeeName);
+        const aliasId = `merchant-alias:${encodeURIComponent(key)}`;
+        const alias = await this.repo.get<{ learnedBy?: string }>(aliasId);
+        const others = (await this.resolutions()).filter(row => row.id !== input.id && row.source === "user" && !row.undoRequestedAt);
+        let stillUsed = false;
+        for (const other of others) {
+          const otherStatement = other.statementSnapshot ?? (await this.findStatement(other.statementId))?.value;
+          if (other.resolution === "same_expense" && otherStatement && other.actualSnapshot?.payeeName &&
+            merchantAliasKey(otherStatement.merchant, other.actualSnapshot.payeeName) === key) stillUsed = true;
+        }
+        // Old aliases have no provenance; retain them only if another active decision supports the pair.
+        if (alias && !stillUsed && (!alias.value.learnedBy || alias.value.learnedBy.startsWith("reconciliation-resolution:"))) await this.repo.delete(aliasId);
+      }
+      const undoneAt = resolution.undoRequestedAt!;
+      await this.repo.put({ id: `reconciliation-undo:${input.statementId}:${undoneAt}`, kind: "correction-audit",
+        value: { targetType: "reconciliation-undo", statementId: input.statementId, resolution: input, undoneAt }, updatedAt: now() });
+      await this.repo.delete(input.id);
+    } catch (error) {
+      await this.storeResolution({ ...resolution, status: "failed", errorCode: error instanceof LocalReconciliationError ? error.code : "actual_apply_failed" });
+      throw error;
+    }
   }
 
   private async findStatement(id: string): Promise<LocalDataRecord<LocalStatement> | null> {
@@ -477,11 +559,11 @@ export class LocalReconciliationService {
     return (await this.repo.list<LocalReceipt>("receipt-metadata")).find((row) => row.value.id === id) ?? null;
   }
 
-  private async saveAlias(merchant: string, aliasMerchant: string): Promise<void> {
+  private async saveAlias(merchant: string, aliasMerchant: string, learnedBy: string): Promise<void> {
     const key = merchantAliasKey(merchant, aliasMerchant);
     const id = `merchant-alias:${encodeURIComponent(key)}`;
     if (await this.repo.get(id)) return;
-    await this.repo.put({ id, kind: "merchant-mapping", value: { merchant, aliasMerchant }, updatedAt: now() });
+    await this.repo.put({ id, kind: "merchant-mapping", value: { merchant, aliasMerchant, learnedBy }, updatedAt: now() });
   }
 
   private async storeResolution(resolution: LocalResolution): Promise<LocalResolution> {
@@ -512,7 +594,7 @@ export class LocalReconciliationService {
       (transaction.isSplit && transaction.amountYen !== targetAmount)) {
       throw new LocalReconciliationError("actual_readback_mismatch");
     }
-    return { ...resolution, actualSnapshot: actualSnapshot(transaction) };
+    return { ...resolution, actualSnapshot: { ...actualSnapshot(transaction), cleared: undefined } };
   }
 
   private async applyOne(input: LocalResolution): Promise<LocalResolution> {
@@ -557,6 +639,12 @@ export class LocalReconciliationService {
         }
         if (resolution.resolution === "no_receipt" && resolution.excludedFromSpending !== undefined) await this.ledger.setSpendingExclusion(imported.id, resolution.excludedFromSpending);
         resolution = { ...resolution, actualTransactionId: imported.id };
+      }
+      if (resolution.resolution === "same_expense" && resolution.source === "user" && resolution.actualSnapshot?.payeeName) {
+        const statement = resolution.statementSnapshot ?? (await this.findStatement(resolution.statementId))?.value;
+        if (statement && statement.merchant !== resolution.actualSnapshot.payeeName) {
+          await this.saveAlias(statement.merchant, resolution.actualSnapshot.payeeName, `${resolution.id}:${resolution.createdAt}`);
+        }
       }
       return this.storeResolution({ ...resolution, status: "applied", errorCode: null });
     } catch (error) {
