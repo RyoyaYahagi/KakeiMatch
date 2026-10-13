@@ -10,9 +10,10 @@ export function daysBetween(from: string, to: string) {
 }
 
 /** Collapsed row of a statement that needs a decision: status mark, merchant with the reason, and the amount. */
-export function reviewSummaryRow(merchant: string, amount: string, tone: 'warning' | 'missing' | 'success') {
-  const element = document.createElement('summary'); element.className = 'review-row';
-  const mark = document.createElement('span'); mark.className = `record-icon tone-${tone}`; mark.append(icon(tone === 'warning' ? 'warning' : tone === 'success' ? 'check' : 'unmatched'));
+export function reviewSummaryRow(merchant: string, amount: string, tone: 'warning' | 'missing' | 'success' | 'neutral', tag: 'summary' | 'div' = 'summary') {
+  const element = document.createElement(tag); element.className = 'review-row';
+  const mark = document.createElement('span'); mark.className = `record-icon tone-${tone}`;
+  mark.append(icon(tone === 'warning' ? 'warning' : tone === 'success' ? 'check' : tone === 'neutral' ? 'eyeOff' : 'unmatched'));
   const main = document.createElement('span'); main.className = 'record-main';
   const title = document.createElement('span'); title.className = 'record-title'; title.textContent = merchant;
   const note = document.createElement('span'); note.className = `record-note note-${tone}`;
@@ -20,6 +21,21 @@ export function reviewSummaryRow(merchant: string, amount: string, tone: 'warnin
   const value = document.createElement('span'); value.className = 'record-amount'; value.textContent = amount;
   element.append(mark, main, value);
   return { element, note };
+}
+
+/** Header of a folded history list: a leading mark, the label with its count, and a chevron. */
+export function historySummary(mark: HTMLElement, label: string) {
+  const summary = document.createElement('summary');
+  const name = document.createElement('span'); name.className = 'review-history-label'; name.textContent = label;
+  const chevron = icon('chevronDown'); chevron.classList.add('review-history-chevron');
+  summary.append(mark, name, chevron);
+  return summary;
+}
+
+/** Local clock time of a saved ISO timestamp, as "10/13 19:51". */
+export function shortDateTime(iso: string) {
+  const at = new Date(iso);
+  return `${at.getMonth() + 1}/${at.getDate()} ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
 
 /** docs/UX.md 下部ナビ: the reconciliation tab shows how many statements need a decision. */

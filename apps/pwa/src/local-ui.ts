@@ -11,7 +11,7 @@ import { attachReceiptSearchItems, emptySearchFilters, type TransactionSearchFil
 import { showTransactionSearch } from './local-transaction-search-ui';
 import { renderCategoryBreakdown, renderMonthlyDashboard, monthEnd, shiftMonth } from './local-monthly-dashboard';
 import { renderHomeAttention, type HomeAttentionCounts, type HomeAttentionItem } from './home-attention';
-import { daysBetween, reviewSummaryRow, shortDay, slipPart, slipPerforation, slipSeal, updateReconciliationBadge } from './reconciliation-ui';
+import { daysBetween, historySummary, reviewSummaryRow, shortDateTime, shortDay, slipPart, slipPerforation, slipSeal, updateReconciliationBadge } from './reconciliation-ui';
 import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
@@ -1329,15 +1329,28 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     updateReconciliationBadge(counts);
     return { run, decisions, suspected, pending, counts };
   }
-  async function reviewPage() {
+  async function reviewPage(runFeedback?: string) {
     const screen = await open('reconciliation');
     // The result is saved even after leaving; only the redraw is skipped.
     const rerun = async () => { recordDiagnosticAction('reconciliation_run_started', 'reconciliation'); await reconciliation.run(); ensureTab('reconciliation'); await reviewPage(); };
+    const matchedCount = (rows: Awaited<ReturnType<typeof reconciliation.resolutions>>) => rows.filter(d => d.resolution === 'same_expense' && d.status === 'applied' && !d.undoRequestedAt).length;
+    // docs/UX.md 照合: says what running again did, so the button is not a silent reload.
+    const runAgain = async () => {
+      recordDiagnosticAction('reconciliation_run_started', 'reconciliation');
+      const before = matchedCount(await reconciliation.resolutions());
+      await reconciliation.run(); ensureTab('reconciliation');
+      const added = matchedCount(await reconciliation.resolutions()) - before;
+      await reviewPage(added > 0 ? `照合しました。新しく${added}件が一致しました。` : '照合しました。新しく一致したものはありません。');
+    };
     const header = document.createElement('div'); header.className = 'page-header';
-    const refresh = button('照合を更新する', rerun); refresh.className = 'secondary compact'; refresh.prepend(icon('repeat'));
+    const refresh = button('もう一度照合する', runAgain); refresh.className = 'secondary compact'; refresh.prepend(icon('repeat'));
     header.append(text('h2', '照合'), refresh); view.append(header);
     const { run, decisions, suspected, pending } = await reconciliationState();
     ensureScreen(screen);
+    if (run) {
+      const status = text('p', runFeedback ?? `最終照合 ${shortDateTime(run.completedAt)}。記録を追加・修正したら、もう一度照合すると新しい一致を探します。`, 'muted review-run-status');
+      status.setAttribute('role', 'status'); view.append(status);
+    }
     for (const decision of decisions.filter(d => d.status !== 'applied')) {
       const failure = document.createElement('div'); failure.className = 'notice notice-danger';
       failure.append(icon('warning'), text('p', decision.undoRequestedAt ? '一致の取り消しが完了していません。判断内容は保存されています。' : '家計簿への反映が完了していません。判断内容は保存されています。'), button(decision.undoRequestedAt ? '取り消しを再試行する' : '反映を再試行する', async () => { if (decision.undoRequestedAt) await reconciliation.undoSameExpense(decision.id); else await reconciliation.retry(decision.id); await rerun(); }, false));
@@ -1540,7 +1553,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (suspected.length) {
       const history = document.createElement('details'); history.id = 'reconciliation-suspected'; history.className = 'review-history';
-      history.append(text('summary', `不正利用？の明細（${suspected.length}件）`));
+      const suspectedMark = document.createElement('span'); suspectedMark.className = 'review-history-mark'; suspectedMark.append(icon('warning'));
+      history.append(historySummary(suspectedMark, `不正利用？の明細（${suspected.length}件）`));
       history.append(text('p', 'あなたが心当たりのない利用としてマークした明細です。KakeiMatchは不正利用と断定しません。', 'muted'));
       const suspectedList = document.createElement('ul'); suspectedList.className = 'review-list';
       for (const flag of suspected.sort((a, b) => b.markedAt.localeCompare(a.markedAt))) {
@@ -1567,17 +1581,22 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     const ignored = decisions.filter(row => row.resolution === 'ignored' && row.status === 'applied');
     if (ignored.length) {
-      const history = document.createElement('details'); history.className = 'surface-section review-history'; history.append(text('summary', `登録しないと判断した明細（${ignored.length}件）`));
+      const history = document.createElement('details'); history.className = 'review-history';
+      const mark = document.createElement('span'); mark.className = 'review-history-mark'; mark.append(icon('eyeOff'));
+      history.append(historySummary(mark, `登録しないと判断した明細（${ignored.length}件）`));
+      const ignoredList = document.createElement('ul'); ignoredList.className = 'review-list';
       for (const decision of ignored) {
-        const statement = allStatements.find(row => row.id === decision.statementId);
-        if (statement) history.append(text('p', `${statement.usedDate} · ${statement.merchant} · ${yen(statement.amountYen)} · 登録しない`));
+        const statement = allStatements.find(row => row.id === decision.statementId); if (!statement) continue;
+        const row = reviewSummaryRow(statement.merchant, yen(statement.amountYen), 'neutral', 'div');
+        row.note.textContent = `${shortDay(statement.usedDate)} · 登録しない`;
+        const item = document.createElement('li'); item.append(row.element); ignoredList.append(item);
       }
-      view.append(history);
+      history.append(ignoredList); view.append(history);
     }
     if (matched.length) {
       const history = document.createElement('details'); history.className = 'review-history'; history.id = 'reconciliation-matched';
-      const historySummary = document.createElement('summary'); const seal = text('span', '済', 'seal'); seal.setAttribute('aria-hidden', 'true');
-      historySummary.append(seal, text('span', `一致した内容を見る（${matchCount}件）`)); history.append(historySummary);
+      const seal = text('span', '済', 'seal'); seal.setAttribute('aria-hidden', 'true');
+      history.append(historySummary(seal, `一致した内容を見る（${matchCount}件）`));
       const matchedList = document.createElement('ul'); matchedList.className = 'review-list';
       const statementById = new Map(allStatements.map(statement => [statement.id, statement]));
       const receiptById = new Map(allReceipts.map(receipt => [receipt.id, receipt]));
@@ -1589,20 +1608,39 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         const row = reviewSummaryRow(statement?.merchant ?? '保存済みの照合', yen(decision.statementAmountYen), 'success');
         row.note.textContent = `${shortDay(statement?.usedDate ?? decision.createdAt.slice(0, 10))} · ${method}`;
         detail.append(row.element);
-        detail.append(text('p', `判定：${method}で一致`));
-        detail.append(text('p', statement ? `明細：${statement.usedDate}${statement.usedTime ? ` ${statement.usedTime.slice(0, 5)}` : ''} · ${statement.merchant} · ${yen(statement.amountYen)}${statement.paymentMethod ? ` · ${statement.paymentMethod}` : ''}` : '対応する明細を端末で見つけられませんでした。'));
+        const body = document.createElement('div'); body.className = 'review-body'; detail.append(body);
+        // docs/DESIGN.md 突き合わせの伝票: the same slip as the decision, with the seal already pressed.
+        const slip = document.createElement('div'); slip.className = 'review-slip is-stamped';
+        slip.append(statement
+          ? slipPart('statement', statementProviderLabels[statement.provider as StatementProvider] ?? '明細', [
+            { label: '日付', value: `${shortDay(statement.usedDate)}${statement.usedTime ? ` ${statement.usedTime.slice(0, 5)}` : ''}` },
+            { label: '店名', value: statement.merchant }, { label: '金額', value: yen(statement.amountYen) }])
+          : text('p', '対応する明細を端末で見つけられませんでした。', 'slip-part muted'));
+        slip.append(slipPerforation());
         const value = receipt?.confirmedValue;
         const savedExpense = decision.actualSnapshot;
-        detail.append(text('p', value ? `レシート：${value.purchasedDate}${value.purchasedTime ? ` ${value.purchasedTime}` : ''} · ${value.merchant} · ${yen(value.totalAmountYen)}`
-          : savedExpense ? `${decision.source === 'user' ? '一致前の家計簿' : '家計簿'}：${savedExpense.date} · ${savedExpense.payeeName || '店名なし'} · ${yen(Math.abs(savedExpense.amountYen))} · ${accountsById.get(savedExpense.accountId)?.name ?? '保存済みの支払元'}`
-          : '対応する支出の詳細を端末で見つけられませんでした。'));
-        if (savedExpense && decision.source === 'user' && Math.abs(savedExpense.amountYen) !== decision.statementAmountYen) detail.append(text('p', `一致後の金額：${yen(decision.statementAmountYen)}`));
-        if (receipt) detail.append(button('レシートを確認する', () => receiptEditor(receipt)));
-        if (decision.source === 'user' && decision.actualSnapshot?.cleared !== undefined) detail.append(button('一致を取り消す', async () => {
-          if (!window.confirm('一致を取り消しますか？一致時に変更した金額と照合状態を戻し、もう一度候補を確認できます。')) return;
-          await reconciliation.undoSameExpense(decision.id); await rerun();
-        }));
-        else if (decision.source === 'user') detail.append(text('p', '変更前の金額・照合状態が残っていないため、この一致は取り消せません。', 'muted'));
+        // A manual match may have changed the record; the snapshot keeps the values from before.
+        const amountChanged = !value && savedExpense && decision.source === 'user' && Math.abs(savedExpense.amountYen) !== decision.statementAmountYen;
+        slip.append(value
+          ? slipPart('record', 'レシート', [
+            { label: '日付', value: `${shortDay(value.purchasedDate)}${value.purchasedTime ? ` ${value.purchasedTime}` : ''}` },
+            { label: '店名', value: value.merchant }, { label: '金額', value: yen(value.totalAmountYen) }])
+          : savedExpense ? slipPart('record', accountsById.get(savedExpense.accountId)?.name ?? '保存済みの支払元', [
+            { label: '日付', value: shortDay(savedExpense.date) },
+            { label: '店名', value: savedExpense.payeeName || '店名なし' },
+            { label: '金額', value: yen(Math.abs(savedExpense.amountYen)), differs: Boolean(amountChanged) }])
+          : text('p', '対応する支出の詳細を端末で見つけられませんでした。', 'slip-part muted'));
+        const stamp = slipSeal(); stamp.classList.add('is-pressed'); slip.append(stamp);
+        body.append(slip);
+        body.append(text('p', `判定：${method}で一致${amountChanged ? `。記録の金額を${yen(decision.statementAmountYen)}に合わせました` : ''}`, 'muted'));
+        if (receipt) body.append(button('レシートを確認する', () => receiptEditor(receipt)));
+        if (decision.source === 'user' && decision.actualSnapshot?.cleared !== undefined) {
+          const undo = button('一致を取り消す', async () => {
+            if (!window.confirm('一致を取り消しますか？一致時に変更した金額と照合状態を戻し、もう一度候補を確認できます。')) return;
+            await reconciliation.undoSameExpense(decision.id); await rerun();
+          }); body.append(undo);
+        }
+        else if (decision.source === 'user') body.append(text('p', '以前の一致のため、取り消しはできません。', 'muted'));
         item.append(detail); matchedList.append(item);
       }
       history.append(matchedList); view.append(history);

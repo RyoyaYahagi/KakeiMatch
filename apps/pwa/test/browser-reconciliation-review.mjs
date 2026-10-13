@@ -91,15 +91,15 @@ try {
   await decideManual();
   await page.getByRole('button', { name: '一致 2件', exact: true }).click();
   await matched('Synthetic Manual').locator('summary').click();
-  await matched('Synthetic Manual').getByText('判定：手動で一致', { exact: true }).waitFor();
-  await matched('Synthetic Manual').getByText(/家計簿：2026-09-30 · Synthetic Manual · ¥550/).waitFor();
+  await matched('Synthetic Manual').getByText(/^判定：手動で一致/).waitFor();
+  assert.match(await matched('Synthetic Manual').locator('.slip-record').innerText(), /9\/30[\s\S]*Synthetic Manual[\s\S]*¥550/);
   await matched('Synthetic Automatic').locator('summary').click();
   await matched('Synthetic Automatic').getByText('判定：自動で一致', { exact: true }).waitFor();
   assert.equal(await matched('Synthetic Automatic').getByRole('button', { name: '一致を取り消す', exact: true }).count(), 0);
   if (process.env.PWA_REVIEW_MATCHED_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_REVIEW_MATCHED_SCREENSHOT_PATH, fullPage: true, animations: 'disabled' });
   await press(matched('Synthetic Manual').getByRole('button', { name: '一致を取り消す', exact: true }));
   await page.getByRole('button', { name: '一致 1件', exact: true }).waitFor();
-  await click('照合を更新する'); await page.getByRole('button', { name: '要確認 1件', exact: true }).waitFor();
+  await click('もう一度照合する'); await page.getByRole('button', { name: '要確認 1件', exact: true }).waitFor();
   await pending('Synthetic Manual').locator('summary').click();
   assert.equal(await pending('Synthetic Manual').locator('.slip-record .slip-differs').textContent(), '¥550');
   await press(pending('Synthetic Manual').getByRole('button', { name: '同じ支出', exact: true }));
