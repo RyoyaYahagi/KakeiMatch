@@ -169,8 +169,9 @@ try {
     assert.equal(await summary.evaluate(node => node.parentElement.open), false);
     await summary.click();
     await page.locator('summary').filter({ hasText: 'Diagnostic Store corrected' }).click();
-    await page.getByText('明細：2026-09-30 · Diagnostic Store corrected · ¥1,280 · PayPayクレジット（1回）', { exact: true }).waitFor();
-    await page.getByText('レシート：2026-09-30 12:00 · Diagnostic Store corrected · ¥1,280', { exact: true }).waitFor();
+    const slip = page.locator('#reconciliation-matched .review-slip');
+    assert.match(await slip.locator('.slip-statement').innerText(), /9\/30[\s\S]*Diagnostic Store corrected[\s\S]*¥1,280/);
+    assert.match(await slip.locator('.slip-record').innerText(), /レシート[\s\S]*9\/30 12:00[\s\S]*Diagnostic Store corrected[\s\S]*¥1,280/);
   };
   await openAutomaticMatch();
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
@@ -180,8 +181,8 @@ try {
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store corrected');
   await page.locator('#reconciliation-tab').click();
   // The latest run no longer contains the applied pair, but its history remains.
-  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
+  await page.getByRole('button', { name: 'もう一度照合する', exact: true }).click();
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === 'もう一度照合する' && b.disabled));
   await openAutomaticMatch();
   const unmatchedStatement = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic New Store' });
   await unmatchedStatement.locator('summary').click();
@@ -210,9 +211,9 @@ try {
   await page.getByText('オフライン', { exact: true }).waitFor();
   await page.getByText('今月の支出 ¥1,780', { exact: false }).waitFor();
   await page.locator('#reconciliation-tab').click();
-  await page.getByRole('button', { name: '照合を更新する', exact: true }).click();
+  await page.getByRole('button', { name: 'もう一度照合する', exact: true }).click();
   await page.getByText(/要確認 0件/).waitFor();
-  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '照合を更新する' && b.disabled));
+  await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === 'もう一度照合する' && b.disabled));
   await openAutomaticMatch();
   await upload();
   await page.getByText('0件を取り込み、照合しました。重複 2件。対象外 0件、要確認 0件。', { exact: true }).waitFor();

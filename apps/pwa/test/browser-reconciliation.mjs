@@ -147,7 +147,7 @@ try {
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
   await page.getByText('一致した内容を見る（2件）', { exact: true }).click();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Other Account Shop' }).click();
-  await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥1,600', { exact: true }).waitFor();
+  assert.match(await page.locator('#reconciliation-matched .slip-record').filter({ hasText: 'Synthetic Other Account Shop' }).innerText(), /レシート[\s\S]*9\/30[\s\S]*¥1,600/);
   assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -155,7 +155,7 @@ try {
 
   // Leaving for home while the reconciliation redraw is still running keeps home on screen.
   const refresh = await page.evaluateHandle(() => {
-    const button = [...document.querySelectorAll('#local-view button')].find(node => node.textContent === '照合を更新する');
+    const button = [...document.querySelectorAll('#local-view button')].find(node => node.textContent === 'もう一度照合する');
     button.click(); document.querySelector('#home-tab').click();
     return button;
   });

@@ -271,8 +271,24 @@ progress { display: block; width: 100%; height: 12px; accent-color: var(--primar
 .review-body > button:last-child { width: 100%; margin-top: var(--space-2); }
 .review-clear { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--success-soft); color: var(--success); font-weight: 700; }
 .review-clear .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
-.review-history { padding: 0; }
-.review-history > summary { min-height: 44px; cursor: pointer; display: flex; align-items: center; gap: var(--space-2); color: var(--primary); font-weight: 500; }
+.review-run-status { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: .8125rem; }
+.review-history { padding: 0; border-top: 1px solid var(--border); }
+.review-history > summary { min-height: 52px; cursor: pointer; display: flex; align-items: center; gap: var(--space-2); color: var(--primary); font-weight: 500; list-style: none; }
+.review-history > summary::-webkit-details-marker { display: none; }
+.review-history-label { flex: 1; min-width: 0; }
+.review-history-chevron, .review-history-mark .icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.review-history-chevron { color: var(--muted); transition: transform .15s; }
+.review-history[open] > summary .review-history-chevron { transform: rotate(180deg); }
+.review-history-mark { display: inline-grid; place-items: center; width: 26px; height: 26px; color: var(--muted); flex: none; }
+.review-history > .review-list { margin: 0 0 var(--space-2); }
+div.review-row { min-height: 56px; }
+.tone-neutral { --tone: var(--muted); --tone-soft: var(--sunken); }
+.note-neutral { color: var(--muted); }
+/* A match already made: the seal stays pressed, smaller so the slip text stays readable. */
+.review-history .slip-part dl { padding-right: 64px; }
+.review-history .slip-seal { width: 60px; height: 60px; margin-top: -30px; border-width: 3px; }
+.review-history .slip-seal span { font-size: 1.375rem; }
+.review-history .slip-seal small { font-size: .5625rem; }
 /* docs/DESIGN.md 「済」の印 */
 .seal { display: inline-grid; place-items: center; width: 26px; height: 26px; border: 1.5px solid var(--success); border-radius: var(--radius-full); color: var(--success); font-size: .75rem; font-weight: 900; line-height: 1; transform: rotate(-10deg); flex: none; }
 .app-nav .nav-button { position: relative; }
