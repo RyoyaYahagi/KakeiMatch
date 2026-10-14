@@ -18,7 +18,7 @@ function button(label: string, action: () => void | Promise<void>, status: HTMLE
 }
 type Options = { view: HTMLElement; ledger: ReturnType<typeof createActualBrowserLedger>; service: LocalPayrollService;
   onCancel(): Promise<void>; onSaved(): Promise<void>; onExisting(id: string): Promise<void> };
-export async function showPayrollEditor(options: Options, pending?: PayrollRecord) {
+export async function showPayrollEditor(options: Options, pending?: PayrollRecord, initialPhoto?: File) {
   const { view, ledger, service } = options;
   const title = node('h2', '給与明細から入力');
   const status = node('p', '', 'muted'); status.setAttribute('role', 'status');
@@ -128,7 +128,7 @@ export async function showPayrollEditor(options: Options, pending?: PayrollRecor
     })
       .finally(() => { submit.disabled = false; });
   });
-  capture.addEventListener('change', () => { void selectPhoto(capture); }); library.addEventListener('change', () => { void selectPhoto(library); });
+  capture.addEventListener('change', () => { void selectPhoto(capture.files?.[0] ?? null); }); library.addEventListener('change', () => { void selectPhoto(library.files?.[0] ?? null); });
   const [categories, accounts] = await Promise.all([ledger.listIncomeCategories(), ledger.listOpenAccounts()]);
   if (!active) return;
   category.append(new Option('選択してください', ''), ...categories.map(row => new Option(row.name, row.id)));
@@ -148,8 +148,10 @@ export async function showPayrollEditor(options: Options, pending?: PayrollRecor
     const accountSide = node('div', '', 'entry-row-side'); accountSide.append(compactAddButton(accountAdd)); accountRow.append(accountSide);
   }
   if (pending) { photos.hidden = true; checked.checked = true; for (const input of Array.from(form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('input,select'))) input.disabled = true; }
-  async function selectPhoto(input: HTMLInputElement) {
-    let file: File | null = input.files?.[0] ?? null; if (!file) return;
+  if (initialPhoto && !pending) await selectPhoto(initialPhoto);
+  initialPhoto = undefined;
+  async function selectPhoto(file: File | null) {
+    if (!file) return;
     destroyImage();
     const selectedRevision = imageRevision;
     try {
