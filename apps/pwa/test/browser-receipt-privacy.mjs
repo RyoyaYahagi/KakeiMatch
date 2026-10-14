@@ -65,10 +65,19 @@ try {
     await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic-private.png', mimeType: 'image/png', buffer: photo });
     await page.getByRole('button', { name: 'AIで読み取る', exact: true }).waitFor(); await noImages();
   };
+  const paintBand = async () => {
+    const preview = page.locator('.receipt-mask-canvas'); await preview.scrollIntoViewIfNeeded();
+    // Keep the lower photo band above the sticky send/cancel footer.
+    await page.getByRole('dialog').evaluate(dialog => { dialog.scrollTop += 80; });
+    const box = await preview.boundingBox();
+    await page.mouse.move(box.x + box.width * .1, box.y + box.height * .85); await page.mouse.down();
+    await page.mouse.move(box.x + box.width * .9, box.y + box.height * .9); await page.mouse.up();
+    await preview.evaluate(() => new Promise(requestAnimationFrame));
+  };
   const review = async () => { await click('AIで読み取る'); await page.getByRole('heading', { name: '送信する写真を確認' }).waitFor({ timeout: 60000 }); await page.waitForFunction(() => !document.querySelector('.receipt-privacy-actions .primary')?.disabled); };
   await choose(); await click('AIで読み取る');
   await page.getByRole('heading', { name: '送信する写真を確認' }).waitFor();
-  await page.getByLabel('上端（%）').fill('85'); await page.getByLabel('下端（%）').fill('90'); await click('この範囲を隠す');
+  await paintBand();
   await page.waitForFunction(() => !document.querySelector('.receipt-privacy-actions .primary')?.disabled);
   assert.deepEqual(await page.locator('.receipt-mask-canvas').evaluate(canvas => [...canvas.getContext('2d').getImageData(300, canvas.height * .87, 1, 1).data]), [0, 0, 0, 255], 'manual masks survive later detection results');
   await click('1つ戻す');
@@ -83,7 +92,7 @@ try {
     return result;
   });
   assert.ok(bands.every(count => count > 80), 'All labeled private fields and codes must be masked');
-  await page.getByLabel('上端（%）').fill('85'); await page.getByLabel('下端（%）').fill('90'); await click('この範囲を隠す'); await click('1つ戻す');
+  await paintBand(); await click('1つ戻す');
   await page.getByRole('dialog').evaluate(dialog => { dialog.scrollTop = 0; });
   if (process.env.PWA_RECEIPT_PRIVACY_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_PRIVACY_SCREENSHOT_PATH });
   await click('この写真で読み取る');

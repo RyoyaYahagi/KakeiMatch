@@ -864,3 +864,9 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .receipt-privacy-dialog button { margin: .25rem; }
 
 .receipt-privacy-actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; background: var(--surface); padding-block: .5rem; }
+.receipt-crop-frame { position: relative; width: fit-content; max-width: 100%; margin-inline: auto; }
+.receipt-crop-frame .receipt-mask-canvas { margin: 0; }
+.receipt-crop-frame[data-cropping="true"] .receipt-mask-canvas { max-height: 40dvh; }
+.receipt-privacy-dialog .receipt-crop-handle { position: absolute; width: 44px; height: 44px; margin: 0; padding: 0; border: 0; background: transparent; transform: translate(-50%, -50%); touch-action: none; }
+.receipt-crop-handle::after { content: ''; display: block; width: 16px; height: 16px; margin: auto; border: 2px solid white; border-radius: 50%; background: var(--primary); box-shadow: 0 0 0 1px var(--text); }
+.receipt-crop-handle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; border-radius: 50%; }
