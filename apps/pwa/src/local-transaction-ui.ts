@@ -76,7 +76,7 @@ export function showManualTransactionEditor(options: {
   /** Called with the schedule to create when "くり返し" was chosen. */
   onSaved: (schedule?: RecurringScheduleInput) => Promise<void>;
   recurringNames?: () => Promise<string[]>;
-  onPayroll?: () => Promise<void>;
+  onPayroll?: (file: File) => Promise<void>;
   onCancel: () => Promise<void>;
 }): void {
   const ledger = options.ledger;
@@ -240,9 +240,16 @@ export function showManualTransactionEditor(options: {
     cancel.className = 'text-button back-link'; cancel.prepend(icon('chevronLeft'));
     options.view.replaceChildren(cancel, heading, form);
     if (kind === 'income' && !transaction && options.onPayroll) {
-      const payroll = node('button', '給与明細から入力', 'secondary'); payroll.type = 'button';
-      payroll.addEventListener('click', () => { void options.onPayroll!().catch(() => { status.textContent = '給与明細の入力を開けませんでした。'; }); });
-      heading.after(payroll);
+      const payroll = node('button', 'AIで簡単入力', 'secondary'); payroll.type = 'button';
+      const camera = node('input'); camera.type = 'file'; camera.accept = 'image/jpeg,image/png,image/webp';
+      camera.setAttribute('capture', 'environment'); camera.hidden = true; camera.id = 'income-payroll-capture';
+      // Open within the tap handler: Safari may reject a picker after async screen loading.
+      payroll.addEventListener('click', () => camera.click());
+      camera.addEventListener('change', () => {
+        const file = camera.files?.[0]; camera.value = '';
+        if (file) void options.onPayroll!(file).catch(() => { status.textContent = '給与明細の入力を開けませんでした。'; });
+      });
+      heading.after(payroll, camera);
     }
     status.textContent = '';
 

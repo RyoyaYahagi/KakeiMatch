@@ -260,13 +260,13 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     body.addEventListener('pointerup', endDrag); body.addEventListener('pointercancel', () => { dragStart = null; recordSheet.style.removeProperty('--sheet-drag'); });
     if (!recordSheet.open) recordSheet.showModal();
   }
-  async function payrollEditor(pendingId?: string) {
+  async function payrollEditor(file: File) {
     await open('receipt');
-    const pending = (await payroll.list()).find(row => row.status === 'pending' && (!pendingId || row.id === pendingId));
+    const pending = (await payroll.list()).find(row => row.status === 'pending');
     await showPayrollEditor({ view, ledger, service: payroll, onCancel: newEntryReturn,
       onSaved: async () => { await returnToRecords(); el('message').textContent = '登録しました。'; },
       onExisting: async id => { const transaction = await ledger.getTransactionById(id); if (transaction) await transactionDetail(transaction); },
-    }, pending);
+    }, pending, file);
   }
   async function accountBalancesPage() {
     // Keep records visible while loading; activate settings only in the same
@@ -281,7 +281,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!mount) await open('receipt');
     await showManualTransactionEditor({ view: mount ?? view, ledger, repository, kind, transaction, focusField, inline: Boolean(mount),
-      onPayroll: () => payrollEditor(),
+      onPayroll: file => payrollEditor(file),
       recurringNames: async () => (await ledger.listRecurringSchedules()).map(row => row.name.trim()),
       onSaved: async schedule => {
         ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords();
