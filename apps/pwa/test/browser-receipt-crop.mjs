@@ -7,6 +7,24 @@ const assets = await readdir(new URL('../.cloudflare/output/v0/workers/default/a
 const moduleFile = assets.find(name => /^receipt-image-privacy-.*\.js$/.test(name));
 const browser = await chromium.launch({ headless: true, executablePath: process.env.PWA_BROWSER_PATH, args: ['--no-sandbox'] });
 const page = await browser.newPage({ viewport: { width: 375, height: 812 } });
+await page.addInitScript(() => {
+  const NativeWorker = window.Worker;
+  window.Worker = class extends NativeWorker {
+    constructor(...args) {
+      super(...args);
+      let released = false;
+      this.addEventListener('message', event => {
+        if (released || event.data?.action !== 'recognize' || event.data.status !== 'resolve') return;
+        event.stopImmediatePropagation();
+        window.releaseRecognition = () => {
+          released = true;
+          this.dispatchEvent(new MessageEvent('message', { data: event.data }));
+          window.releaseRecognition = null;
+        };
+      });
+    }
+  };
+});
 const errors = []; page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
 try {
@@ -32,13 +50,26 @@ try {
   await preview.scrollIntoViewIfNeeded(); let box = await preview.boundingBox();
   await page.mouse.move(box.x + box.width * .4, box.y + box.height * .375); await page.mouse.down();
   await page.mouse.move(box.x + box.width * .6, box.y + box.height * .5); await page.mouse.up();
+  await page.waitForFunction(() => !!window.releaseRecognition);
+  await page.evaluate(() => document.fonts.ready);
+  let finishDetectionDuringDrag = true;
   const selectCrop = async () => {
     await click('トリミング'); await preview.scrollIntoViewIfNeeded(); box = await preview.boundingBox();
+    await preview.evaluate(() => new Promise(requestAnimationFrame));
     for (const [name, x, y] of [['トリミング枠の左上', .1, .15], ['トリミング枠の右下', 5 / 6, 13 / 16]]) {
       const handle = page.getByRole('button', { name, exact: true });
       const position = await handle.boundingBox();
       await page.mouse.move(position.x + position.width / 2, position.y + position.height / 2); await page.mouse.down();
-      await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 3 }); await page.mouse.up();
+      await page.mouse.move(box.x + box.width * x, box.y + box.height * y, { steps: 3 });
+      if (finishDetectionDuringDrag) {
+        finishDetectionDuringDrag = false;
+        const before = await preview.boundingBox();
+        await page.evaluate(async () => { window.releaseRecognition(); await new Promise(requestAnimationFrame); await new Promise(requestAnimationFrame); });
+        const after = await preview.boundingBox();
+        assert.ok(Math.abs(after.y - before.y) < .5 && Math.abs(after.x - before.x) < .5, 'detection completion must not move the crop under the pointer');
+        box = after;
+      }
+      await page.mouse.up();
     }
   };
   await selectCrop();

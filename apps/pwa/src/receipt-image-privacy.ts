@@ -91,6 +91,11 @@ export async function prepareReceiptImage(file: Blob, signal: AbortSignal): Prom
       const full = { x: 0, y: 0, width: original.width, height: original.height };
       let view = { ...full }, selection = { ...full };
       let cropMode = false, detectionDone = false;
+      let detectionStatus = status.textContent ?? '';
+      const updateDetectionStatus = (message: string) => {
+        detectionStatus = message;
+        if (!cropMode && !start) status.textContent = message;
+      };
       type Corner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
       const frameElement = document.createElement('div'); frameElement.className = 'receipt-crop-frame'; frameElement.append(canvas);
       const handles = new Map<Corner, HTMLButtonElement>();
@@ -144,9 +149,11 @@ export async function prepareReceiptImage(file: Blob, signal: AbortSignal): Prom
       };
       const endDrag = (event: PointerEvent) => {
         updateDrag(event); if (dragging) masks.push(dragging);
-        start = null; dragging = null; cropCorner = null; redraw();
+        start = null; dragging = null; cropCorner = null;
+        if (!cropMode) status.textContent = detectionStatus;
+        redraw();
       };
-      const cancelDrag = () => { start = null; dragging = null; cropCorner = null; redraw(); };
+      const cancelDrag = () => { start = null; dragging = null; cropCorner = null; if (!cropMode) status.textContent = detectionStatus; redraw(); };
       canvas.onpointerdown = event => { if (cropMode) return; start = point(event); canvas.setPointerCapture(event.pointerId); updateDrag(event); };
       canvas.onpointermove = updateDrag; canvas.onpointerup = endDrag; canvas.onpointercancel = cancelDrag;
       const cornerLabels = { 'top-left': '左上', 'top-right': '右上', 'bottom-left': '左下', 'bottom-right': '右下' } as const;
@@ -173,6 +180,8 @@ export async function prepareReceiptImage(file: Blob, signal: AbortSignal): Prom
       const setCropMode = (enabled: boolean) => {
         cancelDrag(); cropMode = enabled; crop.setAttribute('aria-pressed', String(enabled)); applyCrop.hidden = !enabled;
         help.hidden = enabled; frameElement.dataset.cropping = String(enabled);
+        // Detection may finish while a corner is held: keep the photo in place.
+        status.textContent = enabled ? '切り取る範囲を調整してください。' : detectionStatus;
         hint.textContent = enabled ? '四隅の丸を動かして、残す範囲を調整してください。矢印キーでも動かせます。「この範囲で切り取る」で確定します。' : maskHint;
         send.disabled = !detectionDone || enabled; redraw();
       };
@@ -204,12 +213,12 @@ export async function prepareReceiptImage(file: Blob, signal: AbortSignal): Prom
         redraw();
       }).then(result => {
         if (closed) return;
-        status.textContent = result.failed ? '自動検出できなかった箇所があります。写真を確認して隠す範囲を追加してください。' : '個人情報と思われる箇所を隠しました。残っていないか確認してください。';
+        updateDetectionStatus(result.failed ? '自動検出できなかった箇所があります。写真を確認して隠す範囲を追加してください。' : '個人情報と思われる箇所を隠しました。残っていないか確認してください。');
         detectionDone = true; send.disabled = cropMode;
         redraw();
       }, () => {
         if (closed) return;
-        status.textContent = '自動検出できませんでした。写真を確認して隠す範囲を追加してください。';
+        updateDetectionStatus('自動検出できませんでした。写真を確認して隠す範囲を追加してください。');
         detectionDone = true; send.disabled = cropMode;
       });
     });
