@@ -13,10 +13,7 @@
   <img src="docs/screenshots/readme-reconciliation-375.png" alt="照合画面。要確認1件、記録なし2件、一致4件と、確認が必要な明細の一覧を表示している" width="240">
 </p>
 
-<img src="docs/screenshots/readme-desktop-home-1440.png" alt="PC幅のホーム画面。左にナビゲーション、中央に月の収支・予算・確認すること・最近の記録、右に支出の内訳がある" width="740">
-
-スクリーンショットはすべて合成データです。ローカルで起動したPWAのURLを `PWA_E2E_URL` に指定し、`pnpm --dir apps/pwa screenshots:readme` を実行すると撮り直せます。
-
+<img src="docs/screenshots/readme-desktop-home-1440.png" alt="PC幅のホーム画面。左にナビゲーション、中央に月の収支・予算・確認すること・最近の記録、右に支出の内訳がある" width="
 ## 作った理由
 
 家計簿をつけるときの負担は、レシートの入力だけではありません。入力した後、後日届くクレジットカードや決済サービスの明細と1件ずつ突き合わせ、金額の違いや記録漏れを探す作業が残ります。
