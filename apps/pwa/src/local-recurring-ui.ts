@@ -1,3 +1,4 @@
+import { categoryChoices } from './category-picker';
 import { dismissOnBackdrop } from './dialog-backdrop';
 import { accountOptions } from './local-account-ui';
 import { categoryTone } from './category-tone';
@@ -67,7 +68,7 @@ export async function showRecurringSchedules(options: {
   const { view, ledger, service } = options;
   async function loadMasters(kind: RecurringScheduleInput['kind']): Promise<{ accounts: Account[]; categories: Category[] }> {
     const [accounts, categories] = await Promise.all([
-      ledger.listOpenAccounts(), kind === 'income' ? ledger.listIncomeCategories() : ledger.listExpenseCategories(),
+      ledger.listOpenAccounts(), kind === 'income' ? categoryChoices(ledger, ledger.listIncomeCategories()) : categoryChoices(ledger, ledger.listExpenseCategories()),
     ]);
     return { accounts, categories };
   }
