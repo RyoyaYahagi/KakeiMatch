@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto, syntheticReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -29,7 +30,7 @@ page.on('pageerror', error => errors.push(error.message));
 const click = name => page.getByRole('button', { name, exact: true }).click();
 const syntheticPng = {
   name: 'synthetic-receipt.png', mimeType: 'image/png',
-  buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64'),
+  buffer: await syntheticReceiptPhoto(page),
 };
 
 async function chooseReceiptEntry() {
@@ -67,9 +68,9 @@ try {
   await chooseReceiptEntry();
   await uploadReceipt();
   await enterReceipt('Gemini Draft Store', 1200);
-  await click('AIで読み取る');
-  await page.getByText('AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。', { exact: true }).waitFor();
-  assert.equal(await page.locator('img.receipt-preview').count(), 1);
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
+  await page.getByText('AI機能は一時的に利用できません。写真は破棄しました。入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。', { exact: true }).waitFor();
+  assert.equal(await page.locator('img.receipt-preview').count(), 0);
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Gemini Draft Store');
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1200');
   if (process.env.PWA_AI_PAUSED_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_AI_PAUSED_SCREENSHOT_PATH, fullPage: true });
@@ -82,10 +83,10 @@ try {
   await uploadReceipt('synthetic-jev-paused.png');
   await enterReceipt('Jev Paused Manual Store', 1800);
   geminiPaused = false;
-  await click('AIで読み取る');
-  await page.getByText('AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。 読み取った内容は編集できます。', { exact: true }).waitFor();
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
+  await page.getByText('AI機能は一時的に利用できません。写真は破棄しました。入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。 読み取った内容は編集できます。', { exact: true }).waitFor();
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Extracted Provider Store');
-  assert.equal(await page.locator('img.receipt-preview').count(), 1);
+  assert.equal(await page.locator('img.receipt-preview').count(), 0);
   await enterReceipt('Jev Paused Corrected Store', 1900);
   await click('登録する');
   await page.getByText('登録しました。', { exact: true }).waitFor();
@@ -97,7 +98,7 @@ try {
   await page.locator('#home-tab').click();
   await page.getByText('今月の支出 ¥3,100', { exact: false }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  console.log('PASS: Gemini/Jev 503 pauses show a safe message, local receipt images remain available, and manual registration works without an account session at 375px width');
+  console.log('PASS: Gemini/Jev 503 pauses show a safe message, receipt images are discarded, and manual registration works without an account session at 375px width');
 } catch (error) {
   console.log(await page.locator('body').innerText());
   console.log('Mock calls:', { gemini: geminiRequests.length, jev: jevRequests.length, status: await page.locator('#message').textContent().catch(() => null) });

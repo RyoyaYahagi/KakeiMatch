@@ -6,7 +6,7 @@
     "dev": "cf dev",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "test": "node test/sw.test.mjs && node --experimental-strip-types --test test/browser-bundle-secrets.test.mjs",
+    "test": "node test/sw.test.mjs && node --experimental-strip-types --test test/browser-bundle-secrets.test.mjs test/cloudflare-config.test.mjs",
     "test:theme-e2e": "node test/browser-theme.mjs",
     "test:updates-e2e": "node test/browser-updates.mjs",
     "test:local-data-rescue-e2e": "node test/browser-local-data-rescue.mjs",
@@ -62,16 +62,20 @@
     "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs",
     "test:moneyforward-e2e": "node test/browser-moneyforward.mjs",
     "test:statement-options-e2e": "node test/browser-statement-options.mjs",
+    "test:receipt-privacy-e2e": "node test/browser-receipt-privacy.mjs && node test/browser-receipt-privacy-response.mjs && node test/browser-receipt-crop.mjs",
     "test:reconciliation-review-e2e": "node test/browser-reconciliation-review.mjs",
     "test:payroll-e2e": "node test/browser-payroll.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",
     "@better-auth/passkey": "1.7.6",
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/jpn": "1.0.0",
     "better-auth": "1.7.6",
     "csv-parse": "7.0.3",
     "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4",
+    "tesseract.js": "7.0.0",
     "zod": "4.6.5"
   },
   "devDependencies": {

@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto, syntheticReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -36,8 +37,8 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await click('記録を追加');
-  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
-  await click('AIで読み取る');
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: await syntheticReceiptPhoto(page) });
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
   const band = page.getByRole('region', { name: '画像と照らし合わせてほしいところが3件あります' });
   await band.waitFor();
   const rows = band.locator('.receipt-review-row');
@@ -90,8 +91,8 @@ try {
   assert.equal(await page.locator('#message').textContent(), '登録しました。');
   // A receipt paid entirely with points keeps a 0 yen total and can be registered as it is.
   await click('記録を追加');
-  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
-  await click('AIで読み取る');
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: await syntheticReceiptPhoto(page) });
+  await click('AIで読み取る'); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Points Market');
   assert.equal(await page.locator('#receipt-amount').inputValue(), '0');
   await page.locator('#receipt-category').selectOption({ label: '食費' });

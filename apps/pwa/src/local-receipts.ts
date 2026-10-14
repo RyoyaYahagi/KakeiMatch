@@ -6,6 +6,8 @@ import { currentAiIdentity, getAiAccessToken } from "./ai-auth";
 import { ActualMasterValidationError, type createActualBrowserLedger } from "../../../src/lib/actual-browser-ledger";
 import { LocalCategoryLearning, type AppliedCategoryRule } from "./local-category-learning";
 
+import { sanitizeReceiptExtraction } from "../../../src/lib/receipt-privacy";
+
 const RECEIPT_KIND = "receipt-metadata" as const;
 const EXTRACTION_KIND = "receipt-extraction" as const;
 const MAPPING_KIND = "merchant-mapping" as const;
@@ -71,6 +73,7 @@ export class LocalReceiptServiceError extends Error {
 type Ledger = ReturnType<typeof createActualBrowserLedger>;
 export type LocalReceiptServiceOptions = {
   fetchImpl?: typeof fetch;
+  prepareImage?: (image: Blob, signal: AbortSignal) => Promise<Blob>;
   getToken?: typeof getAiAccessToken;
   now?: () => Date;
   makeId?: () => string;
@@ -79,6 +82,16 @@ export type LocalReceiptServiceOptions = {
   /** Tests can provide a lock; production uses Web Locks when available. */
   withRegistrationLock?: <T>(id: string, operation: () => Promise<T>) => Promise<T>;
 };
+
+/** Release caller-held images even when an authentication request is still pending. */
+function awaitWithAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(new DOMException("Cancelled", "AbortError"));
+    signal.addEventListener("abort", abort, { once: true });
+    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
+}
 
 function nowIso(options: LocalReceiptServiceOptions): string { return (options.now ?? (() => new Date()))().toISOString(); }
 function newId(options: LocalReceiptServiceOptions): string { return `receipt:${(options.makeId ?? crypto.randomUUID.bind(crypto))()}`; }
@@ -112,7 +125,7 @@ function safeError(error: unknown): LocalReceiptServiceError {
   if (error instanceof LocalDataStorageError) return new LocalReceiptServiceError("storage", error.message);
   if (error instanceof TypeError) return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
   if (error instanceof Error && error.message === "bot_check_cancelled") {
-    return new LocalReceiptServiceError("auth_required", "確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。手で入力するか、もう一度読み取ってください。");
+    return new LocalReceiptServiceError("auth_required", "確認をやめたので、AIでは読み取りませんでした。読み取り用の写真は破棄しました。手で入力するか、もう一度読み取ってください。");
   }
   if (error instanceof Error && error.message === "bot_check_failed") {
     return new LocalReceiptServiceError("auth_required", "ロボットでないことを確かめられませんでした。もう一度読み取ってください。");
@@ -121,7 +134,7 @@ function safeError(error: unknown): LocalReceiptServiceError {
     return new LocalReceiptServiceError("quota", "この接続からの登録なしの利用が多いため、今日はこれ以上始められません。手で入力するか、設定からログインしてください。", true);
   }
   if (error instanceof Error && ["account_session_required", "ai_token_unavailable", "guest_unavailable"].includes(error.message)) {
-    return new LocalReceiptServiceError("auth_required", "AI機能を準備できませんでした。レシートは端末に保存されています。設定からログインすると使えます。");
+    return new LocalReceiptServiceError("auth_required", "AI機能を準備できませんでした。手で入力して続けられます。設定からログインすると使えます。");
   }
   return new LocalReceiptServiceError("unavailable", "処理できませんでした。通信状態と端末の空き容量を確認して再試行してください。");
 }
@@ -148,6 +161,8 @@ function safeCategoryResponse(value: unknown, categories: Array<{ id: string; na
 }
 
 export class LocalReceiptService {
+  private readonly temporaryImages = new Map<string, Blob>();
+  private readonly reads = new Map<string, AbortController>();
   private readonly fetchImpl: typeof fetch;
   private readonly categoryLearning: LocalCategoryLearning;
   constructor(private readonly repository: LocalDataRepository, private readonly ledger: Ledger, private readonly options: LocalReceiptServiceOptions = {}) {
@@ -168,10 +183,48 @@ export class LocalReceiptService {
         aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null },
         confirmedValue: null, registration: { status: "pending", actualTransactionId: null, lastError: null },
       };
-      await this.repository.putBlob({ id: blobId, ownerKind: "receipt", ownerId: id, blob: new Blob([bytes], { type: contentType }), contentType, createdAt: timestamp });
+      bytes.fill(0);
       await this.save(receipt);
+      this.temporaryImages.set(id, file);
       return receipt;
     } catch (error) { throw safeError(error); }
+  }
+
+  async replaceImage(id: string, file: Blob): Promise<LocalReceipt> {
+    const receipt = await this.requireReceipt(id);
+    if (receipt.registration.status !== "pending") throw new LocalReceiptServiceError("registration_locked", "登録済みの写真は変更できません。");
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const { contentType, sizeBytes } = validateReceiptImage({ bytes, declaredContentType: file.type });
+    bytes.fill(0);
+    await this.discardImage(id);
+    const updated = { ...receipt, image: { blobId: `receipt-image:${id.slice("receipt:".length)}`, contentType, sizeBytes }, updatedAt: nowIso(this.options) };
+    await this.save(updated);
+    this.temporaryImages.set(id, file);
+    return updated;
+  }
+
+  /** New photos stay in memory. Legacy saved photos are read only when explicitly selected. */
+  async getImage(id: string): Promise<Blob | null> {
+    const temporary = this.temporaryImages.get(id);
+    if (temporary) return temporary;
+    const receipt = await this.get(id);
+    return receipt?.image ? (await this.repository.getBlob(receipt.image.blobId))?.blob ?? null : null;
+  }
+
+  discardTemporaryImage(id: string): void {
+    this.temporaryImages.delete(id);
+  }
+
+  discardTemporaryImages(): void {
+    for (const controller of this.reads.values()) controller.abort();
+    this.temporaryImages.clear();
+  }
+
+  async discardImage(id: string): Promise<void> {
+    this.reads.get(id)?.abort();
+    this.temporaryImages.delete(id);
+    const receipt = await this.get(id);
+    if (receipt?.image) await this.repository.deleteBlob(receipt.image.blobId);
   }
 
   async createManual(): Promise<LocalReceipt> {
@@ -221,37 +274,58 @@ export class LocalReceiptService {
           }
         }
         await this.repository.deleteReceiptData(receipt.id, `receipt-extraction:${receipt.id}`, `receipt-draft:${receipt.id}`);
+        this.temporaryImages.delete(id);
       } catch (error) { throw safeError(error); }
     });
   }
 
-  async analyze(id: string): Promise<LocalReceipt> {
+  async analyze(id: string, signal?: AbortSignal): Promise<LocalReceipt> {
     return this.withLock(id, async () => {
     const receipt = await this.requireReceipt(id);
     if (receipt.registration.status !== "pending") throw new LocalReceiptServiceError("registration_locked", "登録済みの内容は読み取り直せません。");
     if (!receipt.image) throw new LocalReceiptServiceError("image_required", "読み取るレシート画像がありません。");
-    const blob = await this.repository.getBlob(receipt.image.blobId);
-    if (!blob) throw new LocalReceiptServiceError("image_missing", "レシート画像を端末で見つけられませんでした。");
+    const controller = new AbortController();
+    this.reads.set(id, controller);
+    const abort = () => controller.abort();
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) controller.abort();
+    let bytes: Uint8Array | undefined;
     try {
-      const bytes = new Uint8Array(await blob.blob.arrayBuffer());
-      if (bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。");
-      if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのため読み取れません。レシート画像は端末に保存されています。接続後に再試行してください。");
-      const token = await (this.options.getToken ?? getAiAccessToken)();
+      controller.signal.throwIfAborted();
+      const image = await this.getImage(id);
+      if (!image) throw new LocalReceiptServiceError("image_missing", "写真は破棄されています。読み取り直す場合は写真を選び直してください。");
+      const prepare = this.options.prepareImage ?? (await import("./receipt-image-privacy")).prepareReceiptImage;
+      const prepared = await prepare(image, controller.signal);
+      controller.signal.throwIfAborted();
+      bytes = new Uint8Array(await prepared.arrayBuffer());
+      if (bytes.byteLength > MAX_GATEWAY_IMAGE_BYTES) throw new LocalReceiptServiceError("image_too_large", "AIで読み取る場合は6 MiB以下の画像を選び直してください。");
+      if (typeof navigator !== "undefined" && navigator.onLine === false) throw new LocalReceiptServiceError("offline_or_unavailable", "オフラインのため読み取れません。手で入力して続けられます。接続後に再試行してください。");
+      const token = await awaitWithAbort((this.options.getToken ?? getAiAccessToken)(), controller.signal);
+      controller.signal.throwIfAborted();
       const flowId = crypto.randomUUID();
       const response = await this.fetchImpl(this.options.geminiUrl ?? "/api/ai/gemini", {
-        method: "POST", credentials: "same-origin", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ flowId, contentType: receipt.image.contentType, imageBase64: toBase64(bytes) }),
+        method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal, headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ flowId, contentType: prepared.type, imageBase64: toBase64(bytes) }),
       });
       if (!response.ok) throw gatewayError(await readGatewayCode(response), response.status);
-      const extraction = validateReceiptExtraction(await response.json());
+      const extraction = sanitizeReceiptExtraction(validateReceiptExtraction(await response.json()));
+      controller.signal.throwIfAborted();
       const timestamp = nowIso(this.options);
-      // Store the raw, schema-validated AI output before updating any suggestion state.
+      // Persist only validated, sanitized ledger facts.
       await this.repository.put({ id: `receipt-extraction:${id}`, kind: EXTRACTION_KIND, value: { receiptId: id, extraction, analyzedAt: timestamp }, updatedAt: timestamp });
       const updated: LocalReceipt = { ...receipt, extraction, aiFlowId: flowId, updatedAt: timestamp, reviewedWarnings: undefined,
         itemCategories: undefined, classificationAttempt: undefined, aiSuggestion: { categoryId: null, source: "unclassified", probabilities: null, model: null, attemptedAt: null } };
       await this.save(updated);
       return updated;
-    } catch (error) { throw safeError(error); }
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof DOMException && error.name === "AbortError")) throw new LocalReceiptServiceError("cancelled", "読み取りを中止し、写真を破棄しました。手で入力できます。");
+      throw safeError(error);
+    } finally {
+      bytes?.fill(0);
+      signal?.removeEventListener("abort", abort);
+      this.reads.delete(id);
+      await this.discardImage(id);
+    }
     });
   }
 
@@ -646,7 +720,7 @@ async function readGatewayCode(response: Response): Promise<string> {
 }
 function gatewayError(code: string, status?: number): LocalReceiptServiceError {
   if (code === "invalid_flow") return new LocalReceiptServiceError("invalid_flow", "この読み取りのカテゴリ提案は終了しました。手動で選ぶか、AIで読み取り直してください。");
-  if (code === "unauthorized") return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。");
+  if (code === "unauthorized") return new LocalReceiptServiceError("auth_required", "AI機能を使うにはアカウントへのサインインが必要です。手で入力して続けられます。");
   if (code === "ai_quota_exceeded") {
     return currentAiIdentity() === "guest"
       ? new LocalReceiptServiceError("quota", "今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。手で入力して続けられます。", true)
@@ -655,6 +729,6 @@ function gatewayError(code: string, status?: number): LocalReceiptServiceError {
   if (code === "rate_limited") return new LocalReceiptServiceError("rate_limited", "AIへの要求が集中しています。しばらく待つか、手動で入力してください。");
   if (code === "invalid_provider_response") return new LocalReceiptServiceError("invalid_ai_response", "AIの応答を確認できませんでした。もう一度お試しください。");
   if (code === "not_configured") return new LocalReceiptServiceError("not_configured", "AI機能を現在利用できません。後でもう一度お試しください。");
-  if (code === "ai_temporarily_paused" || status === 503) return new LocalReceiptServiceError("offline_or_unavailable", "AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。", code === "ai_temporarily_paused");
+  if (code === "ai_temporarily_paused" || status === 503) return new LocalReceiptServiceError("offline_or_unavailable", "AI機能は一時的に利用できません。写真は破棄しました。入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。", code === "ai_temporarily_paused");
   return new LocalReceiptServiceError("offline_or_unavailable", "通信できないか、一時的に処理できませんでした。接続を確認して再試行してください。");
 }

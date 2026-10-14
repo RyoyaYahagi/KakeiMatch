@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto, reselectReceiptPhoto, syntheticReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -68,7 +69,7 @@ try {
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
   await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
+  const png = await syntheticReceiptPhoto(page);
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: png });
   // A failed analysis can leave an empty draft behind before the next attempt.
   await page.getByText('入力内容を端末に保存しました。', { exact: true }).waitFor();
@@ -76,7 +77,8 @@ try {
   await page.getByRole('button', { name: '閉じる', exact: true }).click();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '未入力のレシート · 確認する', exact: true }).click();
-  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click();
+  await reselectReceiptPhoto(page, png);
+  await page.getByRole('button', { name: 'AIで読み取る', exact: true }).click(); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Diagnostic Store', null, { timeout: 10000 });
   assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-30');
   assert.equal(await page.locator('#receipt-time').inputValue(), '12:00');
@@ -108,7 +110,7 @@ try {
   for (const summary of await page.locator('details.optional-fields:not([open]) > summary').all()) await summary.click(); await page.locator('#receipt-time').fill('11:30');
   await page.locator('#receipt-amount').fill('1200');
   page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: '再読み取り', exact: true }).click();
+  await reselectReceiptPhoto(page, png); await page.getByRole('button', { name: '再読み取り', exact: true }).click(); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Diagnostic Store', null, { timeout: 10000 });
   assert.equal(await page.locator('#receipt-merchant').inputValue(), 'Diagnostic Store');
   assert.equal(await page.locator('#receipt-date').inputValue(), '2026-09-30');
@@ -132,7 +134,7 @@ try {
   await page.getByRole('button', { name: /^Diagnostic Store/ }).click();
   quotaExceeded = true;
   page.once('dialog', dialog => dialog.accept());
-  await page.getByRole('button', { name: '再読み取り', exact: true }).click();
+  await reselectReceiptPhoto(page, png); await page.getByRole('button', { name: '再読み取り', exact: true }).click(); await confirmReceiptPhoto(page);
   await page.getByText('AI利用上限に達しました。手動で入力できます。', { exact: true }).waitFor();
   assert.equal(usedFlows.size, 2);
   await page.locator('#receipt-merchant').fill('Diagnostic Store corrected');

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
 import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
+const syntheticPng = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
 await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
@@ -23,6 +24,20 @@ async function detail(name) { await page.locator('#receipt-tab').click(); await 
 async function remove() { page.once('dialog', dialog => dialog.accept()); await click('削除する'); await page.getByText('削除しました。', { exact: true }).waitFor(); }
 async function records() {
   return page.evaluate(() => new Promise((resolve, reject) => { const open = indexedDB.open('kakeimatch-local-data'); open.onerror = () => reject(open.error); open.onsuccess = () => { const db = open.result; const tx = db.transaction(['records', 'blobs']); const data = tx.objectStore('records').getAll(); const blobs = tx.objectStore('blobs').getAll(); tx.oncomplete = () => { resolve({ records: data.result.filter(row => row.profileId === localStorage.getItem('kakeimatch.local-profile.v1')), blobs: blobs.result.filter(row => row.profileId === localStorage.getItem('kakeimatch.local-profile.v1')).map(blob => ({ id: blob.id })) }); db.close(); }; }; }));
+}
+async function seedLegacyReceiptImage(receipt) {
+  // Keep coverage for originals saved by older versions, without persisting new photos.
+  await page.evaluate(async ({ row, imageBytes }) => {
+    const db = await new Promise((resolve, reject) => { const request = indexedDB.open('kakeimatch-local-data'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const profileId = localStorage.getItem('kakeimatch.local-profile.v1');
+    const image = row.value.image;
+    const transaction = db.transaction('blobs', 'readwrite');
+    transaction.objectStore('blobs').put({ id: image.blobId, ownerKind: 'receipt', ownerId: row.id,
+      blob: new Blob([new Uint8Array(imageBytes)], { type: image.contentType }), contentType: image.contentType,
+      createdAt: row.value.createdAt, profileId, key: `${profileId}\u0000${image.blobId}` });
+    await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
+    db.close();
+  }, { row: receipt, imageBytes: [...syntheticPng] });
 }
 try {
   await page.goto(process.env.PWA_E2E_URL); await page.getByText('今月の支出 ¥0').waitFor();
@@ -46,7 +61,7 @@ try {
   await page.getByRole('button', { name: / · 振替 · / }).click(); await remove(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 0);
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor(); assert.equal(await page.getByRole('button', { name: / · 振替 · / }).count(), 1);
   await page.locator('#home-tab').click(); await click('記録を追加');
-  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: syntheticPng });
   await page.locator('#receipt-merchant').fill('Synthetic Split'); await page.locator('#receipt-amount').fill('1400'); await page.locator('#receipt-category').selectOption({ label: 'Synthetic Food' }); await page.locator('#receipt-account').selectOption({ label: 'Synthetic Bank' });
   let itemIndex = 0;
   for (const [name, amount, categoryName] of [['Synthetic Apple', '900', 'Synthetic Food'], ['Synthetic Soap', '500', 'Synthetic Household']]) {
@@ -57,6 +72,8 @@ try {
   await click('全体');
   await click('登録する'); await page.getByText('登録しました。', { exact: true }).waitFor();
   await detail('Synthetic Split'); const before = await records(); const splitRecord = before.records.find(row => row.kind === 'receipt-metadata' && row.value.confirmedValue?.merchant === 'Synthetic Split'); const original = splitRecord.value.registration.actualTransactionId;
+  assert.equal(before.blobs.length, 0, 'new photos must never be persisted');
+  await seedLegacyReceiptImage(splitRecord);
   await remove(); let snapshot = await records(); assert.equal(snapshot.blobs.length, 1); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.status, 'deleted');
   await click('元に戻す'); await page.getByText('削除を取り消しました。', { exact: true }).waitFor();
   snapshot = await records(); assert.equal(snapshot.records.find(row => row.id === splitRecord.id).value.registration.actualTransactionId, original);

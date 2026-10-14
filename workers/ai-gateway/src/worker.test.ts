@@ -628,6 +628,16 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const circuit = await db.prepare("SELECT reason FROM ai_provider_circuits WHERE provider='gemini'").bind().first<{ reason: string }>();
     expect(circuit).toEqual({ reason: "provider_failures" });
   });
+  it("sanitizes private strings before returning or approving the category payload", async () => {
+    const privateReceipt = { ...receipt, merchant: "Customer name: Synthetic Person", items: [{ name: "会員番号 1234567", amountYen: 3284 }],
+      warnings: [{ field: "merchant", code: "check", message: "電話 090-1234-5678を確認" }] };
+    const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(privateReceipt) }));
+    expect(response.status).toBe(200);
+    const data = await response.json() as typeof receipt;
+    expect(data.merchant).toBe("非公開");
+    expect(data.items[0].name).toBe("非公開");
+    expect(JSON.stringify(data)).not.toMatch(/Synthetic Person|1234567|090-1234-5678/);
+  });
   it("accepts printed seconds, slash dates and zero quantities by normalizing only their notation", async () => {
     const printed = { ...receipt, purchasedDate: "2026/9/30", purchasedTime: "9:05:42", items: [{ name: "Synthetic Item", amountYen: 3284, quantity: 0 }] };
     const response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(printed) }));

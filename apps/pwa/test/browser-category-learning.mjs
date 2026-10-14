@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto, syntheticReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
@@ -10,7 +11,7 @@ await context.addInitScript(() => { navigator.serviceWorker.register = async () 
 const page = await context.newPage();
 await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
 const errors = []; page.on('pageerror', error => errors.push(error.message));
-const syntheticImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64');
+const syntheticImage = await syntheticReceiptPhoto(page);
 let geminiScenario = 'known';
 const jevRequests = [];
 let learningIds;
@@ -63,7 +64,7 @@ async function addLearningItems() {
 }
 async function register() { await click('登録する'); await page.waitForFunction(() => document.querySelector('#message')?.textContent === '登録しました。'); }
 async function analyze(scenario) {
-  geminiScenario = scenario; await startReceipt(); await click('AIで読み取る');
+  geminiScenario = scenario; await startReceipt(); await click('AIで読み取る'); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Learning Shop'
     && document.querySelectorAll('[data-receipt-item]').length === 2
     && document.querySelectorAll('[data-receipt-item] [data-item-category]').length === 2);

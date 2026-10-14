@@ -23,6 +23,7 @@ async function setup(fetchImpl = vi.fn(), ledgerOverrides: Record<string, unknow
   };
   const service = new LocalReceiptService(repository, ledger as never, {
     fetchImpl: fetchImpl as typeof fetch,
+    prepareImage: async image => image,
     getToken: vi.fn(async () => "synthetic-token"),
     makeId: () => "00000000-0000-4000-8000-000000000001",
     now: () => new Date("2026-09-30T00:00:00.000Z"),
@@ -37,12 +38,13 @@ beforeEach(() => {
 });
 
 describe("LocalReceiptService", () => {
-  it("stores the image and metadata locally before AI, then saves validated extraction separately from confirmation", async () => {
+  it("keeps images transient and stores only sanitized extraction separately from confirmation", async () => {
     const fetchImpl = vi.fn(async () => Response.json(extraction));
     const { repository, service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
     expect(receipt.id).toBe("receipt:00000000-0000-4000-8000-000000000001");
-    expect((await repository.getBlob(receipt.image!.blobId))?.ownerId).toBe(receipt.id);
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+    expect(await service.getImage(receipt.id)).not.toBeNull();
     const analyzed = await service.analyze(receipt.id);
     expect(analyzed.extraction).toEqual(extraction);
     expect(analyzed.confirmedValue).toBeNull();
@@ -52,12 +54,12 @@ describe("LocalReceiptService", () => {
     }));
   });
 
-  it("has the local image and receipt row persisted before starting the Gemini request", async () => {
+  it("never persists the image before starting the Gemini request", async () => {
     const fetchImpl = vi.fn(async () => {
       const rows = await setupResult.repository.list("receipt-metadata");
       expect(rows).toHaveLength(1);
       const receipt = rows[0].value as { image: { blobId: string } };
-      expect(await setupResult.repository.getBlob(receipt.image.blobId)).not.toBeNull();
+      expect(await setupResult.repository.getBlob(receipt.image.blobId)).toBeNull();
       return Response.json(extraction);
     });
     const setupResult = await setup(fetchImpl);
@@ -79,6 +81,7 @@ describe("LocalReceiptService", () => {
     expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([1]);
     await service.markWarningsReviewed(receipt.id, [0]);
     expect((await service.get(receipt.id))?.reviewedWarnings).toEqual([0, 1]);
+    await service.replaceImage(receipt.id, pngBlob());
     await service.analyze(receipt.id);
     expect((await service.get(receipt.id))?.reviewedWarnings).toBeUndefined();
   });
@@ -96,7 +99,7 @@ describe("LocalReceiptService", () => {
     expect((ledger.importReceipt.mock.calls[0] as unknown[])[0]).not.toHaveProperty("splits");
   });
 
-  it("keeps a valid image larger than the AI gateway limit locally for manual entry", async () => {
+  it("discards a valid image larger than the AI gateway limit", async () => {
     const fetchImpl = vi.fn();
     const { repository, service } = await setup(fetchImpl);
     const bytes = new Uint8Array(7 * 1024 * 1024);
@@ -104,7 +107,8 @@ describe("LocalReceiptService", () => {
     const receipt = await service.saveImage(new Blob([bytes], { type: "image/png" }));
     expect(receipt.image?.sizeBytes).toBe(bytes.byteLength);
     await expect(service.analyze(receipt.id)).rejects.toMatchObject({ code: "image_too_large" });
-    expect(await repository.getBlob(receipt.image!.blobId)).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+    expect(await service.getImage(receipt.id)).toBeNull();
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
@@ -132,6 +136,7 @@ describe("LocalReceiptService", () => {
       .mockResolvedValueOnce(Response.json({ error: "invalid_flow" }, { status: 409 }));
     const { repository, ledger, service } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
+    await service.replaceImage(receipt.id, pngBlob());
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     if (format === "legacy") {
@@ -280,6 +285,7 @@ describe("LocalReceiptService", () => {
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("actual-food");
     await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 3284, categoryId: "food", accountId: "cash" });
+    await service.replaceImage(receipt.id, pngBlob());
     await service.analyze(receipt.id);
     expect(await service.suggestCategory(receipt.id)).toBe("actual-medical");
     expect(fetchImpl).toHaveBeenCalledTimes(4);
@@ -291,6 +297,7 @@ describe("LocalReceiptService", () => {
     const receipt = await service.saveImage(pngBlob());
     await service.analyze(receipt.id);
     const confirmed = await service.confirm(receipt.id, { merchant: "Corrected Shop", purchasedDate: "2026-09-29", purchasedTime: null, totalAmountYen: 100, categoryId: "food", accountId: "cash" });
+    await service.replaceImage(receipt.id, pngBlob());
     const reanalyzed = await service.analyze(receipt.id);
     expect(reanalyzed.confirmedValue).toEqual(confirmed.confirmedValue);
     expect(reanalyzed.aiFlowId).not.toBe(confirmed.aiFlowId);
@@ -370,13 +377,60 @@ describe("LocalReceiptService", () => {
     expect(lockCalls).toBe(3);
   });
 
+  it("discards cancelled images and ignores an answer arriving after cancellation", async () => {
+    let release!: (value: Response) => void;
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    const fetchImpl = vi.fn(() => { started(); return new Promise<Response>(resolve => { release = resolve; }); });
+    const { repository, service } = await setup(fetchImpl);
+    const receipt = await service.saveImage(pngBlob());
+    const controller = new AbortController();
+    const reading = service.analyze(receipt.id, controller.signal);
+    await ready;
+    controller.abort();
+    release(Response.json(extraction));
+    await expect(reading).rejects.toMatchObject({ code: "cancelled" });
+    expect(await service.getImage(receipt.id)).toBeNull();
+    expect(await repository.get(`receipt-extraction:${receipt.id}`)).toBeNull();
+    expect((await service.get(receipt.id))?.extraction).toBeNull();
+  });
+
+  it("discards the photo immediately when authentication is cancelled", async () => {
+    let requested!: () => void;
+    const ready = new Promise<void>(resolve => { requested = resolve; });
+    const getToken = () => { requested(); return new Promise<string>(() => {}); };
+    const fetchImpl = vi.fn();
+    const { service } = await setup(fetchImpl, {}, { getToken });
+    const receipt = await service.saveImage(pngBlob());
+    const controller = new AbortController();
+    const reading = service.analyze(receipt.id, controller.signal);
+    await ready; controller.abort();
+    await expect(reading).rejects.toMatchObject({ code: "cancelled" });
+    expect(await service.getImage(receipt.id)).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("sends only the reviewed copy with no caching, then discards both images", async () => {
+    const reviewed = new Blob([new Uint8Array([1, 2, 3])], { type: "image/png" });
+    const fetchImpl = vi.fn<typeof fetch>(async () => Response.json(extraction));
+    const { service, repository } = await setup(fetchImpl, {}, { prepareImage: async () => reviewed });
+    const receipt = await service.saveImage(pngBlob());
+    await service.analyze(receipt.id);
+    const init = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(init.body)).imageBase64).toBe("AQID");
+    expect(init.cache).toBe("no-store");
+    expect(await service.getImage(receipt.id)).toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+  });
+
   it("maps quota and malformed AI responses to safe errors", async () => {
     const quotaFetch = vi.fn(async () => Response.json({ error: "ai_quota_exceeded" }, { status: 429 }));
     const { service, repository } = await setup(quotaFetch);
     const receipt = await service.saveImage(pngBlob());
     await expect(service.analyze(receipt.id)).rejects.toMatchObject({ code: "quota" });
     expect((await service.get(receipt.id))?.extraction).toBeNull();
-    expect(await repository.getBlob(receipt.image!.blobId)).not.toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
+    expect(await service.getImage(receipt.id)).toBeNull();
 
     const badFetch = vi.fn(async () => Response.json({ unexpected: true }));
     const bad = await setup(badFetch);
@@ -389,7 +443,7 @@ describe("LocalReceiptService", () => {
     ["provider unavailable", async () => Response.json({ error: "provider_unavailable" }, { status: 503 }), "offline_or_unavailable"],
     ["authentication required", async () => Response.json({ error: "unauthorized" }, { status: 401 }), "auth_required"],
     ["schema invalid", async () => Response.json({ ...extraction, totalAmountYen: 1.5 }), "invalid_ai_response"],
-  ])("keeps the image available after %s", async (_name, respond, code) => {
+  ])("discards the image after %s", async (_name, respond, code) => {
     const fetchImpl = vi.fn(respond as () => Promise<Response>);
     const { service, repository } = await setup(fetchImpl);
     const receipt = await service.saveImage(pngBlob());
@@ -398,7 +452,8 @@ describe("LocalReceiptService", () => {
     expect(saved).not.toBeNull();
     expect(saved?.extraction).toBeNull();
     expect(saved?.registration.status).toBe("pending");
-    expect(new Uint8Array(await (await repository.getBlob(receipt.image!.blobId))!.blob.arrayBuffer())).toEqual(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]));
+    expect(await service.getImage(receipt.id)).toBeNull();
+    expect(await repository.getBlob(receipt.image!.blobId)).toBeNull();
   });
 
   it.each([
@@ -618,6 +673,7 @@ it("retains raw extraction when item classification fails", async () => {
   const fetchImpl = vi.fn().mockResolvedValueOnce(Response.json(extraction)).mockResolvedValueOnce(Response.json({ error: "rate_limited" }, { status: 429 }));
   const { service, repository } = await setup(fetchImpl);
   const receipt = await service.saveImage(pngBlob());
+    await service.replaceImage(receipt.id, pngBlob());
   await service.analyze(receipt.id);
   await expect(service.suggestCategory(receipt.id)).rejects.toMatchObject({ code: "rate_limited" });
   expect((await service.get(receipt.id))?.extraction).toEqual(extraction);
@@ -629,6 +685,7 @@ describe("pending receipt deletion", () => {
   it("atomically removes only the receipt, extraction, draft, and its unshared image", async () => {
     const { repository, service } = await setup();
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     await repository.put({ id: `receipt-extraction:${receipt.id}`, kind: "receipt-extraction", value: { receiptId: receipt.id, extraction }, updatedAt: receipt.updatedAt });
     await repository.put({ id: `receipt-draft:${receipt.id}`, kind: "category-state", value: { merchant: "Synthetic draft" }, updatedAt: receipt.updatedAt });
     await repository.put({ id: `category-learning:${receipt.id}`, kind: "correction-audit", value: { targetType: "category-learning", receiptId: receipt.id }, updatedAt: receipt.updatedAt });
@@ -648,6 +705,7 @@ describe("pending receipt deletion", () => {
   it("transfers a shared image to its remaining receipt and keeps the backup valid", async () => {
     const { repository, service } = await setup();
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     const sibling = { ...receipt, id: "receipt:sibling" };
     await repository.put({ id: sibling.id, kind: "receipt-metadata", value: sibling, updatedAt: sibling.updatedAt });
     await service.deletePending(receipt.id);
@@ -659,6 +717,7 @@ describe("pending receipt deletion", () => {
   it("refuses deletion when a non-receipt record refers to an owned image", async () => {
     const { repository, service } = await setup();
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     await repository.put({ id: "synthetic-other-reference", kind: "category-state", value: { nested: { blobId: receipt.image!.blobId } }, updatedAt: receipt.updatedAt });
     await expect(service.deletePending(receipt.id)).rejects.toBeDefined();
     expect(await service.get(receipt.id)).not.toBeNull();
@@ -668,6 +727,7 @@ describe("pending receipt deletion", () => {
   it.each(["processing", "failed", "applied"] as const)("refuses to delete a receipt in %s state", async status => {
     const { repository, service } = await setup();
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     const value = { ...receipt, registration: { status, actualTransactionId: status === "applied" ? "actual-synthetic" : null, lastError: null } };
     await repository.put({ id: receipt.id, kind: "receipt-metadata", value, updatedAt: receipt.updatedAt });
     await expect(service.deletePending(receipt.id)).rejects.toMatchObject({ code: "receipt_not_deletable" });
@@ -678,6 +738,7 @@ describe("pending receipt deletion", () => {
   it("refuses deletion when Actual already contains the receipt import ID", async () => {
     const { repository, service } = await setup(vi.fn(), { getTransactions: vi.fn(async () => [{ importedId: "kakeimatch:receipt:00000000-0000-4000-8000-000000000001" }]) });
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     await service.confirm(receipt.id, { merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: null, totalAmountYen: 100, categoryId: "actual-food", accountId: "cash" });
     await expect(service.deletePending(receipt.id)).rejects.toMatchObject({ code: "receipt_actual_data_exists" });
     expect(await service.get(receipt.id)).not.toBeNull();
@@ -687,6 +748,7 @@ describe("pending receipt deletion", () => {
   it("keeps every item when the atomic local deletion fails", async () => {
     const { repository, service } = await setup();
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     await repository.put({ id: `receipt-extraction:${receipt.id}`, kind: "receipt-extraction", value: { receiptId: receipt.id, extraction }, updatedAt: receipt.updatedAt });
     await repository.put({ id: `receipt-draft:${receipt.id}`, kind: "category-state", value: { merchant: "Synthetic draft" }, updatedAt: receipt.updatedAt });
     await repository.put({ id: `category-learning:${receipt.id}`, kind: "correction-audit", value: { targetType: "category-learning", receiptId: receipt.id }, updatedAt: receipt.updatedAt });
@@ -715,6 +777,7 @@ describe("pending receipt deletion", () => {
     };
     const { repository, service } = await setup(fetchImpl, {}, { withRegistrationLock });
     const receipt = await service.saveImage(pngBlob());
+    await repository.putBlob({ id: receipt.image!.blobId, ownerKind: "receipt", ownerId: receipt.id, blob: pngBlob(), contentType: "image/png", createdAt: receipt.createdAt });
     const analysis = service.analyze(receipt.id);
     await started;
     const deletion = service.deletePending(receipt.id);

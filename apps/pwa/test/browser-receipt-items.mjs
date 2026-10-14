@@ -1,3 +1,4 @@
+import { confirmReceiptPhoto, reselectReceiptPhoto, syntheticReceiptPhoto } from './receipt-photo-helpers.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright-core';
@@ -40,18 +41,18 @@ try {
   await page.getByRole('button', { name: 'Synthetic Wallet · 利用中', exact: true }).waitFor();
   await page.locator('#receipt-tab').click();
   await page.getByRole('button', { name: '記録を追加', exact: true }).click();
-  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jp1sAAAAASUVORK5CYII=', 'base64') });
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic.png', mimeType: 'image/png', buffer: await syntheticReceiptPhoto(page) });
   const aiButton = page.getByRole('button', { name: 'AIで読み取る', exact: true });
   await aiButton.waitFor();
   const aiBounds = await aiButton.boundingBox();
   assert.ok(aiBounds.y + aiBounds.height <= 812, 'AI reading should be visible without scrolling');
   assert.ok(aiBounds.y < (await page.locator('#receipt-merchant').boundingBox()).y);
   if (process.env.PWA_RECEIPT_AI_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_AI_SCREENSHOT_PATH });
-  await click('AIで読み取る'); await page.getByText(/読み取った内容は編集できます/).waitFor();
+  await click('AIで読み取る'); await confirmReceiptPhoto(page); await page.getByText(/読み取った内容は編集できます/).waitFor();
   assert.equal(await page.locator('#receipt-amount').inputValue(), '1400');
   assert.equal(await row(0).locator('[data-item-category]').inputValue(), '');
   assert.equal(await page.locator('[data-receipt-adjustment]').count(), 1);
-  classificationFails = false; page.once('dialog', dialog => dialog.accept()); await click('再読み取り');
+  classificationFails = false; page.once('dialog', dialog => dialog.accept()); await reselectReceiptPhoto(page); await click('再読み取り'); await confirmReceiptPhoto(page);
   await page.waitForFunction(() => document.querySelector('[data-item-category]')?.selectedOptions[0]?.textContent === '食費');
   assert.equal(classificationCalls, 2);
   assert.equal(await row(1).locator('[data-item-category] option:checked').textContent(), '日用品');
