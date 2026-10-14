@@ -22,7 +22,8 @@
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.6",
-    "better-auth": "1.7.6"
+    "better-auth": "1.7.6",
+    "zod": "4.6.5"
   },
   "overrides": {
     "sharp": "0.35.5",

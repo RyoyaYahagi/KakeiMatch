@@ -1,4 +1,6 @@
 import { sanitizeReceiptExtraction, type ReceiptPrivacyInput } from '../../../src/lib/receipt-privacy';
+import { PAYROLL_SCHEMA, PAYROLL_PROMPT } from './payroll';
+import { payrollSchema } from './payroll-schema';
 import { handleAdminRequest, type AdminEnv } from './admin';
 import { classificationPayload, parseClassification } from './contact';
 import { parseContactInput, parseContactInterviewInput, parseContactInterview, transcriptionPayload, contactInterviewPayload, type ContactEnv } from './contact';
@@ -414,7 +416,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   if (url.pathname === "/api/ai/guest") return handleGuestRequest(request, env as GuestEnv, options);
   const contact = url.pathname === "/api/contact" || url.pathname === "/api/contact/transcribe" || url.pathname === "/api/contact/interview";
   const categorySuggestion = url.pathname === "/api/ai/category-suggestion";
-  if (!contact && url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/jev" && !categorySuggestion) return json(404, { error: "not_found" });
+  if (!contact && url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/payroll" && url.pathname !== "/api/ai/jev" && !categorySuggestion) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
   const identity = await authenticate(request, env.AI_GATEWAY_AUTH_SECRET, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
@@ -424,7 +426,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!await isAccountActive(env.ACCOUNT_DB, identity)) return json(401, { error: "unauthorized" });
   } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!env.AI_USER_RATE_LIMIT) return json(503, { error: "not_configured" });
-  const provider = contact || url.pathname.endsWith("/gemini") ? "gemini" : "jev";
+  const provider = contact || url.pathname.endsWith("/gemini") || url.pathname.endsWith("/payroll") ? "gemini" : "jev";
   let limit: { success: boolean };
   try { limit = await env.AI_USER_RATE_LIMIT.limit({ key: `${identity}:${provider}` }); } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!limit.success) return json(429, { error: "rate_limited" });
@@ -598,16 +600,18 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   const clock = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
 
   if (provider === "gemini") {
+    const payroll = url.pathname === "/api/ai/payroll";
+    if (payroll && body.maskingConfirmed !== true) return json(400, { error: "invalid_request" });
     const image = parseImage(body);
     if (!image) return json(400, { error: "invalid_request" });
     if (!env.GEMINI_API_KEY) return json(503, { error: "not_configured" });
     if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
-    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: RECEIPT_SCHEMA }, service_tier: "standard", generation_config: { max_output_tokens: 8192 }, store: false };
+    const payload = { model: env.GEMINI_MODEL?.trim() || "gemini-3.5-flash-lite", input: [{ type: "text", text: payroll ? PAYROLL_PROMPT : GEMINI_PROMPT }, { type: "image", data: image.data, mime_type: image.mimeType }], response_format: { type: "text", mime_type: "application/json", schema: payroll ? PAYROLL_SCHEMA : RECEIPT_SCHEMA }, service_tier: "standard", generation_config: { max_output_tokens: 8192 }, store: false };
     let admission: CostAdmission;
     try { admission = await prepareDispatch(env, provider, payload.model, payload, now); }
     catch (error) { return dispatchError(error); }
     try {
-      const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", image);
+      const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", payroll ? { ...image, documentKind: "pay_slip" } : image);
       const reservation = await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, flowLimits(env), "receipt", addressMac);
       if (reservation !== "reserved") return json(reservation === "ai_quota_exceeded" ? 429 : 409, { error: reservation });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
@@ -623,6 +627,13 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     }
     const outputText = geminiOutputText(decoded);
     if (!outputText) return invalidProviderResponse(env, eventId, provider, clock());
+    if (payroll) {
+      try {
+        const result = payrollSchema.safeParse(JSON.parse(outputText));
+        if (!result.success) return invalidProviderResponse(env, eventId, provider, clock());
+        return json(200, { extraction: result.data, model: payload.model, promptVersion: "payroll-v1" });
+      } catch { return invalidProviderResponse(env, eventId, provider, clock()); }
+    }
     let extraction: unknown;
     try { extraction = normalizeReceiptExtraction(JSON.parse(outputText) as unknown); } catch { return invalidProviderResponse(env, eventId, provider, clock()); }
     const problem = receiptResultProblem(extraction);

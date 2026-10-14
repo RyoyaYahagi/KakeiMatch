@@ -28,10 +28,10 @@ try {
   await page.locator('#statement-file').setInputFiles({ name: 'synthetic-provider-only-rakuten.csv', mimeType: 'text/csv', buffer: Buffer.from(csv) });
   await click('取り込んで照合');
   await page.getByText('1件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
-  await page.getByText(/要確認 0件 · 記録なし 1件 · 明細待ち 0件/).waitFor();
+  await page.getByText(/要確認 0件 · 記録なし 1件 · 不正利用？ 0件 · 明細待ち 0件/).waitFor();
   assert.equal(await page.getByText(/照合できる支払元がありません/).count(), 0);
 
-  const unrecorded = page.locator('#local-view details').filter({ hasText: 'Synthetic Unrecorded Market' });
+  const unrecorded = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic Unrecorded Market' });
   await unrecorded.locator('summary').click();
   assert.equal(await unrecorded.locator('select[id^="account-"]').count(), 0);
   await unrecorded.locator('select[id^="category-"]').selectOption({ label: '食費' });

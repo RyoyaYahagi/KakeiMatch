@@ -378,6 +378,8 @@ describe("Actual browser ledger", () => {
     expect(api.batchBudgetUpdates).toHaveBeenCalledTimes(2);
     expect(api.updateTransaction).toHaveBeenCalledWith("receipt-created", { category: "home", cleared: true });
     expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3280, cleared: true });
+    await ledger.applyTransactionUpdates([{ transactionId: "expense", amountYen: -3284, cleared: false }]);
+    expect(api.updateTransaction).toHaveBeenCalledWith("expense", { amount: -3284, cleared: false });
   });
 
   it("aggregates by amount sign, excludes off-budget and tombstoned rows, and reports null categories", async () => {
@@ -790,6 +792,22 @@ describe("Actual browser ledger", () => {
     expect(api.importTransactions).not.toHaveBeenCalled();
     expect(api.addTransactions).toHaveBeenCalledWith("cash", [expect.objectContaining({ date: input.date, amount: -1200, payee: "same-payee", imported_id: input.importedId })],
       { learnCategories: false, runTransfers: false });
+    await ledger.createTransaction(input);
+    expect(api.addTransactions).toHaveBeenCalledTimes(1);
+  });
+
+  it("adds explicitly confirmed payroll without import matching and retries the stable ID", async () => {
+    const { ledger, api, rows, payees } = fixture([{ id: "budget", name: "Local" }]);
+    payees.push({ id: "employer", name: "Synthetic Employer" });
+    rows.push({ id: "planned-payroll", account: "bank", date: "2026-10-25", amount: 250000,
+      payee: "employer", category: "income-category", cleared: false, imported_id: "planned-payroll" });
+    const input = { kind: "income" as const, accountId: "bank", date: "2026-10-25", amountYen: 250000,
+      payeeName: "Synthetic Employer", categoryId: "income-category", memo: null,
+      importedId: "kakeimatch:payroll:00000000-0000-4000-8000-000000000269" };
+    const saved = await ledger.createTransaction(input);
+    expect(saved.id).not.toBe("planned-payroll");
+    expect(api.importTransactions).not.toHaveBeenCalled();
+    expect(api.addTransactions).toHaveBeenCalledWith("bank", [expect.objectContaining({ amount: 250000, imported_id: input.importedId })], { learnCategories: false, runTransfers: false });
     await ledger.createTransaction(input);
     expect(api.addTransactions).toHaveBeenCalledTimes(1);
   });

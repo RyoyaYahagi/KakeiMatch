@@ -16,6 +16,7 @@
     "test:screen-lock-e2e": "node test/browser-screen-lock.mjs",
     "build": "tsc --noEmit && cf build",
     "icons": "node scripts/render-icons.mjs",
+    "screenshots:readme": "node scripts/readme-screenshots.mjs",
     "test:e2e": "node test/browser-flow.mjs",
     "test:security-e2e": "node test/browser-security.mjs",
     "test:contact-e2e": "node test/browser-contact.mjs",
@@ -61,7 +62,9 @@
     "test:pending-receipt-deletion-e2e": "node test/browser-pending-receipt-deletion.mjs",
     "test:moneyforward-e2e": "node test/browser-moneyforward.mjs",
     "test:statement-options-e2e": "node test/browser-statement-options.mjs",
-    "test:receipt-privacy-e2e": "node test/browser-receipt-privacy.mjs && node test/browser-receipt-privacy-response.mjs && node test/browser-receipt-crop.mjs"
+    "test:receipt-privacy-e2e": "node test/browser-receipt-privacy.mjs && node test/browser-receipt-privacy-response.mjs && node test/browser-receipt-crop.mjs",
+    "test:reconciliation-review-e2e": "node test/browser-reconciliation-review.mjs",
+    "test:payroll-e2e": "node test/browser-payroll.mjs"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

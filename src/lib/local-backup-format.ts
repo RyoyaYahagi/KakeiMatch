@@ -1,3 +1,4 @@
+import { payrollRecordSchema } from '../../workers/ai-gateway/src/payroll-schema';
 import { z } from "zod";
 import { warningIndexInRange } from "./receipt-extraction";
 import { CATEGORY_IDS } from "./category";
@@ -73,7 +74,6 @@ const deletionAudit = z.object({
   status: z.enum(["pending", "deleted", "restoring", "restored"]), createdAt: isoDateTime,
   deletedAt: appliedAt, undoUntil: isoDateTime, completedAt: appliedAt,
 }).strict();
-const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, recurringCatchUpAuditSchema, categoryLearningObservationSchema]);
 const statementImport = z.object({
   provider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]), fileHash: z.string().regex(/^[0-9a-f]{64}$/i), encoding: z.string(),
   accountId: z.string().min(1).max(128).optional(),
@@ -101,11 +101,14 @@ const resolution = z.object({
   id: z.string(), runId: z.string(), statementId: z.string(), resolution: z.enum(["same_expense", "no_receipt", "transfer", "ignored"]), source: z.enum(["automatic", "user"]),
   receiptId: nullableString, categoryId: nullableString, accountId: nullableString, statementAmountYen: safeYen, importedId: nullableString,
   status: z.enum(["pending", "processing", "applied", "failed"]), actualTransactionId: nullableString,
-  actualSnapshot: z.object({ date, amountYen: z.number().int().safe(), payeeName: nullableString, accountId: z.string().min(1), isSplit: z.boolean().optional() }).strict().optional(),
+  actualSnapshot: z.object({ date, amountYen: z.number().int().safe(), payeeName: nullableString, accountId: z.string().min(1), isSplit: z.boolean().optional(), cleared: z.boolean().optional() }).strict().optional(),
   statementSnapshot: z.object({ usedDate: date, merchant: z.string(), kind: z.enum(["purchase", "refund"]) }).strict().optional(),
   destinationAccountId: z.string().min(1).optional(), excludedFromSpending: z.boolean().optional(),
+  undoRequestedAt: isoDateTime.optional(),
   errorCode: nullableString, createdAt: isoDateTime, updatedAt: isoDateTime,
 }).strict();
+const reconciliationUndoAudit = z.object({ targetType: z.literal("reconciliation-undo"), statementId: z.string().min(1), resolution, undoneAt: isoDateTime }).strict();
+const allCorrectionAudits = z.union([correctionAudit, deletionAudit, scheduleAuditSchema, recurringCatchUpAuditSchema, categoryLearningObservationSchema, reconciliationUndoAudit]);
 
 const rawBlobMetadata = z.object({
   id: z.string().min(1), ownerKind: z.enum(["receipt", "statement-import"]), ownerId: z.string().min(1), contentType: z.string().min(1),
@@ -129,12 +132,13 @@ async function hash(bytes: Uint8Array): Promise<string> {
 function blobPart(bytes: Uint8Array): ArrayBuffer { return new Uint8Array(bytes).buffer as ArrayBuffer; }
 function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
   switch (kind) {
+    case "payroll-record": return payrollRecordSchema;
     case "receipt-metadata": return receipt;
     case "receipt-extraction": return z.object({ receiptId: z.string().min(1), extraction, analyzedAt: isoDateTime }).strict();
     case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string(), ...detailFields, destinationAccountId: z.string().optional(), manualKind: z.enum(["expense", "income", "transfer"]).optional(), excludedFromSpending: z.boolean().optional(), manualMemo: nullableString.optional(), manualImportedId: z.string().min(1).max(200).optional(), manualTransactionId: nullableString.optional(), manualStatus: z.enum(["draft", "processing", "failed"]).optional() }).strict();
     case "merchant-mapping": return id.startsWith("merchant:")
       ? z.union([z.object({ normalizedMerchant: z.string(), categoryId: z.enum(CATEGORY_IDS) }).strict(), z.object({ normalizedMerchant: z.string(), actualCategoryId: z.string().min(1) }).strict()])
-      : z.object({ merchant: z.string(), aliasMerchant: z.string() }).strict();
+      : z.object({ merchant: z.string(), aliasMerchant: z.string(), learnedBy: z.string().min(1).optional() }).strict();
     case "statement-import": return statementImport;
     case "statement-transaction": return statement;
     case "reconciliation-run": return reconciliationRun;
@@ -147,6 +151,9 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
       statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]).optional(),
     }).strict();
     case "app-settings":
+      if (id.startsWith("settings:reconciliation-suspected:")) return z.object({ statementId: z.string().min(1), markedAt: isoDateTime }).strict();
+      if (id.startsWith("settings:reconciliation-manual:")) return z.object({ statementId: z.string().min(1) }).strict();
+      if (id === "settings:reconciliation-attention") return z.object({ keys: z.array(z.string().min(1)), updatedAt: isoDateTime }).strict();
       if (id.startsWith("settings:spending-exclusion:")) return z.object({ budgetId: z.string().min(1), transactionId: z.string().min(1), excluded: z.literal(true) }).strict();
       if (id === "settings:budget") return z.object({ budgetId: z.string().min(1), dataDir: z.string().min(1).optional() }).strict();
       if (id.startsWith("settings:monthly-budgets:")) return monthlyBudgetSettingsSchema;
@@ -170,7 +177,7 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
   const recordIds = new Set<string>();
   const scopedBudgetIds = new Set<string>();
   const records: LocalDataRecord[] = backup.records.map((raw) => {
-    const parsedRecord = z.object({ id: z.string().min(1), kind: z.enum(["receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"]), value: z.unknown(), updatedAt: isoDateTime }).strict().safeParse(raw);
+    const parsedRecord = z.object({ id: z.string().min(1), kind: z.enum(["payroll-record", "receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"]), value: z.unknown(), updatedAt: isoDateTime }).strict().safeParse(raw);
     if (!parsedRecord.success) fail("端末データに不正な記録があります。");
     const { id, kind, value: recordValue, updatedAt } = parsedRecord.data;
     if (recordIds.has(id)) fail("同じ記録IDが複数あります。");
@@ -191,6 +198,7 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
       if (id.slice("settings:basic-categories:".length) !== budgetId) fail("基本カテゴリの記録と家計簿の対応が一致しません。");
       scopedBudgetIds.add(budgetId);
     }
+    if (kind === "payroll-record" && id !== `payroll:${(recordValue as { id: string }).id}`) fail("給与記録のIDが一致しません。");
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
     if (kind === "account-metadata") {
       const metadata = recordValue as { budgetId: string; accountId: string };

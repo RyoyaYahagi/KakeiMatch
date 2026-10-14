@@ -89,7 +89,7 @@ try {
   await click('取り込んで照合');
   await page.getByText('5件を取り込み、照合しました。重複 0件。対象外 0件、要確認 0件。', { exact: true }).waitFor();
   // A record in another card account still matches: payment sources do not scope reconciliation.
-  await page.getByText(/自動で一致 2件/).waitFor();
+  await page.getByText(/一致 2件/).waitFor();
   await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   // A record that is a candidate of a statement waiting for a decision is marked in the records list.
   await page.locator('#receipt-tab').click();
@@ -100,13 +100,13 @@ try {
   await attention.getByRole('heading', { name: /^確認すること\s*3\s*件$/ }).waitFor();
   assert.equal(await attention.locator('.record-row').count(), 3);
   assert.match(await attention.locator('.record-row').first().getAttribute('aria-label'), /^Synthetic Difference Shop · 金額が¥\d[\d,]*違います · ¥/);
-  await page.getByText('2件 は自動で照合済みです', { exact: true }).waitFor();
+  await page.getByText('2件 は一致しています', { exact: true }).waitFor();
   if (process.env.PWA_HOME_ATTENTION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_HOME_ATTENTION_SCREENSHOT_PATH, fullPage: true });
   await page.locator('#reconciliation-tab').click();
   await page.getByText(/要確認 1件 · 記録なし 2件/).waitFor();
   await page.getByText(/明細待ち 0件/).waitFor();
 
-  const difference = page.locator('#local-view details').filter({ hasText: 'Synthetic Difference Shop' });
+  const difference = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic Difference Shop' });
   await difference.locator('summary').click();
   // docs/DESIGN.md 突き合わせの伝票: the statement over the record, the differing amount marked, and why it is a candidate.
   const slip = difference.locator('.review-slip');
@@ -120,15 +120,15 @@ try {
   assert.equal(await difference.locator('select').count(), 0, 'matching an existing record must not ask for a payment source');
   await difference.getByRole('button', { name: '別の支出', exact: true }).click();
   await page.getByText(/要確認 0件 · 記録なし 3件/).waitFor();
-  const learned = page.locator('#local-view details').filter({ hasText: 'Synthetic Learned Market' }); await learned.locator('summary').click();
+  const learned = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic Learned Market' }); await learned.locator('summary').click();
   const learnedCategory = learned.locator('select[id^="category-"]');
   const foodId = await learnedCategory.locator('option').evaluateAll(options => options.find(option => option.textContent === '食費')?.value ?? '');
   await seedMerchantLearning('synthetic learned market', foodId);
   await page.reload(); await page.locator('#reconciliation-tab').click();
-  const refreshedLearned = page.locator('#local-view details').filter({ hasText: 'Synthetic Learned Market' }); await refreshedLearned.locator('summary').click();
+  const refreshedLearned = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic Learned Market' }); await refreshedLearned.locator('summary').click();
   assert.equal(await refreshedLearned.locator('select[id^="category-"]').locator('option:checked').textContent(), '食費');
 
-  const newMerchant = page.locator('#local-view details').filter({ hasText: 'Synthetic New Merchant' }); await newMerchant.locator('summary').click();
+  const newMerchant = page.locator('#reconciliation-pending .review-item').filter({ hasText: 'Synthetic New Merchant' }); await newMerchant.locator('summary').click();
   await newMerchant.getByRole('button', { name: 'すべてのカテゴリから選ぶ' }).click();
   await page.locator('dialog.category-sheet[open]').getByRole('button', { name: 'カテゴリを追加', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -145,9 +145,9 @@ try {
   await page.reload(); await page.locator('#reconciliation-tab').click();
   await page.getByText(/要確認 0件 · 記録なし 2件/).waitFor();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Difference Shop' }).waitFor();
-  await page.getByText('自動で一致した内容を見る（2件）', { exact: true }).click();
+  await page.getByText('一致した内容を見る（2件）', { exact: true }).click();
   await page.locator('#local-view summary').filter({ hasText: 'Synthetic Other Account Shop' }).click();
-  await page.getByText('レシート：2026-09-30 · Synthetic Other Account Shop · ¥1,600', { exact: true }).waitFor();
+  assert.match(await page.locator('#reconciliation-matched .slip-record').filter({ hasText: 'Synthetic Other Account Shop' }).innerText(), /レシート[\s\S]*9\/30[\s\S]*¥1,600/);
   assert.equal(await page.locator('#local-view summary').filter({ hasText: 'Synthetic New Merchant' }).count(), 0);
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
@@ -155,7 +155,7 @@ try {
 
   // Leaving for home while the reconciliation redraw is still running keeps home on screen.
   const refresh = await page.evaluateHandle(() => {
-    const button = [...document.querySelectorAll('#local-view button')].find(node => node.textContent === '照合を更新する');
+    const button = [...document.querySelectorAll('#local-view button')].find(node => node.textContent === 'もう一度照合する');
     button.click(); document.querySelector('#home-tab').click();
     return button;
   });
