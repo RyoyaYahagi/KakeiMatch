@@ -1,7 +1,7 @@
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
-import { confirmedPayrollSchema, payrollRecordSchema, type ConfirmedPayroll, type PayrollRecord } from './payroll-schema';
+import { confirmedPayrollSchema, payrollRecordSchema, type ConfirmedPayroll, type PayrollRecord } from '../../../workers/ai-gateway/src/payroll-schema';
 
 type Ledger = Pick<ReturnType<typeof createActualBrowserLedger>, 'getTransactions' | 'listRecurringSchedules' | 'createTransaction' | 'getTransactionById' | 'listOpenAccounts' | 'listIncomeCategories'>;
 const normalized = (value: string) => value.normalize('NFKC').toLowerCase().replace(/[\s・]/g, '');

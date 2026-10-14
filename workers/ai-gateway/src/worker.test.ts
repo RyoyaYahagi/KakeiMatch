@@ -1,4 +1,4 @@
-import { emptyPayroll } from '../../../apps/pwa/src/payroll-schema';
+import { emptyPayroll } from './payroll-schema';
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";

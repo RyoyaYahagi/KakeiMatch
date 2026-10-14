@@ -1,4 +1,4 @@
-import { payrollRecordSchema } from '../../apps/pwa/src/payroll-schema';
+import { payrollRecordSchema } from '../../workers/ai-gateway/src/payroll-schema';
 import { z } from "zod";
 import { warningIndexInRange } from "./receipt-extraction";
 import { CATEGORY_IDS } from "./category";

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LocalDataRepository } from './local-data';
 import { createPortableBackup, readPortableBackup } from './local-backup-format';
 import { LocalPayrollService } from '../../apps/pwa/src/local-payroll';
-import { confirmedPayrollSchema, emptyPayroll, payrollSchema, payrollMismatch } from '../../apps/pwa/src/payroll-schema';
+import { confirmedPayrollSchema, emptyPayroll, payrollSchema, payrollMismatch } from '../../workers/ai-gateway/src/payroll-schema';
 
 const synthetic = () => ({ ...emptyPayroll(), employerName: 'Synthetic Employer', paymentDate: '2026-10-25',
   grossPayYen: 320000, netPayYen: 250000, deductions: { ...emptyPayroll().deductions, totalYen: 70000 } });

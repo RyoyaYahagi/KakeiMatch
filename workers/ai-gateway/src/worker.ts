@@ -1,5 +1,5 @@
 import { PAYROLL_SCHEMA, PAYROLL_PROMPT } from './payroll';
-import { payrollSchema } from '../../../apps/pwa/src/payroll-schema';
+import { payrollSchema } from './payroll-schema';
 import { handleAdminRequest, type AdminEnv } from './admin';
 import { classificationPayload, parseClassification } from './contact';
 import { parseContactInput, parseContactInterviewInput, parseContactInterview, transcriptionPayload, contactInterviewPayload, type ContactEnv } from './contact';

@@ -5,7 +5,7 @@ import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-
 import { getAiAccessToken } from './ai-auth';
 import { financialImage, financialImageBytes, maskFinancialImage } from './financial-image';
 import { LocalPayrollService } from './local-payroll';
-import { confirmedPayrollSchema, deductionLabels, emptyPayroll, payrollMismatch, payrollSchema, type PayrollExtraction, type PayrollRecord } from './payroll-schema';
+import { confirmedPayrollSchema, deductionLabels, emptyPayroll, payrollMismatch, payrollSchema, type PayrollExtraction, type PayrollRecord } from '../../../workers/ai-gateway/src/payroll-schema';
 
 const node = <K extends keyof HTMLElementTagNameMap>(tag: K, value = '', className = '') => {
   const element = document.createElement(tag); element.textContent = value; element.className = className; return element;
