@@ -1,3 +1,4 @@
+import { payrollRecordSchema } from '../../workers/ai-gateway/src/payroll-schema';
 import { z } from "zod";
 import { warningIndexInRange } from "./receipt-extraction";
 import { CATEGORY_IDS } from "./category";
@@ -131,6 +132,7 @@ async function hash(bytes: Uint8Array): Promise<string> {
 function blobPart(bytes: Uint8Array): ArrayBuffer { return new Uint8Array(bytes).buffer as ArrayBuffer; }
 function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
   switch (kind) {
+    case "payroll-record": return payrollRecordSchema;
     case "receipt-metadata": return receipt;
     case "receipt-extraction": return z.object({ receiptId: z.string().min(1), extraction, analyzedAt: isoDateTime }).strict();
     case "category-state": return z.object({ merchant: z.string(), purchasedDate: z.string(), purchasedTime: z.string().nullable(), totalAmountYen: z.number().finite(), categoryId: z.string(), accountId: z.string(), ...detailFields, destinationAccountId: z.string().optional(), manualKind: z.enum(["expense", "income", "transfer"]).optional(), excludedFromSpending: z.boolean().optional(), manualMemo: nullableString.optional(), manualImportedId: z.string().min(1).max(200).optional(), manualTransactionId: nullableString.optional(), manualStatus: z.enum(["draft", "processing", "failed"]).optional() }).strict();
@@ -175,7 +177,7 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
   const recordIds = new Set<string>();
   const scopedBudgetIds = new Set<string>();
   const records: LocalDataRecord[] = backup.records.map((raw) => {
-    const parsedRecord = z.object({ id: z.string().min(1), kind: z.enum(["receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"]), value: z.unknown(), updatedAt: isoDateTime }).strict().safeParse(raw);
+    const parsedRecord = z.object({ id: z.string().min(1), kind: z.enum(["payroll-record", "receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"]), value: z.unknown(), updatedAt: isoDateTime }).strict().safeParse(raw);
     if (!parsedRecord.success) fail("端末データに不正な記録があります。");
     const { id, kind, value: recordValue, updatedAt } = parsedRecord.data;
     if (recordIds.has(id)) fail("同じ記録IDが複数あります。");
@@ -196,6 +198,7 @@ function validateLocalData(value: unknown): LocalDataBackupV2 {
       if (id.slice("settings:basic-categories:".length) !== budgetId) fail("基本カテゴリの記録と家計簿の対応が一致しません。");
       scopedBudgetIds.add(budgetId);
     }
+    if (kind === "payroll-record" && id !== `payroll:${(recordValue as { id: string }).id}`) fail("給与記録のIDが一致しません。");
     if (kind === "receipt-metadata" && (recordValue as { id: string }).id !== id) fail("レシート記録のIDが一致しません。");
     if (kind === "account-metadata") {
       const metadata = recordValue as { budgetId: string; accountId: string };

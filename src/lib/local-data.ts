@@ -8,6 +8,7 @@ export const LOCAL_PROFILE_KEY = "kakeimatch.local-profile.v1";
 export const LOCAL_DATA_SCHEMA_VERSION = 2;
 
 export type LocalDataKind =
+  | "payroll-record"
   | "receipt-metadata"
   | "receipt-extraction"
   | "category-state"
@@ -118,7 +119,7 @@ export function migrateLocalDataBackup(input: LocalDataBackup): LocalDataBackupV
 }
 
 function isLocalDataKind(kind: string): kind is LocalDataKind {
-  return ["receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"].includes(kind);
+  return ["payroll-record", "receipt-metadata", "receipt-extraction", "category-state", "merchant-mapping", "statement-import", "statement-transaction", "reconciliation-run", "reconciliation-result", "reconciliation-resolution", "correction-audit", "account-metadata", "app-settings"].includes(kind);
 }
 
 function requestResult<T>(request: IDBRequest<T>): Promise<T> {

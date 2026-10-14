@@ -1,3 +1,5 @@
+import { LocalPayrollService } from './local-payroll';
+import { showPayrollEditor, payrollDetails } from './payroll-ui';
 import { configureInlineEditor } from './inline-record-editor';
 import { dismissOnBackdrop } from './dialog-backdrop';
 import { initializeMoneyForwardUi } from './moneyforward-ui';
@@ -90,6 +92,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, id);
   } });
   if (budgetId) monthlyBudgets = new LocalMonthlyBudgetService(repository, ledger, budgetId);
+  const payroll = new LocalPayrollService(repository, ledger);
   const receipts = new LocalReceiptService(repository, ledger);
   const categoryLearning = new LocalCategoryLearning(repository);
   const statements = new LocalStatementService(repository);
@@ -257,6 +260,14 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     body.addEventListener('pointerup', endDrag); body.addEventListener('pointercancel', () => { dragStart = null; recordSheet.style.removeProperty('--sheet-drag'); });
     if (!recordSheet.open) recordSheet.showModal();
   }
+  async function payrollEditor(pendingId?: string) {
+    await open('receipt');
+    const pending = (await payroll.list()).find(row => row.status === 'pending' && (!pendingId || row.id === pendingId));
+    await showPayrollEditor({ view, ledger, service: payroll, onCancel: newEntryReturn,
+      onSaved: async () => { await returnToRecords(); el('message').textContent = '登録しました。'; },
+      onExisting: async id => { const transaction = await ledger.getTransactionById(id); if (transaction) await transactionDetail(transaction); },
+    }, pending);
+  }
   async function accountBalancesPage() {
     // Keep records visible while loading; activate settings only in the same
     // synchronous render that shows the accounts, so its root cannot flash.
@@ -270,6 +281,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     }
     if (!mount) await open('receipt');
     await showManualTransactionEditor({ view: mount ?? view, ledger, repository, kind, transaction, focusField, inline: Boolean(mount),
+      onPayroll: () => payrollEditor(),
       recurringNames: async () => (await ledger.listRecurringSchedules()).map(row => row.name.trim()),
       onSaved: async schedule => {
         ensureTab('receipt'); if (transaction) await transactionDetail(transaction); else await returnToRecords();
@@ -458,10 +470,12 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       ['振替先口座', accounts.find(account => account.id === current.transferAccountId)?.name || '利用不可'],
       ['メモ', current.memo || 'なし'],
     ] : [['金額', yen(current.amountYen)], ['日付', current.date], [current.kind === 'income' ? '入金元・内容' : '店名・支払先', current.payeeName || '未設定'], ['カテゴリ', current.categoryName || '未設定'], [current.kind === 'income' ? '入金先口座' : '支払元', accounts.find(account => account.id === current.accountId)?.name || '利用不可'], ['メモ', current.memo || 'なし']];
+    const payrollRecord = (await payroll.list()).find(row => row.actualTransactionId === current.id);
     const fields = ['amount', 'date', 'payee', 'category', 'account', 'memo'] as const;
     const summary = recordDetailRows(values, current.kind !== 'transfer' && !current.isSplit
       ? (index, mount, close) => manualEditor(current.kind === 'income' ? 'income' : 'expense', current, fields[index], mount, close) : undefined);
     view.append(summary);
+    if (payrollRecord) view.append(payrollDetails(payrollRecord));
     if (current.kind === "expense" && current.amountYen < 0) view.append(spendingExclusionControl(current));
     const actions = document.createElement('div'); actions.className = 'detail-actions';
     actions.append(detailFooters.get(summary)!);
