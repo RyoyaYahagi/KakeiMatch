@@ -1206,6 +1206,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
       if (parsed.importedId.startsWith("kakeimatch:receipt:")) {
         throw new ActualMasterValidationError("この識別子はレシート登録に使われています。取引を作成し直してください。");
       }
+      const isPayroll = parsed.importedId.startsWith("kakeimatch:payroll:");
+      if (isPayroll && !/^kakeimatch:payroll:[0-9a-f-]{36}$/i.test(parsed.importedId)) throw new ActualMasterValidationError("給与の登録識別子を確認してください。");
       const isRecurringCatchUp = parsed.importedId.startsWith("kakeimatch:schedule:");
       if (isRecurringCatchUp && !/^kakeimatch:schedule:[A-Za-z0-9_-]{1,128}:\d{4}-\d{2}-\d{2}$/.test(parsed.importedId)) {
         throw new ActualMasterValidationError("定期登録の生成識別子を確認してください。");
@@ -1216,7 +1218,8 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
         if (existing) return verifyManualReadback(existing, parsed, parsed.importedId, api);
         await validateManualMasters(api, parsed);
         const amount = parsed.kind === "expense" ? -parsed.amountYen : parsed.amountYen;
-        if (isRecurringCatchUp) {
+        // Explicit payroll overrides must add a record rather than merge with a matching planned income.
+        if (isRecurringCatchUp || isPayroll) {
           const payee = (await api.getPayees()).find(item => item.name === parsed.payeeName);
           const payeeId = payee?.id ?? await api.createPayee({ name: parsed.payeeName });
           await api.addTransactions(parsed.accountId, [{

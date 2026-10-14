@@ -76,6 +76,7 @@ export function showManualTransactionEditor(options: {
   /** Called with the schedule to create when "くり返し" was chosen. */
   onSaved: (schedule?: RecurringScheduleInput) => Promise<void>;
   recurringNames?: () => Promise<string[]>;
+  onPayroll?: () => Promise<void>;
   onCancel: () => Promise<void>;
 }): void {
   const ledger = options.ledger;
@@ -238,6 +239,11 @@ export function showManualTransactionEditor(options: {
     if (transfer) addShortcut(destination, { kind: 'account' });
     cancel.className = 'text-button back-link'; cancel.prepend(icon('chevronLeft'));
     options.view.replaceChildren(cancel, heading, form);
+    if (kind === 'income' && !transaction && options.onPayroll) {
+      const payroll = node('button', '給与明細から入力', 'secondary'); payroll.type = 'button';
+      payroll.addEventListener('click', () => { void options.onPayroll!().catch(() => { status.textContent = '給与明細の入力を開けませんでした。'; }); });
+      heading.after(payroll);
+    }
     status.textContent = '';
 
     const readValue = (): FormValue => ({

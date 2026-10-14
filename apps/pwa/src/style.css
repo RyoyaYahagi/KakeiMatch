@@ -879,3 +879,10 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .detail-save .form-actions { position: static; margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
 .detail-save button { width: 100%; min-width: 0; margin: 0; }
 .detail-save:has(.is-collapsed) .status:empty { display: none; }
+
+.payroll-mask { display: block; max-width: 100%; height: auto; cursor: crosshair; }
+.payroll-duplicates { color: var(--warning); }
+.payroll-consent { display: flex; align-items: center; gap: var(--space-2); margin-block: var(--space-3); }
+.payroll-consent label { margin: 0; min-height: 44px; display: flex; align-items: center; }
+.payroll-consent input { flex: none; }
+#payroll-netPayYen { font-family: var(--font-num); font-size: 1.875rem; }

@@ -796,6 +796,22 @@ describe("Actual browser ledger", () => {
     expect(api.addTransactions).toHaveBeenCalledTimes(1);
   });
 
+  it("adds explicitly confirmed payroll without import matching and retries the stable ID", async () => {
+    const { ledger, api, rows, payees } = fixture([{ id: "budget", name: "Local" }]);
+    payees.push({ id: "employer", name: "Synthetic Employer" });
+    rows.push({ id: "planned-payroll", account: "bank", date: "2026-10-25", amount: 250000,
+      payee: "employer", category: "income-category", cleared: false, imported_id: "planned-payroll" });
+    const input = { kind: "income" as const, accountId: "bank", date: "2026-10-25", amountYen: 250000,
+      payeeName: "Synthetic Employer", categoryId: "income-category", memo: null,
+      importedId: "kakeimatch:payroll:00000000-0000-4000-8000-000000000269" };
+    const saved = await ledger.createTransaction(input);
+    expect(saved.id).not.toBe("planned-payroll");
+    expect(api.importTransactions).not.toHaveBeenCalled();
+    expect(api.addTransactions).toHaveBeenCalledWith("bank", [expect.objectContaining({ amount: 250000, imported_id: input.importedId })], { learnCategories: false, runTransfers: false });
+    await ledger.createTransaction(input);
+    expect(api.addTransactions).toHaveBeenCalledTimes(1);
+  });
+
   it("creates one native linked transfer pair and deduplicates by imported ID", async () => {
     const { ledger, api, rows } = fixture([{ id: "budget", name: "Local" }]);
     const input = { amountYen: 12500, date: "2026-09-30", sourceAccountId: "cash", destinationAccountId: "bank", memo: "移動", importedId: "kakeimatch:transfer:one" };

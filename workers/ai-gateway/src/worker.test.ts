@@ -1,3 +1,4 @@
+import { emptyPayroll } from '../../../apps/pwa/src/payroll-schema';
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
@@ -96,6 +97,28 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
   const gemini = (flowId = crypto.randomUUID(), at = now, provider?: typeof fetch) => handleRequest(request("gemini", { ...image, flowId }, bearer("synthetic-user", at)), env, options(provider, at));
+  it("extracts payroll with existing authentication, quota and no stored provider input", async () => {
+    const value = { ...emptyPayroll(), employerName: 'Synthetic Employer', paymentDate: '2026-10-25', netPayYen: 250000 };
+    const provider = fetchOk({ output_text: JSON.stringify(value) });
+    const response = await handleRequest(request('payroll', { ...image, flowId: crypto.randomUUID(), maskingConfirmed: true }), env, options(provider));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ extraction: value, promptVersion: 'payroll-v1' });
+    const payload = JSON.parse(String(vi.mocked(provider).mock.calls[0][1]?.body));
+    expect(payload.store).toBe(false);
+    expect(payload.input[0].text).toContain('employee IDs');
+    expect(await flowUsage(db, 'synthetic-user', '2026-09')).toBe(1);
+  });
+  it("requires masking confirmation before sending payroll and rejects identifiers without logging values", async () => {
+    const provider = fetchOk({ output_text: JSON.stringify({ ...emptyPayroll(), employeeId: 'synthetic-secret' }) });
+    const unconfirmed = await handleRequest(request('payroll', { ...image, flowId: crypto.randomUUID() }), env, options(provider));
+    expect(unconfirmed.status).toBe(400); expect(provider).not.toHaveBeenCalled();
+    const log = vi.spyOn(console, 'warn');
+    try {
+      const response = await handleRequest(request('payroll', { ...image, flowId: crypto.randomUUID(), maskingConfirmed: true }), env, options(provider));
+      expect(response.status).toBe(502);
+      expect(JSON.stringify(log.mock.calls)).not.toContain('synthetic-secret');
+    } finally { log.mockRestore(); }
+  });
   const usage = async (at = now) => (await handleRequest(new Request(`${origin}/api/ai/usage`), env, options(undefined, at))).json();
   const costs = async (month: string, at = now) => (await handleRequest(new Request(`${origin}/api/ai/costs?month=${month}`), env, options(undefined, at))).json();
   const eventCount = async () => (await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events").bind().first<{ count: number }>())?.count ?? 0;
