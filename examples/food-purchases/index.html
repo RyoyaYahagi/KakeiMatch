@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="ja">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>食品購入APIの接続例</title>
+<h1>食品購入APIの接続例</h1>
+<p>合成データで試してください。KakeiMatchの設定で、このサイトのURLを許可し、食品カテゴリを選んで連携キーを発行します。</p>
+<form id="connect">
+  <p><label>KakeiMatchのURL <input id="app-origin" type="url" required></label></p>
+  <p><label>連携キー <input id="token" type="password" autocomplete="off" required></label></p>
+  <button>接続画面を開く</button>
+</form>
+<p>接続画面で「連携を開始」を押してから、取得してください。</p>
+<button id="read" disabled>食品情報を取得・更新</button>
+<button id="disconnect">接続を閉じる</button>
+<p id="status" role="status"></p>
+<pre id="result"></pre>
+<script type="module" src="./client.mjs"></script>
+</html>

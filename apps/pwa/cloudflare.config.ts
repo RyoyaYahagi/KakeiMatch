@@ -21,7 +21,7 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
       triggers: [{ type: 'scheduled', schedule: '0 18 * * *' }],
-      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html'] },
+      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html', '/food-api', '/food-api.html'] },
       env: {
         ASSETS: bindings.assets(),
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),

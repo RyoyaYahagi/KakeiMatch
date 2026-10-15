@@ -25,6 +25,14 @@ const appWorker = {
   },
   async fetch(request: Request, env: AppEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === '/food-api' || path === '/food-api.html') {
+      if (request.method !== 'GET' && request.method !== 'HEAD') return secureApiResponse(new Response(null, { status: 405 }));
+      const asset = secureApiResponse(await env.ASSETS.fetch(request));
+      asset.headers.set('cross-origin-opener-policy', 'unsafe-none');
+      asset.headers.set('cross-origin-embedder-policy', 'unsafe-none');
+      asset.headers.set('referrer-policy', 'no-referrer');
+      return asset;
+    }
     if (path === '/admin' || path.startsWith('/admin/') || path === '/admin.html') {
       const auth = await requireAdmin(request, env);
       if ('response' in auth) return secureApiResponse(auth.response);

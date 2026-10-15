@@ -116,3 +116,11 @@ test('admin documents and API bypass even an installed offline shell', async () 
     assert.equal(context.request(path, 'navigate'), undefined);
   }
 });
+
+// The connection document must retain its own opener policy instead of the isolated PWA shell.
+test('food connection documents bypass an installed service worker', async () => {
+  const context = worker(); await context.lifecycle('install');
+  for (const path of ['/food-api', '/food-api.html', '/food-api.html?origin=https%3A%2F%2Frecipe.example']) {
+    assert.equal(context.request(path, 'navigate'), undefined);
+  }
+});
