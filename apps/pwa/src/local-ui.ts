@@ -1,3 +1,4 @@
+import { initializeFoodConnectionsUi } from './food-connections-ui';
 import { LocalPayrollService } from './local-payroll';
 import { showPayrollEditor, payrollDetails } from './payroll-ui';
 import { configureInlineEditor } from './inline-record-editor';
@@ -1672,6 +1673,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
   });
   el('home-all-records').addEventListener('click', () => el('receipt-tab').click());
   // A user chooses a budget explicitly when multiple local budgets are available.
+  initializeFoodConnectionsUi(repository, () => ledger.listCategories());
   const setup = el('local-settings');
   const closeCategoryRules = initializeCategoryRulesUi({ entryContainer: setup, settingsContent: el('settings-content'), ledger, learning: categoryLearning });
   await initializeBackupUi(repository, ledger);
