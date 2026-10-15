@@ -1,3 +1,4 @@
+import { categoryChoices } from './category-picker';
 import { createMasterShortcut } from './local-master-ui';
 import { entryRow, optionalFields, compactAddButton } from './entry-form';
 import { z } from 'zod';
@@ -129,7 +130,7 @@ export async function showPayrollEditor(options: Options, pending?: PayrollRecor
       .finally(() => { submit.disabled = false; });
   });
   capture.addEventListener('change', () => { void selectPhoto(capture.files?.[0] ?? null); }); library.addEventListener('change', () => { void selectPhoto(library.files?.[0] ?? null); });
-  const [categories, accounts] = await Promise.all([ledger.listIncomeCategories(), ledger.listOpenAccounts()]);
+  const [categories, accounts] = await Promise.all([categoryChoices(ledger, ledger.listIncomeCategories()), ledger.listOpenAccounts()]);
   if (!active) return;
   category.append(new Option('選択してください', ''), ...categories.map(row => new Option(row.name, row.id)));
   category.value = pending?.categoryId ?? categories.find(row => row.name === '給与')?.id ?? '';
@@ -138,7 +139,7 @@ export async function showPayrollEditor(options: Options, pending?: PayrollRecor
   if (!pending) {
     const categoryAdd = createMasterShortcut({ ledger, request: { kind: 'category', isIncome: true },
       origin: { field: category, beforeOpen: async () => {}, onCreated: async id => {
-        category.replaceChildren(new Option('選択してください', ''), ...(await ledger.listIncomeCategories()).map(row => new Option(row.name, row.id))); category.value = id;
+        category.replaceChildren(new Option('選択してください', ''), ...(await categoryChoices(ledger, ledger.listIncomeCategories())).map(row => new Option(row.name, row.id))); category.value = id;
       } } });
     const accountAdd = createMasterShortcut({ ledger, request: { kind: 'account' },
       origin: { field: account, beforeOpen: async () => {}, onCreated: async id => {

@@ -1,3 +1,4 @@
+import { categoryChoices } from './category-picker';
 import { LocalCategoryLearning, type LocalCategoryRule } from './local-category-learning';
 import { backLink } from './settings-ui';
 import { icon } from './ui-icons';
@@ -54,7 +55,7 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
     status.classList.add('error');
   }
   async function refresh() {
-    const categories = await options.ledger.listExpenseCategories();
+    const categories = await categoryChoices(options.ledger, options.ledger.listExpenseCategories());
     rows = await options.learning.listRules(categories);
     ul.replaceChildren();
     if (rows.length === 0) {

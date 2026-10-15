@@ -1,3 +1,4 @@
+import { categoryChoices } from './category-picker';
 import type { LocalDataRepository } from '../../../src/lib/local-data';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { backLink, pageTitle, groupTitle, detailList, pageActions } from './settings-ui';
@@ -79,7 +80,7 @@ export function initializeMoneyForwardUi(repository: LocalDataRepository, ledger
         if (diagnostic.unknownHeaders?.length) body.append(node('p', `認識できない列: ${diagnostic.unknownHeaders.join('、')}`));
         return;
       }
-      [categories, accounts] = await Promise.all([ledger.listCategories(), ledger.listAccounts()]);
+      [categories, accounts] = await Promise.all([categoryChoices(ledger, ledger.listCategories()), ledger.listAccounts()]);
       const rules = await service.getRules(); mappings = { categories: Object.create(null), accounts: Object.create(null) };
       for (const row of result.transactions) {
         const key = categoryKey(row);
