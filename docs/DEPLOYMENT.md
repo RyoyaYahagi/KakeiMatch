@@ -167,9 +167,9 @@ secret値は本人だけがCloudflareへ登録します。値をGit、PR、チ�
 umask 077
 secret_file=$(mktemp)
 trap 'rm -f "$secret_file"' EXIT
-read -rs 'OPENCODE_API_KEY='
+read -rsp 'OPENCODE_API_KEY: ' OPENCODE_API_KEY
 echo
-printf '{"OPENCODE_API_KEY":{"type":"secret_text","text":"%s"}}' "$OPENCODE_API_KEY" > "$secret_file"
+jq -n --arg value "$OPENCODE_API_KEY" '{OPENCODE_API_KEY: {type: "secret_text", text: $value}}' > "$secret_file"
 corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file" --dry-run
 corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file"
 unset OPENCODE_API_KEY
