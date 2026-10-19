@@ -152,7 +152,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql` が必要です。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql`、`0017_jev_upstream_circuits.sql` が必要です。0017はprovider停止状態のキーを `jev` から `jev:opencode` / `jev:openrouter` へ分割します。適用時に `jev` の停止が開いていれば両方へ引き継ぐため、再開するupstreamを選んでください。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -160,6 +160,20 @@ corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir 
 ```
 
 secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は「本番URLとデータ」に記載しています。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
+
+`cf workers secrets update <name>` は値を省略しても対話入力せず、空の値で更新します。値は0600の一時ファイルへ書き、`cf workers secrets bulk --body @<file>` で渡すと引数とシェル履歴に残りません。次の例は1つのsecretを登録し、`--dry-run` で送信内容を確認してから実行します。複数のbindingは同じJSONへまとめられます。
+
+```sh
+umask 077
+secret_file=$(mktemp)
+trap 'rm -f "$secret_file"' EXIT
+read -rs 'OPENCODE_API_KEY='
+echo
+printf '{"OPENCODE_API_KEY":{"type":"secret_text","text":"%s"}}' "$OPENCODE_API_KEY" > "$secret_file"
+corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file" --dry-run
+corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file"
+unset OPENCODE_API_KEY
+```
 
 検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、PWAとAPIが同じversionに含まれることを確認してから公開します。
 
