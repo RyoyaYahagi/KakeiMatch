@@ -92,7 +92,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       for (const migration of migrations) await d1.exec(migration.replace(/^--.*$/gm, "").replace(/\s+/g, " "));
     } else { ({ db, dispose } = sqliteDb()); }
     for (const user of ["synthetic-user", "other-user"]) await db.prepare("INSERT INTO user(id, name, email, createdAt, updatedAt) VALUES (?, 'Test', ?, 0, 0)").bind(user, `${user}@example.invalid`).run();
-    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", OPENROUTER_API_KEY: "synthetic-jev-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
+    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", OPENCODE_API_KEY: "synthetic-opencode-key", OPENROUTER_API_KEY: "synthetic-openrouter-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
   });
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
@@ -231,10 +231,10 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const result = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "スーパーマーケット", categories: choices }), env, options(provider));
     expect(result.status).toBe(200);
     expect(await result.json()).toEqual({ categoryId: "local-food" });
-    expect(vi.mocked(provider).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(vi.mocked(provider).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-jev-key" });
+    expect(vi.mocked(provider).mock.calls[0]?.[0]).toBe("https://opencode.ai/inference/systemone/v1/systemone");
+    expect(vi.mocked(provider).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-opencode-key" });
     const providerPayload = JSON.parse(String(vi.mocked(provider).mock.calls[0]?.[1]?.body));
-    expect(providerPayload.model).toBe("typesafe/jev-1.13");
+    expect(providerPayload.model).toBe("jev-1.13-free");
     expect(providerPayload.state).toEqual({ sourceCategoryName: "スーパーマーケット" });
     expect(providerPayload.state).not.toHaveProperty("receipt");
     expect(providerPayload.questions.category.criteria).toEqual({ "local-food": "食費", "local-home": "日用品" });
@@ -353,6 +353,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(count?.requests).toBe(2);
   });
   it("uses actual Gemini GenerateContent metadata and preserves Jev's versioned model", async () => {
+    env.JEV_PROVIDER = "openrouter";
     const geminiFlow = crypto.randomUUID();
     const generateContent = {
       model: "gemini-3.5-flash-lite",
@@ -369,7 +370,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await classified.json()).toEqual({ model: versionedJev.model, answers: versionedJev.answers });
     const [providerUrl, providerInit] = vi.mocked(jevProvider).mock.calls[0]!;
     expect(providerUrl).toBe("https://openrouter.ai/api/alpha/decisions");
-    expect(providerInit?.headers).toMatchObject({ authorization: "Bearer synthetic-jev-key" });
+    expect(providerInit?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
     expect(JSON.parse(String(providerInit?.body))).toMatchObject({ model: "typesafe/jev-1.13", state: category });
     const geminiRow = await db.prepare("SELECT model, input_tokens, output_tokens, thinking_tokens, total_tokens, metering_status FROM ai_provider_cost_events WHERE flow_id=?")
       .bind(geminiFlow).first<{ model: string; input_tokens: number; output_tokens: number; thinking_tokens: number; total_tokens: number; metering_status: string }>();
@@ -699,15 +700,46 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(503);
     expect(await usage()).toMatchObject({ used: 0 });
   });
-  it("does not dispatch either classification route without an OpenRouter key", async () => {
+  it("selects the Jev upstream from configuration and fails closed on an unknown provider", async () => {
+    const suggestion = () => request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "スーパーマーケット", categories: [{ id: "local-food", name: "食費" }] });
+    const answer = (model: string) => ({ model, answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
+
+    const openrouter = fetchOk(answer("typesafe/jev-1.13"));
+    env.JEV_PROVIDER = "openrouter";
+    expect((await handleRequest(suggestion(), env, options(openrouter))).status).toBe(200);
+    expect(vi.mocked(openrouter).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(vi.mocked(openrouter).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
+    expect(JSON.parse(String(vi.mocked(openrouter).mock.calls[0]?.[1]?.body)).model).toBe("typesafe/jev-1.13");
+
+    const opencode = fetchOk(answer("jev-1.13-free"));
+    env.JEV_PROVIDER = "opencode";
+    expect((await handleRequest(suggestion(), env, options(opencode))).status).toBe(200);
+    expect(vi.mocked(opencode).mock.calls[0]?.[0]).toBe("https://opencode.ai/inference/systemone/v1/systemone");
+    expect(vi.mocked(opencode).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-opencode-key" });
+    expect(JSON.parse(String(vi.mocked(opencode).mock.calls[0]?.[1]?.body)).model).toBe("jev-1.13-free");
+
+    // An unknown provider name must not silently fall back to a working upstream.
+    env.JEV_PROVIDER = "gemini";
+    const unknown = fetchOk(answer("jev-1.13-free"));
+    const blocked = await handleRequest(suggestion(), env, options(unknown));
+    expect(blocked.status).toBe(503);
+    expect(await blocked.json()).toEqual({ error: "not_configured" });
+    expect(unknown).not.toHaveBeenCalled();
+  });
+  it("does not dispatch either classification route without the selected provider's key", async () => {
     const flowId = crypto.randomUUID();
     await gemini(flowId);
-    env.OPENROUTER_API_KEY = undefined;
+    env.OPENCODE_API_KEY = undefined;
     const provider = fetchOk(jev);
     const receiptResponse = await handleRequest(request("jev", { ...category, flowId }), env, options(provider));
     expect(receiptResponse.status).toBe(503);
     expect(await receiptResponse.json()).toEqual({ error: "not_configured" });
     expect((await handleRequest(request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "合成カテゴリ", categories: [{ id: "food", name: "食費" }] }), env, options(provider))).status).toBe(503);
+    expect(provider).not.toHaveBeenCalled();
+    // The key of the other provider must never be used as a fallback.
+    env.JEV_PROVIDER = "openrouter";
+    env.OPENROUTER_API_KEY = undefined;
+    expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(503);
     expect(provider).not.toHaveBeenCalled();
   });
   it("maintains the separate per-user/provider rate limit for retries and Family", async () => {

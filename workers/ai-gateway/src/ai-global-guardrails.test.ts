@@ -33,7 +33,11 @@ describe("global AI guardrail configuration", () => {
     expect(requestReservation("gemini", "gemini-3.5-flash-lite", geminiBody, 50_000, 0)).toBe(50_000);
     const jevBody = JSON.stringify({ model: "jev-latest", questions: { item_0: {}, item_1: {} } });
     expect(requestReservation("jev", "jev-latest", jevBody, 0, 0)).toBeGreaterThan(0);
+    // The OpenCode free model prices at zero, so only the configured floor remains.
+    expect(requestReservation("jev", "jev-1.13-free", jevBody, 5_000, 0)).toBe(5_000);
+    expect(requestReservation("jev", "jev-1.13", jevBody, 0, 0)).toBeGreaterThan(0);
     expect(() => requestReservation("gemini", "unpriced-model", geminiBody, 0, 0)).toThrow(AiPausedError);
+    expect(() => requestReservation("jev", "unpriced-model", jevBody, 0, 0)).toThrow(AiPausedError);
   });
 
   it("backfills reservations for prior unknown events without rewriting settled price snapshots", () => {

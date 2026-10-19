@@ -9,11 +9,16 @@ export type Pricing = { version: string; provider: Provider; model: string; vali
 // https://docs.typesafe.ai/models (verified 2026-10-02)
 // https://openrouter.ai/typesafe/jev-1.13/api (verified 2026-10-08)
 // https://openrouter.ai/docs/api-reference/alpha/decisions/submit-decisions
+// https://opencode.ai/docs/zen/ (verified 2026-10-20)
 export const PRICING_CATALOG: readonly Pricing[] = [
   { version: "2026-10-02-gemini-standard", provider: "gemini", model: "gemini-3.5-flash-lite", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 300_000, outputUsdPerMillionMicros: 2_500_000 },
   { version: "2026-10-02-jev-1.13", provider: "jev", model: "jev-1.13.0", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 42_000, outputUsdPerMillionMicros: 0 },
   { version: "2026-10-08-openrouter-jev-1.13", provider: "jev", model: "typesafe/jev-1.13", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 42_000, outputUsdPerMillionMicros: 0 },
   { version: "2026-10-08-openrouter-jev-1.13", provider: "jev", model: "typesafe/jev-1.13-20260917", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 42_000, outputUsdPerMillionMicros: 0 },
+  // OpenCode Console serves Jev under its own model IDs and returns them verbatim.
+  // jev-1.13-free is a limited-time free model; its cost is zero, not unknown.
+  { version: "2026-10-20-opencode-jev-1.13-free", provider: "jev", model: "jev-1.13-free", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 0, outputUsdPerMillionMicros: 0 },
+  { version: "2026-10-20-opencode-jev-1.13", provider: "jev", model: "jev-1.13", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 42_000, outputUsdPerMillionMicros: 0 },
   { version: "2026-10-03-gemini-transcribe-standard", provider: "gemini", model: "gemini-3.5-transcribe", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 2_000_000, outputUsdPerMillionMicros: 12_000_000 },
 ];
 export function pricingFor(provider: Provider, model: string, at: number, catalog = PRICING_CATALOG): Pricing | null {

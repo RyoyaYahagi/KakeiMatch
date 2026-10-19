@@ -42,7 +42,7 @@ export interface RateLimitBinding { limit(input: { key: string }): Promise<{ suc
 export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
 export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT"> {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
-  OPENROUTER_API_KEY?: string; OPENROUTER_API_URL?: string; JEV_MODEL?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
+  OPENCODE_API_KEY?: string; OPENROUTER_API_KEY?: string; JEV_PROVIDER?: string; JEV_API_URL?: string; JEV_MODEL?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
   FEEDBACK_ENCRYPTION_KEY?: string;
   // Contact AI features are not counted against a plan; this per-minute limit is their abuse guard.
@@ -366,6 +366,27 @@ function geminiOutputText(value: unknown): string | null {
   return text.length > 0 ? text.map((part) => part.text as string).join("") : null;
 }
 
+type JevProvider = "opencode" | "openrouter";
+/** Endpoint and default model for each Jev provider. Prices for both live in the server-only pricing catalog. */
+const JEV_PROVIDERS: Record<JevProvider, { apiUrl: string; model: string }> = {
+  opencode: { apiUrl: "https://opencode.ai/inference/systemone/v1/systemone", model: "jev-1.13-free" },
+  openrouter: { apiUrl: "https://openrouter.ai/api/alpha/decisions", model: "typesafe/jev-1.13" },
+};
+type JevUpstream = { apiUrl: string; model: string; headers: Record<string, string> };
+/** Resolves the configured Jev provider. Unknown providers or missing keys fail closed instead of guessing. */
+function jevUpstream(env: GatewayEnv): JevUpstream | null {
+  const name = env.JEV_PROVIDER?.trim() || "opencode";
+  if (name !== "opencode" && name !== "openrouter") return null;
+  const apiKey = name === "opencode" ? env.OPENCODE_API_KEY : env.OPENROUTER_API_KEY;
+  if (!apiKey) return null;
+  const preset = JEV_PROVIDERS[name];
+  return {
+    apiUrl: env.JEV_API_URL?.trim() || preset.apiUrl,
+    model: env.JEV_MODEL?.trim() || preset.model,
+    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+  };
+}
+
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/ai/token" || url.pathname === "/api/ai/usage" || url.pathname === "/api/ai/costs") {
@@ -446,8 +467,9 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   if (categorySuggestion) {
     const input = parseCategorySuggestionInput(body);
     if (!input) return json(400, { error: "invalid_request" });
-    if (!env.OPENROUTER_API_KEY || !env.ACCOUNT_DB) return json(503, { error: "not_configured" });
-    const model = env.JEV_MODEL?.trim() || "typesafe/jev-1.13";
+    const upstream = jevUpstream(env);
+    if (!upstream || !env.ACCOUNT_DB) return json(503, { error: "not_configured" });
+    const model = upstream.model;
     const categoryIds = input.categories.map(category => category.id);
     const criteria = Object.fromEntries(input.categories.map(category => [category.id, category.name]));
     const payload = {
@@ -468,8 +490,8 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     let response: Response, decoded: unknown, eventId: string;
     try {
       ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, input.flowId, "jev", model,
-        requestNow, env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/alpha/decisions",
-        { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENROUTER_API_KEY}` }, body: JSON.stringify(payload) },
+        requestNow, upstream.apiUrl,
+        { method: "POST", headers: upstream.headers, body: JSON.stringify(payload) },
         8_000, fetchImpl, clock, admission, env, "category-suggestion"));
     } catch (error) { return dispatchError(error); }
     if (!response.ok) {
@@ -651,7 +673,8 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   const itemIndexes = body.itemIndexes === undefined ? normalized.receipt.items.map((_, index) => index) : parseItemIndexes(body.itemIndexes, normalized.receipt.items.length);
   const categories = body.categories === undefined ? null : parseCategoryOptions(body.categories);
   if (!itemIndexes || (body.categories !== undefined && !categories)) return json(400, { error: "invalid_request" });
-  if (!env.OPENROUTER_API_KEY) return json(503, { error: "not_configured" });
+  const upstream = jevUpstream(env);
+  if (!upstream) return json(503, { error: "not_configured" });
   if (!env.ACCOUNT_DB) return json(503, { error: "not_configured" });
   const selectedItems = itemIndexes.map(index => normalized.receipt.items[index]);
   const questionKeys = selectedItems.length > 0 ? itemIndexes.map(index => `item_${index}`) : ["category"];
@@ -664,7 +687,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     : CATEGORY_CRITERIA;
   const selectedReceipt = { ...normalized.receipt, items: selectedItems };
   const question = { type: "choice", instructions: "この商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。", criteria };
-  const payload = { model: env.JEV_MODEL?.trim() || "typesafe/jev-1.13", state: { receipt: selectedReceipt }, questions: Object.fromEntries(questionKeys.map((key, index) => [key, { ...question, instructions: selectedItems.length > 0 ? `state.receipt.items[${index}]の商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。${fallbackInstruction}` : `このレシートの店名と合計金額から、該当する家計簿カテゴリを1つ選んでください。${fallbackInstruction}`, criteria }])) };
+  const payload = { model: upstream.model, state: { receipt: selectedReceipt }, questions: Object.fromEntries(questionKeys.map((key, index) => [key, { ...question, instructions: selectedItems.length > 0 ? `state.receipt.items[${index}]の商品を家計簿のカテゴリから1つ選んでください。商品名を優先してください。${fallbackInstruction}` : `このレシートの店名と合計金額から、該当する家計簿カテゴリを1つ選んでください。${fallbackInstruction}`, criteria }])) };
   let admission: CostAdmission;
   try { admission = await prepareDispatch(env, provider, payload.model, payload, now); }
   catch (error) { return dispatchError(error); }
@@ -673,7 +696,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!await attemptFlow(env.ACCOUNT_DB, identity, flowId, "jev", mac, now)) return json(409, { error: "invalid_flow" });
   } catch { return json(503, { error: "temporarily_unavailable" }); }
   let response: Response, decoded: unknown, eventId: string;
-  try { ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, env.OPENROUTER_API_URL?.trim() || "https://openrouter.ai/api/alpha/decisions", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${env.OPENROUTER_API_KEY}` }, body: JSON.stringify(payload) }, 8_000, fetchImpl, clock, admission, env)); }
+  try { ({ response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB, identity, flowId, provider, payload.model, now, upstream.apiUrl, { method: "POST", headers: upstream.headers, body: JSON.stringify(payload) }, 8_000, fetchImpl, clock, admission, env)); }
   catch (error) { return dispatchError(error); }
   if (!response.ok) return providerError(response.status);
   const result = normalizeJevResponse(decoded, questionKeys, categoryIds);

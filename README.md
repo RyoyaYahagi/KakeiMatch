@@ -89,7 +89,7 @@ AIは曖昧さを含む処理だけに使います。
 | 処理 | 担当 |
 | --- | --- |
 | レシート画像の読み取り | Gemini |
-| 選択肢からのカテゴリ分類 | Jev（OpenRouter経由） |
+| 選択肢からのカテゴリ分類 | Jev（OpenCode Console経由。設定でOpenRouterへ切り替え可） |
 | 明細の照合、重複判定、状態遷移、金額計算、認可 | 通常のTypeScriptコード |
 
 AIの応答はZodのschemaで検証し、不正な応答は保存しません。金額は整数の円で扱い、浮動小数点を使いません。照合ロジックには、合成データの評価セット（`pnpm eval:reconciliation`）を用意しています。
@@ -126,7 +126,7 @@ flowchart TB
   UI -- "AIを使うときだけ" --> AI
   UI -- "ログイン" --> Auth
   AI --> Gemini["Gemini API"]
-  AI --> Jev["OpenRouter / Jev API"]
+  AI --> Jev["OpenCode Console / Jev API"]
   AI --> GH["GitHub Issues"]
 ```
 

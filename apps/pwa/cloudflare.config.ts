@@ -40,6 +40,7 @@ export default defineConfig(({ mode, isPreview }) => {
         CF_ACCESS_TEAM_DOMAIN: bindings.secret(),
         CF_ACCESS_AUD: bindings.secret(),
         FEEDBACK_ENCRYPTION_KEY: bindings.secret(),
+        OPENCODE_API_KEY: bindings.secret(),
         OPENROUTER_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
         // Contact AI is not counted against a plan, so it gets its own tighter limit per identity and per address.
@@ -47,8 +48,9 @@ export default defineConfig(({ mode, isPreview }) => {
         TURNSTILE_SITE_KEY: bindings.text(turnstileSiteKey),
         TURNSTILE_SECRET_KEY: bindings.secret(),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),
-        JEV_MODEL: bindings.text('typesafe/jev-1.13'),
-        OPENROUTER_API_URL: bindings.text('https://openrouter.ai/api/alpha/decisions'),
+        JEV_PROVIDER: bindings.text('opencode'),
+        JEV_MODEL: bindings.text('jev-1.13-free'),
+        JEV_API_URL: bindings.text('https://opencode.ai/inference/systemone/v1/systemone'),
       },
     },
   };
