@@ -15,6 +15,16 @@ export const DEFAULT_GUARDRAILS: Guardrails = {
   jev: { enabled: true, dailyRequests: 1000, monthlyRequests: 10000, minuteRequests: 60, dailyCostUsdMicros: 1_000_000, monthlyCostUsdMicros: 10_000_000, requestReserveUsdMicros: 5000, failureThreshold: 5, unknownThreshold: 10 },
 };
 export class AiPausedError extends Error { constructor() { super("ai_temporarily_paused"); } }
+/** The circuit is open; callers that have an equivalent upstream may use it instead of pausing. */
+export class CircuitOpenError extends AiPausedError {}
+/**
+ * Circuits follow the upstream that fails, not the metering provider. Gemini
+ * has one upstream, so its scope is the provider. Jev has two interchangeable
+ * upstreams that share provider='jev' metering, so they carry their own key and
+ * scope events by the requested model.
+ */
+export type CircuitScope = { key: string; model: string | null };
+export const providerCircuit = (provider: Provider): CircuitScope => ({ key: provider, model: null });
 export function guardrailConfig(raw: string | undefined): Guardrails {
   if (raw === undefined) return structuredClone(DEFAULT_GUARDRAILS);
   const decoded: unknown = JSON.parse(raw);
@@ -63,19 +73,21 @@ const UNKNOWN_WINDOW = 3600;
 const STALE_SECONDS = 120;
 const liability = "CASE WHEN metering_status='metered' THEN estimated_cost_usd_micros ELSE reserved_cost_usd_micros END";
 const failed = "(safe_error_code IN ('provider_timeout','invalid_provider_response','provider_http_408','provider_http_429','provider_http_529') OR safe_error_code GLOB 'provider_http_5[0-9][0-9]')";
-/** Opens the provider circuit when recent failures or unknown metering reach their thresholds. */
-export function refreshCircuitStatement(db: Db, provider: Provider, limits: ProviderLimits, now: number): AccountD1Statement {
+/** Opens the circuit for one upstream when recent failures or unknown metering reach their thresholds. */
+export function refreshCircuitStatement(db: Db, provider: Provider, scope: CircuitScope, limits: ProviderLimits, now: number): AccountD1Statement {
+  // A scoped circuit counts only the events of its own upstream; events keep provider='jev'.
+  const scopeFilter = scope.model === null ? "" : " AND requested_model=?";
   return db.prepare(`INSERT INTO ai_provider_circuits(provider,opened_at,reason,resumed_at)
     SELECT ?,?,CASE WHEN failures>=? THEN 'provider_failures' ELSE 'unknown_metering' END,0 FROM (
       SELECT COALESCE(SUM(CASE WHEN dispatched_at>=? AND ${failed} THEN 1 ELSE 0 END),0) AS failures,
         COALESCE(SUM(CASE WHEN dispatched_at>=? AND metering_status='unknown' AND (completed_at IS NOT NULL OR dispatched_at<=?) THEN 1 ELSE 0 END),0) AS unknowns
-      FROM ai_provider_cost_events WHERE provider=? AND dispatched_at>=? AND rowid>COALESCE((SELECT resumed_after_event FROM ai_provider_circuits WHERE provider=?),0)
+      FROM ai_provider_cost_events WHERE provider=? AND dispatched_at>=?${scopeFilter} AND rowid>COALESCE((SELECT resumed_after_event FROM ai_provider_circuits WHERE provider=?),0)
     ) WHERE failures>=? OR unknowns>=?
     ON CONFLICT(provider) DO UPDATE SET opened_at=COALESCE(ai_provider_circuits.opened_at,excluded.opened_at),reason=COALESCE(ai_provider_circuits.reason,excluded.reason)`)
-    .bind(provider,now,limits.failureThreshold,now-FAILURE_WINDOW,now-UNKNOWN_WINDOW,now-STALE_SECONDS,provider,now-UNKNOWN_WINDOW,provider,limits.failureThreshold,limits.unknownThreshold);
+    .bind(scope.key,now,limits.failureThreshold,now-FAILURE_WINDOW,now-UNKNOWN_WINDOW,now-STALE_SECONDS,provider,now-UNKNOWN_WINDOW,...(scope.model === null ? [] : [scope.model]),scope.key,limits.failureThreshold,limits.unknownThreshold);
 }
 export type CostAdmission = { reservation: number; predicate: string; parameters: unknown[] };
-export async function costAdmission(db: Db, provider: Provider, model: string, body: string, now: number, config: Guardrails, emergencyStop?: string): Promise<CostAdmission> {
+export async function costAdmission(db: Db, provider: Provider, model: string, body: string, now: number, config: Guardrails, emergencyStop?: string, scope: CircuitScope = providerCircuit(provider)): Promise<CostAdmission> {
   checkEmergencyStop(emergencyStop);
   const limits = config[provider];
   if (!limits.enabled) throw new AiPausedError();
@@ -84,7 +96,7 @@ export async function costAdmission(db: Db, provider: Provider, model: string, b
   // All predicates run inside the same INSERT as the event reservation. D1/SQLite
   // serialization prevents parallel users from all passing a separate SELECT.
   const conditions: string[] = ["NOT EXISTS(SELECT 1 FROM ai_provider_circuits WHERE provider=? AND opened_at IS NOT NULL)"];
-  const parameters: unknown[] = [provider];
+  const parameters: unknown[] = [scope.key];
   for (const [since, ceiling] of [[now-60,limits.minuteRequests],[day,limits.dailyRequests],[month,limits.monthlyRequests]]) {
     conditions.push("(SELECT COUNT(*) FROM ai_provider_cost_events WHERE provider=? AND dispatched_at>=?) < ?");
     parameters.push(provider,since,ceiling);
@@ -97,11 +109,15 @@ export async function costAdmission(db: Db, provider: Provider, model: string, b
   // Refresh the circuit and check before product-flow reservation for ordinary
   // paused requests, in one round trip. The event INSERT repeats these
   // predicates atomically against concurrent admissions.
-  const [circuit, check] = await db.batch<AccountD1BatchResult>([
-    refreshCircuitStatement(db, provider, limits, now),
+  const [circuit, opened, check] = await db.batch<AccountD1BatchResult>([
+    refreshCircuitStatement(db, provider, scope, limits, now),
+    db.prepare("SELECT CASE WHEN EXISTS(SELECT 1 FROM ai_provider_circuits WHERE provider=? AND opened_at IS NOT NULL) THEN 1 ELSE 0 END AS opened").bind(scope.key),
     db.prepare(`SELECT CASE WHEN ${admission.predicate} THEN 1 ELSE 0 END AS allowed`).bind(...admission.parameters),
   ]);
   if (!circuit?.success) throw new Error("guardrail_unavailable");
+  // Report an open circuit separately so a caller with another equivalent
+  // upstream can use it; every other reason to pause stays a plain pause.
+  if ((opened?.results?.[0] as { opened?: number } | undefined)?.opened === 1) throw new CircuitOpenError();
   if ((check?.results?.[0] as { allowed?: number } | undefined)?.allowed !== 1) throw new AiPausedError();
   return admission;
 }
