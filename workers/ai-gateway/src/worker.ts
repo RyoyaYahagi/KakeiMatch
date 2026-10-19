@@ -42,7 +42,7 @@ export interface RateLimitBinding { limit(input: { key: string }): Promise<{ suc
 export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
 export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT"> {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
-  OPENCODE_API_KEY?: string; OPENROUTER_API_KEY?: string; JEV_PROVIDER?: string; JEV_API_URL?: string; JEV_MODEL?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
+  OPENCODE_API_KEY?: string; OPENROUTER_API_KEY?: string; JEV_PROVIDER?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
   FEEDBACK_ENCRYPTION_KEY?: string;
   // Contact AI features are not counted against a plan; this per-minute limit is their abuse guard.
@@ -367,7 +367,12 @@ function geminiOutputText(value: unknown): string | null {
 }
 
 type JevProvider = "opencode" | "openrouter";
-/** Endpoint and default model for each Jev provider. Prices for both live in the server-only pricing catalog. */
+/**
+ * Every Jev provider is one complete upstream: endpoint, model and key belong
+ * together. Switching providers is therefore JEV_PROVIDER alone, and a model
+ * change (for example when the free model is withdrawn) is edited here.
+ * Prices for both models live in the server-only pricing catalog.
+ */
 const JEV_PROVIDERS: Record<JevProvider, { apiUrl: string; model: string }> = {
   opencode: { apiUrl: "https://opencode.ai/inference/systemone/v1/systemone", model: "jev-1.13-free" },
   openrouter: { apiUrl: "https://openrouter.ai/api/alpha/decisions", model: "typesafe/jev-1.13" },
@@ -379,12 +384,8 @@ function jevUpstream(env: GatewayEnv): JevUpstream | null {
   if (name !== "opencode" && name !== "openrouter") return null;
   const apiKey = name === "opencode" ? env.OPENCODE_API_KEY : env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
-  const preset = JEV_PROVIDERS[name];
-  return {
-    apiUrl: env.JEV_API_URL?.trim() || preset.apiUrl,
-    model: env.JEV_MODEL?.trim() || preset.model,
-    headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-  };
+  const { apiUrl, model } = JEV_PROVIDERS[name];
+  return { apiUrl, model, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` } };
 }
 
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {

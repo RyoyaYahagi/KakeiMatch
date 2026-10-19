@@ -17,8 +17,6 @@ export default defineConfig({
       AI_GUARDRAILS_JSON: bindings.secret(),
       GEMINI_MODEL: bindings.text("gemini-3.5-flash-lite"),
       JEV_PROVIDER: bindings.text("opencode"),
-      JEV_MODEL: bindings.text("jev-1.13-free"),
-      JEV_API_URL: bindings.text("https://opencode.ai/inference/systemone/v1/systemone"),
     },
   },
 });
