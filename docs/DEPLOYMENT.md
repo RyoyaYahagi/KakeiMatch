@@ -161,7 +161,7 @@ corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir 
 
 secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は「本番URLとデータ」に記載しています。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
 
-`cf workers secrets update <name>` は値を省略しても対話入力せず、空の値で更新します。値は0600の一時ファイルへ書き、`cf workers secrets bulk --body @<file>` で渡すと引数とシェル履歴に残りません。次の例は1つのsecretを登録し、`--dry-run` で送信内容を確認してから実行します。複数のbindingは同じJSONへまとめられます。
+`cf workers secrets update <name>` は値を省略しても対話入力せず、空の値で更新します。値は0600の一時ファイルへ書き、`cf workers secrets bulk --body @<file>` で渡すと引数とシェル履歴に残りません。`--dry-run` は送信内容をそのまま表示するため、実値では使わないでください。次の例は1つのsecretを登録します。複数のbindingは同じJSONへまとめられます。
 
 ```sh
 umask 077
@@ -170,8 +170,8 @@ trap 'rm -f "$secret_file"' EXIT
 read -rsp 'OPENCODE_API_KEY: ' OPENCODE_API_KEY
 echo
 jq -n --arg value "$OPENCODE_API_KEY" '{OPENCODE_API_KEY: {type: "secret_text", text: $value}}' > "$secret_file"
-corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file" --dry-run
-corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file"
+jq -e '.OPENCODE_API_KEY | (.type == "secret_text") and (.text | length > 0)' "$secret_file" > /dev/null &&
+  corepack pnpm --dir apps/pwa exec cf workers secrets bulk --worker kakeimatch --body @"$secret_file"
 unset OPENCODE_API_KEY
 ```
 
