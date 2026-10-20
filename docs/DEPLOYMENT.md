@@ -14,9 +14,11 @@ Issue #39では本番route、D1、secretを準備・検証せず、本番deploy�
 
 preview上ではActualブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`OPENROUTER_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL`、`JEV_MODEL`、`OPENROUTER_API_URL` です。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY`、`OPENCODE_API_KEY`、`OPENROUTER_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL`、`JEV_PROVIDER` です。provider keyと認証secretは秘密情報です。D1識別子とmodel/quotaの設定値はresource選択や動作設定であり、secretではありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
-カテゴリ分類はOpenRouterの [Decisions API](https://openrouter.ai/docs/api-reference/alpha/decisions/submit-decisions)（`https://openrouter.ai/api/alpha/decisions`）から `typesafe/jev-1.13` を呼びます。レシート分類とマネーフォワード移行時のカテゴリ提案で同じ設定を使います。更新前に対象WorkerへOpenRouter発行のキーを `OPENROUTER_API_KEY` Secretとして登録してください。旧 `TYPESAFE_API_KEY` の値はOpenRouterへ転用できません。新構成では旧Secretを参照しません。`JEV_MODEL` と `OPENROUTER_API_URL` はconfigの既定値を使います。旧Next.jsのlegacy設定は従来のTypeSafe用のままです。Secret登録時は現行 `cf cli search` と対象commandのhelpを確認し、値をsourceやコマンド引数へ書かないでください。
+カテゴリ分類は `JEV_PROVIDER` が選ぶproviderを呼びます。providerごとの接続先とモデルは `workers/ai-gateway/src/worker.ts` の `JEV_PROVIDERS` にまとめてあり、configが持つ値は `JEV_PROVIDER` の1つだけです。既定は `opencode` で、OpenCode Console（[Models](https://opencode.ai/docs/zen/)）の `https://opencode.ai/inference/systemone/v1/systemone` に `jev-1.13-free` を送ります。`JEV_PROVIDER=openrouter` へ変えると [Decisions API](https://openrouter.ai/docs/api-reference/alpha/decisions/submit-decisions)（`https://openrouter.ai/api/alpha/decisions`）の `typesafe/jev-1.13` へ戻ります。レシート分類とマネーフォワード移行時のカテゴリ提案で同じ設定を使います。更新前に対象Workerへ、選んだproviderのキー（OpenCode Console発行のキーは `OPENCODE_API_KEY`、OpenRouter発行のキーは `OPENROUTER_API_KEY`）をSecretとして登録してください。旧 `TYPESAFE_API_KEY` の値はどちらへも転用できません。新構成では旧Secretを参照しません。両方のbindingはconfigに残しているため、切り替え先のキーが登録済みならSecretの再登録は不要です。未登録provider名やキー不足ではリクエストを送らず `not_configured` を返します。
+
+`jev-1.13-free` の呼び出しが失敗した場合、両方のキーが登録されていれば同じリクエストをもう片方のproviderへ1回だけ再送します。再送するのはタイムアウト、応答本文を取得できない応答、HTTP 400/401/403/404/408/429/529/5xxです。両方の呼び出しは `/api/ai/costs` に別々のイベントとして記録されますが、利用者の回数は1回です。片方のcircuitが開いている間は、新しい要求は最初からもう片方へ送られます。そのためOpenCodeの障害中もJevは停止せず、有料のOpenRouterへ継続して課金されます（1リクエストあたり約 $0.00005）。circuitは `jev:opencode` と `jev:openrouter` に分かれているため、失敗が続いて停止するのは失敗した側だけです。`apps/pwa/cloudflare.config.ts` と `workers/ai-gateway/cloudflare.config.ts` の `JEV_PROVIDER` は、自動フォールバックを止めて常に片方だけを使いたい場合や、主系を入れ替えたい場合に変更します。切り戻し自体は再送で自動的に行われるため、通常は値の変更は不要です。停止したupstreamを再開するときは `docs/AI_COST_GUARDRAILS.md` の手順で、対象のcircuitキーだけを解除します。無料モデルが提供終了した場合は、`JEV_PROVIDERS.opencode.model` を `jev-1.13`（有料、入力 $0.042/1M）へ変えます。どちらのモデルも `workers/ai-gateway/src/ai-provider-costs.ts` の `PRICING_CATALOG` に登録済みです。未登録のモデルを設定すると、providerへ送信する前に全Jev要求が停止します。更新前に `0017_jev_upstream_circuits.sql` を適用してください。既存の `jev` circuitが開いている場合は、移行時に両方のupstreamへ引き継がれます。旧Next.jsのlegacy設定は従来のTypeSafe用のままです。Secret登録時は現行 `cf cli search` と対象commandのhelpを確認し、値をsourceやコマンド引数へ書かないでください。
 
 ## ローカル開発と確認
 
@@ -45,7 +47,7 @@ corepack pnpm install
 cp apps/pwa/.dev.vars.example apps/pwa/.dev.vars
 ```
 
-既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。実際の読み取りには `GEMINI_API_KEY`、カテゴリ提案には `OPENROUTER_API_KEY` を自分のAPIキーへ置き換えます。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
+既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。実際の読み取りには `GEMINI_API_KEY`、カテゴリ提案には選択中providerのキー（既定は `OPENCODE_API_KEY`、`openrouter` 選択時は `OPENROUTER_API_KEY`）を自分のAPIキーへ置き換えます。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
 
 次に、開発サーバーと同じ保存先にあるローカルD1だけを更新します。IDは `cloudflare.config.ts` の開発用 `ACCOUNT_DB` と一致させます。`--local` と `--persist-to .wrangler/state` を省略しないでください。
 
@@ -150,7 +152,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql` が必要です。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql`、`0017_jev_upstream_circuits.sql` が必要です。0017はprovider停止状態のキーを `jev` から `jev:opencode` / `jev:openrouter` へ分割します。適用時に `jev` の停止が開いていれば両方へ引き継ぐため、再開するupstreamを選んでください。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -158,6 +160,20 @@ corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir 
 ```
 
 secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は「本番URLとデータ」に記載しています。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
+
+`cf workers secrets update <name> --type secret_text` は `--text` を省略すると空の値で更新します。`--text` に値を渡すと実行中のプロセス一覧から値が見えるため、値は0600の一時ファイルへ書き、`--body @<file>` で渡します。`--body` のJSONには `name` も必要です。`--dry-run` は送信内容をそのまま表示するため、実値では使わないでください。
+
+```sh
+umask 077
+body_file=$(mktemp)
+trap 'rm -f "$body_file"' EXIT
+read -rsp 'OPENCODE_API_KEY: ' OPENCODE_API_KEY
+echo
+jq -n --arg value "$OPENCODE_API_KEY" '{name: "OPENCODE_API_KEY", type: "secret_text", text: $value}' > "$body_file"
+jq -e '.name == "OPENCODE_API_KEY" and .type == "secret_text" and (.text | length > 0)' "$body_file" > /dev/null &&
+  corepack pnpm --dir apps/pwa exec cf workers secrets update OPENCODE_API_KEY --worker kakeimatch --type secret_text --body @"$body_file"
+unset OPENCODE_API_KEY
+```
 
 検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、PWAとAPIが同じversionに含まれることを確認してから公開します。
 
