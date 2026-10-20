@@ -13,7 +13,7 @@ vi.mock("./account-auth", () => ({
 }));
 
 const migrationNames = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql",
-  "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql", "0016_feedback_inbox.sql"];
+  "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql", "0016_feedback_inbox.sql", "0017_jev_upstream_circuits.sql"];
 const origin = "https://kakeimatch.example";
 const now = Math.floor(Date.parse("2026-10-08T04:00:00Z") / 1000);
 let sqlite: DatabaseSync | undefined;

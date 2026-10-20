@@ -21,6 +21,16 @@ describe("provider cost snapshots", () => {
     expect(pricingFor("jev", "typesafe/jev-1.13-20990101", 100)).toBeNull();
   });
 
+  it("prices OpenCode Jev, treating the free model as zero cost rather than unknown", () => {
+    const free = pricingFor("jev", "jev-1.13-free", 100)!;
+    expect(free.version).toBe("2026-10-20-opencode-jev-1.13-free");
+    expect(costUsdMicros({ input: 1113, output: 177, thinking: 0, cached: 0, total: 1290 }, free)).toBe(0);
+    const paid = pricingFor("jev", "jev-1.13", 100)!;
+    expect(paid.version).toBe("2026-10-20-opencode-jev-1.13");
+    expect(costUsdMicros({ input: 1_000_000, output: 0, thinking: 0, cached: 0, total: 1_000_000 }, paid)).toBe(42_000);
+    expect(pricingFor("jev", "jev-1.13-20990101", 100)).toBeNull();
+  });
+
   it("accepts the provider-specific Gemini and Jev usage shapes with consistent totals", () => {
     expect(tokenUsage("gemini", {
       modelVersion: "gemini-3.5-flash-lite",
