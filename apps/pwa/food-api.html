@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <meta name="color-scheme" content="light dark" />
+  <title>食品情報の連携 — KakeiMatch</title>
+  <script src="/theme.js"></script>
+</head>
+<body>
+  <main id="food-bridge" class="food-bridge">
+    <h1>食品情報の連携</h1>
+    <p>設定で許可したアプリへ、食品の購入情報だけを渡します。この画面を閉じると取得できなくなります。</p>
+    <p id="food-peer">接続先からの要求を待っています。</p>
+    <button id="food-start" class="primary" type="button" disabled>連携を開始</button>
+    <button id="food-stop" class="secondary" type="button">連携を停止</button>
+    <p id="food-status" role="status"></p>
+  </main>
+  <script type="module" src="/src/food-bridge.ts"></script>
+</body>
+</html>

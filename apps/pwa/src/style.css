@@ -886,3 +886,16 @@ details[open] > .receipt-compact-summary::after { transform: rotate(90deg); }
 .payroll-consent label { margin: 0; min-height: 44px; display: flex; align-items: center; }
 .payroll-consent input { flex: none; }
 #payroll-netPayYen { font-family: var(--font-num); font-size: 1.875rem; }
+
+/* Food sharing uses the existing settings rows and a small standalone connection screen. */
+.food-bridge { max-width: 640px; margin: 0 auto; padding: 24px; overflow-wrap: anywhere; }
+.food-bridge button { margin: 8px 0; width: 100%; }
+.food-category-choice { display: flex; align-items: center; gap: 12px; min-height: 44px; }
+.food-category-choice input { width: 20px; min-height: 20px; }
+#food-connections-host .record-main { overflow-wrap: anywhere; }
+#food-connections-host textarea { width: 100%; box-sizing: border-box; }
+
+#food-connections-host .record-main { white-space: pre-line; }
+.food-category-options { border: 0; padding: 0; margin: 12px 0; }
+#food-connections-host .food-category-choice { margin: 0; border-bottom: 1px solid var(--border); }
+#food-connections-host > details > summary { min-height: 44px; padding-top: 12px; }

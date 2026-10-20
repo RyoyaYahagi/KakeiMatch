@@ -72,6 +72,7 @@ root.innerHTML = `
       <section id="backup-quick" class="surface-section backup-quick" aria-label="バックアップの状況"></section>
       <section id="data-rows" class="surface-section settings-list" aria-label="データの設定">
         <button class="master-entry" type="button" data-settings-page="settings-page-ledger" aria-label="バックアップと復元"><span class="master-entry-name">バックアップと復元</span></button>
+        <button class="master-entry" type="button" data-settings-page="settings-page-food" aria-label="食品情報の連携"><span class="master-entry-name">食品情報の連携</span></button>
         <button class="master-entry" type="button" data-settings-page="settings-page-lock" aria-label="画面ロック"><span class="master-entry-name">画面ロック</span><span id="screen-lock-row-value" class="master-entry-value"></span></button>
         <button class="master-entry destructive-text" type="button" data-settings-page="settings-page-cleanup" aria-label="原本の整理・全削除"><span class="master-entry-name">原本の整理・全削除</span></button>
       </section>
@@ -111,6 +112,11 @@ root.innerHTML = `
           <p class="storage-location-risk">端末の紛失やブラウザーのデータ消去で、家計データが失われることがあります。バックアップを別の場所に保存してください。</p>
         </section>
       </div>
+      </section>
+      <section id="settings-page-food" class="settings-page" hidden aria-labelledby="settings-page-food-title">
+        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
+        <h2 id="settings-page-food-title" class="page-title">食品情報の連携</h2>
+        <div id="food-connections-host"></div>
       </section>
       <section id="settings-page-lock" class="settings-page" hidden aria-labelledby="settings-page-lock-title">
         <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>

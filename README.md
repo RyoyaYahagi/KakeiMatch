@@ -171,6 +171,7 @@ flowchart TB
 - [口座間振替](docs/LOCAL_TRANSFERS.md)と[定期収入・定期支出](docs/LOCAL_RECURRING_TRANSACTIONS.md)
 - [記録の検索・絞り込み](docs/LOCAL_TRANSACTION_SEARCH.md)
 - [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)、[口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)、[月予算（全体／カテゴリ別）](docs/LOCAL_MONTHLY_BUDGETS.md)
+- [食品購入データの外部アプリ連携](docs/FOOD_PURCHASES_API.md): 端末内の読み取り専用API
 - [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
 - [管理画面](docs/ADMIN.md)、[お問い合わせ](docs/CONTACT.md)と[端末内の診断](docs/LOCAL_DIAGNOSTICS.md)
 

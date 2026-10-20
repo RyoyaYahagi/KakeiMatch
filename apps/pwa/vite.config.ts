@@ -19,6 +19,22 @@ const productionSharedModules = new Set([
   'lib/monthly-budget-settings.ts',
   'lib/encrypted-household-format.ts', 'lib/encrypted-sync-version.ts',
 ]);
+// Only the food bridge keeps a cross-origin opener; the Actual PWA remains isolated.
+const foodBridgeHeaders: Plugin = {
+  name: 'food-bridge-headers',
+  configureServer(server) { server.middlewares.use(bridgeHeaders); },
+  configurePreviewServer(server) { server.middlewares.use(bridgeHeaders); },
+};
+function bridgeHeaders(request: { url?: string }, response: { setHeader(name: string, value: string): unknown }, next: () => void) {
+  const path = request.url?.split('?')[0];
+  if (path === '/food-api' || path === '/food-api.html') {
+    response.setHeader('Cross-Origin-Opener-Policy', 'unsafe-none');
+    response.setHeader('Cross-Origin-Embedder-Policy', 'unsafe-none');
+    response.setHeader('Cache-Control', 'no-store');
+    response.setHeader('Referrer-Policy', 'no-referrer');
+  }
+  next();
+}
 const runtimeBoundary: Plugin = {
   name: 'local-first-runtime-boundary',
   generateBundle() {
@@ -35,13 +51,13 @@ const runtimeBoundary: Plugin = {
 };
 
 export default defineConfig({
-  environments: { client: { build: { rollupOptions: { input: { app: fileURLToPath(new URL('./index.html', import.meta.url)), admin: fileURLToPath(new URL('./admin.html', import.meta.url)) } } } } },
+  environments: { client: { build: { rollupOptions: { input: { app: fileURLToPath(new URL('./index.html', import.meta.url)), admin: fileURLToPath(new URL('./admin.html', import.meta.url)), food: fileURLToPath(new URL('./food-api.html', import.meta.url)) } } } } },
   define: { __APP_BUILD_ID__: JSON.stringify(execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], { cwd: fileURLToPath(new URL('.', import.meta.url)), encoding: 'utf8' }).trim()) },
   server: { host: '127.0.0.1', headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Content-Security-Policy': PWA_CONTENT_SECURITY_POLICY } },
   // Built assets are served from the app's own origin, as on Cloudflare.
   // Vite's default CORS adds Vary: Origin, unlike the deployed asset response.
   preview: { cors: false, headers: { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp', 'Content-Security-Policy': PWA_CONTENT_SECURITY_POLICY } },
-  plugins: [cloudflare({ experimental: { newConfig: { cfBuildOutput: true } } }), runtimeBoundary, browserBundleSecrets, {
+  plugins: [foodBridgeHeaders, cloudflare({ experimental: { newConfig: { cfBuildOutput: true } } }), runtimeBoundary, browserBundleSecrets, {
     name: 'offline-assets',
     generateBundle(_options, bundle) {
       if (this.environment.name !== 'client') return;
