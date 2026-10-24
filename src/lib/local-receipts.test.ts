@@ -481,12 +481,38 @@ describe("receipt category allocations", () => {
       { categoryId: "household", amountYen: 550 },
     ]);
   });
-  it("rejects a gap that tax cannot explain and a discount without a target", () => {
+  it("rejects a gap that tax cannot explain", () => {
     expect(() => receiptAllocations({ ...value, totalAmountYen: 1541, taxAmountYen: 140 })).toThrow(/カテゴリ配分/);
-    expect(() => receiptAllocations({ ...value, totalAmountYen: 1540, taxAmountYen: 140, adjustments: [{ id: "d", label: "値引き", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
+    expect(() => receiptAllocations({ ...value, totalAmountYen: 1541, taxAmountYen: 140, adjustments: [{ id: "d", label: "値引き", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
   });
-  it("requires confirmation for an unattributed discount or a total mismatch", () => {
-    expect(() => receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100 }] })).toThrow(/カテゴリ配分/);
+  it("shares a discount without a target by category amounts", () => {
+    // 1000:500 → 66.67:33.33 yen; the larger remainder takes the leftover yen.
+    expect(receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100 }] })).toEqual([
+      { categoryId: "food", amountYen: 933 }, { categoryId: "household", amountYen: 467 },
+    ]);
+    expect(receiptAllocations({ ...value, adjustments: [{ id: "d", label: "ポイント利用", amountYen: -100, targetItemId: null }] })).toEqual([
+      { categoryId: "food", amountYen: 933 }, { categoryId: "household", amountYen: 467 },
+    ]);
+  });
+  it("shares an untargeted discount after targeted ones and before external tax", () => {
+    const adjustments = [
+      { id: "t", label: "値引き", amountYen: -100, targetItemId: "a" },
+      { id: "u", label: "クーポン", amountYen: -140, targetItemId: null },
+    ];
+    // 900:500 shares 140 as 90:50, then 1260 is taxed 126 as 81:45.
+    expect(receiptAllocations({ ...value, adjustments, totalAmountYen: 1260 })).toEqual([
+      { categoryId: "food", amountYen: 810 }, { categoryId: "household", amountYen: 450 },
+    ]);
+    expect(receiptAllocations({ ...value, adjustments, totalAmountYen: 1386, taxAmountYen: 126 })).toEqual([
+      { categoryId: "food", amountYen: 891 }, { categoryId: "household", amountYen: 495 },
+    ]);
+    expect(receiptAllocations({ ...value, adjustments: [{ id: "u", label: "調整", amountYen: 30, targetItemId: null }], totalAmountYen: 1530 })).toEqual([
+      { categoryId: "food", amountYen: 1020 }, { categoryId: "household", amountYen: 510 },
+    ]);
+  });
+  it("requires confirmation for a missing target item or a total mismatch", () => {
+    expect(() => receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100, targetItemId: "deleted" }] })).toThrow(/カテゴリ配分/);
+    expect(() => receiptAllocations({ ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100 }], totalAmountYen: 1500 })).toThrow(/カテゴリ配分/);
     expect(() => receiptAllocations({ ...value, totalAmountYen: 1500 })).toThrow(/カテゴリ配分/);
     expect(() => receiptAllocations({ ...value, items: value.items!.map(item => ({ ...item, amountYen: null })) })).toThrow(/カテゴリ配分/);
   });
@@ -513,6 +539,16 @@ describe("receipt category allocations", () => {
     expect(edited.registration.actualTransactionId).toBe("actual-tx");
     expect(editReceipt).toHaveBeenCalledWith("actual-tx", expect.objectContaining({ memo: "Synthetic edited memo", importedId: `kakeimatch:${receipt.id}` }));
     expect(edited.confirmedValue?.adjustments?.[0].amountYen).toBe(-100);
+  });
+  it("registers a multi-category receipt with a coupon that names no item", async () => {
+    const { service, ledger } = await setup();
+    const receipt = await service.createManual();
+    await service.confirm(receipt.id, { ...value, adjustments: [{ id: "d", label: "クーポン", amountYen: -100, targetItemId: null }] });
+    await service.register(receipt.id);
+    expect(ledger.importReceipt).toHaveBeenCalledWith(expect.objectContaining({
+      amountYen: -1400,
+      splits: [{ categoryId: "actual-food", amountYen: -933 }, { categoryId: "actual-household", amountYen: -467 }],
+    }));
   });
   it("keeps an unsafe allocation pending and editable without writing to Actual", async () => {
     const { service, ledger } = await setup();
