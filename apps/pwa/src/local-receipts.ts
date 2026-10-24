@@ -602,7 +602,14 @@ export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ catego
     if (!Number.isSafeInteger(amount)) fail();
     totals.set(key, amount);
   }
+  // Coupons, points and subtotal discounts often name no item; they are shared after targeted ones.
+  let untargetedYen = 0;
   for (const adjustment of value.adjustments ?? []) {
+    if (adjustment.targetItemId == null) {
+      untargetedYen += adjustment.amountYen;
+      if (!Number.isSafeInteger(untargetedYen)) fail();
+      continue;
+    }
     const item = items.find(item => item.id === adjustment.targetItemId);
     if (!item) fail();
     const key = item!.categoryId ?? value.categoryId;
@@ -610,28 +617,49 @@ export function receiptAllocations(value: ConfirmedReceiptValue): Array<{ catego
     if (!Number.isSafeInteger(amount) || amount < 0) fail();
     totals.set(key, amount);
   }
+  if (untargetedYen !== 0) {
+    if (!distributeProportionally(totals, untargetedYen)) fail();
+    if ([...totals.values()].some(amount => amount < 0)) fail();
+  }
   const sum = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
   if (!Number.isSafeInteger(sum)) fail();
   if (sum !== value.totalAmountYen) {
     const tax = value.taxAmountYen;
     // Only add external tax when it explains the entire difference. Inclusive tax is already in sum.
     if (sum <= 0 || tax == null || !isSafeYen(tax) || tax <= 0 || value.totalAmountYen - sum !== tax) fail();
-    // Allocate proportionally after discounts. BigInt keeps products exact even for large safe yen values.
-    const denominator = BigInt(sum);
-    const shares = [...totals].map(([categoryId, amountYen], order) => {
-      const product = BigInt(amountYen) * BigInt(tax!);
-      return { categoryId, amountYen, order, taxYen: Number(product / denominator), remainder: product % denominator };
-    });
-    let remaining = tax! - shares.reduce((sum, share) => sum + share.taxYen, 0);
-    const ranked = [...shares].sort((a, b) => a.remainder === b.remainder ? a.order - b.order : a.remainder > b.remainder ? -1 : 1);
-    for (const share of ranked) {
-      if (remaining === 0) break;
-      share.taxYen += 1;
-      remaining -= 1;
-    }
-    for (const share of shares) totals.set(share.categoryId, share.amountYen + share.taxYen);
+    // Allocate proportionally after discounts.
+    if (!distributeProportionally(totals, tax!)) fail();
   }
   return [...totals].filter(([,amount]) => amount > 0).map(([categoryId, amountYen]) => ({ categoryId, amountYen }));
+}
+
+/**
+ * Adds amountYen to the category totals in proportion to them. Yen left by rounding go one by one
+ * to the largest remainders, ties in item order. BigInt keeps products exact even for large safe yen values.
+ */
+function distributeProportionally(totals: Map<string, number>, amountYen: number): boolean {
+  const sum = [...totals.values()].reduce((sum, amount) => sum + amount, 0);
+  if (sum <= 0 || [...totals.values()].some(amount => amount < 0)) return false;
+  const sign = amountYen < 0 ? -1 : 1;
+  const magnitude = BigInt(Math.abs(amountYen));
+  const denominator = BigInt(sum);
+  const shares = [...totals].map(([categoryId, total], order) => {
+    const product = BigInt(total) * magnitude;
+    return { categoryId, total, order, shareYen: Number(product / denominator), remainder: product % denominator };
+  });
+  let remaining = Math.abs(amountYen) - shares.reduce((sum, share) => sum + share.shareYen, 0);
+  const ranked = [...shares].sort((a, b) => a.remainder === b.remainder ? a.order - b.order : a.remainder > b.remainder ? -1 : 1);
+  for (const share of ranked) {
+    if (remaining === 0) break;
+    share.shareYen += 1;
+    remaining -= 1;
+  }
+  for (const share of shares) {
+    const amount = share.total + sign * share.shareYen;
+    if (!Number.isSafeInteger(amount)) return false;
+    totals.set(share.categoryId, amount);
+  }
+  return true;
 }
 
 function toBase64(bytes: Uint8Array): string {

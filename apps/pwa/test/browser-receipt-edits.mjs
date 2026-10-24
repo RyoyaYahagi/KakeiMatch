@@ -67,7 +67,8 @@ try {
   const discount = page.locator('[data-receipt-adjustment]').nth(1);
   await discount.locator('[data-adjustment-label]').fill('Synthetic points'); await discount.locator('[data-adjustment-amount]').fill('10');
   await click('全体');
-  await page.locator('#receipt-amount').fill('1390');
+  // An untargeted discount is shared by category, but a total it does not explain still stops registration.
+  await page.locator('#receipt-amount').fill('1380');
   const invalidRegistrationForm = await page.locator('#local-view form').elementHandle();
   await click('登録する');
   // The earlier error remains visible while this submission is still saving.
