@@ -18,7 +18,7 @@ import { pendingReceiptRow, recordRow } from './record-row';
 import { renderRecordGroups, type RecordKindFilter } from './records-list';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
 import { scheduleFromEntry } from './entry-recurrence';
-import { categoryRow, expenseCategoryUsage, lastUsedCategory, recentCategoryUsage } from './category-picker';
+import { categoryChoices, categoryRow, lastUsedCategory } from './category-picker';
 import { icon } from './ui-icons';
 import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
@@ -554,7 +554,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const draftId = `receipt-draft:${receipt.id}`;
     const savedDraft = await repository.get<ReceiptDraft>(draftId);
     const draft = savedDraft?.value;
-    let [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), ledger.listExpenseCategories()]);
+    let [accounts, categories] = await Promise.all([ledger.listOpenAccounts(), categoryChoices(ledger, ledger.listExpenseCategories())]);
     const categoryName = (id: string | null | undefined) => {
       if (!id) return 'カテゴリ未選択';
       const builtin = isCategoryId(id) ? CATEGORY_LABELS[id] : null;
@@ -792,7 +792,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     amount.classList.add('amount-input');
     const optional = optionalFields('時刻・メモ', [timeLabel, time, memoLabel, memo], Boolean(time.value || memo.value));
     // docs/DESIGN.md 帳簿の行で組む入力: one ruled row per field.
-    const categoryUi = categoryRow({ select: category, label: categoryLabel, usageReady: recentCategoryUsage(ledger),
+    const categoryUi = categoryRow({ select: category, label: categoryLabel,
       hint: lastUsed ? { value: lastUsed, text: '前回と同じ' } : receipt.aiSuggestion.source === 'learned_rule' && category.value ? { value: category.value, text: 'いつもの分類' } : null });
     // With items, the category comes from them: the row shows the split and leads to the item list.
     // The category chosen in the sheet then only fills items that have none.
@@ -927,7 +927,7 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
       return createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
         field, beforeOpen: saveDraft,
         onCreated: async id => {
-          categories = await ledger.listExpenseCategories();
+          categories = await categoryChoices(ledger, ledger.listExpenseCategories());
           for (const select of [category, ...Array.from(itemsList.querySelectorAll<HTMLSelectElement>('[data-item-category]'))]) {
             const previous = select.value;
             select.replaceChildren(new Option(select === category ? '選択してください' : '未選択', ''), ...categories.map(entry => new Option(entry.name, entry.id)));
@@ -1400,8 +1400,8 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const importer = await renderStatementImporter(true);
     ensureScreen(screen);
     view.append(importer);
-    const [allStatements, allReceipts, allAccounts, expenseCategories, categoryUsage] = await Promise.all([
-      statements.list(), receipts.list(), ledger.listAccounts(), ledger.listExpenseCategories(), expenseCategoryUsage(ledger),
+    const [allStatements, allReceipts, allAccounts, expenseCategories] = await Promise.all([
+      statements.list(), receipts.list(), ledger.listAccounts(), categoryChoices(ledger, ledger.listExpenseCategories()),
     ]);
     const accountsById = new Map(allAccounts.map(account => [account.id, account]));
     const attention = statementAttention(allStatements, new Set([...pending.map(row => row.statementTransactionId), ...suspected.map(row => row.statementId)]));
@@ -1509,14 +1509,14 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
           const excluded = document.createElement('input'); excluded.type = 'checkbox'; excluded.id = `excluded-${statement.id}`;
           const excludedLabel = fieldLabel('label', '支出の計算に含めない', excluded.id);
           const exclusionRow = document.createElement('div'); exclusionRow.className = 'entry-row spending-exclusion'; exclusionRow.append(excluded, excludedLabel);
-          const categoryUi = categoryRow({ select: category, label: categoryLabel, usageReady: Promise.resolve(categoryUsage) });
+          const categoryUi = categoryRow({ select: category, label: categoryLabel });
           categoryUi.sheet.classList.add('reconciliation-category-sheet');
           body.append(text('p', '記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。'), fieldLabel('label', '取引の種類', kind.id), kind,
             categoryUi.row, destinationLabel, destination, exclusionRow);
           categoryUi.sheet.querySelector('.sheet-body')!.append(createMasterShortcut({ ledger, request: { kind: 'category', isIncome: false }, origin: {
             field: category, beforeOpen: async () => { categoryUi.sheet.close(); }, onCreated: async id => {
               const previous = category.value;
-              const refreshed = await ledger.listExpenseCategories();
+              const refreshed = await categoryChoices(ledger, ledger.listExpenseCategories());
               category.replaceChildren(new Option('カテゴリを選択してください', ''), ...refreshed.map(c => new Option(c.name, c.id)));
               category.value = refreshed.some(c => c.id === previous) ? previous : id;
             },

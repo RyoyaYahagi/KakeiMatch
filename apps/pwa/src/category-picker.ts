@@ -6,34 +6,36 @@ import { icon } from './ui-icons';
 const VISIBLE_CATEGORIES = 7;
 let pickerSequence = 0;
 
-type RecentTransactions = { getRecentTransactions(options: { limit: number }): Promise<Array<{ categoryId?: string | null }>> };
+type CategoryHistory = {
+  getSearchTransactions(): Promise<Array<{ transaction: { kind: string }; categoryIds: string[] }>>;
+};
 
-// The ledger returns at most 100 recent records at a time.
+// Last-used defaults only need recent records; menu ordering uses the full history.
 const RECENT_USAGE_LIMIT = 100;
 
-/** How often each category was used in recent records. */
-export async function recentCategoryUsage(ledger: RecentTransactions) {
-  const usage = new Map<string, number>();
-  for (const row of await ledger.getRecentTransactions({ limit: RECENT_USAGE_LIMIT })) if (row.categoryId) usage.set(row.categoryId, (usage.get(row.categoryId) ?? 0) + 1);
-  return usage;
-}
-
-/** Count each category once per expense, including categories of split items. */
-export async function expenseCategoryUsage(ledger: {
-  getSearchTransactions(): Promise<Array<{ transaction: { kind: string }; categoryIds: string[] }>>;
-}) {
+/** Count each category once per record, including split items; transfers do not count. */
+export async function categoryUsage(ledger: CategoryHistory, kind?: 'expense' | 'income') {
   const usage = new Map<string, number>();
   for (const row of await ledger.getSearchTransactions()) {
-    if (row.transaction.kind !== 'expense') continue;
+    if (row.transaction.kind !== 'expense' && row.transaction.kind !== 'income') continue;
+    if (kind && row.transaction.kind !== kind) continue;
     for (const id of new Set(row.categoryIds)) usage.set(id, (usage.get(id) ?? 0) + 1);
   }
   return usage;
 }
 
-/** usage: recent use per category; frequently used categories come first once it resolves. */
+/** Same frequency order for native menus and category sheets; ties keep the everyday order. */
+export function sortCategoriesByUsage<T extends { id: string; name: string }>(categories: readonly T[], usage: ReadonlyMap<string, number>): T[] {
+  return [...categories].sort((a, b) => (usage.get(b.id) ?? 0) - (usage.get(a.id) ?? 0) || categoryRank(a.name) - categoryRank(b.name));
+}
+
+export async function categoryChoices<T extends { id: string; name: string }>(ledger: CategoryHistory, categoriesReady: Promise<T[]>): Promise<T[]> {
+  const [categories, usage] = await Promise.all([categoriesReady, categoryUsage(ledger)]);
+  return sortCategoriesByUsage(categories, usage);
+}
+
 /** collapse: fold long lists behind "すべて表示"; the category sheet is already the full list, so it shows everything. */
-export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabelElement, usageReady: Promise<ReadonlyMap<string, number>> = Promise.resolve(new Map()), collapse = true) {
-  let usage: ReadonlyMap<string, number> = new Map();
+export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabelElement, collapse = true) {
   if (!label.id) label.id = `category-picker-label-${++pickerSequence}`;
   const picker = document.createElement('div'); picker.className = 'category-picker';
   picker.setAttribute('role', 'radiogroup'); picker.setAttribute('aria-labelledby', label.id);
@@ -48,10 +50,8 @@ export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabe
   }
 
   function render() {
-    const options = Array.from(select.options).filter(option => option.value)
-      .map((option, index) => ({ option, index }))
-      .sort((a, b) => (usage.get(b.option.value) ?? 0) - (usage.get(a.option.value) ?? 0) || categoryRank(a.option.text) - categoryRank(b.option.text) || a.index - b.index)
-      .map(({ option }) => option);
+    // Native dropdowns and sheets share the already ordered options.
+    const options = Array.from(select.options).filter(option => option.value);
     const collapsible = collapse && options.length > VISIBLE_CATEGORIES + 1;
     const visible = !collapsible || expanded ? options : options.slice(0, VISIBLE_CATEGORIES);
     const selected = options.find(option => option.value === select.value);
@@ -83,8 +83,6 @@ export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabe
   new MutationObserver(render).observe(select, { childList: true, subtree: true });
   render();
   select.after(picker);
-  // Ordering is a convenience; without history the everyday order is kept.
-  void usageReady.then(value => { usage = value; if (picker.isConnected) render(); }, () => undefined);
   return picker;
 }
 
@@ -93,7 +91,7 @@ export function enhanceCategorySelect(select: HTMLSelectElement, label: HTMLLabe
  * "すべて ›" opens a sheet with every category as buttons. The select keeps the value as before.
  */
 export function categoryRow(options: {
-  select: HTMLSelectElement; label: HTMLLabelElement; usageReady?: Promise<ReadonlyMap<string, number>>;
+  select: HTMLSelectElement; label: HTMLLabelElement;
   /** Shown beside the name while the value is still the one filled in for the user. */
   hint?: { value: string; text: string } | null;
   extras?: HTMLElement[];
@@ -116,7 +114,7 @@ export function categoryRow(options: {
   close.addEventListener('click', () => sheet.close());
   header.append(title, close);
   sheet.setAttribute('aria-labelledby', title.id);
-  const picker = enhanceCategorySelect(select, label, options.usageReady, false);
+  const picker = enhanceCategorySelect(select, label, false);
   body.append(header, picker, ...(options.extras ?? []));
   sheet.append(body);
   dismissOnBackdrop(sheet, () => sheet.close());

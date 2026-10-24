@@ -1,3 +1,4 @@
+import { categoryChoices } from './category-picker';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import type { ActualTransaction } from '../../../src/lib/actual-ledger';
 import { emptySearchFilters, filterSearchTransactions } from './local-transaction-search';
@@ -32,7 +33,7 @@ export async function showTransactionSearch(options: {
   let filters = { ...(options.initialFilters ?? emptySearchFilters) };
   let entries: SearchEntry[] = [];
   const title = pageTitle('記録を検索'); view.replaceChildren(backLink('記録', '検索を閉じる', options.onBack), title);
-  const [accounts, categories] = await Promise.all([ledger.listAccounts(), ledger.listCategories()]);
+  const [accounts, categories] = await Promise.all([ledger.listAccounts(), categoryChoices(ledger, ledger.listCategories())]);
   if (!title.isConnected) return;
   const accountNames = new Map(accounts.map(account => [account.id, account.name]));
   const categoryNames = new Map(categories.map(category => [category.id, category.name]));

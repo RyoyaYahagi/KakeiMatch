@@ -4,7 +4,7 @@ import { createMasterShortcut } from './local-master-ui';
 import { compactAddButton, dateShortcuts, entryRow, formActions, optionalFields, recurrenceRow, shortLabel } from './entry-form';
 import { scheduleFromEntry } from './entry-recurrence';
 import type { RecurringScheduleInput } from '../../../src/lib/recurring-schedule';
-import { categoryRow, lastUsedCategory, recentCategoryUsage } from './category-picker';
+import { categoryChoices, categoryRow, lastUsedCategory } from './category-picker';
 import { icon } from './ui-icons';
 import type { createActualBrowserLedger } from '../../../src/lib/actual-browser-ledger';
 import { ActualMasterValidationError } from '../../../src/lib/actual-browser-ledger';
@@ -123,7 +123,7 @@ export function showManualTransactionEditor(options: {
   void editorLockReady.then(locked => {
     if (!locked) throw new Error('別の画面でこの記録を編集中です。閉じてから開き直してください。');
     if (!heading.isConnected || options.view.hidden) { releaseEditorLock?.(); return null; }
-    const categoriesPromise = transfer ? Promise.resolve([]) : kind === 'expense' ? ledger.listExpenseCategories() : ledger.listIncomeCategories();
+    const categoriesPromise = transfer ? Promise.resolve([]) : kind === 'expense' ? categoryChoices(ledger, ledger.listExpenseCategories()) : categoryChoices(ledger, ledger.listIncomeCategories());
     // docs/UX.md 収入・振替の入力: a new income starts with the category used last time.
     const lastUsedPromise = !transfer && !transaction ? categoriesPromise.then(rows => lastUsedCategory(ledger, kind as 'expense' | 'income', rows.map(row => row.id))).catch(() => '') : Promise.resolve('');
     return Promise.all([categoriesPromise, ledger.listOpenAccounts(), options.repository.get<ManualTransactionDraft>(draftId), lastUsedPromise] as const);
@@ -190,7 +190,7 @@ export function showManualTransactionEditor(options: {
     amount.classList.add('amount-input');
     const optional = optionalFields('メモ', [memoLabel, memo], Boolean(memo.value));
     // docs/DESIGN.md 帳簿の行で組む入力: one ruled row per field.
-    const categoryUi = transfer ? null : categoryRow({ select: category, label: categoryLabel, usageReady: recentCategoryUsage(ledger),
+    const categoryUi = transfer ? null : categoryRow({ select: category, label: categoryLabel,
       hint: lastUsed && !draftSnapshot ? { value: lastUsed, text: '前回と同じ' } : null });
     const rows = document.createElement('div'); rows.className = 'entry-rows';
     rows.append(entryRow(amountLabel, amount), ...(transfer ? [] : [entryRow(payeeLabel, payee)]), entryRow(dateLabel, date, dateShortcuts(date, localToday())),
@@ -213,7 +213,7 @@ export function showManualTransactionEditor(options: {
         field, beforeOpen: () => persistDraft(readValue()),
         onCreated: async id => {
           if (request.kind === 'category') {
-            const updated = await (kind === 'income' ? ledger.listIncomeCategories() : ledger.listExpenseCategories());
+            const updated = await (kind === 'income' ? categoryChoices(ledger, ledger.listIncomeCategories()) : categoryChoices(ledger, ledger.listExpenseCategories()));
             categories.splice(0, categories.length, ...updated);
             category.replaceChildren(new Option('選択してください', ''), ...categories.map(value => new Option(value.name, value.id)));
           } else {
