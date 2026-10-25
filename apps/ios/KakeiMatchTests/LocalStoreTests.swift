@@ -202,7 +202,7 @@ import ZIPFoundation
         for (name, type) in [("../escape", Entry.EntryType.file), ("C:/escape", .file), ("link", .symlink)] {
             let zip = directory.appendingPathComponent(UUID().uuidString + ".zip")
             let archive = try Archive(url: zip, accessMode: .create)
-            try archive.addEntry(with: name, type: type, uncompressedSize: 1) { _, _ in Data([0]) }
+            try archive.addEntry(with: name, type: type, uncompressedSize: Int64(1)) { _, _ in Data([0]) }
             let malformed = try rewrite(bytes, actual: { _ in try Data(contentsOf: zip) })
             let file = directory.appendingPathComponent("unsafe.kmb"); try malformed.write(to: file)
             await #expect(throws: (any Error).self) { try await store.importBackup(from: file) }
