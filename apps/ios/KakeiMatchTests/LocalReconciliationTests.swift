@@ -205,6 +205,50 @@ struct LocalReconciliationTests {
         first.externalId = "external"; repeatRow.externalId = "external"; repeatRow.amountYen += 1
         #expect(throws: KMReconciliationError("duplicate_external_id_conflict")) { try KMStatementDeduplication.newRows([repeatRow], existing: [first]) }
     }
+    @Test func allConditionalAttentionBranchesMatchTS() throws {
+        let normal = statement("normal", amount: 1200)
+        let refund = statement("refund", amount: 200, kind: .refund)
+        let small = statement("small", amount: 500, merchant: "New Store")
+        #expect(try KMReconciliationReview.attention(statements: [normal, refund], unresolvedIds: ["normal", "refund"]).isEmpty)
+        #expect(try KMReconciliationReview.attention(statements: [small], unresolvedIds: ["small"]).isEmpty)
+        var old = statement("old", amount: 1000, merchant: "Old Store")
+        old.usedDate = KMDate(rawValue: "2026-09-01")
+        #expect(try KMReconciliationReview.attention(statements: [old, small], unresolvedIds: ["small"]).first?.reasons == ["過去の明細にない加盟店で500円以下の決済"])
+        old.provider = .rakutenCard
+        #expect(try KMReconciliationReview.attention(statements: [old, small], unresolvedIds: ["small"]).isEmpty)
+        old.provider = .paypayCard; old.merchant = "New Store"
+        #expect(try KMReconciliationReview.attention(statements: [old, small], unresolvedIds: ["small"]).isEmpty)
+        var large = statement("large", amount: 10000)
+        large.usedDate = KMDate(rawValue: "2026-10-04")
+        #expect(try KMReconciliationReview.attention(statements: [small, large], unresolvedIds: ["large"]).isEmpty)
+        large.usedDate = KMDate(rawValue: "2026-10-03"); large.provider = .smbcCard
+        #expect(try KMReconciliationReview.attention(statements: [small, large], unresolvedIds: ["small", "large"]).isEmpty)
+        let burst = ["a", "b", "c"].map { statement($0, amount: 1200) }
+        let attention = try KMReconciliationReview.attention(statements: burst, unresolvedIds: ["b"])
+        #expect(attention.first?.reasons == ["同じカードで同日に3件以上の決済"])
+        #expect(attention.first?.key == "[\"b\",[\"同じカードで同日に3件以上の決済\"]]")
+        #expect(try KMReconciliationReview.attention(statements: Array(burst.reversed()), unresolvedIds: ["b"]) == attention)
+        #expect(try KMReconciliationReview.attention(statements: Array(burst.prefix(2)), unresolvedIds: ["b"]).isEmpty)
+        #expect(try KMReconciliationReview.attention(statements: burst, unresolvedIds: []).isEmpty)
+    }
+
+    @Test func sharedAliasRemainsUntilLastSupportingManualDecisionIsUndone() throws {
+        var state = service()
+        state.transactions[0].payeeName = "Ledger Store"
+        var other = state.transactions[0]; other.id = "t2"
+        state.transactions.append(other); state.statements.append(statement("s2"))
+        _ = try state.run(id: "one", at: now)
+        let first = try state.sameExpense(runId: "one", statementId: "s", receiptId: "actual:t", at: now)
+        _ = try state.run(id: "two", at: now)
+        let second = try state.sameExpense(runId: "two", statementId: "s2", receiptId: "actual:t2", at: now)
+        #expect(state.aliases.count == 1)
+        #expect(state.aliases.first?.learnedBy?.hasPrefix(first.id + ":") == true)
+        try state.undoSameExpense(first.id, at: now)
+        #expect(state.aliases.count == 1)
+        try state.undoSameExpense(second.id, at: now)
+        #expect(state.aliases.isEmpty)
+    }
+
     @Test func attentionUsesProviderHistoryAndOnlyUnresolvedPurchases() throws {
         var old = statement("old", amount: 1000, merchant: "既存店舗")
         old.usedDate = KMDate(rawValue: "2026-09-01")
