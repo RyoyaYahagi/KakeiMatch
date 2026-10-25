@@ -51,8 +51,9 @@ import Foundation
         guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
         busy = true; defer { busy = false }
         let prefix = try FileHandle(forReadingFrom: url)
-        let magic = try prefix.read(upToCount: 8) ?? Data()
-        try prefix.close()
+        defer { try? prefix.close() }
+        var magic = Data()
+        while magic.count < 8, let chunk = try prefix.read(upToCount: 8 - magic.count), !chunk.isEmpty { magic.append(chunk) }
         if magic == KMNativeBackup.magic { try importNativeBackup(from: url); return }
         guard magic == Data("KMATCHB1".utf8) else { throw KMPortableBackup.invalid() }
         let backup = try KMPortableBackup.read(url: url)
