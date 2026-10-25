@@ -73,11 +73,11 @@ enum KMMoneyForwardParser {
         if data.isEmpty { return failure("empty_file", encoding) }; if data.count > maxBytes { return failure("limit_exceeded", encoding) }; if data.contains(0) { return failure("invalid_file", encoding) }
         let raw = bom ? Data(data.dropFirst(3)) : data
         var text = String(data: raw, encoding: .utf8)
-        if text == nil { text = String(data: data, encoding: .japanese); encoding = "shift_jis" }
+        if text == nil { text = String(data: data, encoding: .shiftJIS); encoding = "shift_jis" }
         guard let text else { return failure("invalid_file", encoding) }
         guard let csv = MFCSV(text) else { return failure("malformed_csv", encoding) }
         if csv.records.isEmpty { return failure("empty_file", encoding) }
-        if csv.records.count - 1 > maxRows || csv.records.contains(where: { $0.contains(where: { $0.count > maxFieldLength }) }) { return failure("limit_exceeded", encoding) }
+        if csv.records.count - 1 > maxRows || csv.records.contains(where: { $0.fields.contains(where: { $0.count > maxFieldLength }) }) { return failure("limit_exceeded", encoding) }
         let rows = csv.records.enumerated().filter { $0.offset == 0 || $0.element.fields.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) }
         let records = rows.map { $0.element.fields }, lineEnds = rows.map { $0.element.lineEnd }
         let headers = records[0]

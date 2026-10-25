@@ -47,7 +47,7 @@ enum KMStatementParser {
         let stringEncoding: String.Encoding = provider == .smbcCard ? .windowsCP1252 : .utf8
         let text: String?
         if provider == .smbcCard {
-            text = String(data: data, encoding: .japanese)
+            text = String(data: data, encoding: .shiftJIS)
         } else { text = String(data: Data(body), encoding: stringEncoding) }
         guard let text else { return failure("invalid_file") }
         return parse(text: text, provider: provider, encoding: encoding, sourceByteCount: data.count)
@@ -122,7 +122,7 @@ enum KMStatementParser {
             else if !row[6].isEmpty { reason = "通常購入の形式ではありません" }
             if let reason { out.needsReviewRows.append(rowIssue(n, reason)); continue }
             let fp = fingerprint(["smbc_card", "purchase", d!, row[1], String(amount!), "１回払い"]); ordinals[fp, default: 0] += 1
-            out.transactions.append(.init(provider: .smbcCard, usedDate: resultDate(d!), merchant: row[1], amountYen: amount!, paymentMethod: "1回払い", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]))
+            out.transactions.append(.init(provider: .smbcCard, usedDate: resultDate(d!), merchant: row[1], amountYen: amount!, paymentMethod: "1回払い", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!))
             let (next, overflow) = sum.addingReportingOverflow(billed!); if overflow { return empty("unsupported_layout", encoding, rows: details.count) }; sum = next
         }
         if out.needsReviewRows.isEmpty && sum != total { return empty("unsupported_layout", encoding, rows: details.count) }
@@ -147,7 +147,7 @@ enum KMStatementParser {
             if let reason { out.needsReviewRows.append(rowIssue(n, reason)); continue }
             let amount = amounts[0]!; let method = r[3].trimmingCharacters(in: .whitespacesAndNewlines); let type = r[4].trimmingCharacters(in: .whitespacesAndNewlines)
             let fp = fingerprint(["paypay_card", "purchase", d!, merchant, String(amount), method, type]); ordinals[fp, default: 0] += 1
-            out.transactions.append(.init(provider: .paypayCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount, paymentMethod: "\(method)（\(type)）", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]))
+            out.transactions.append(.init(provider: .paypayCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount!, paymentMethod: "\(method)（\(type)）", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!))
         }
         if !out.fatalErrors.isEmpty { out.transactions = [] }; return out
     }
@@ -191,7 +191,7 @@ enum KMStatementParser {
             else if missing { reason = "複数行明細または部分行の可能性があります" }
             if let reason { addReview(n, reason, continuation: continuation); continue }
             let fp = fingerprint(["rakuten_card", "purchase", d!, merchant, String(amount!), method]); ordinals[fp, default: 0] += 1
-            out.transactions.append(.init(provider: .rakutenCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount!, paymentMethod: method, sourceFingerprint: fp, duplicateOrdinal: ordinals[fp])); prior = (n, fp)
+            out.transactions.append(.init(provider: .rakutenCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount!, paymentMethod: method, sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!)); prior = (n, fp)
         }
         return out
     }
