@@ -87,6 +87,8 @@ import ZIPFoundation
         let csv = try #require(try source.originalArtifact(id: "statement-source:\(importRecord.id)"))
         let output = try await source.exportNativeBackup()
         #expect(output.pathExtension == "kmib")
+        let parsedBackup = try KMNativeBackup.read(url: output)
+        #expect(parsedBackup.artifacts.count == 2)
         #expect(try await source.settings().lastExportAt != nil)
         let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
         try await restored.saveSettings(.init(theme: .dark))
