@@ -33,7 +33,9 @@ final class NavigationSmokeTests: XCTestCase {
         app.buttons["add-record"].tap()
         XCTAssertTrue(app.buttons["chooser.receipt"].waitForExistence(timeout: 5))
         screenshot("chooser-light")
-        XCTAssertFalse(app.buttons["home-tab"].exists, "Modal sheet must hide the background navigation from accessibility")
+        // Transparent native presentations retain the underlying view in XCUI's
+        // hierarchy. Its presence is not the same as being interactable.
+        XCTAssertFalse(app.buttons["home-tab"].isHittable, "Modal sheet must block background navigation")
         app.buttons["record-sheet.close"].tap()
         assertScreen("home.screen")
         app.buttons["add-record"].tap()
