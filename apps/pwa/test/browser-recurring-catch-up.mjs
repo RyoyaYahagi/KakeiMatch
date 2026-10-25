@@ -68,6 +68,21 @@ async function recordNames() {
   return page.locator('.record-groups').innerText();
 }
 function occurrencesOf(text, value) { return text.toLowerCase().split(value.toLowerCase()).length - 1; }
+// Optional contention on the real service lock makes the final Undo race reproducible.
+async function delayNextUndo() {
+  const delayMs = Number(process.env.PWA_CATCH_UP_UNDO_DELAY_MS ?? 0);
+  assert.ok(Number.isFinite(delayMs) && delayMs >= 0, 'PWA_CATCH_UP_UNDO_DELAY_MS must be nonnegative');
+  if (!delayMs) return;
+  await page.evaluate(async delay => {
+    const profileId = localStorage.getItem('kakeimatch.local-profile.v1');
+    await new Promise(acquired => {
+      void navigator.locks.request(`kakeimatch-schedules:${profileId}`, async () => {
+        acquired();
+        await new Promise(resolve => setTimeout(resolve, delay));
+      });
+    });
+  }, delayMs);
+}
 async function chooseCatchUp(action) {
   if (action === 'cancel') {
     const box = await page.locator('.recurring-catch-up-confirm').boundingBox();
@@ -205,11 +220,18 @@ try {
   const octoberOperation = page.locator('section.recurring-catch-up-history [data-catch-up-operation-id]')
     .filter({ has: page.locator('[data-catch-up-date][value="2026-10-01"]') });
   assert.equal(await octoberOperation.count(), 1);
+  const octoberOperationId = await octoberOperation.getAttribute('data-catch-up-operation-id');
+  assert.ok(octoberOperationId);
+  const completedOctoberOperation = page.locator(`[data-catch-up-operation-id="${octoberOperationId}"]`);
+  await delayNextUndo();
   await octoberOperation.locator('[data-catch-up-undo]').click();
-  await recordNames();
-  names = await page.locator('.record-groups').innerText();
+  // click() waits for dispatch, not the async service. recordNames() only waits
+  // for the list's own read, which can finish before Undo has deleted anything.
+  await completedOctoberOperation.getByText('一括取り消し済みです。', { exact: true }).waitFor();
+  await completedOctoberOperation.getByText('2026-10-01 · ¥1,700 · 削除済み', { exact: true }).waitFor();
+  names = await recordNames();
   assert.equal(occurrencesOf(names, 'Synthetic Catch-up Monthly'), 2,
-    'Undo must remove only the generated transaction and preserve the identical manual transaction');
+    'Undo must preserve the case-normalized manual transaction and the edited August transaction');
   assert.equal(occurrencesOf(names, 'Synthetic Catch-up Other'), 1);
 
   // Saving the unchanged schedule again must not create already-audited dates a second time.
