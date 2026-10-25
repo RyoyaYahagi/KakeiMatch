@@ -2,8 +2,19 @@ import SwiftUI
 
 @main
 struct KakeiMatchApp: App {
+    private let repositories: Result<KMRepositories, Error>
+
+    init() { repositories = Result { try KMFixtureLoader.launch() } }
+
     var body: some Scene {
-        WindowGroup { AppShell().preferredColorScheme(testColorScheme) }
+        WindowGroup {
+            switch repositories {
+            case .success(let value):
+                AppShell().environment(\.repositories, value).preferredColorScheme(testColorScheme)
+            case .failure(let error):
+                Text(error.localizedDescription).accessibilityIdentifier("data.fixtureError")
+            }
+        }
     }
 
     /// Deterministic screenshots without changing the user's system preference.
