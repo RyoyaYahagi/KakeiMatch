@@ -53,10 +53,10 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | ドメインモデル・Repository protocol・fixture 注入 | `feature/ios-domain` | #280（#278 上） | Linux | マージ済み |
 | 明細 CSV・MoneyForward CSV 解析 | `feature/ios-statement-parsers` | #281（#280 上） | Linux | マージ済み・TS テスト対応表あり |
 | 照合・重複検出・カテゴリ学習・定期・予算のロジック | `feature/ios-reconciliation` | #282（#280 上） | Linux | マージ済み・golden 273 件 TS と一致 |
-| 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283（main 起点） | Linux | 統合修正中。設計は `docs/DATA_LAYER.md` |
+| 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283 | Linux | マージ済み。設計は `docs/DATA_LAYER.md` |
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
-| iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | 作成中（#283 上） | Linux | 作業中 |
-| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287（base: main） | Linux | typed通信・応答検証・Keychain・給与画像マスキング・URLProtocolテストを追加。認証の制約と未実装は `docs/API_LAYER.md`。CI結果はPR参照 |
+| iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | #284（main 起点） | Linux | 専用`.kmib`の書き出し・iOS間復元・原本同梱を追加。iOS→PWA書き出しは提供しない。詳細は `docs/DATA_LAYER.md` |
+| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287 | Linux | マージ済み。typed通信・応答検証・Keychain・給与画像マスキング。ネイティブ認証には Worker 側の変更が必要（利用者判断待ち）。`docs/API_LAYER.md` |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
@@ -116,6 +116,8 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - luna で足りる作業は luna に任せる（利用者指示 2026-10-26）
 
 ## 6. 再現できない可能性が高い点（判明しているもの）
+
+- **iOS → PWA 書き出しは提供しない（利用者決定、2026-10-26）。iOS のバックアップは iOS 同士でのみ復元できる。** PWA → iOS は既存の `.kmb` 取り込みを使う。
 
 - `docs/screenshots/migration` の参照スクショは Linux の Chromium で撮影しており、PWA の `--font-body`（-apple-system / Hiragino）と `--font-num`（ui-monospace / SF Mono）が代替フォントで描かれている。iPhone 上の PWA とは字形・字幅が違うので、iOS との比較ではレイアウト・色・余白・文言を見て、字形の差は無視する。Mac では `pnpm --dir apps/pwa screenshots:migration` を Playwright の WebKit で実行し直すと iPhone に近い基準を作れる（Mac 側で最初にやるとよい）
 
