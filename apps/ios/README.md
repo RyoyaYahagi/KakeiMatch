@@ -54,7 +54,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 | `KMStatusLabel` / `KMCompletedStamp` | 記号と文言で状態を伝える。成功は朱の済、要確認は藍、記録なしは紫、失敗は深紅 |
 | `KMInputRow(label:value:identifier:hint:isAmount:error:)` | 入力Binding・検証結果。フォーカスの下線を部品が描く |
 | `KMSegmentedControl(options:selection:identifier:)` | 安定したoption IDと選択Binding |
-| `KMBottomSheet(title:isPresented:content:)` | shell最上層へ配置し、背後を `accessibilityHidden` にする。外側タップ、ヘッダ/つまみの80pt超の下スワイプで閉じる |
+| `KMBottomSheet(title:isPresented:content:)` | 透明な `.fullScreenCover` 内に置く。OSがモーダルのフォーカスを隔離し、部品がPWA形状・scrim・内容に合った高さを描く。外側タップ、ヘッダ/つまみの80pt超の下スワイプで閉じる |
 | `KMToast(message:actionTitle:action:)` | Undoの期限（PWAでは10秒）・処理はfeature側。部品は表示のみ |
 | `KMBanner(status:title:detail:actionTitle:action:)` | 失敗理由と再試行操作を渡す |
 
@@ -85,6 +85,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 - タブ内はplaceholderです。ホームの集計・記録一覧・照合・設定の本実装とデータ状態の比較は後続PRです。空データ状態を再現したとは扱いません。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
+- シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。
 - セグメントの見た目はPWAの36ptですが、44ptのヒット領域確保のため下地の高さがPWAより8pt高くなります。
 - フォントの字形・改行はネイティブの組版に依存します。固定サイズをPWAに合わせた土台であり、Dynamic Typeの拡大対応は後続の検証課題です。

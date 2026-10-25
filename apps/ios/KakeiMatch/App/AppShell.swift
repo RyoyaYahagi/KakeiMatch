@@ -36,22 +36,22 @@ struct AppShell: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 KMBottomNavigation(selection: $tab, add: { showsChooser = true })
                     .frame(maxWidth: KMLayout.contentMax)
-                    .accessibilityHidden(showsChooser)
-            }
-            .accessibilityHidden(showsChooser)
-            if showsChooser {
-                KMBottomSheet(title: "何を記録しますか？", isPresented: $showsChooser) {
-                    RecordChooserView { destination in
-                        entry = destination
-                        showsChooser = false
-                    }
-                }
-                .zIndex(1)
             }
         }
         .font(KMTypography.text)
         .tint(KMColor.primary)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: showsChooser)
+        // A transparent native modal host traps accessibility focus without changing
+        // the PWA-shaped sheet or removing the underlying page from the screen.
+        .fullScreenCover(isPresented: $showsChooser) {
+            KMBottomSheet(title: "何を記録しますか？", isPresented: $showsChooser) {
+                RecordChooserView { destination in
+                    entry = destination
+                    showsChooser = false
+                }
+            }
+            .presentationBackground(.clear)
+        }
+        .transaction { if reduceMotion { $0.disablesAnimations = true } }
         .onChange(of: tab) { _, _ in entry = nil }
     }
 

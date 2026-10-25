@@ -14,10 +14,12 @@ struct KMButtonStyle: ButtonStyle {
             .background(background(pressed: configuration.isPressed))
             .clipShape(RoundedRectangle(cornerRadius: role == .primary ? KMRadius.lg : KMRadius.md))
             .offset(y: configuration.isPressed && role == .primary && enabled ? 1 : 0)
+            .scaleEffect(configuration.isPressed && role == .primary && enabled ? 0.985 : 1)
+            .opacity(!enabled && role != .primary ? 0.55 : 1)
     }
 
     private var foreground: Color {
-        if !enabled { return KMColor.muted }
+        if !enabled && role == .primary { return KMColor.muted }
         return role == .primary ? KMColor.onPrimary : role == .destructive ? KMColor.danger : KMColor.primary
     }
     private func background(pressed: Bool) -> Color {

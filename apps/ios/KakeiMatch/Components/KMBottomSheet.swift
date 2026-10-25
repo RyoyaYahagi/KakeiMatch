@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// Custom presentation preserves PWA bottom alignment, 24pt corners and 80pt dismissal.
-/// Unlike .sheet, it does not rescale the underlying page or hide the bottom navigation.
+/// Present inside .fullScreenCover with a clear presentation background: UIKit owns
+/// modal focus isolation, while this view owns the PWA geometry and dimming.
 struct KMBottomSheet<Content: View>: View {
     let title: String
     @Binding var isPresented: Bool
