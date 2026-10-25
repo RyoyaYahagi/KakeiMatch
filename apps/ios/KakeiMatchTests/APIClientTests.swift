@@ -24,10 +24,31 @@ private final class APIStub: URLProtocol, @unchecked Sendable {
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    static func materializedRequest(_ request: URLRequest) throws -> URLRequest {
+        // URLSession on Apple platforms may move a Data body into a stream before
+        // delivering it to URLProtocol. Capture those bytes once for payload assertions.
+        guard request.httpBody == nil, let stream = request.httpBodyStream else { return request }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let capacity = 8192
+        var buffer = [UInt8](repeating: 0, count: capacity)
+        while true {
+            let count = stream.read(&buffer, maxLength: capacity)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        var result = request
+        result.httpBodyStream = nil
+        result.httpBody = data
+        return result
+    }
     override func startLoading() {
         do {
-            let handler = Self.state.withLock { state in state.requests.append(request); return state.handler }
-            let reply = try handler(request)
+            let captured = try Self.materializedRequest(request)
+            let handler = Self.state.withLock { state in state.requests.append(captured); return state.handler }
+            let reply = try handler(captured)
             let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1",
                                            headerFields: reply.headers.merging(["Content-Type": reply.contentType], uniquingKeysWith: { _, new in new }))!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -297,6 +318,19 @@ struct APIClientTests {
     }
 
     @Test
+    func stubMaterializesStreamBackedBodiesWithoutChangingHeaders() throws {
+        var request = URLRequest(url: URL(string: "https://synthetic.example.test/api/native/challenge")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bytes = Data(#"{"purpose":"token"}"#.utf8)
+        request.httpBodyStream = InputStream(data: bytes)
+        let captured = try APIStub.materializedRequest(request)
+        #expect(captured.httpBody == bytes)
+        #expect(captured.httpBodyStream == nil)
+        #expect(captured.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
+
+    @Test
     func nativeConfigurationSendsNeitherOriginNorCookies() async throws {
         APIStub.reset { request in
             #expect(request.url?.path == "/api/native/config")
@@ -312,6 +346,7 @@ struct APIClientTests {
 
     @Test
     func nativeNeverFallsBackToTurnstileOrFakeCredentials() async throws {
+        APIStub.reset { _ in throw URLError(.badServerResponse) }
         let api = try client(native: true)
         await #expect(throws: KMAPIError.nativeUnsupported) { _ = try await api.guestConfiguration() }
         await #expect(throws: KMAPIError.nativeUnsupported) { try await api.createGuest(turnstileToken: "fake") }
