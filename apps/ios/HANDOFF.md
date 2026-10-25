@@ -43,7 +43,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 内容 | branch | PR | 担当 | 状態 |
 | --- | --- | --- | --- | --- |
 | 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | CI 成功・レビュー待ち（各画面は placeholder） |
-| Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md（identifier 表） | `test/pwa-migration-screenshots` | #279 | Linux | 撮影範囲を広げる作業中 |
+| Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md（identifier 表） | `test/pwa-migration-screenshots` | #279 | Linux | 27状態×light/dark 54枚・fixture.json・synthetic.kmb 完了、レビュー待ち |
 | データ層・API 層の仕様調査 | なし（Linux 側の作業メモ） | なし | Linux | 作業中 |
 | ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | 未作成 | 未作成 | Linux | 次に着手 |
 | ローカル DB（local-first）・`.kmb` 取り込み | 未作成 | 未作成 | Linux | 予定 |
@@ -103,6 +103,8 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - 調査・スクショの見比べ表づくり: 無料の deepseek-v4.1-flash でよい（遅い）
 
 ## 6. 再現できない可能性が高い点（判明しているもの）
+
+- `docs/screenshots/migration` の参照スクショは Linux の Chromium で撮影しており、PWA の `--font-body`（-apple-system / Hiragino）と `--font-num`（ui-monospace / SF Mono）が代替フォントで描かれている。iPhone 上の PWA とは字形・字幅が違うので、iOS との比較ではレイアウト・色・余白・文言を見て、字形の差は無視する。Mac では `pnpm --dir apps/pwa screenshots:migration` を Playwright の WebKit で実行し直すと iPhone に近い基準を作れる（Mac 側で最初にやるとよい）
 
 最後に利用者へまとめて報告するため、見つけたら PR に追記する。
 
