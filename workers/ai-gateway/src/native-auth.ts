@@ -25,7 +25,7 @@ const CHALLENGE_SECONDS = 120;
 const ACCESS_SECONDS = 600;
 const AUDIENCE = 'kakeimatch-native-ai';
 const TOKEN = /^[A-Za-z0-9_-]{43}$/;
-const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const utf8 = new TextEncoder();
 
 function json(status: number, value: unknown) {
@@ -101,7 +101,7 @@ async function consume(db: Db, id: unknown, purpose: string, now: number): Promi
   // Consume before checking proof. Failed proofs burn the challenge too; never retry it.
   return db.prepare(`UPDATE native_challenges SET used_at=? WHERE id=? AND purpose=? AND used_at IS NULL AND expires_at>?
     RETURNING id,challenge,purpose,key_id,session_hash,ceremony_kind,target_user_id,verification_cookie`)
-    .bind(now, id, purpose, now).first<Challenge>();
+    .bind(now, id.toLowerCase(), purpose, now).first<Challenge>();
 }
 async function checkAssertion(db: Db, config: Config, challenge: Challenge, assertion: string): Promise<KeyRow | null> {
   const registered = await key(db, challenge.key_id, config);

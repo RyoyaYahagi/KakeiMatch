@@ -34,7 +34,7 @@
     "@actual-app/cli": "26.9.0",
     "@better-auth/drizzle-adapter": "^1.7.6",
     "@better-auth/passkey": "1.7.6",
-    "@peculiar/x509": "2.2.0",
+    "@peculiar/x509": "1.14.3",
     "cbor-x": "1.6.8",
     "reflect-metadata": "0.2.2",
     "@google/genai": "^2.24.0",

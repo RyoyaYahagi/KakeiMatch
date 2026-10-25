@@ -129,6 +129,18 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect(attest).toHaveBeenCalledOnce();
   });
 
+  it('accepts uppercase UUID challenge IDs emitted by Swift JSONEncoder', async () => {
+    const challenge = await (await issueChallenge()).json() as { challengeId: string };
+    expect((await run('/api/native/attest', { challengeId: challenge.challengeId.toUpperCase(), keyId, attestation: 'proof' })).status).toBe(200);
+    const guestChallenge = await (await issueChallenge('guest')).json() as { challengeId: string };
+    const guest = await run('/api/native/guest', { challengeId: guestChallenge.challengeId.toUpperCase(), keyId, assertion: 'proof' });
+    expect(guest.status).toBe(201);
+    const { sessionToken } = await guest.json() as { sessionToken: string };
+    const headers = { authorization: `Native ${sessionToken}` };
+    const tokenChallenge = await (await issueChallenge('token', keyId, headers)).json() as { challengeId: string };
+    expect((await run('/api/native/ai/token', { challengeId: tokenChallenge.challengeId.toUpperCase(), keyId, assertion: 'proof' }, headers)).status).toBe(200);
+  });
+
   it('binds a key to a guest once, stores opaque 14-day sessions, and reuses the same user on new assertions', async () => {
     await registerKey();
     const first = await guestLogin();

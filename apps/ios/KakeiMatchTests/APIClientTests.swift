@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImageIO
 import Security
@@ -753,6 +754,7 @@ struct APIClientTests {
     @Test
     @MainActor
     func nativeGuestAndAITokenUseAppAttestAndKeepCredentialsBoundToHost() async throws {
+        let store = APITestCredentials()
         let appAttest = FakeAppAttest(isSupported: true)
         let challengeText = KMNativeCrypto.base64URL(Data(repeating: 7, count: 32))
         APIStub.reset { request in
@@ -783,7 +785,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(native: true, appAttest: appAttest)
+        let api = try client(credentials: store, native: true, appAttest: appAttest)
         try await api.createNativeGuest()
         #expect(try await api.accessToken() == String(repeating: "T", count: 43))
         #expect(store.read("ai-token") == nil)

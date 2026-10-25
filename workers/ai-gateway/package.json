@@ -22,7 +22,7 @@
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.6",
-    "@peculiar/x509": "2.2.0",
+    "@peculiar/x509": "1.14.3",
     "better-auth": "1.7.6",
     "cbor-x": "1.6.8",
     "reflect-metadata": "0.2.2",

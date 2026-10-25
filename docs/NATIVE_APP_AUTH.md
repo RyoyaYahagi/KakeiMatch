@@ -34,7 +34,7 @@ accountセッションはネイティブでは固定期限です。Webの「24�
 
 ## 3. API と要求・応答
 
-全通信は設定済みHTTPS hostへ直接行います。redirectを追いません。JSON応答は `Cache-Control:no-store`。ネイティブの小さな制御要求は64 KiB上限、未知フィールドは拒否します。AI本体の要求サイズは既存経路の制限を使います。時刻はUnix秒、日次・月次集計はAsia/Tokyoです。
+全通信は設定済みHTTPS hostへ直接行います。redirectを追いません。JSON応答は `Cache-Control:no-store`。ネイティブの小さな制御要求は64 KiB上限、未知フィールドは拒否します。AI本体の要求サイズは既存経路の制限を使います。時刻はUnix秒、日次・月次集計はAsia/Tokyoです。challenge / ceremonyのUUIDは大文字・小文字を受理し、D1照合前に小文字へ正規化します。SwiftのUUIDエンコード形式でも同じchallengeを参照できます。
 
 ### App Attest 鍵の登録
 
