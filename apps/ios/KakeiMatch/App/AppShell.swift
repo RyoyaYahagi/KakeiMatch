@@ -36,7 +36,10 @@ struct AppShell: View {
                 .frame(maxWidth: .infinity)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                KMBottomNavigation(selection: $tab, add: { showsChooser = true })
+                KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
+                    tab = destination
+                    entry = nil // Reselecting the current tab also leaves an entry, like PWA.
+                }), add: { showsChooser = true })
                     .frame(maxWidth: KMLayout.contentMax)
             }
         }

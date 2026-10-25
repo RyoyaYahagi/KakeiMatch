@@ -41,6 +41,12 @@ final class NavigationSmokeTests: XCTestCase {
         app.buttons["add-record"].tap()
         app.buttons["chooser.expense"].tap()
         assertScreen("manualEntry.screen")
+        // Add is not a tab: reselecting the original home tab must still navigate home.
+        app.buttons["home-tab"].tap()
+        assertScreen("home.screen")
+        app.buttons["add-record"].tap()
+        app.buttons["chooser.expense"].tap()
+        assertScreen("manualEntry.screen")
         app.buttons["entry.cancel"].tap()
         XCTAssertTrue(app.buttons["chooser.receipt"].waitForExistence(timeout: 5))
         app.buttons["record-sheet.close"].tap()
