@@ -14,19 +14,19 @@ enum KMReconciliationEngine {
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
-    private static let amountRatio = Decimal(string: "0.03")!
-    private static let candidateMerchantThreshold = Decimal(string: "0.7")!
-    private static let autoMerchantThreshold = Decimal(string: "0.72")!
-    private static let autoScoreThreshold = Decimal(string: "0.88")!
-    private static let marginThreshold = Decimal(string: "0.15")!
+    private static let amountRatio = KMJSNumber("0.03")
+    private static let candidateMerchantThreshold = KMJSNumber("0.7")
+    private static let autoMerchantThreshold = KMJSNumber("0.72")
+    private static let autoScoreThreshold = KMJSNumber("0.88")
+    private static let marginThreshold = KMJSNumber("0.15")
     private struct Candidate {
         var statementId: String
         var receiptId: String
         var score: Decimal
-        var autoScore: Decimal
+        var autoScore: KMJSNumber
         var delta: Int
         var days: Int
-        var similarity: Decimal
+        var similarity: KMJSNumber
         var aliasMatch: Bool
         var reasons: [String]
     }
@@ -47,6 +47,9 @@ enum KMReconciliationEngine {
     }
 
     static func merchantSimilarity(_ left: String, _ right: String) -> Decimal {
+        similarityNumber(left, right).decimalApproximation
+    }
+    private static func similarityNumber(_ left: String, _ right: String) -> KMJSNumber {
         let a = Array(normalizeMerchant(left).unicodeScalars)
         let b = Array(normalizeMerchant(right).unicodeScalars)
         guard !a.isEmpty, !b.isEmpty else { return 0 }
@@ -57,7 +60,7 @@ enum KMReconciliationEngine {
         }
         let aa = bigrams(a), bb = bigrams(b)
         guard !aa.isEmpty, !bb.isEmpty else { return 0 }
-        return Decimal(2 * aa.intersection(bb).count) / Decimal(aa.count + bb.count)
+        return KMJSNumber(2 * aa.intersection(bb).count) / KMJSNumber(aa.count + bb.count)
     }
 
     static func aliasKey(_ left: String, _ right: String) -> String {
@@ -89,16 +92,16 @@ enum KMReconciliationEngine {
                           let rday = dayNumber(receipt.purchasedDate.rawValue) else { continue }
                     let distance = abs(sday - rday)
                     let delta = abs(statement.amountYen - receipt.amountYen)
-                    let tolerance = max(Decimal(amountTolerance), Decimal(statement.amountYen) * amountRatio)
-                    guard Decimal(delta) <= tolerance else { continue }
-                    let similarity = merchantSimilarity(statement.merchant, receipt.merchant)
+                    let tolerance = max(KMJSNumber(amountTolerance), KMJSNumber(statement.amountYen) * amountRatio)
+                    guard KMJSNumber(delta) <= tolerance else { continue }
+                    let similarity = similarityNumber(statement.merchant, receipt.merchant)
                     let alias = aliases.contains(aliasKey(statement.merchant, receipt.merchant))
                     let sameSource = preferredAccountIds[statement.id]?.contains(receipt.actualAccountId) ?? false
-                    let dateScore = Decimal(8 - distance) / 8
-                    let amountScore = delta == 0 ? Decimal(1) : max(Decimal(0), Decimal(1) - Decimal(delta) / tolerance)
-                    let merchantScore = alias ? Decimal(1) : similarity
-                    let score = rounded(amountScore * Decimal(string: "0.55")! + dateScore * Decimal(string: "0.30")! + merchantScore * Decimal(string: "0.05")! + (sameSource ? Decimal(string: "0.10")! : 0))
-                    let autoScore = rounded(amountScore * Decimal(string: "0.55")! + dateScore * Decimal(string: "0.25")! + merchantScore * Decimal(string: "0.20")!)
+                    let dateScore = KMJSNumber(1) - KMJSNumber(distance) / 8
+                    let amountScore = delta == 0 ? KMJSNumber(1) : max(0, KMJSNumber(1) - KMJSNumber(delta) / tolerance)
+                    let merchantScore = alias ? KMJSNumber(1) : similarity
+                    let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.30") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.10") : 0)).roundedMillion().decimal
+                    let autoScore = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25") + merchantScore * KMJSNumber("0.20")).roundedMillion().binary
                     var reasons = [delta == 0 ? "amount_exact" : "amount_close", distance <= autoWindow ? "date_close" : "date_within_window"]
                     if similarity >= candidateMerchantThreshold { reasons.append("merchant_similar") }
                     if alias { reasons.append("merchant_alias_match") }
@@ -139,7 +142,7 @@ enum KMReconciliationEngine {
                 return compare($0, $1)
             }
             for (index, candidate) in choices.prefix(3).enumerated() {
-                output.append(KMReconciliationCandidate(statementTransactionId: candidate.statementId, receiptId: candidate.receiptId, rank: index + 1, score: candidate.score, amountDeltaYen: candidate.delta, dateDistanceDays: candidate.days, merchantSimilarity: candidate.similarity, reasons: candidate.reasons + (ambiguous(candidate) ? ["ambiguous_candidates"] : [])))
+                output.append(KMReconciliationCandidate(statementTransactionId: candidate.statementId, receiptId: candidate.receiptId, rank: index + 1, score: candidate.score, amountDeltaYen: candidate.delta, dateDistanceDays: candidate.days, merchantSimilarity: candidate.similarity.decimalApproximation, reasons: candidate.reasons + (ambiguous(candidate) ? ["ambiguous_candidates"] : [])))
             }
         }
         let statementResults = statements.map { statement -> KMReconciliationStatementResult in
@@ -159,12 +162,7 @@ enum KMReconciliationEngine {
     }
 
     private static func safe(_ amount: Int) -> Bool { amount >= 0 && amount <= KMYen.maxSafe }
-    private static func rounded(_ value: Decimal) -> Decimal {
-        var value = value, result = Decimal()
-        NSDecimalRound(&result, &value, 6, .plain)
-        return result
-    }
-    private static func margin(_ top: Candidate, _ second: Candidate?) -> Decimal { top.autoScore - (second?.autoScore ?? 0) }
+    private static func margin(_ top: Candidate, _ second: Candidate?) -> KMJSNumber { top.autoScore - (second?.autoScore ?? 0) }
     private static func compare(_ a: Candidate, _ b: Candidate) -> Bool {
         if a.autoScore != b.autoScore { return a.autoScore > b.autoScore }
         if a.statementId != b.statementId { return less(a.statementId, b.statementId) }

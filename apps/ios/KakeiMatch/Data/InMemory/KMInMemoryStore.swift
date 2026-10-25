@@ -219,6 +219,8 @@ import Foundation
         if let markedAt {
             suspectedValues.append(KMSuspectedStatement(statementId: statementId, markedAt: markedAt))
             recordManualReview(statementId: statementId)
+        } else {
+            clearSuspectedReview(statementId: statementId)
         }
     }
     func budgetSummary(month: KMYearMonth) async throws -> KMMonthlyBudgetSummary {

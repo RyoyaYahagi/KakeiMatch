@@ -4,6 +4,7 @@ import Foundation
 enum KMMonthlyBudgetService {
     static func summary(yearMonth: KMYearMonth, settings: KMMonthlyBudgetSettings,
                         nativeCategories: [KMMonthlyBudgetCategory]) throws -> KMMonthlyBudgetSummary {
+        let settings = try settings.validated(for: settings.budgetId)
         let raw = try nativeCategories.map { native -> KMMonthlyBudgetCategory in
             let budget = try settings.effectiveMonthlyBudget(yearMonth: yearMonth, categoryId: native.categoryId,
                                                               nativeBudgetYen: native.budgetYen ?? 0)

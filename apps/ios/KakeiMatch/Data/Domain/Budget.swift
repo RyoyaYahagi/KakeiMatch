@@ -229,7 +229,7 @@ struct KMMonthlyBudgetSettings: Codable, Equatable, Sendable {
         return sum
     }
 
-    static func validIdentifier(_ value: String) -> Bool { !value.isEmpty && value.count <= 128 }
+    static func validIdentifier(_ value: String) -> Bool { !value.isEmpty && value.utf16.count <= 128 }
     static func validAmount(_ value: Int) -> Bool { value >= 0 && value <= 9_007_199_254_740_991 }
     static func validSafeInteger(_ value: Int) -> Bool { value >= -9_007_199_254_740_991 && value <= 9_007_199_254_740_991 }
     static func validYearMonth(_ value: String) -> Bool {

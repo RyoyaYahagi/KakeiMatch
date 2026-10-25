@@ -4,7 +4,8 @@ struct KMRecurringCatchUpPlan: Equatable, Sendable {
     var dates: [KMDate]
     var startDate: KMDate? { dates.first }
     var endDate: KMDate? { dates.last }
-    var totalAmountYen: Int
+    /// Catch-up totals mirror TS BigInt and may exceed Number's safe-integer range.
+    var totalAmountYen: Decimal
 }
 
 /// Calendar-date recurrence and catch-up planning. Persistence, locking, and
@@ -70,7 +71,7 @@ enum KMRecurringScheduleService {
 
     static func validatedInput(_ input: KMRecurringScheduleInput) throws -> KMRecurringScheduleInput {
         let name = input.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 200, input.amountYen > 0, KMMonthlyBudgetSettings.validAmount(input.amountYen),
+        guard !name.isEmpty, name.utf16.count <= 200, input.amountYen > 0, KMMonthlyBudgetSettings.validAmount(input.amountYen),
               KMMonthlyBudgetSettings.validIdentifier(input.categoryId), KMMonthlyBudgetSettings.validIdentifier(input.accountId) else {
             throw KMDataError.invalidData("名前・金額・日付・カテゴリ・口座を確認してください。")
         }
@@ -85,9 +86,7 @@ enum KMRecurringScheduleService {
         let validated = try validatedInput(input)
         let dates = missingOccurrences(input: validated, scheduleId: scheduleId, through: through,
             auditedDates: auditedDates, importedIds: importedIds, nativeScheduleDates: nativeScheduleDates)
-        let (total, overflow) = validated.amountYen.multipliedReportingOverflow(by: dates.count)
-        guard !overflow else { throw KMDataError.amountOverflow }
-        _ = try KMYen.checked(total)
+        let total = Decimal(validated.amountYen) * Decimal(dates.count)
         return KMRecurringCatchUpPlan(dates: dates, totalAmountYen: total)
     }
 

@@ -50,6 +50,22 @@ struct LocalReconciliationTests {
         #expect(exact.transactions[0].cleared && exact.transactions[0].amountYen == -1000)
         #expect(throws: KMReconciliationError("undo_unavailable")) { try exact.undoSameExpense(exact.resolutions[0].id, at: now) }
     }
+    @Test func keepsLatestRunUsableAfterMultipleManualMatches() throws {
+        let transactions = ["t1", "t2"].map { id in
+            KMTransaction(id: id, date: KMDate(rawValue: "2026-10-01"), amountYen: -1000, kind: .expense,
+                payeeName: "人工ストア", accountId: "card", cleared: false)
+        }
+        var state = KMLocalReconciliation(statements: [statement("s1"), statement("s2")], imports: [], transactions: transactions,
+            accounts: [.init(id: "card", name: "PayPayカード", accountType: .creditCard, statementProvider: .paypayCard)],
+            categories: [.init(id: "food", name: "食費")])
+        let run = try state.run(id: "one", at: now)
+        #expect(run.statementResults.allSatisfy { $0.status == .needsReview })
+        let first = try state.sameExpense(runId: "one", statementId: "s1", receiptId: "actual:t1", at: now)
+        let second = try state.sameExpense(runId: "one", statementId: "s2", receiptId: "actual:t2", at: now)
+        #expect(first.status == .applied && second.status == .applied)
+        #expect(state.resolutions.map(\.statementId) == ["s1", "s2"])
+    }
+
     @Test func cashClearedAndFailedDecisionsAreExcluded() throws {
         var state = service()
         state.transactions[0].accountId = "cash"
@@ -71,12 +87,10 @@ struct LocalReconciliationTests {
             try state.noReceipt(runId: "one", statementId: "s", categoryId: "food", newAccountId: "new", at: now)
         }
         try state.rejectPair(runId: "one", statementId: "s", receiptId: "actual:t")
-        let run = try state.run(id: "two", at: now)
-        #expect(run.candidates.isEmpty && run.statementResults.first?.status == .unmatchedStatement)
-        let value = try state.noReceipt(runId: "two", statementId: "s", categoryId: "food", excludedFromSpending: true, newAccountId: "new", at: now)
+        let value = try state.noReceipt(runId: "one", statementId: "s", categoryId: "food", excludedFromSpending: true, newAccountId: "new", at: now)
         #expect(value.resolution == .noReceipt && value.status == .applied)
         #expect(state.transactions.count == 2 && state.transactions.last?.excludedFromSpending == true)
-        _ = try state.run(id: "three", at: now)
+        _ = try state.run(id: "two", at: now)
         #expect(state.latest?.statementResults.isEmpty == true)
     }
     @Test func ignoreRefundAndCandidateDoesNotMutateLedger() throws {

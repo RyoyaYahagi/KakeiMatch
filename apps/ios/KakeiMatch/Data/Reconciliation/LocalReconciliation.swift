@@ -151,6 +151,16 @@ struct KMLocalReconciliation: Sendable {
         guard let latest, latest.runId == id, preparedAtRun == snapshot() else { throw KMReconciliationError("stale_run") }
         return latest
     }
+    /// Own decisions change the prepared inputs; rebase the stale-run guard so other rows in
+    /// the same immutable run can still be reviewed. External edits remain stale.
+    private mutating func refreshPreparedSnapshot() {
+        guard latest != nil else { return }
+        preparedAtRun = snapshot()
+    }
+    mutating func recordManualReview(statementId: String) {
+        manualStatementIds.insert(statementId)
+        refreshPreparedSnapshot()
+    }
     private func decision(run: KMReconciliationRun, statement: KMStatementTransaction, kind: KMReconciliationResolution.Resolution, at timestamp: Date) -> KMReconciliationResolution {
         .init(id: "reconciliation-resolution:\(statement.id)", runId: run.runId, statementId: statement.id, resolution: kind, source: .user,
             statementAmountYen: statement.amountYen, status: .pending,
@@ -171,6 +181,7 @@ struct KMLocalReconciliation: Sendable {
         var value = decision(run: run, statement: statement, kind: .sameExpense, at: timestamp)
         value.receiptId = receiptId; value.actualTransactionId = row.id; value.actualSnapshot = Self.actualSnapshot(row)
         resolutions.append(value); try apply(value.id, at: timestamp)
+        refreshPreparedSnapshot()
         return resolutions.first { $0.id == value.id }!
     }
     mutating func rejectPair(runId: String, statementId: String, receiptId: String) throws {
@@ -179,13 +190,16 @@ struct KMLocalReconciliation: Sendable {
         try requireUndecided(statementId)
         guard !rejections.contains(where: { $0.runId == runId && $0.statementId == statementId && $0.receiptId == receiptId }) else { throw KMReconciliationError("decision_conflict") }
         rejections.append(.init(runId: runId, statementId: statementId, receiptId: receiptId))
+        refreshPreparedSnapshot()
     }
     @discardableResult mutating func ignore(runId: String, statementId: String, at timestamp: Date) throws -> KMReconciliationResolution {
         let run = try requireLatest(runId); try requireUndecided(statementId)
         guard run.statementResults.contains(where: { $0.statementTransactionId == statementId && $0.status != .matched }),
               let statement = statements.first(where: { $0.id == statementId }) else { throw KMReconciliationError("decision_unavailable") }
         var value = decision(run: run, statement: statement, kind: .ignored, at: timestamp)
-        value.status = .applied; resolutions.append(value); return value
+        value.status = .applied; resolutions.append(value)
+        refreshPreparedSnapshot()
+        return value
     }
     /// Resolves current provider mapping. Callers provide a deterministic ID only when creation is needed.
     mutating func registrationAccount(provider: KMStatementProvider, newAccountId: String) throws -> String {
@@ -222,6 +236,7 @@ struct KMLocalReconciliation: Sendable {
         value.destinationAccountId = destinationAccountId; value.excludedFromSpending = excludedFromSpending
         value.importedId = "kakeimatch:statement:\(statement.id)"
         resolutions.append(value); try apply(value.id, at: timestamp)
+        refreshPreparedSnapshot()
         return resolutions.first { $0.id == value.id }!
     }
     static func actualSnapshot(_ row: KMTransaction) -> KMReconciliationResolution.ActualSnapshot {
@@ -290,6 +305,7 @@ struct KMLocalReconciliation: Sendable {
             value.status = .failed; value.errorCode = (error as? KMReconciliationError)?.code ?? "actual_apply_failed"
         }
         resolutions[index] = value
+        refreshPreparedSnapshot()
     }
     mutating func markSuspected(runId: String, statementId: String, at timestamp: Date) throws {
         let run = try requireLatest(runId)
@@ -297,8 +313,12 @@ struct KMLocalReconciliation: Sendable {
         try requireUndecided(statementId)
         if suspected.contains(where: { $0.statementId == statementId }) { return }
         manualStatementIds.insert(statementId); suspected.append(.init(statementId: statementId, markedAt: timestamp))
+        refreshPreparedSnapshot()
     }
-    mutating func clearSuspected(statementId: String) { suspected.removeAll { $0.statementId == statementId } }
+    mutating func clearSuspected(statementId: String) {
+        suspected.removeAll { $0.statementId == statementId }
+        refreshPreparedSnapshot()
+    }
     mutating func undoSameExpense(_ id: String, at timestamp: Date) throws {
         guard let index = resolutions.firstIndex(where: { $0.id == id }), resolutions[index].source == .user,
               resolutions[index].resolution == .sameExpense, let snapshot = resolutions[index].actualSnapshot,
@@ -321,5 +341,6 @@ struct KMLocalReconciliation: Sendable {
             if !supported { aliases.removeAll { KMReconciliationEngine.aliasKey($0.merchant, $0.aliasMerchant) == key && ($0.learnedBy == nil || $0.learnedBy!.hasPrefix("reconciliation-resolution:")) } }
         }
         undoHistory.append(.init(resolution: value, undoneAt: value.undoRequestedAt ?? timestamp)); resolutions.remove(at: index)
+        refreshPreparedSnapshot()
     }
 }

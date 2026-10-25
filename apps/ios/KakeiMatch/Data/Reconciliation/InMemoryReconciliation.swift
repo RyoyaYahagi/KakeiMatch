@@ -2,8 +2,12 @@ import Foundation
 
 @MainActor extension KMInMemoryStore {
     func recordManualReview(statementId: String) {
-        var state = currentReconciliation(); state.manualStatementIds.insert(statementId)
+        var state = currentReconciliation(); state.recordManualReview(statementId: statementId)
         reconciliationState = state
+    }
+    func clearSuspectedReview(statementId: String) {
+        var state = currentReconciliation(); state.clearSuspected(statementId: statementId)
+        reconciliationState = state; suspectedValues = state.suspected
     }
     private func currentReconciliation() -> KMLocalReconciliation {
         var state = reconciliationState ?? KMLocalReconciliation(statements: statementValues, imports: importValues,

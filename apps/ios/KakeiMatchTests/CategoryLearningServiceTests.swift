@@ -49,9 +49,40 @@ struct CategoryLearningServiceTests {
             items: [], availableCategoryIds: [], confirmedAt: timestamp) == nil)
     }
 
+    @Test func merchantCategoryIncludesCategoriesFromItemsWithoutLearnableNames() {
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let blankOnly = KMCategoryLearningService.observation(receiptId: "receipt", merchant: "Synthetic Market",
+            defaultCategoryId: "home-custom", items: [("   ", "food-custom")],
+            availableCategoryIds: ["food-custom", "home-custom"], confirmedAt: timestamp)
+        #expect(blankOnly?.items.isEmpty == true)
+        #expect(blankOnly?.merchantCategoryId == "food-custom")
+
+        let mixed = KMCategoryLearningService.observation(receiptId: "receipt-2", merchant: "Synthetic Market",
+            defaultCategoryId: "home-custom", items: [("Milk", "food-custom"), ("   ", nil)],
+            availableCategoryIds: ["food-custom", "home-custom"], confirmedAt: timestamp)
+        #expect(mixed?.merchantCategoryId == nil)
+        #expect(mixed?.items.map(\.categoryId) == ["food-custom"])
+    }
+
+    @Test func rulesPreserveFirstSeenMapOrder() {
+        let observations = ["zebra", "apple"].flatMap { name in
+            (1...3).map { index in
+                KMCategoryLearningObservation(targetType: .categoryLearning, receiptId: "\(name)-\(index)",
+                    normalizedMerchant: "merchant-\(name)", merchantCategoryId: "food-custom",
+                    items: [.init(normalizedName: name, categoryId: "food-custom")],
+                    confirmedAt: Date(timeIntervalSince1970: TimeInterval(index)))
+            }
+        }
+        let stats = KMCategoryLearningService.deriveStats(observations: observations, availableCategoryIds: ["food-custom"])
+        #expect(stats.filter { $0.targetType == .item }.map(\.normalizedName) == ["zebra", "apple"])
+        #expect(stats.filter { $0.targetType == .merchant }.map(\.normalizedName) == ["merchant-zebra", "merchant-apple"])
+    }
+
     @Test func normalizesConservativelyAndAppliesOverrides() {
         #expect(KMCategoryLearningService.normalizeName("  Synthetic ＭＩＬＫ  ") == "synthetic milk")
         #expect(KMCategoryLearningService.normalizeName(String(repeating: "x", count: 1_001)).isEmpty)
+        #expect(KMCategoryLearningService.normalizeName(String(repeating: "😀", count: 501)).isEmpty)
+        #expect(KMCategoryLearningService.normalizeName(String(repeating: "😀", count: 500)).utf16.count == 1_000)
         #expect(KMCategoryLearningService.normalizeName("Synthetic Milk 2") != KMCategoryLearningService.normalizeName("Synthetic Milk"))
         let stats = KMCategoryLearningService.deriveStats(observations: [observation("a"), observation("b"), observation("c")], availableCategoryIds: ["food-custom"])
         let overridden = KMCategoryLearningService.applyingOverrides(stats, overrides: [.init(targetType: .item, normalizedName: "synthetic milk", disabled: true, deleted: nil, categoryId: "home-custom")], availableCategoryIds: ["food-custom", "home-custom"])

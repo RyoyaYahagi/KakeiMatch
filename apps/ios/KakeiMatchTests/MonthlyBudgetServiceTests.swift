@@ -53,6 +53,11 @@ struct MonthlyBudgetServiceTests {
         #expect(summary.categories.first(where: { $0.categoryId == "food" })?.budgetYen == 3_000)
     }
 
+    @Test func identifierLengthsUseJavaScriptUtf16Units() {
+        #expect(KMMonthlyBudgetSettings.validIdentifier(String(repeating: "😀", count: 64)))
+        #expect(!KMMonthlyBudgetSettings.validIdentifier(String(repeating: "😀", count: 65)))
+    }
+
     @Test func safelySumsAndRejectsOverflow() throws {
         #expect(try KMMonthlyBudgetService.checkedSum([1_000, 2_000]) == 3_000)
         #expect(throws: (any Error).self) { try KMMonthlyBudgetService.checkedSum([KMYen.maxSafe, 1]) }

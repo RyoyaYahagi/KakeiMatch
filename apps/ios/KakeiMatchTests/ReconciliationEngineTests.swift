@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import KakeiMatch
 
@@ -80,11 +81,11 @@ struct ReconciliationEngineTests {
             receipt("merchant", merchant: "架空ストア新宿", amount: 1160, date: "2026-09-09"),
             receipt("date-amount", merchant: "無関係カフェ")
         ])
-        #expect(priority.candidates.map(\\.receiptId) == ["date-amount", "merchant"])
+        #expect(priority.candidates.map(\.receiptId) == ["date-amount", "merchant"])
 
         let automaticRetained = KMReconciliationEngine.run(statements: [statement("s")], receipts: [
-            receipt("automatic"), receipt("other-a", date: "2026-09-09"),
-            receipt("other-b", date: "2026-09-11"), receipt("other-c", date: "2026-09-12")
+            receipt("automatic"), receipt("other-a", merchant: "別店舗A", date: "2026-09-09"),
+            receipt("other-b", merchant: "別店舗B", date: "2026-09-11"), receipt("other-c", merchant: "別店舗C", date: "2026-09-12")
         ])
         #expect(automaticRetained.statementResults[0].status == .matched)
         #expect(automaticRetained.candidates.count == 3)
@@ -95,6 +96,28 @@ struct ReconciliationEngineTests {
         #expect(manual.candidates.count == 1)
         let unscoped = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", account: "other-account")])
         #expect(unscoped.statementResults[0].status == .matched)
+    }
+
+    @Test func autoMatchMarginUsesRoundedJavaScriptBinary64() {
+        let result = KMReconciliationEngine.run(statements: [statement("s", merchant: "abcdx")], receipts: [
+            receipt("top", merchant: "abcdx"), receipt("runner-up", merchant: "abxyz"),
+        ])
+        #expect(result.statementResults.first?.status == .matched)
+        #expect(result.statementResults.first?.matchedReceiptId == "top")
+        #expect(KMReconciliationEngine.merchantSimilarity("abcdx", "abxyz") == Decimal(string: "0.25")!)
+    }
+
+    @Test func reconciliationAmountsMustBeSafeIntegers() {
+        let maximum = KMReconciliationEngine.run(statements: [statement("safe", amount: KMYen.maxSafe)],
+            receipts: [receipt("safe", amount: KMYen.maxSafe)])
+        #expect(maximum.statementResults.first?.status == .matched)
+        let unsafeStatement = KMReconciliationEngine.run(statements: [statement("unsafe", amount: KMYen.maxSafe + 1)],
+            receipts: [receipt("safe", amount: KMYen.maxSafe)])
+        #expect(unsafeStatement.candidates.isEmpty)
+        #expect(unsafeStatement.statementResults.first?.status == .unmatchedStatement)
+        let unsafeReceipt = KMReconciliationEngine.run(statements: [statement("safe", amount: KMYen.maxSafe)],
+            receipts: [receipt("unsafe", amount: KMYen.maxSafe + 1)])
+        #expect(unsafeReceipt.candidates.isEmpty)
     }
 
     @Test func tolerancesAndInputOrderingAreDeterministic() {

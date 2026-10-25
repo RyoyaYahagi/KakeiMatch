@@ -44,9 +44,18 @@ struct RecurringScheduleServiceTests {
         #expect(throws: (any Error).self) { try KMRecurringScheduleService.validatedInput(schedule) }
     }
 
-    @Test func catchesAmountOverflowAndIncludesTokyoDayFromInstantAtDomainBoundary() throws {
-        let tooLarge = input(.weekly, start: "2026-10-01", amount: KMYen.maxSafe)
-        #expect(throws: (any Error).self) { try KMRecurringScheduleService.preview(input: tooLarge, scheduleId: "rent", through: date("2026-10-08")) }
+    @Test func validatesNameLengthInJavaScriptUtf16Units() throws {
+        var schedule = input(.monthly, start: "2026-10-01")
+        schedule.name = String(repeating: "😀", count: 100)
+        #expect(try KMRecurringScheduleService.validatedInput(schedule).name.utf16.count == 200)
+        schedule.name = String(repeating: "😀", count: 101)
+        #expect(throws: (any Error).self) { try KMRecurringScheduleService.validatedInput(schedule) }
+    }
+
+    @Test func keepsCatchUpBigIntegerTotalExactAndIncludesTokyoDayFromInstant() throws {
+        let maximum = input(.weekly, start: "2026-10-01", amount: KMYen.maxSafe)
+        let plan = try KMRecurringScheduleService.preview(input: maximum, scheduleId: "rent", through: date("2026-10-08"))
+        #expect(plan.totalAmountYen == Decimal(KMYen.maxSafe) * Decimal(2))
         #expect(KMDate(instant: ISO8601DateFormatter().date(from: "2026-10-04T12:00:00+09:00")!).rawValue == "2026-10-04")
     }
 }
