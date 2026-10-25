@@ -248,6 +248,7 @@ import ZIPFoundation
                 let food = try #require(try db.rows("SELECT id FROM categories WHERE name='食費'").first?.string("id"))
                 let daily = try #require(try db.rows("SELECT id FROM categories WHERE name='日用品'").first?.string("id"))
                 try db.execute("INSERT INTO accounts(id,name,offbudget) VALUES('off','合成対象外口座',1)")
+                try db.execute("UPDATE category_groups SET hidden=1 WHERE is_income=1")
                 for (id, account, amount, category) in [("split", bank, -3000, food), ("child-a", bank, -1000, food),
                     ("child-b", bank, -2000, daily), ("out", bank, -10000, food), ("in", cash, 10000, food),
                     ("opening", cash, 50000, food), ("off-tx", "off", -500, food)] {
@@ -269,6 +270,8 @@ import ZIPFoundation
         #expect(try await store.home(month: KMYearMonth("2026-10")).summary.expenseYen == 29868)
         #expect(try await store.accounts().first { $0.name == "現金" }?.balanceYen == 58340)
         #expect(try await store.transaction(id: "opening") == nil)
+        #expect(try await store.categories(includeHidden: false).allSatisfy { !$0.isIncome })
+        #expect(try await store.categories().first { $0.name == "給与" }?.hidden == true)
         let budgetId = try await store.budgetSettings().budgetId
         try await store.saveBudgetSettings(.empty(budgetId: budgetId))
         #expect(try await store.budgetSummary(month: KMYearMonth("2026-10")).budgetYen == 60000)

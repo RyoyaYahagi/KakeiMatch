@@ -93,7 +93,8 @@ import ZIPFoundation
         let categories = try categoryRows.map { row in
             let groupId = row.string("cat_group")
             return KMCategory(id: try row.required("id"), name: try row.required("name"), isIncome: row.int("is_income") == 1,
-                hidden: row.int("hidden") == 1, groupName: groups.first { $0.id == groupId }?.name ?? "支出", groupId: groupId)
+                hidden: row.int("hidden") == 1 || groups.first { $0.id == groupId }?.hidden == true,
+                groupName: groups.first { $0.id == groupId }?.name ?? "", groupId: groupId)
         }
         for index in groups.indices { groups[index].categoryIds = categories.filter { $0.groupId == groups[index].id }.map(\.id) }
         let payees = try db.rows("SELECT id,name,transfer_acct FROM payees WHERE tombstone=0 ORDER BY id").map { row in
