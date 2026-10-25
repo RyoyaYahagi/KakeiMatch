@@ -29,6 +29,32 @@ jobs:
       PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: ubuntu24.04-x64
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check whether PWA checks are needed
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          echo "skip_pwa=false" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            exit 0
+          fi
+          changed_files="$RUNNER_TEMP/changed-files"
+          if ! git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" > "$changed_files"; then
+            echo "Could not compare PR commits; running all checks."
+            exit 0
+          fi
+          [ -s "$changed_files" ] || exit 0
+          while IFS= read -r -d '' file; do
+            case "$file" in
+              apps/ios/*|.github/workflows/ios.yml) ;;
+              *) exit 0 ;;
+            esac
+          done < "$changed_files"
+          echo "skip_pwa=true" >> "$GITHUB_OUTPUT"
+          echo "Only iOS files changed; skipping PWA checks."
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
@@ -37,22 +63,31 @@ jobs:
           node-version: 22
           # A self-hosted host keeps its pnpm store; uploading it only costs time.
           cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm install --frozen-lockfile
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm lint
       # Also covers apps/pwa, so the build below skips its own tsc pass.
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm eval:reconciliation
-      - run: pnpm --dir apps/pwa test
-      - run: pnpm --dir apps/pwa exec cf build
-      - if: runner.environment == 'github-hosted'
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm typecheck
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm test
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm eval:reconciliation
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm --dir apps/pwa test
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm --dir apps/pwa exec cf build
+      - if: steps.changes.outputs.skip_pwa != 'true' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       # The runner image already provides Chromium's system libraries, so skip the slow apt step.
-      - run: pnpm --dir apps/pwa exec playwright-core install chromium
+      - if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm --dir apps/pwa exec playwright-core install chromium
       - name: Synthetic local-first flows without legacy runtime
+        if: steps.changes.outputs.skip_pwa != 'true'
         env:
           # A dev server may already hold 5173 on the self-hosted host.
           E2E_PORT: 5199
@@ -89,7 +124,7 @@ jobs:
             test:diagnostics-e2e test:security-e2e test:encryption-e2e test:receipt-ai-warnings-e2e test:guest-ai-e2e test:device-link-e2e test:local-data-rescue-e2e test:receipt-total-check-e2e test:receipt-ai-reading-e2e test:recurring-catch-up-e2e test:idb-migration-e2e test:actual-compatibility-e2e \
             | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
       - name: Upload E2E logs
-        if: failure()
+        if: failure() && steps.changes.outputs.skip_pwa != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-logs
