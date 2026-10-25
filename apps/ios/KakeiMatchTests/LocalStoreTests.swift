@@ -103,8 +103,8 @@ import ZIPFoundation
         #expect(try await restored.home(month: KMYearMonth("2026-10")) == beforeHome)
         #expect(try await restored.receiptImage(blobId: blobId) == image)
         #expect(try restored.originalArtifact(id: "statement-source:\(importRecord.id)") == csv)
-        #expect(try restored.importedRecords() == originalRecords)
-        #expect(try restored.settings().theme == beforeSettings.theme)
+        #expect(try KMJSON.encoder().encode(restored.importedRecords()) == KMJSON.encoder().encode(originalRecords))
+        #expect(try await restored.settings().theme == beforeSettings.theme)
     }
 
     private func rewriteNative(_ data: Data, _ change: (inout [String: Any]) -> Void) throws -> Data {
