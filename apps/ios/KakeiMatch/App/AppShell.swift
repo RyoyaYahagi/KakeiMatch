@@ -36,6 +36,7 @@ struct AppShell: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 KMBottomNavigation(selection: $tab, add: { showsChooser = true })
                     .frame(maxWidth: KMLayout.contentMax)
+                    .accessibilityHidden(showsChooser)
             }
             .accessibilityHidden(showsChooser)
             if showsChooser {

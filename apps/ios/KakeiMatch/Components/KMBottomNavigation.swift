@@ -49,8 +49,9 @@ struct KMBottomNavigation: View {
         }
         .padding(.horizontal, KMSpacing.space2)
         .frame(height: KMLayout.navHeight)
+        // Border belongs behind the floating add button, not across its face.
+        .background(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         .glassEffect(.regular, in: Rectangle())
-        .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("アプリ")
     }

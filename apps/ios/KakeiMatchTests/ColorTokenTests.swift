@@ -4,6 +4,13 @@ import UIKit
 @testable import KakeiMatch
 
 struct ColorTokenTests {
+    @Test @MainActor func scrimOpacityMatchesReference() {
+        for (style, expected) in [(UIUserInterfaceStyle.light, CGFloat(0.45)), (.dark, CGFloat(0.6))] {
+            let color = UIColor(KMColor.scrim).resolvedColor(with: UITraitCollection(userInterfaceStyle: style))
+            #expect(abs(color.cgColor.alpha - expected) < 0.0001)
+        }
+    }
+
     @Test @MainActor func baselinePalettes() {
         let pairs: [(Color, UInt32, UInt32)] = [
             (KMColor.bg, 0xFAF6F1, 0x17120E),

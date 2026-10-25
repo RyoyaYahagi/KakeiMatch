@@ -30,7 +30,7 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) は既存CIと独立して生成→build→Swift Testing→XCUITestを実行します。失敗時もxcresultを保存し、UIテストが保存した全タブ・追加シートのXCTAttachmentをPNGとして `ios-test-results` artifactに含めます。`gh run download <run-id> -n ios-test-results -D /tmp/ios-results` で取得できます。
+[`ios.yml`](../../.github/workflows/ios.yml) は既存CIと独立して生成→build→Swift Testing→XCUITestを実行します。失敗時もxcresultを `ios-test-results` に保存し、UIテストが保存した全タブ・追加シートのXCTAttachment（light/dark）をPNGとして `ios-reference-screenshots` artifactに含めます。`gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` で取得できます。PNGのUUIDと画面名の対応は `manifest.json` にあります。DEBUGビルドだけ `KM_UI_TEST_APPEARANCE=light|dark` を受け付け、UIテストでOS設定を変えずに外観を固定します。通常起動とReleaseはシステム設定に従います。
 
 runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載されていることを確認して選定しています。[runner-images (2026/10), macOS 15 / Xcode・Installed Simulators]
 

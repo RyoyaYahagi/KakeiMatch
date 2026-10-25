@@ -69,13 +69,21 @@ jobs:
           if [ -d UITests.xcresult ]; then
             xcrun xcresulttool export attachments --path UITests.xcresult --output-path screenshots
           fi
-      - name: Upload test results and screenshots (also on failure)
+      - name: Upload test results (also on failure)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-test-results
+          path: apps/ios/*.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload reference screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-reference-screenshots
           path: |
-            apps/ios/*.xcresult
-            apps/ios/screenshots/
+            apps/ios/screenshots/*.png
+            apps/ios/screenshots/manifest.json
           if-no-files-found: warn
           retention-days: 14

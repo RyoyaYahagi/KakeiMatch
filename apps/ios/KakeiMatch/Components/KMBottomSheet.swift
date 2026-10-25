@@ -7,6 +7,7 @@ struct KMBottomSheet<Content: View>: View {
     @Binding var isPresented: Bool
     @ViewBuilder var content: () -> Content
     @AccessibilityFocusState private var titleFocused: Bool
+    @State private var contentHeight: CGFloat = 360
 
     var body: some View {
         GeometryReader { geometry in
@@ -28,22 +29,27 @@ struct KMBottomSheet<Content: View>: View {
                         Button { isPresented = false } label: {
                             KMIcon(name: "close", size: 20)
                                 .frame(width: KMLayout.minimumHit, height: KMLayout.minimumHit)
+                                .glassEffect(.regular, in: Circle())
                         }
-                        .buttonStyle(.plain).foregroundStyle(KMColor.primary)
+                        .buttonStyle(.plain).foregroundStyle(KMColor.text)
                         .keyboardShortcut(.cancelAction)
                         .accessibilityLabel("閉じる").accessibilityIdentifier("record-sheet.close")
                     }
                     .contentShape(Rectangle()).gesture(dismissDrag)
+                    .padding(.bottom, KMSpacing.space3)
                     ScrollView {
                         content()
                             .padding(.bottom, KMSpacing.space6 + geometry.safeAreaInsets.bottom)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
                     }
                     .scrollBounceBehavior(.basedOnSize)
                 }
                 .padding(.horizontal, KMSpacing.space4)
                 .frame(maxWidth: KMLayout.contentMax)
-                .frame(height: min(480 + geometry.safeAreaInsets.bottom, geometry.size.height - 48))
+                // Grabber (21) + header hit target (44) + PWA header margin (12).
+                .frame(height: min(contentHeight + 77, geometry.size.height - 48))
                 .glassEffect(.regular.tint(KMColor.bg), in: UnevenRoundedRectangle(topLeadingRadius: KMRadius.sheet, topTrailingRadius: KMRadius.sheet))
+                .accessibilityElement(children: .contain)
                 .accessibilityAddTraits(.isModal)
                 .accessibilityIdentifier("record-sheet")
                 .transition(.move(edge: .bottom))
