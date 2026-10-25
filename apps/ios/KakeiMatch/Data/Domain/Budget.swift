@@ -77,7 +77,7 @@ struct KMMonthlyBudgetSettings: Codable, Equatable, Sendable {
     }
 
     func validated(for expectedBudgetId: String) throws -> Self {
-        guard !budgetId.isEmpty, budgetId.count <= 128, budgetId == expectedBudgetId,
+        guard Self.validIdentifier(budgetId), budgetId == expectedBudgetId,
               defaults.keys.allSatisfy(Self.validIdentifier),
               defaults.values.allSatisfy(Self.validAmount),
               (defaultTotal.map(Self.validAmount) ?? true),
@@ -229,7 +229,7 @@ struct KMMonthlyBudgetSettings: Codable, Equatable, Sendable {
         return sum
     }
 
-    static func validIdentifier(_ value: String) -> Bool { !value.isEmpty && value.count <= 128 }
+    static func validIdentifier(_ value: String) -> Bool { !value.isEmpty && value.utf16.count <= 128 }
     static func validAmount(_ value: Int) -> Bool { value >= 0 && value <= 9_007_199_254_740_991 }
     static func validSafeInteger(_ value: Int) -> Bool { value >= -9_007_199_254_740_991 && value <= 9_007_199_254_740_991 }
     static func validYearMonth(_ value: String) -> Bool {
