@@ -37,6 +37,16 @@ await context.route('**/api/ai/jev', route => {
 const click = name => page.getByRole('button', { name, exact: true }).click();
 const itemRow = index => page.locator('[data-receipt-item]').nth(index);
 async function settings(label) { await page.locator('#settings-tab').click(); await click(label); }
+async function openDetails(locator) {
+  if (await locator.getAttribute('open') === null) await locator.locator('summary').click();
+  await locator.locator('summary').waitFor({ state: 'visible' });
+  await locator.evaluate(element => element.open || new Promise(resolve => {
+    const observer = new MutationObserver(() => {
+      if (element.open) { observer.disconnect(); resolve(); }
+    });
+    observer.observe(element, { attributes: true, attributeFilter: ['open'] });
+  }));
+}
 async function addAccount(name) {
   await settings('支払元'); await click('支払元を追加する'); await page.getByLabel('支払元の名前', { exact: true }).fill(name); await click('追加する');
   await page.getByRole('button', { name: `${name} · 利用中`, exact: true }).waitFor();
@@ -129,7 +139,7 @@ try {
   // Users can inspect the learned evidence and override or disable an item rule.
   await settings('分類ルール');
   const milkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
-  await milkRule.locator('summary').click();
+  await openDetails(milkRule);
   await milkRule.getByText(/根拠: 3件 \/ 3件 · 一致率 100%/).waitFor();
   await page.screenshot({ path: process.env.PWA_CATEGORY_RULES_SCREENSHOT_PATH ?? '/tmp/issue-157-category-rules.png', fullPage: true });
   await milkRule.locator('select').selectOption(learningIds.home);
@@ -145,7 +155,7 @@ try {
   await cancelDraft();
   await settings('分類ルール');
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
-  await updatedMilkRule.locator('summary').click();
+  await openDetails(updatedMilkRule);
   await updatedMilkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
   await updatedMilkRule.locator('input[role=switch]').check();
   await updatedMilkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor({ state: 'attached' });
