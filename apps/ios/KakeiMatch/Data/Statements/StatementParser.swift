@@ -208,7 +208,7 @@ private struct CSV {
                 if c == "\"" { if i + 1 < chars.count && chars[i + 1] == "\"" { field.append("\""); i += 1 } else { quoted = false; closedQuote = true } }
                 else { field.append(c) }
             } else if c == "," { row.append(field); field = ""; closedQuote = false }
-            else if c == "\r" || c == "\n" { row.append(field); field = ""; if !(row.count == 1 && row[0].isEmpty) { records.append(row) }; row = []; closedQuote = false; if c == "\r" && i + 1 < chars.count && chars[i + 1] == "\n" { i += 1 } }
+            else if c == "\r" || c == "\n" || c == "\r\n" { row.append(field); field = ""; if !(row.count == 1 && row[0].isEmpty) { records.append(row) }; row = []; closedQuote = false; if c == "\r" && i + 1 < chars.count && chars[i + 1] == "\n" { i += 1 } }
             else if c == "\"" { if !field.isEmpty || closedQuote { return nil }; quoted = true }
             else { if closedQuote { return nil }; field.append(c) }
             i += 1

@@ -19,9 +19,9 @@ struct StatementParserTests {
         #expect(result.fatalErrors.isEmpty)
         #expect(result.encoding == "utf-8-bom")
         #expect(result.transactions.map(\.duplicateOrdinal) == [1, 2])
-        #expect(result.transactions[0].merchant == "食堂,駅前店")
-        #expect(result.transactions[0].amountYen == 1000)
-        #expect(result.transactions[0].sourceFingerprint == result.transactions[1].sourceFingerprint)
+        #expect(result.transactions.first?.merchant == "食堂,駅前店")
+        #expect(result.transactions.first?.amountYen == 1000)
+        #expect(result.transactions.first?.sourceFingerprint == result.transactions.dropFirst().first?.sourceFingerprint)
     }
 
     @Test func reviewsCancellationsAndUnsupportedPaymentRows() {

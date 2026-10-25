@@ -179,9 +179,9 @@ private struct MFCSV {
             let c = text[i]
             if quoted {
                 if c == "\"" { let next = text.index(after: i); if next < text.endIndex && text[next] == "\"" { field.append("\""); i = next } else { quoted = false; closed = true } }
-                else { field.append(c); if c == "\n" { line += 1 } else if c == "\r" { line += 1 } }
+                else { field.append(c); if c == "\r\n" || c == "\n" || c == "\r" { line += 1 } }
             } else if c == "," { row.append(field); field = ""; closed = false }
-            else if c == "\n" || c == "\r" {
+            else if c == "\n" || c == "\r" || c == "\r\n" {
                 row.append(field); field = ""; if !(row.count == 1 && row[0].isEmpty) { records.append(.init(fields: row, lineEnd: line)) }; row = []; closed = false
                 if c == "\r" { let next = text.index(after: i); if next < text.endIndex && text[next] == "\n" { i = next } }; line += 1
             } else if c == "\"" { if !field.isEmpty || closed { return nil }; quoted = true }

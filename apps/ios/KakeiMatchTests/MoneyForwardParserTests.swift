@@ -33,7 +33,7 @@ struct MoneyForwardParserTests {
     }
 
     @Test func reportsHeaderErrorsEmptyRowsAndInvalidCsv() {
-        let duplicate = KMMoneyForwardParser.parse(data: Data("日付,日付,内容,金額（円）,大項目\n".utf8), now: now)
+        let duplicate = KMMoneyForwardParser.parse(data: Data("日付,日付,内容,金額（円）,大項目\n2025/1/2,2025/1/2,test,-1,食費".utf8), now: now)
         #expect(duplicate.fatalErrors.first?.code == "header_mismatch")
         #expect(duplicate.duplicateHeaders == ["日付"])
         #expect(KMMoneyForwardParser.parse(data: Data("\"unfinished".utf8), now: now).fatalErrors.first?.code == "malformed_csv")
@@ -78,8 +78,8 @@ struct MoneyForwardParserTests {
         #expect(result.transactions.map { [$0.date.rawValue, $0.description, $0.sourceTransactionId ?? ""] } == [
             ["2026-01-02", "", "id-jan"], ["2026-12-31", "", ""], ["2026-12-31", "", ""],
         ])
-        #expect(KMMoneyForwardParser.description(result.transactions[0]) == "内容なし")
-        #expect(result.transactions[1].sourceKey == result.transactions[2].sourceKey)
+        #expect(result.transactions.first.map { KMMoneyForwardParser.description($0) } == "内容なし")
+        #expect(result.transactions.dropFirst().first?.sourceKey == result.transactions.dropFirst(2).first?.sourceKey)
         #expect(result.rowErrors == [.init(rowNumber: 7, reason: "日付を確認できません")])
     }
 
