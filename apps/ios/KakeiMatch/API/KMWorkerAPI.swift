@@ -3,6 +3,8 @@ import Foundation
 /// Cloud-only adapter. Does not read/write household repositories or retry paid requests.
 actor KMWorkerAPI {
     enum Identity: String, Sendable { case account, guest }
+    private struct AuthFailure: Codable { let code: String?; let message: String }
+    private struct Failure: Codable { let error: String }
     private let configuration: KMAPIConfiguration
     private let session: URLSession
     private let credentials: any KMCloudCredentialStore
@@ -274,11 +276,9 @@ actor KMWorkerAPI {
             let code: String?
             if path.hasPrefix("/api/auth/"), let json = try? JSONDecoder().decode(KMAPIJSON.self, from: data),
                case .object(let object) = json, object["message"] != nil {
-                struct AuthFailure: Codable { let code: String?; let message: String }
                 _ = try KMAPIValidation.decode(AuthFailure.self, data: data, shape: .object(["code": .text(max: 100), "message": .text(max: 2000)], optional: ["code"]))
                 code = http.statusCode == 401 ? "unauthorized" : nil
             } else {
-                struct Failure: Codable { let error: String }
                 code = try KMAPIValidation.decode(Failure.self, data: data, shape: .object(["error": .text(max: 100)])).error
             }
             let error = KMAPIError.from(status: http.statusCode, code: code)

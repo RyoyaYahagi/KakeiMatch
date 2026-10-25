@@ -56,7 +56,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283（main 起点） | Linux | 統合修正中。設計は `docs/DATA_LAYER.md` |
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
 | iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | 作成中（#283 上） | Linux | 作業中 |
-| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #280上のstack（PR番号は作成後追記） | Linux | typed通信・応答検証・Keychain・給与画像マスキング・URLProtocolテストを追加。認証の制約と未実装は `docs/API_LAYER.md`。CI結果はPR参照 |
+| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287（base: main） | Linux | typed通信・応答検証・Keychain・給与画像マスキング・URLProtocolテストを追加。認証の制約と未実装は `docs/API_LAYER.md`。CI結果はPR参照 |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
