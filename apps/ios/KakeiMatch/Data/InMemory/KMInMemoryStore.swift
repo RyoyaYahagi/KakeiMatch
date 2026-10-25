@@ -10,17 +10,23 @@ import Foundation
     var categoryValues: [KMCategory]
     var groupValues: [KMCategoryGroup]
     var receiptValues: [KMReceipt]
+    /// Native IDs are preserved on import; fixture-only names are synthesized below.
+    var payeeValues: [KMPayee] = []
     var imageValues: [String: Data] = [:]
     var importValues: [KMLocalRecord<KMStatementImport>] = []
     var statementValues: [KMStatementTransaction] = []
     var runValues: [KMReconciliationRun] = []
     var resolutionValues: [KMReconciliationResolution] = []
-    var reconciliationState: KMLocalReconciliation?
+    var serviceState = KMServiceState()
+    var reconciliationState: KMLocalReconciliation? {
+        get { serviceState.reconciliation }
+        set { serviceState.reconciliation = newValue }
+    }
     var suspectedValues: [KMSuspectedStatement] = []
     var recurringValues: [KMRecurringTransaction] = []
     var payrollValues: [KMPayrollRecord] = []
     var ruleValues: [KMCategoryLearningRule] = []
-    private var ruleOverrides: [KMCategoryRuleOverride] = []
+    var ruleOverrides: [KMCategoryRuleOverride] = []
     var settingsValue = KMAppSettings()
     var monthlySettings: KMMonthlyBudgetSettings
     /// Untouched native Actual amounts are separate from KakeiMatch overrides.
@@ -193,7 +199,8 @@ import Foundation
         categoryValues.removeAll { $0.id == id }
     }
     func payees() async throws -> [KMPayee] {
-        Array(Set(transactionValues.compactMap(\.payeeName))).sorted().map { KMPayee(id: "fixture-payee:" + $0, name: $0) }
+        let known = Set(payeeValues.map(\.name))
+        return payeeValues + Array(Set(transactionValues.compactMap(\.payeeName)).subtracting(known)).sorted().map { KMPayee(id: "fixture-payee:" + $0, name: $0) }
     }
     func receipts() async throws -> [KMReceipt] { receiptValues.sorted { $0.createdAt > $1.createdAt } }
     func receipt(id: String) async throws -> KMReceipt? { receiptValues.first { $0.id == id } }
@@ -242,14 +249,19 @@ import Foundation
     }
     func recurringTransactions() async throws -> [KMRecurringTransaction] { recurringValues }
     func saveRecurring(_ value: KMRecurringTransaction) async throws {
-        try validAmount(value.amountYen); try openAccount(value.accountId); try validCategory(value.categoryId, income: value.kind == .income)
+        try KMRecurringScheduleService.validateMastersAndUniqueness(input: recurringInput(value), editingId: value.id,
+            categories: categoryValues, accounts: accountValues, schedules: recurringValues)
         recurringValues.removeAll { $0.id == value.id }; recurringValues.append(value)
     }
     func deleteRecurring(id: String) async throws { recurringValues.removeAll { $0.id == id } }
     func payrollRecords() async throws -> [KMPayrollRecord] { payrollValues }
     func savePayrollRecord(_ record: KMPayrollRecord) async throws { payrollValues.removeAll { $0.id == record.id }; payrollValues.append(record) }
     func categoryRules() async throws -> [KMCategoryLearningRule] {
-        ruleValues.map { value in
+        let available = Set(categoryValues.filter { !$0.isIncome }.map(\.id))
+        let stats = KMCategoryLearningService.deriveStats(observations: serviceState.observations, availableCategoryIds: available)
+        let derived = KMCategoryLearningService.applyingOverrides(stats, overrides: ruleOverrides, availableCategoryIds: available)
+        if !serviceState.observations.isEmpty { return derived }
+        return ruleValues.map { value in
             guard let override = ruleOverrides.first(where: { $0.targetType == value.targetType && $0.normalizedName == value.normalizedName }) else { return value }
             var result = value
             result.categoryId = override.categoryId ?? result.categoryId
@@ -268,6 +280,41 @@ import Foundation
         ruleOverrides.removeAll { $0.targetType == targetType && $0.normalizedName == normalizedName }
     }
     func resetCategoryRuleOverrides() async throws { ruleOverrides = [] }
+    func categoryObservations() async throws -> [KMCategoryLearningObservation] { serviceState.observations }
+    func saveCategoryObservation(_ value: KMCategoryLearningObservation) async throws {
+        guard !value.receiptId.isEmpty, !value.normalizedMerchant.isEmpty else { throw KMDataError.invalidData("分類履歴を確認してください。") }
+        if let old = serviceState.observations.first(where: { $0.receiptId == value.receiptId }), old.confirmedAt > value.confirmedAt { return }
+        if let index = serviceState.observations.firstIndex(where: { $0.receiptId == value.receiptId }) { serviceState.observations[index] = value }
+        else { serviceState.observations.append(value) }
+    }
+    private func recurringInput(_ value: KMRecurringTransaction) -> KMRecurringScheduleInput {
+        .init(name: value.name, kind: value.kind, amountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId,
+            frequency: value.frequency, startDate: value.startDate, postsTransaction: value.postsTransaction)
+    }
+    func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence] {
+        serviceState.occurrences.filter { $0.scheduleId == scheduleId }
+    }
+    func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws {
+        guard let schedule = recurringValues.first(where: { $0.id == id }), !schedule.completed, schedule.postsTransaction else {
+            throw KMDataError.invalidData("実行できる定期登録を選んでください。")
+        }
+        let input = recurringInput(schedule)
+        try KMRecurringScheduleService.validateMastersAndUniqueness(input: input, editingId: id,
+            categories: categoryValues, accounts: accountValues, schedules: recurringValues)
+        let imported = Set(transactionValues.compactMap(\.importedId))
+        let consumed = Set(serviceState.occurrences.filter { $0.scheduleId == id }.map(\.date)).union(
+            dates.filter { imported.contains(KMRecurringScheduleService.importedId(scheduleId: id, date: $0)) })
+        let selected = try KMRecurringScheduleService.selectedOccurrences(dates, input: input, through: through, alreadyConsumed: consumed)
+        // No fallible operations after validation: in-memory and durable adapters share atomic domain behavior.
+        for date in selected {
+            let importedId = KMRecurringScheduleService.importedId(scheduleId: id, date: date)
+            transactionValues.append(.init(id: importedId, date: date, amountYen: schedule.kind == .expense ? -schedule.amountYen : schedule.amountYen,
+                kind: schedule.kind == .expense ? .expense : .income, payeeName: schedule.name,
+                categoryName: categoryValues.first { $0.id == schedule.categoryId }?.name, accountId: schedule.accountId,
+                categoryId: schedule.categoryId, importedId: importedId))
+            serviceState.occurrences.append(.init(scheduleId: id, date: date, importedId: importedId, processedAt: timestamp))
+        }
+    }
     func settings() async throws -> KMAppSettings { settingsValue }
     func saveSettings(_ settings: KMAppSettings) async throws { settingsValue = settings }
 }

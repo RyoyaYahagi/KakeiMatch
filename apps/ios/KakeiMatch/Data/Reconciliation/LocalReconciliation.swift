@@ -23,7 +23,7 @@ struct KMReconciliationUndo: Codable, Equatable, Sendable {
 /// Pure device-local state machine. A durable adapter must reserve decisions before ledger I/O,
 /// persist processing/failed states and read back the ledger (see local-reconciliation.ts).
 /// The in-memory adapter applies these transitions atomically to value snapshots.
-struct KMLocalReconciliation: Sendable {
+struct KMLocalReconciliation: Codable, Equatable, Sendable {
     var statements: [KMStatementTransaction]
     var imports: [KMLocalRecord<KMStatementImport>]
     var transactions: [KMTransaction]
@@ -39,7 +39,7 @@ struct KMLocalReconciliation: Sendable {
     var latest: KMReconciliationRun?
     private var preparedAtRun: Prepared?
 
-    struct Prepared: Equatable, Sendable {
+    struct Prepared: Codable, Equatable, Sendable {
         var statements: [KMStatementTransaction]
         var receipts: [KMReceipt]
         var imports: [KMLocalRecord<KMStatementImport>]
