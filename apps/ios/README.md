@@ -96,3 +96,5 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 [runner-images, 2026/10] GitHub. "macOS 15 Readme"（確認時のcommitを固定）. https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
 
 [Apple SwiftUI, 2026/10] Apple. "glassEffect(_:in:)". https://developer.apple.com/documentation/swiftui/view/glasseffect(_:in:) / "Glass". https://developer.apple.com/documentation/swiftui/glass
+
+CI skip-path verification.
