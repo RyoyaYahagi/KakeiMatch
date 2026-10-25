@@ -125,6 +125,20 @@ import ZIPFoundation
         #expect(try await reopened.categoryObservations() == observations)
         let derived = KMCategoryLearningService.deriveStats(observations: observations, availableCategoryIds: Set(categories.filter { !$0.isIncome }.map(\.id)))
         #expect(try await reopened.categoryRules() == KMCategoryLearningService.applyingOverrides(derived, overrides: [], availableCategoryIds: Set(categories.map(\.id))))
+        await #expect(throws: KMReconciliationError("stale_run")) {
+            try await reopened.ignoreStatement(runId: run.runId, statementId: statements[0].id, at: run.createdAt)
+        }
+        // Recreate v1's persisted layout and recover imported history from its untouched provenance.
+        let profile = try reopened.profile().current
+        let database = try KMStoreDatabase(url: directory.appendingPathComponent(profile.uuidString).appendingPathComponent("household.sqlite"))
+        try database.sql.execute("DELETE FROM objects WHERE collection='service-state'")
+        try database.sql.execute("PRAGMA user_version=1")
+        let migrated = try KMSQLiteStore(directory: directory)
+        #expect(try await migrated.categoryObservations() == observations)
+        #expect(try await migrated.latestRun() == run)
+        let decisions = try await reopened.resolutions()
+        #expect(try await migrated.resolutions() == decisions)
+        #expect(try await migrated.transactions(matching: .init(limit: nil)) == transactions)
         try reopened.returnToPreviousProfile()
         #expect(try await reopened.transaction(id: before.id) == before)
         try reopened.returnToPreviousProfile()

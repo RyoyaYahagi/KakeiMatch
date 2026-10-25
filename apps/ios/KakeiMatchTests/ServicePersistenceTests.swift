@@ -151,6 +151,30 @@ import Testing
         #expect(try await repo.budgets.budgetSummary(month: day.yearMonth).budgetYen == 5000)
     }
 
+    @Test func learningAndRecurringFailuresDoNotPublishPartialState() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try install(seed(), at: directory)
+        let schedule = KMRecurringTransaction(id: "schedule", name: "合成定期", kind: .expense, amountYen: 100,
+            categoryId: "food", accountId: "card", frequency: .monthly, startDate: day,
+            postsTransaction: true, completed: false, editable: true)
+        try await store.saveRecurring(schedule)
+        let db = try database(store)
+        let revision = try db.sql.rows("SELECT revision FROM control").first?.int("revision")
+        try db.sql.execute("CREATE TRIGGER fail_service BEFORE INSERT ON objects WHEN NEW.collection='service-state' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
+        let observation = try #require(KMCategoryLearningService.observation(receiptId: "r", merchant: "人工ストア",
+            defaultCategoryId: "food", items: [], availableCategoryIds: ["food"], confirmedAt: now))
+        await #expect(throws: (any Error).self) { try await store.saveCategoryObservation(observation) }
+        await #expect(throws: (any Error).self) { try await store.catchUpRecurring(id: "schedule", dates: [day], through: day, at: now) }
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.categoryObservations().isEmpty)
+        #expect(try await reopened.recurringOccurrences(scheduleId: "schedule").isEmpty)
+        #expect(try await reopened.transactions(matching: .init(limit: nil)).map(\.id) == ["t"])
+        #expect(try db.sql.rows("SELECT revision FROM control").first?.int("revision") == revision)
+        try db.sql.execute("DROP TRIGGER fail_service")
+        try await reopened.catchUpRecurring(id: "schedule", dates: [day], through: day, at: now)
+        #expect(try await reopened.recurringOccurrences(scheduleId: "schedule").count == 1)
+    }
+
     @Test func serviceWritesRollbackTogetherAndV1Migrates() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let store = try install(seed(), at: directory)
@@ -166,6 +190,11 @@ import Testing
         // Recreate an actual v1 layout by removing only the v2 collection.
         try db.sql.execute("DELETE FROM objects WHERE collection='service-state'")
         try db.sql.execute("PRAGMA user_version=1")
+        try db.sql.execute("CREATE TRIGGER fail_migration BEFORE INSERT ON objects WHEN NEW.collection='service-state' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
+        #expect(throws: (any Error).self) { try KMSQLiteStore(directory: directory) }
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 1)
+        #expect(try db.sql.rows("SELECT id FROM objects WHERE collection='service-state'").isEmpty)
+        try db.sql.execute("DROP TRIGGER fail_migration")
         let migrated = try KMSQLiteStore(directory: directory)
         #expect(try await migrated.transaction(id: "t")?.amountYen == -980)
         #expect(try await migrated.latestRun()?.runId == "one")
