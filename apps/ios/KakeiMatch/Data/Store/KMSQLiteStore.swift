@@ -50,6 +50,11 @@ import Foundation
     func importBackup(from url: URL) async throws {
         guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
         busy = true; defer { busy = false }
+        let prefix = try FileHandle(forReadingFrom: url)
+        let magic = try prefix.read(upToCount: 8) ?? Data()
+        try prefix.close()
+        if magic == KMNativeBackup.magic { try importNativeBackup(from: url); return }
+        guard magic == Data("KMATCHB1".utf8) else { throw KMPortableBackup.invalid() }
         let backup = try KMPortableBackup.read(url: url)
         let old = try profile(), id = UUID(), target = profileDirectory(id)
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
@@ -71,6 +76,64 @@ import Foundation
             }
             try publish(ProfilePointer(current: id, previous: old.current))
         } catch { try cleanup(target, after: error) }
+    }
+    /// Creates a complete native-only backup in a temporary .kmib file and returns its URL.
+    /// Export time means generation completed; the caller still owns saving/sharing the file.
+    func exportNativeBackup() async throws -> URL {
+        guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
+        busy = true; defer { busy = false }
+        let timestamp = Date()
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+        let snapshotURL = tempDirectory.appendingPathComponent("snapshot.sqlite")
+        try database().snapshot(to: snapshotURL)
+        let snapshot = try Data(contentsOf: snapshotURL, options: [.mappedIfSafe])
+        let artifacts = try KMStoreDatabase(url: snapshotURL).artifacts()
+        let archive = try KMNativeBackup.package(database: snapshot, artifacts: artifacts, exportedAt: timestamp)
+        let output = FileManager.default.temporaryDirectory.appendingPathComponent("KakeiMatch-\(UUID().uuidString).kmib")
+        try archive.write(to: output, options: .atomic)
+        do {
+            let current = try database().load()
+            current.settingsValue.lastExportAt = timestamp
+            try database().save(current)
+        } catch {
+            try FileManager.default.removeItem(at: output)
+            throw error
+        }
+        return output
+    }
+
+    private func importNativeBackup(from url: URL) throws {
+        let backup = try KMNativeBackup.read(url: url)
+        let old = try profile(), id = UUID(), target = profileDirectory(id)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        do {
+            let databaseURL = target.appendingPathComponent("household.sqlite")
+            try backup.database.write(to: databaseURL, options: [.atomic])
+            let incoming = try KMStoreDatabase(url: databaseURL)
+            let imported = try incoming.load()
+            let currentStore = try database().load()
+            imported.settingsValue.theme = currentStore.settingsValue.theme
+            try incoming.save(imported)
+            let actualArtifacts = try incoming.artifacts()
+            guard actualArtifacts.count == backup.artifacts.count else { throw KMPortableBackup.invalid() }
+            let expected = Dictionary(uniqueKeysWithValues: actualArtifacts.map { ($0.0, $0.1) })
+            for (path, bytes) in backup.artifacts {
+                guard let encoded = path.split(separator: "/").last,
+                      let artifactId = Self.decodeArtifactPath(String(encoded)), expected[artifactId] == bytes else { throw KMPortableBackup.invalid() }
+            }
+            let reopened = try KMStoreDatabase(url: databaseURL)
+            let verified = try reopened.load()
+            guard try fingerprint(imported) == fingerprint(verified) else { throw KMDataError.invalidData("復元した記録の読み戻しに失敗しました。") }
+            try publish(ProfilePointer(current: id, previous: old.current))
+        } catch { try cleanup(target, after: error) }
+    }
+    private static func decodeArtifactPath(_ component: String) -> String? {
+        var value = component.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
+        guard let data = Data(base64Encoded: value), let decoded = String(data: data, encoding: .utf8) else { return nil }
+        return decoded
     }
     func returnToPreviousProfile() throws {
         guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
@@ -106,13 +169,15 @@ import Foundation
             var receipts: [KMReceipt]; var statements: [KMStatementTransaction]; var imports: [KMLocalRecord<KMStatementImport>]
             var runs: [KMReconciliationRun]; var resolutions: [KMReconciliationResolution]; var payees: [KMPayee]
             var budget: KMMonthlyBudgetSettings; var nativeBudgets: [String: [String: Int]]; var payroll: [KMPayrollRecord]
+            var recurring: [KMRecurringTransaction]; var rules: [KMCategoryLearningRule]
             var suspected: [KMSuspectedStatement]; var overrides: [KMCategoryRuleOverride]; var settings: KMAppSettings
         }
         let encoder = KMJSON.encoder(); encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(Snapshot(transactions: store.transactionValues, accounts: store.accountValues, categories: store.categoryValues,
             groups: store.groupValues, receipts: store.receiptValues, statements: store.statementValues, imports: store.importValues,
             runs: store.runValues, resolutions: store.resolutionValues, payees: store.payeeValues, budget: store.monthlySettings,
-            nativeBudgets: store.nativeBudgets, payroll: store.payrollValues, suspected: store.suspectedValues, overrides: store.ruleOverrides, settings: store.settingsValue))
+            nativeBudgets: store.nativeBudgets, payroll: store.payrollValues, recurring: store.recurringValues, rules: store.ruleValues,
+            suspected: store.suspectedValues, overrides: store.ruleOverrides, settings: store.settingsValue))
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] { try await access { try await $0.transactions(matching: query) } }

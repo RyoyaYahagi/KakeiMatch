@@ -69,6 +69,82 @@ import ZIPFoundation
         #expect(throws: (any Error).self) { try second.save(oldSecond) }
         #expect(try first.load().accountValues.map(\.id) == ["winner"])
     }
+    @Test func nativeBackupRoundTripsEveryProjectionAndOriginal() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try KMSQLiteStore(directory: directory.appendingPathComponent("source"))
+        try await source.importBackup(from: fixture("synthetic", "kmb"))
+        let beforeHome = try await source.home(month: KMYearMonth("2026-10"))
+        let beforeTransactions = try await source.transactions(matching: .init(limit: nil))
+        let beforeAccounts = try await source.accounts(), beforeCategories = try await source.categories()
+        let beforeReceipts = try await source.receipts(), beforeStatements = try await source.statementTransactions()
+        let beforeRuns = try await source.latestRun(), beforeResolutions = try await source.resolutions()
+        let beforeBudget = try await source.budgetSettings(), beforePayroll = try await source.payrollRecords()
+        let beforeSettings = try await source.settings()
+        let originalRecords = try source.importedRecords()
+        let original = try #require(beforeReceipts.first { $0.image != nil })
+        let blobId = try #require(original.image?.blobId)
+        let image = try #require(try await source.receiptImage(blobId: blobId))
+        let importRecord = try #require(try await source.statementImports().first)
+        let csv = try #require(try source.originalArtifact(id: "statement-source:\(importRecord.id)"))
+        let output = try await source.exportNativeBackup()
+        #expect(output.pathExtension == "kmib")
+        #expect(try await source.settings().lastExportAt != nil)
+        let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
+        try await restored.importBackup(from: output)
+        #expect(try await restored.transactions(matching: .init(limit: nil)) == beforeTransactions)
+        #expect(try await restored.accounts() == beforeAccounts)
+        #expect(try await restored.categories() == beforeCategories)
+        #expect(try await restored.receipts() == beforeReceipts)
+        #expect(try await restored.statementTransactions() == beforeStatements)
+        #expect(try await restored.latestRun() == beforeRuns)
+        #expect(try await restored.resolutions() == beforeResolutions)
+        #expect(try await restored.budgetSettings() == beforeBudget)
+        #expect(try await restored.payrollRecords() == beforePayroll)
+        #expect(try await restored.home(month: KMYearMonth("2026-10")) == beforeHome)
+        #expect(try await restored.receiptImage(blobId: blobId) == image)
+        #expect(try restored.originalArtifact(id: "statement-source:\(importRecord.id)") == csv)
+        #expect(try restored.importedRecords() == originalRecords)
+        #expect(try restored.settings().theme == beforeSettings.theme)
+    }
+
+    private func rewriteNative(_ data: Data, _ change: (inout [String: Any]) -> Void) throws -> Data {
+        let length = data[8..<12].reduce(0) { $0 * 256 + Int($1) }
+        var manifest = try #require(try JSONSerialization.jsonObject(with: data.subdata(in: 12..<12 + length)) as? [String: Any])
+        change(&manifest)
+        let json = try JSONSerialization.data(withJSONObject: manifest, options: [.sortedKeys])
+        var result = KMNativeBackup.magic
+        let size = UInt32(json.count)
+        result.append(contentsOf: [UInt8(size >> 24), UInt8((size >> 16) & 255), UInt8((size >> 8) & 255), UInt8(size & 255)])
+        result.append(json); result.append(data.dropFirst(12 + length)); return result
+    }
+    @Test func nativeBackupRejectsCorruptionFutureVersionAndUnsafePathsWithoutSwitching() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory), row = try await seed(store), active = try store.profile().current
+        let dbURL = directory.appendingPathComponent("fixture.sqlite")
+        try KMStoreDatabase(url: dbURL).snapshot(to: directory.appendingPathComponent("unused.sqlite"))
+        let snapshot = try Data(contentsOf: directory.appendingPathComponent("unused.sqlite"))
+        let good = try KMNativeBackup.package(database: snapshot, artifacts: [], exportedAt: Date())
+        let damaged = directory.appendingPathComponent("damaged.kmib")
+        var bytes = good; bytes[bytes.count - 1] ^= 1
+        let variants = try [bytes,
+            rewriteNative(good) { $0["formatVersion"] = 2 },
+            rewriteNative(good) { manifest in var entries = manifest["entries"] as! [[String: Any]]; entries[0]["path"] = "../household.sqlite"; manifest["entries"] = entries },
+            rewriteNative(good) { manifest in var entries = manifest["entries"] as! [[String: Any]]; entries[0]["size"] = KMNativeBackup.maxEntry + 1; manifest["entries"] = entries }
+        ]
+        for variant in variants {
+            try variant.write(to: damaged)
+            await #expect(throws: (any Error).self) { try await store.importBackup(from: damaged) }
+            #expect(try store.profile().current == active)
+            #expect(try await store.transaction(id: row.id) == row)
+        }
+        var pwa = try Data(contentsOf: fixture("synthetic", "kmb"))
+        let pwaURL = directory.appendingPathComponent("pwa.kmb"); try pwa.write(to: pwaURL)
+        try await store.importBackup(from: pwaURL)
+        #expect(try store.profile().previous == active)
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == 12)
+        pwa.removeAll()
+    }
+
     @Test func importsRealPWABackupWithImagesStatementsAndIDs() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let store = try KMSQLiteStore(directory: directory), before = try await seed(store), old = try store.profile().current

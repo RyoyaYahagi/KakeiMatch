@@ -93,15 +93,19 @@ TSと同じ外側上限：manifest 2 MiB、端末記録64 MiB、entry 128 MiB、
 
 TS側のスキーマが変わったら再生成し、migration fixtureと拒否テストを確認する。PWAの既存ソースは変更しない。別担当の決定的サービスがこれらの独自記録を扱う際は、元JSONから対応するprojectionを追加する。
 
-## iOS → PWA書き出しの調査結果
+## iOSバックアップの書き出し・復元
 
-**今回は `.kmb` 書き出しを実装しない。** ZIPを作ること自体は可能だが、native snapshotをActual内部DBとして安全に再構成したとは保証できない。
+利用者決定（2026-10-26）により、**iOSからPWAへ戻す書き出しは提供しない**。PWAからiOSへの移行は従来どおり `.kmb` 取り込みを使う。機種変更・再インストール・誤操作からiOSの変更を守るため、iOS同士で復元できる専用バックアップを追加する。
 
-調査したActual API 26.9.0では、`exportBuffer()` は `db.sqlite` のcacheを除き、`metadata.json` に `resetClock=true` を付けてZIP化する。`importBuffer()` はこの2entryを同じdirectoryから取得し、家計簿を開く際にmigration一覧の一致、mapping、rule、CRDT clock等を処理する。`resetClock` はnode IDの更新であり、native snapshotを正しいActual DBへ変換するAPIではない。[Actual API (26.9.0), `exportBuffer` / `importBuffer` / `checkDatabaseValidity` / `loadClock`]
+### iOS専用形式 `.kmib`
 
-iOSのprojectionだけから、未対応のrule/schedule・migration・削除履歴・mapping・CRDTの整合性を作り直すのは危険である。元ZIPを返すだけではiOSの編集が消え、成功したように見えるため、その「書き出し」も提供しない。
+`.kmib` は非圧縮・非暗号化の独自containerで、PWA `.kmb` と別形式である。先頭magicは `KMIOB001`、manifestの `format` は `kakeimatch-ios-native-backup`、format versionは1、native SQLite schema versionは1。PWA `.kmb` は従来どおり `KMATCHB1`、`.kmb`、portable schema version 2を使う。どちらも拡張子だけでなくmagicを検査し、iOS readerはmagicにより`.kmb`を既存のPWA取り込みへ、`.kmib`をnative復元へ振り分ける。PWA readerが`.kmib`を`.kmb`として受理することはない。
 
-当面の代替は **元のPWAと `.kmb` を外部へ保管し、iOS→PWAへ戻す用途には元バックアップを使う**こと。iOSの新規変更はそれに含まれない。後続でActual公式APIを使う変換経路（native snapshot→検証済み公式API→exportBudget→PWA復元E2E）を別途実装・検証する必要がある。同期も現段階では受信のstaging/切替だけを再利用可能で、相互同期が完成したとは扱わない。
+manifestには生成日時と各entryのpath・size・SHA-256を含める。`household.sqlite` は稼働中のSQLite接続上で `VACUUM INTO` を実行して作った一貫したDB snapshotである。レシート画像・CSV原本も `artifacts/` entryとして同梱し、DB内の原本との対応を復元時に照合する。snapshotと原本は同一snapshot DBから取得する。format/schemaの未来版、未知manifest field、危険なpath、重複path、size/checksum/lengthの不一致、上限超過、余分なpayloadを拒否する。上限はmanifest 2 MiB、entry 128 MiB、entry合計256 MiB、最大10,000 entries。暗号化・改ざん検知は行わず、SHA-256は破損検出用である。ファイルを他人へ渡さないよう画面で案内する。
+
+`try await repositories.localStore?.exportNativeBackup()` は一時 `.kmib` のURLを返す。共有シートやFilesへの保存は画面側の責任である。生成日時は設定へ記録するが、利用者がファイルを保存できたことを意味しない。復元は専用manifestとDB schemaを検証した後、新profileへsnapshotをstageし、全collection・原本の読み戻しとfingerprint検証に成功した場合だけprofile pointerを切り替える。失敗時は現profileを保持し、成功後も従来の `returnToPreviousProfile()` で戻せる。
+
+iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `.kmb` 取り込みを継続する。PWAへの一方向の移行と、iOS間の保護用バックアップを混同しない。
 
 ## 検証・既知の制約・後続への申し送り
 

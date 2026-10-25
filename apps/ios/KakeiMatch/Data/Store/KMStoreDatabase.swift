@@ -134,4 +134,14 @@ import Foundation
     func original(_ id: String) throws -> Data? {
         try sql.rows("SELECT payload FROM artifacts WHERE id=?", [.text(id)]).first?.data("payload")
     }
+    func artifacts() throws -> [(String, Data)] {
+        try sql.rows("SELECT id,payload FROM artifacts ORDER BY id").map {
+            guard let payload = $0.data("payload") else { throw KMDataError.invalidData("端末DBの原本が不正です。") }
+            return (try $0.required("id"), payload)
+        }
+    }
+    func snapshot(to url: URL) throws {
+        guard !FileManager.default.fileExists(atPath: url.path) else { throw KMPortableBackup.invalid() }
+        try sql.execute("VACUUM INTO ?", [.text(url.path)])
+    }
 }
