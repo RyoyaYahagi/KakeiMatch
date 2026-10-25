@@ -61,7 +61,7 @@ enum KMStatementParser {
         guard let csv = CSV(text) else { return failure("malformed_csv") }
         let rows = csv.records
         if rows.isEmpty { return failure("empty_file") }
-        if rows.count - 1 > maxRows || rows.contains(where: { $0.contains(where: { $0.count > maxFieldLength }) }) { return failure("limit_exceeded") }
+        if rows.count - 1 > maxRows || rows.contains(where: { $0.contains(where: { $0.utf16.count > maxFieldLength }) }) { return failure("limit_exceeded") }
         switch provider {
         case .smbcCard: return smbc(rows, encoding)
         case .rakutenCard: return rakuten(rows, encoding)
@@ -86,15 +86,15 @@ enum KMStatementParser {
     private static func yen(_ value: String, signed: Bool = false) -> Int? {
         let s = value.trimmingCharacters(in: .whitespacesAndNewlines)
         if s.isEmpty { return 0 }
-        let pattern = signed ? #"^-?(?:0|[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)$"# : #"^(?:0|[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)$"#
-        guard s.range(of: pattern, options: .regularExpression) != nil, let n = Int(s.replacingOccurrences(of: ",", with: "")), abs(n) <= 9_007_199_254_740_991 else { return nil }
+        let pattern = signed ? #"^-?(?:0|[1-9][0-9]*|[1-9][0-9]{0,2}(?:,[0-9]{3})+)$"# : #"^(?:0|[1-9][0-9]*|[1-9][0-9]{0,2}(?:,[0-9]{3})+)$"#
+        guard s.range(of: pattern, options: .regularExpression) != nil, let n = Int(s.replacingOccurrences(of: ",", with: "")), n >= -9_007_199_254_740_991 && n <= 9_007_199_254_740_991 else { return nil }
         return n
     }
     private static func strictYen(_ s: String) -> Int? {
-        guard s.range(of: #"^[1-9]\d*$"#, options: .regularExpression) != nil, let n = Int(s), n <= 9_007_199_254_740_991 else { return nil }; return n
+        guard s.range(of: #"^[1-9][0-9]*$"#, options: .regularExpression) != nil, let n = Int(s), n <= 9_007_199_254_740_991 else { return nil }; return n
     }
     private static func date(_ s: String, flexible: Bool = false) -> String? {
-        let p = flexible ? #"^(\d{4})/(\d{1,2})/(\d{1,2})$"# : #"^(\d{4})/(\d{2})/(\d{2})$"#
+        let p = flexible ? #"^([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})$"# : #"^([0-9]{4})/([0-9]{2})/([0-9]{2})$"#
         guard let m = s.range(of: p, options: .regularExpression), let re = try? NSRegularExpression(pattern: p), let match = re.firstMatch(in: s, range: NSRange(m, in: s)) else { return nil }
         let parts = (1...3).compactMap { Range(match.range(at: $0), in: s).map { String(s[$0]) } }
         guard parts.count == 3, let yyyy = Int(parts[0]), let mm = Int(parts[1]), let dd = Int(parts[2]), (1...12).contains(mm), let valid = try? KMDate(String(format: "%04d-%02d-%02d", yyyy, mm, dd)) else { return nil }; return valid.rawValue
@@ -111,7 +111,7 @@ enum KMStatementParser {
         var ordinals: [String: Int] = [:]; var sum = 0
         for (i, row) in details.enumerated() {
             let n = i + 2
-            if row.contains(where: { $0.count > maxFieldLength }) { out.needsReviewRows.append(rowIssue(n, "明細の項目が長すぎます")); continue }
+            if row.contains(where: { $0.utf16.count > maxFieldLength }) { out.needsReviewRows.append(rowIssue(n, "明細の項目が長すぎます")); continue }
             let d = date(row[0]), amount = strictYen(row[2]), billed = strictYen(row[5]); var reason: String?
             if d == nil { reason = "利用日を確認できません" }
             else if row[1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { reason = "利用先を確認できません" }
@@ -137,7 +137,7 @@ enum KMStatementParser {
         for row in body where row.count == 12 { let merchant = row[1].trimmingCharacters(in: .whitespacesAndNewlines); for s in row[5..<11] { if let n = yen(s, signed: true), n < 0 { cancellations.insert("\(merchant)|\(-n)") } } }
         for (i, r) in body.enumerated() {
             let n = i + 2
-            if r.count != 12 || r.contains(where: { $0.count > maxFieldLength }) { out.fatalErrors.append(.init(rowNumber: n, code: r.contains(where: { $0.count > maxFieldLength }) ? "limit_exceeded" : "invalid_row")); continue }
+            if r.count != 12 || r.contains(where: { $0.utf16.count > maxFieldLength }) { out.fatalErrors.append(.init(rowNumber: n, code: r.contains(where: { $0.utf16.count > maxFieldLength }) ? "limit_exceeded" : "invalid_row")); continue }
             let d = date(r[0].trimmingCharacters(in: .whitespacesAndNewlines), flexible: true), pd = date(r[11].trimmingCharacters(in: .whitespacesAndNewlines), flexible: true), merchant = r[1].trimmingCharacters(in: .whitespacesAndNewlines)
             let amounts = r[5...10].map { yen($0, signed: true) }; var reason: String?
             if d == nil { reason = "利用日を確認できません" } else if pd == nil { reason = "当月お支払日を確認できません" } else if merchant.isEmpty { reason = "利用先を確認できません" } else if amounts.contains(where: { $0 == nil }) { reason = "金額欄を確認できません" } else if r[3].trimmingCharacters(in: .whitespacesAndNewlines) != "PayPayクレジット" { reason = "PayPayクレジット以外の決済方法です" } else if r[4].trimmingCharacters(in: .whitespacesAndNewlines) != "1回" { reason = "1回払い以外の可能性があります" } else if merchant.range(of: #"キャンセル|取消|返金|返品"#, options: .regularExpression) != nil { reason = "返金・取消の可能性があります" }
@@ -147,7 +147,7 @@ enum KMStatementParser {
             if let reason { out.needsReviewRows.append(rowIssue(n, reason)); continue }
             let amount = amounts[0]!; let method = r[3].trimmingCharacters(in: .whitespacesAndNewlines); let type = r[4].trimmingCharacters(in: .whitespacesAndNewlines)
             let fp = fingerprint(["paypay_card", "purchase", d!, merchant, String(amount), method, type]); ordinals[fp, default: 0] += 1
-            out.transactions.append(.init(provider: .paypayCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount!, paymentMethod: "\(method)（\(type)）", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!))
+            out.transactions.append(.init(provider: .paypayCard, usedDate: resultDate(d!), merchant: merchant, amountYen: amount, paymentMethod: "\(method)（\(type)）", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!))
         }
         if !out.fatalErrors.isEmpty { out.transactions = [] }; return out
     }
@@ -166,7 +166,7 @@ enum KMStatementParser {
         let template = twelve ? rakuten12 : rakuten11; let signature = (try? JSONSerialization.data(withJSONObject: template)) .flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         guard !body.isEmpty else { return empty("header_only", encoding, signature: signature) }
         if body.contains(where: { $0.count != template.count }) { return empty("unsupported_layout", encoding, rows: body.count, signature: signature) }
-        if body.contains(where: { $0.contains(where: { $0.count > maxFieldLength }) }) { return empty("limit_exceeded", encoding, rows: body.count, signature: signature) }
+        if body.contains(where: { $0.contains(where: { $0.utf16.count > maxFieldLength }) }) { return empty("limit_exceeded", encoding, rows: body.count, signature: signature) }
         var out = KMStatementParseResult(totalRows: body.count, encoding: encoding, headerSignature: signature); var ordinals: [String: Int] = [:]; var prior: (row: Int, fingerprint: String)?
         func addReview(_ row: Int, _ reason: String, continuation: Bool) {
             if continuation, let p = prior, p.row == row - 1 { out.transactions.removeAll { $0.sourceFingerprint == p.fingerprint && $0.duplicateOrdinal == (ordinals[p.fingerprint] ?? 1) }; ordinals[p.fingerprint] = max((ordinals[p.fingerprint] ?? 1) - 1, 0); out.needsReviewRows.append(rowIssue(p.row, "複数行明細の可能性があるため確認してください")) }

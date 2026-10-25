@@ -70,14 +70,14 @@ enum KMMoneyForwardParser {
     static func parse(data: Data, now: Date = Date()) -> KMMoneyForwardParseResult {
         if data.count > maxBytes { return failure("limit_exceeded") }
         let bom = data.starts(with: [0xef,0xbb,0xbf]); var encoding = bom ? "utf-8-bom" : "utf-8"
-        if data.isEmpty { return failure("empty_file", encoding) }; if data.count > maxBytes { return failure("limit_exceeded", encoding) }; if data.contains(0) { return failure("invalid_file", encoding) }
+        if data.isEmpty { return failure("empty_file", encoding) }; if data.count > maxBytes { return failure("limit_exceeded", encoding) }; if data.contains(0) { return failure("invalid_file") }
         let raw = bom ? Data(data.dropFirst(3)) : data
         var text = String(data: raw, encoding: .utf8)
         if text == nil { text = String(data: data, encoding: .shiftJIS); encoding = "shift_jis" }
-        guard let text else { return failure("invalid_file", encoding) }
+        guard let text else { return failure("invalid_file") }
         guard let csv = MFCSV(text) else { return failure("malformed_csv", encoding) }
         if csv.records.isEmpty { return failure("empty_file", encoding) }
-        if csv.records.count - 1 > maxRows || csv.records.contains(where: { $0.fields.contains(where: { $0.count > maxFieldLength }) }) { return failure("limit_exceeded", encoding) }
+        if csv.records.count - 1 > maxRows || csv.records.contains(where: { $0.fields.contains(where: { $0.utf16.count > maxFieldLength }) }) { return failure("limit_exceeded", encoding) }
         let rows = csv.records.enumerated().filter { $0.offset == 0 || $0.element.fields.contains(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) }
         let records = rows.map { $0.element.fields }, lineEnds = rows.map { $0.element.lineEnd }
         let headers = records[0]
@@ -105,8 +105,11 @@ enum KMMoneyForwardParser {
             if isTransfer { out.excludedRows.append(.init(rowNumber: line, reason: "transfer")); continue }
             if !included { out.excludedRows.append(.init(rowNumber: line, reason: "excluded_from_calculation")); continue }
             let description = get("description"), account = get("account"), memo = get("memo"), identifier = get("id")
-            let identity = identifier.isEmpty ? ["row", day.rawValue, description, String(amount), account, major, minor, memo, transferValue, calculationValue] : ["id", identifier]
-            let sourceKey = hash("[\"moneyforward\",\(json(identity))]")
+            let identity: [Any] = identifier.isEmpty
+                ? ["row", day.rawValue, description, String(amount), account.isEmpty ? NSNull() as Any : account as Any, major, minor, memo, transferValue, calculationValue]
+                : ["id", identifier]
+            let sourcePayload = try! JSONSerialization.data(withJSONObject: ["moneyforward", identity] as [Any], options: [.fragmentsAllowed, .withoutEscapingSlashes])
+            let sourceKey = hash(sourcePayload)
             out.transactions.append(.init(rowNumber: line, date: day, description: description, amountYen: amount, kind: amount < 0 ? .expense : .income, accountName: account.isEmpty ? nil : account, majorCategory: major, minorCategory: minor, memo: memo, sourceTransactionId: identifier.isEmpty ? nil : identifier, sourceKey: sourceKey, isTransfer: isTransfer, isIncludedInCalculation: included, categoryNeedsReviewReason: major == "現金・カード" ? "現金・カードの分類を確認してください" : nil))
         }
         return out
@@ -151,14 +154,14 @@ enum KMMoneyForwardParser {
     private static func headerKey(_ value: String) -> String { value.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines).filter { !$0.isWhitespace }.lowercased() }
     private static func signature(_ headers: [String]) -> String { json(headers.map(headerKey)) }
     private static func json(_ strings: [String]) -> String { let data = (try? JSONSerialization.data(withJSONObject: strings, options: [.fragmentsAllowed, .withoutEscapingSlashes])) ?? Data("[]".utf8); return String(data: data, encoding: .utf8) ?? "[]" }
-    private static func hash(_ value: String) -> String { SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined() }
+    private static func hash(_ value: Data) -> String { SHA256.hash(data: value).map { String(format: "%02x", $0) }.joined() }
     private static func parseDate(_ value: String) -> KMDate? {
-        guard let re = try? NSRegularExpression(pattern: #"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$"#), let m = re.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)), let y = Range(m.range(at: 1), in: value), let mo = Range(m.range(at: 2), in: value), let d = Range(m.range(at: 3), in: value) else { return nil }
+        guard let re = try? NSRegularExpression(pattern: #"^([0-9]{4})[/-]([0-9]{1,2})[/-]([0-9]{1,2})$"#), let m = re.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)), let y = Range(m.range(at: 1), in: value), let mo = Range(m.range(at: 2), in: value), let d = Range(m.range(at: 3), in: value) else { return nil }
         return try? KMDate(String(format: "%04d-%02d-%02d", Int(value[y])!, Int(value[mo])!, Int(value[d])!))
     }
     private static func parseYen(_ value: String) -> Int? {
         let normalized = value.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "￥", with: "").replacingOccurrences(of: "¥", with: "").replacingOccurrences(of: "円", with: "")
-        guard normalized.range(of: #"^-?(?:0|[1-9]\d*|[1-9]\d{0,2}(?:,\d{3})+)$"#, options: .regularExpression) != nil, let amount = Int(normalized.replacingOccurrences(of: ",", with: "")), abs(amount) <= 9_007_199_254_740_991 else { return nil }; return amount
+        guard normalized.range(of: #"^-?(?:0|[1-9][0-9]*|[1-9][0-9]{0,2}(?:,[0-9]{3})+)$"#, options: .regularExpression) != nil, let amount = Int(normalized.replacingOccurrences(of: ",", with: "")), amount >= -9_007_199_254_740_991 && amount <= 9_007_199_254_740_991 else { return nil }; return amount
     }
     private static func flag(_ value: String, defaultValue: Bool) -> Bool? {
         let s = value.precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines); if s.isEmpty { return defaultValue }
