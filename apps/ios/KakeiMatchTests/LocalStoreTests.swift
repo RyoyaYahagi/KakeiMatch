@@ -103,7 +103,11 @@ import ZIPFoundation
         #expect(try await restored.home(month: KMYearMonth("2026-10")) == beforeHome)
         #expect(try await restored.receiptImage(blobId: blobId) == image)
         #expect(try restored.originalArtifact(id: "statement-source:\(importRecord.id)") == csv)
-        #expect(try KMJSON.encoder().encode(restored.importedRecords()) == KMJSON.encoder().encode(originalRecords))
+        let restoredRecords = try restored.importedRecords()
+        #expect(restoredRecords.map(\.id) == originalRecords.map(\.id))
+        #expect(restoredRecords.map(\.kind.rawValue) == originalRecords.map(\.kind.rawValue))
+        #expect(restoredRecords.map(\.value) == originalRecords.map(\.value))
+        #expect(restoredRecords.map(\.updatedAt) == originalRecords.map(\.updatedAt))
         #expect(try await restored.settings().theme == beforeSettings.theme)
     }
 
