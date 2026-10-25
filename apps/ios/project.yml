@@ -1,0 +1,53 @@
+name: KakeiMatch
+options:
+  minimumXcodeGenVersion: 2.44.1
+  deploymentTarget:
+    iOS: '26.0'
+settings:
+  base:
+    SWIFT_VERSION: '6.0'
+    TARGETED_DEVICE_FAMILY: '1'
+    CODE_SIGNING_ALLOWED: NO
+    GENERATE_INFOPLIST_FILE: YES
+    MARKETING_VERSION: '0.1.0'
+    CURRENT_PROJECT_VERSION: '1'
+targets:
+  KakeiMatch:
+    type: application
+    platform: iOS
+    sources: [KakeiMatch]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios
+        INFOPLIST_KEY_CFBundleDisplayName: KakeiMatch
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+  KakeiMatchTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [KakeiMatchTests]
+    dependencies:
+      - target: KakeiMatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios.tests
+  KakeiMatchUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [KakeiMatchUITests]
+    dependencies:
+      - target: KakeiMatch
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios.uitests
+schemes:
+  KakeiMatch:
+    build:
+      targets:
+        KakeiMatch: all
+    test:
+      gatherCoverageData: true
+      targets:
+        - KakeiMatchTests
+        - KakeiMatchUITests
