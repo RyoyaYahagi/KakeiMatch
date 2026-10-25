@@ -76,3 +76,7 @@ PWA ソース欄のパスはすべて `apps/pwa/src/` からの相対パス。�
 `matched` は PWA に実在する一致履歴の展開状態であり、要確認明細を架空に消した画面ではない。同期はランダムな接続コードを生成する前、給与はAI送信前、MF移行はファイル選択前を基準にした。それぞれ依頼された画面の初期状態を撮影しており、同期接続後・給与抽出後・MF取り込み後の追加状態は本PRの対象に含めない。
 
 主要操作と共通 identifier は [flows.md](flows.md) を参照。
+
+## フォントについて
+
+この画像は Linux の Chromium で撮影しています。PWA の `--font-body`（-apple-system / Hiragino）と `--font-num`（ui-monospace / SF Mono）は代替フォントで描かれるため、iPhone 上の表示とは字形・字幅が異なります。iOS 版との比較ではレイアウト・色・余白・文言を基準にしてください。macOS で同じスクリプトを WebKit で実行すると iPhone に近い基準を作れます。
