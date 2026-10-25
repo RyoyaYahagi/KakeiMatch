@@ -145,7 +145,27 @@ struct StatementParserTests {
         let duplicate = KMStatementParser.parse(data: csv([headers, normal, normal]), provider: .rakutenCard)
         #expect(duplicate.transactions.map(\.duplicateOrdinal) == [1, 2])
         let partial = ["2026/09/01", "人工親行", "本人", "1回払い", "500", "0", "500", "", "", "", ""]
-        #expect(KMStatementParser.parse(data: csv([headers, partial]), provider: .rakutenCard).transactions.isEmpty)
+        let partialResult = KMStatementParser.parse(data: csv([headers, partial]), provider: .rakutenCard)
+        #expect(partialResult.transactions.isEmpty)
+        #expect(partialResult.needsReviewRows == [.init(rowNumber: 2, reason: "複数行明細または部分行の可能性があります")])
+    }
+
+    @Test func routesSmbcFeesAndInvalidDatesOrAmountsToReview() {
+        let fee = smbcPurchase("手数料", "500")
+        let badDate = ["2026/02/30", "Synthetic Store", "1200", "１", "１", "1200", ""]
+        let badAmount = ["2026/09/28", "Synthetic Store", "12.5", "１", "１", "12.5", ""]
+        let result = KMStatementParser.parse(
+            text: "SYNTHETIC MEMBER,SYNTHETIC CARD,SYNTHETIC STATEMENT\n\(fee.joined(separator: ","))\n\(badDate.joined(separator: ","))\n\(badAmount.joined(separator: ","))\n,,,,,500,",
+            provider: .smbcCard,
+            encoding: "cp932"
+        )
+        #expect(result.fatalErrors.isEmpty)
+        #expect(result.transactions.isEmpty)
+        #expect(result.needsReviewRows == [
+            .init(rowNumber: 2, reason: "特殊な利用の可能性があります"),
+            .init(rowNumber: 3, reason: "利用日を確認できません"),
+            .init(rowNumber: 4, reason: "利用金額を確認できません"),
+        ])
     }
 
     @Test func decodesCp932VpassBytesAndRejectsUnsafeTotals() {
@@ -162,6 +182,8 @@ struct StatementParserTests {
         #expect(invalidMetadata.fatalErrors.first?.code == "unsupported_layout")
         let wrongTotal = KMStatementParser.parse(text: "SYNTHETIC MEMBER,SYNTHETIC CARD,SYNTHETIC STATEMENT\n2026/09/28,人工店舗,1200,１,１,1200,\n,,,,,1300,", provider: .smbcCard, encoding: "cp932")
         #expect(wrongTotal.fatalErrors.first?.code == "unsupported_layout")
+        let unsafeAggregate = KMStatementParser.parse(text: "SYNTHETIC MEMBER,SYNTHETIC CARD,SYNTHETIC STATEMENT\n2026/09/28,人工店舗,4503599627370496,１,１,4503599627370496,\n2026/09/28,人工店舗,4503599627370496,１,１,4503599627370496,\n,,,,,9007199254740991,", provider: .smbcCard, encoding: "cp932")
+        #expect(unsafeAggregate.fatalErrors.first?.code == "unsupported_layout")
         let wrongDetailWidth = KMStatementParser.parse(text: "SYNTHETIC MEMBER,SYNTHETIC CARD,SYNTHETIC STATEMENT\n2026/09/28,人工店舗,1200,１,１,1200\n,,,,,1200,", provider: .smbcCard, encoding: "cp932")
         #expect(wrongDetailWidth.fatalErrors.first?.code == "unsupported_layout")
     }

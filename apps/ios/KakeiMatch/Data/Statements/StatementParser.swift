@@ -123,7 +123,7 @@ enum KMStatementParser {
             if let reason { out.needsReviewRows.append(rowIssue(n, reason)); continue }
             let fp = fingerprint(["smbc_card", "purchase", d!, row[1], String(amount!), "１回払い"]); ordinals[fp, default: 0] += 1
             out.transactions.append(.init(provider: .smbcCard, usedDate: resultDate(d!), merchant: row[1], amountYen: amount!, paymentMethod: "1回払い", sourceFingerprint: fp, duplicateOrdinal: ordinals[fp]!))
-            let (next, overflow) = sum.addingReportingOverflow(billed!); if overflow { return empty("unsupported_layout", encoding, rows: details.count) }; sum = next
+            let (next, overflow) = sum.addingReportingOverflow(billed!); if overflow || next > 9_007_199_254_740_991 { return empty("unsupported_layout", encoding, rows: details.count) }; sum = next
         }
         if out.needsReviewRows.isEmpty && sum != total { return empty("unsupported_layout", encoding, rows: details.count) }
         return out
