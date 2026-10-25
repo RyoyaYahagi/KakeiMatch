@@ -37,7 +37,7 @@ DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログ�
 | iOS端末DB `PRAGMA user_version` | 1 | 0（未作成/空DB）から1へtransaction内で作成。既存の不正な構造は作り直さない。2以上は更新案内を返し、家計操作を開始しない |
 | `.kmb` 外側 | 1 | `KMATCHB1` + manifest長（4byte big-endian）+ UTF-8 manifest + 宣言順のentry bytes |
 | portable端末記録 | 2 | `records` / `blobs`。未来版・未知kind/fieldは拒否する |
-| Actual内部DB | API 26.9.0の検証範囲 | 同梱fixtureのmigration最大値1787013118115まで。必要なtable/columnがないDB、新しい版、未対応の定期登録は明示的に拒否。内部DBのmigrationは実行しない |
+| Actual内部DB | API 26.9.0の検証範囲 | API packageから生成した59件のmigration一覧（最大1787013118115）のprefixとの一致を検証。必要なtable/columnがないDB、新しい版、未知のmigration、未対応の定期登録は明示的に拒否。内部DBのmigrationは実行しない |
 
 将来のnative DB移行は `KMStoreDatabase` に旧版→新版の処理を追加し、構造・値・versionを1つのtransactionで更新する。破壊的な変更では新profileへの移行を使う。portable schema版を端末DB版の代わりに使わない。
 
@@ -68,7 +68,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 ## `.kmb` 取り込みと互換性
 
-呼び出し口：`try await repositories.localStore?.importBackup(from: fileURL)`。これはUI操作ではない。呼び出し側は利用者の確認・security-scoped URLの取得/解放・エラー表示・表示snapshotの再取得を担当する。元に戻す操作は `returnToPreviousProfile()`。原本は `originalArtifact(id:)`、画像は既存の `ReceiptRepository.receiptImage(blobId:)` で取得する。
+呼び出し口：`try await repositories.localStore?.importBackup(from: fileURL)`。これはUI操作ではない。呼び出し側は利用者の確認・security-scoped URLの取得/解放・エラー表示・表示snapshotの再取得を担当する。元に戻す操作は `returnToPreviousProfile()`。端末の外観選択は取り込み・切り戻しで引き継ぎ、バックアップの設定で上書きしない。原本は `originalArtifact(id:)`、画像は既存の `ReceiptRepository.receiptImage(blobId:)` で取得する。
 
 1. regular fileの全長と12byte headerを検査する。
 2. manifestの厳密schema・version・entry件数・全path/宣言sizeを検査する。payloadを読む前に上限を検査する。
@@ -103,7 +103,7 @@ iOSのprojectionだけから、未対応のrule/schedule・migration・削除履
 
 ## 検証・既知の制約・後続への申し送り
 
-- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→1の作成・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版のstaging失敗と既存データ保持。
+- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→1の作成・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/未対応定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。
 - 共通fixtureはPR #279の合成データ。`synthetic.kmb` には `fixture.json` の11取引に加えて画像付きレシート登録分2,138円があり、12取引・支出26,868円になる。レシートは登録済み11＋空下書き1、明細7、照合一致4/要確認1/記録なし2、予算80,000円を確認する。fixtureの7品目は `.kmb` では確認値に保存されていないため、品目を捏造しない。
 - 通常起動だけpersistentへ注入する。Debug `-UITestFixture` とPreviewは従来のin-memoryで、利用者のDBへ触れない。
 - 閲覧・既存Repositoryの保存/検索/集計/復元はオフライン。AI抽出/分類、Cloud認証、問い合わせは別のAPI境界。ログアウトやアカウント削除からこのDBを消さない。

@@ -72,9 +72,11 @@ import ZIPFoundation
     @Test func importsRealPWABackupWithImagesStatementsAndIDs() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let store = try KMSQLiteStore(directory: directory), before = try await seed(store), old = try store.profile().current
+        try await store.saveSettings(.init(theme: .dark))
         try await store.importBackup(from: fixture("synthetic", "kmb"))
         let reopened = try KMSQLiteStore(directory: directory)
         #expect(try reopened.profile().previous == old)
+        #expect(try await reopened.settings().theme == .dark)
         #expect(try await reopened.transaction(id: before.id) == nil)
         let seed = try KMJSON.decoder().decode(KMMigrationFixture.self, from: Data(contentsOf: fixture("fixture", "json")))
         let transactions = try await reopened.transactions(matching: .init(limit: nil)), accounts = try await reopened.accounts(), categories = try await reopened.categories()
@@ -113,6 +115,8 @@ import ZIPFoundation
         #expect(run.statementResults.filter { $0.status == .needsReview }.count == 1)
         #expect(run.statementResults.filter { $0.status == .unmatchedStatement }.count == 2)
         #expect(try await reopened.resolutions().filter { $0.status == .applied }.count == 4)
+        #expect(try reopened.importedRecords().count == 44)
+        #expect(try reopened.importedRecords().contains { $0.kind == .correctionAudit })
         try reopened.returnToPreviousProfile()
         #expect(try await reopened.transaction(id: before.id) == before)
         try reopened.returnToPreviousProfile()
@@ -154,6 +158,9 @@ import ZIPFoundation
             rewrite(bytes, manifest: { $0["backupFormatVersion"] = 2 }),
             rewrite(bytes, manifest: { $0["localDataSchemaVersion"] = 1 }),
             rewrite(bytes, manifest: { $0["unexpected"] = true }),
+            rewrite(bytes, manifest: { m in m["entries"] = Array(repeating: (m["entries"] as! [[String: Any]])[0], count: 10001) }),
+            rewrite(bytes, manifest: { m in var raw = m["rawArtifacts"] as! [[String: Any]]; raw[0]["ownerId"] = "missing-owner"; m["rawArtifacts"] = raw }),
+            rewrite(bytes, manifest: { m in var raw = m["rawArtifacts"] as! [[String: Any]]; raw[0]["present"] = false; m["rawArtifacts"] = raw }),
             rewrite(bytes, manifest: { $0["missingRawArtifacts"] = [["id": "fake", "ownerKind": "receipt", "ownerId": "fake", "contentType": NSNull()]] }),
             rewrite(bytes, manifest: { m in var e = m["entries"] as! [[String: Any]]; e[0]["path"] = "../actual-budget.zip"; m["entries"] = e }),
             rewrite(bytes, manifest: { m in var e = m["entries"] as! [[String: Any]]; e[0]["size"] = KMPortableBackup.maxEntry + 1; m["entries"] = e }),
@@ -188,19 +195,106 @@ import ZIPFoundation
         try result.addEntry(with: "metadata.json", fileURL: metadata, compressionMethod: .deflate)
         return try Data(contentsOf: output)
     }
+    @Test func rejectsUnsafeZIPNamesAndSymlinksBeforeExtraction() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory), row = try await seed(store), id = try store.profile().current
+        let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
+        for (name, type) in [("../escape", Entry.EntryType.file), ("C:/escape", .file), ("link", .symlink)] {
+            let zip = directory.appendingPathComponent(UUID().uuidString + ".zip")
+            let archive = try Archive(url: zip, accessMode: .create)
+            try archive.addEntry(with: name, type: type, uncompressedSize: 1) { _, _ in Data([0]) }
+            let malformed = try rewrite(bytes, actual: { _ in try Data(contentsOf: zip) })
+            let file = directory.appendingPathComponent("unsafe.kmb"); try malformed.write(to: file)
+            await #expect(throws: (any Error).self) { try await store.importBackup(from: file) }
+            #expect(try store.profile().current == id)
+            #expect(try await store.transaction(id: row.id) == row)
+            #expect(!FileManager.default.fileExists(atPath: directory.deletingLastPathComponent().appendingPathComponent("escape").path))
+        }
+    }
+    @Test func acceptsDeclaredMissingOriginalsWithoutLosingRecords() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let source = try fixture("synthetic", "kmb"), backup = try KMPortableBackup.read(url: source)
+        var manifest = try #require(try JSONSerialization.jsonObject(with: backup.manifestJSON) as? [String: Any])
+        var missing: [[String: Any]] = []
+        for record in backup.records {
+            if record.kind == .statementImport { missing.append(["id": "statement-source:\(record.id)", "ownerKind": "statement-import", "ownerId": record.id, "contentType": NSNull()]) }
+            if record.kind == .receiptMetadata, let image = try record.decode(KMReceipt.self).image {
+                missing.append(["id": image.blobId, "ownerKind": "receipt", "ownerId": record.id, "contentType": image.contentType])
+            }
+        }
+        manifest["entries"] = (manifest["entries"] as! [[String: Any]]).filter { !($0["path"] as! String).hasPrefix("artifacts/") }
+        manifest["rawArtifacts"] = []; manifest["missingRawArtifacts"] = missing
+        let json = try JSONSerialization.data(withJSONObject: manifest)
+        var data = Data("KMATCHB1".utf8); let n = UInt32(json.count)
+        data.append(contentsOf: [UInt8(n >> 24), UInt8((n >> 16) & 255), UInt8((n >> 8) & 255), UInt8(n & 255)])
+        data.append(json); data.append(backup.actualZIP); data.append(backup.localJSON)
+        let file = directory.appendingPathComponent("missing.kmb"); try data.write(to: file)
+        let store = try KMSQLiteStore(directory: directory); try await store.importBackup(from: file)
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == 12)
+        #expect(try await store.receipts().count == 12)
+        #expect(try await store.statementTransactions().count == 7)
+        let receipt = try #require(try await store.receipts().first { $0.image != nil })
+        #expect(try await store.receiptImage(blobId: #require(receipt.image?.blobId)) == nil)
+        #expect(try store.originalArtifact(id: "statement-source:\(backup.records.first { $0.kind == .statementImport }!.id)") == nil)
+    }
+    @Test func actualSplitsTransfersOpeningBalancesAndOffbudgetAreProjected() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let editDirectory = try temporary(); defer { try? FileManager.default.removeItem(at: editDirectory) }
+        let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
+        let altered = try rewrite(bytes, actual: { zip in
+            try changeZIP(zip, in: editDirectory) { db in
+                let bank = try #require(try db.rows("SELECT id FROM accounts WHERE name='メイン口座'").first?.string("id"))
+                let cash = try #require(try db.rows("SELECT id FROM accounts WHERE name='現金'").first?.string("id"))
+                let food = try #require(try db.rows("SELECT id FROM categories WHERE name='食費'").first?.string("id"))
+                let daily = try #require(try db.rows("SELECT id FROM categories WHERE name='日用品'").first?.string("id"))
+                try db.execute("INSERT INTO accounts(id,name,offbudget) VALUES('off','合成対象外口座',1)")
+                for (id, account, amount, category) in [("split", bank, -3000, food), ("child-a", bank, -1000, food),
+                    ("child-b", bank, -2000, daily), ("out", bank, -10000, food), ("in", cash, 10000, food),
+                    ("opening", cash, 50000, food), ("off-tx", "off", -500, food)] {
+                    try db.execute("INSERT INTO transactions(id,acct,date,amount,category) VALUES(?,?,20261014,?,?)",
+                        [.text(id), .text(account), .integer(amount), .text(category)])
+                }
+                try db.execute("UPDATE transactions SET isParent=1,category=NULL WHERE id='split'")
+                try db.execute("UPDATE transactions SET isChild=1,parent_id='split' WHERE id IN ('child-a','child-b')")
+                try db.execute("UPDATE transactions SET transferred_id='in',category=NULL WHERE id='out'")
+                try db.execute("UPDATE transactions SET transferred_id='out',category=NULL WHERE id='in'")
+                try db.execute("UPDATE transactions SET starting_balance_flag=1 WHERE id='opening'")
+                try db.execute("INSERT INTO zero_budgets(id,month,category,amount) VALUES('native-test',202610,?,60000)", [.text(food)])
+            }
+        })
+        let file = directory.appendingPathComponent("edges.kmb"); try altered.write(to: file)
+        let store = try KMSQLiteStore(directory: directory); try await store.importBackup(from: file)
+        #expect(try await store.transaction(id: "split")?.splits?.map(\.amountYen) == [-1000, -2000])
+        #expect(try await store.transactions(matching: .init(kind: .transfer)).map(\.id) == ["out"])
+        #expect(try await store.home(month: KMYearMonth("2026-10")).summary.expenseYen == 29868)
+        #expect(try await store.accounts().first { $0.name == "現金" }?.balanceYen == 58340)
+        #expect(try await store.transaction(id: "opening") == nil)
+        let budgetId = try await store.budgetSettings().budgetId
+        try await store.saveBudgetSettings(.empty(budgetId: budgetId))
+        #expect(try await store.budgetSummary(month: KMYearMonth("2026-10")).budgetYen == 60000)
+    }
     @Test func failedActualStagingKeepsExistingDataAndCleansTarget() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let store = try KMSQLiteStore(directory: directory), row = try await seed(store), id = try store.profile().current
-        let bytes = try Data(contentsOf: fixture("synthetic", "kmb")), editDirectory = try temporary()
-        defer { try? FileManager.default.removeItem(at: editDirectory) }
-        let altered = try rewrite(bytes, actual: { zip in
-            try changeZIP(zip, in: editDirectory) { try $0.execute("INSERT INTO __migrations__ VALUES(9999999999999)") }
-        })
-        let file = directory.appendingPathComponent("future.kmb"); try altered.write(to: file)
-        let directoriesBefore = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
-        await #expect(throws: (any Error).self) { try await store.importBackup(from: file) }
-        #expect(try store.profile().current == id)
-        #expect(try await store.transaction(id: row.id) == row)
-        #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == directoriesBefore)
+        let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
+        for sql in ["INSERT INTO __migrations__ VALUES(9999999999999)",
+                    "INSERT INTO preferences(id,value) VALUES('defaultCurrencyCode','USD')",
+                    "INSERT INTO schedules(id,completed,tombstone) VALUES('unsupported-schedule',0,0)",
+                    "UPDATE transactions SET amount=amount+1 WHERE id='e9098745-2f4a-4bda-a534-1ca975c40c72'"] {
+            let editDirectory = try temporary(); defer { try? FileManager.default.removeItem(at: editDirectory) }
+            let altered = try rewrite(bytes, actual: { zip in
+                try changeZIP(zip, in: editDirectory) { db in
+                    try db.execute(sql)
+                    // Last case also makes a malformed split, forcing a failure after the target was allocated.
+                    if sql.hasPrefix("UPDATE") { try db.execute("UPDATE transactions SET isParent=1 WHERE id='e9098745-2f4a-4bda-a534-1ca975c40c72'") }
+                }
+            })
+            let file = directory.appendingPathComponent("bad-actual.kmb"); try altered.write(to: file)
+            let directoriesBefore = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted()
+            await #expect(throws: (any Error).self) { try await store.importBackup(from: file) }
+            #expect(try store.profile().current == id)
+            #expect(try await store.transaction(id: row.id) == row)
+            #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == directoriesBefore)
+        }
     }
 }

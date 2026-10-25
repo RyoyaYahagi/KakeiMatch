@@ -55,6 +55,8 @@ import Foundation
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
         do {
             let working = try KMActualImport.project(backup: backup, staging: target)
+            // Appearance is device-local, not imported household data.
+            working.settingsValue.theme = try database().load().settingsValue.theme
             let db = try KMStoreDatabase(url: target.appendingPathComponent("household.sqlite"))
             try db.saveArtifacts(backup.artifacts)
             try db.save(working)
@@ -76,7 +78,12 @@ import Foundation
         guard let previous = value.previous else { throw KMDataError.notFound("変更前の家計簿がありません。") }
         let path = profileDirectory(previous).appendingPathComponent("household.sqlite")
         guard FileManager.default.fileExists(atPath: path.path) else { throw KMDataError.notFound("変更前の家計簿が見つかりません。") }
-        _ = try KMStoreDatabase(url: path).load()
+        let previousDB = try KMStoreDatabase(url: path), previousStore = try previousDB.load()
+        let theme = try database().load().settingsValue.theme
+        if previousStore.settingsValue.theme != theme {
+            previousStore.settingsValue.theme = theme
+            try previousDB.save(previousStore)
+        }
         try publish(ProfilePointer(current: previous, previous: value.current))
     }
     /// CSVs and images are accessible by portable blob ID, never by an archive-supplied filesystem path.

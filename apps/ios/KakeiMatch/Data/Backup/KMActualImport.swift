@@ -65,8 +65,14 @@ import ZIPFoundation
         guard try db.rows("PRAGMA integrity_check").first?.string("integrity_check") == "ok" else { throw KMPortableBackup.invalid() }
         let required = ["__migrations__", "accounts", "categories", "category_groups", "transactions", "payees", "category_mapping", "payee_mapping", "zero_budgets", "reflect_budgets", "schedules", "preferences"]
         let tables = Set(try db.rows("SELECT name FROM sqlite_master WHERE type='table'").compactMap { $0.string("name") })
-        guard Set(required).isSubset(of: tables),
-              let migration = try db.rows("SELECT MAX(id) AS latest FROM __migrations__").first?.int("latest"), migration <= lastKnownMigration else {
+        struct Migrations: Decodable { var apiVersion: String; var ids: [Int] }
+        guard let migrationURL = Bundle.main.url(forResource: "actual-migrations", withExtension: "json") else { throw KMPortableBackup.invalid() }
+        let supported = try JSONDecoder().decode(Migrations.self, from: Data(contentsOf: migrationURL))
+        let applied = try db.rows("SELECT id FROM __migrations__ ORDER BY id").map { row -> Int in
+            guard let id = row.int("id") else { throw KMPortableBackup.invalid() }; return id
+        }
+        guard Set(required).isSubset(of: tables), supported.apiVersion == "26.9.0", supported.ids.last == lastKnownMigration,
+              !applied.isEmpty, applied.count <= supported.ids.count, applied == Array(supported.ids.prefix(applied.count)) else {
             throw KMDataError.unsupported("この家計簿のActual DB版は未対応です。元のPWAでバックアップを保持してください。")
         }
         // KakeiMatch's portable contract is integer yen. An explicitly non-JPY Actual budget is not compatible.

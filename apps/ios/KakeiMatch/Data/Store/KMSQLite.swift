@@ -26,7 +26,8 @@ import SQLite3
             throw KMDataError.invalidData("端末DBを開けません。保存済みデータは削除しないでください。")
         }
         sqlite3_busy_timeout(handle, 3000)
-        sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 128 * 1024 * 1024)
+        // Leave row overhead above a maximum-size (128 MiB) portable artifact.
+        sqlite3_limit(handle, SQLITE_LIMIT_LENGTH, 258 * 1024 * 1024)
         do {
             try execute("PRAGMA trusted_schema=OFF")
             if readOnly { try execute("PRAGMA query_only=ON") }
@@ -45,7 +46,8 @@ import SQLite3
             let position = Int32(index + 1)
             let code: Int32
             switch value {
-            case .text(let value): code = sqlite3_bind_text(statement, position, value, -1, transient)
+            case .text(let value):
+                code = value.withCString { sqlite3_bind_text(statement, position, $0, Int32(value.utf8.count), transient) }
             case .integer(let value): code = sqlite3_bind_int64(statement, position, Int64(value))
             case .blob(let value):
                 code = value.isEmpty ? sqlite3_bind_zeroblob(statement, position, 0) : value.withUnsafeBytes {
