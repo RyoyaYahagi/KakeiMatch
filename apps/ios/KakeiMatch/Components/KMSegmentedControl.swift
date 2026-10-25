@@ -29,7 +29,8 @@ struct KMSegmentedControl: View {
                 .accessibilityIdentifier(identifier + "." + option.id)
             }
         }
-        .padding(KMSpacing.space1)
+        // Each 44pt hit target already centers the 36pt visual with 4pt above/below.
+        .padding(.horizontal, KMSpacing.space1)
         .background(KMColor.sunken, in: RoundedRectangle(cornerRadius: KMRadius.lg))
     }
 }

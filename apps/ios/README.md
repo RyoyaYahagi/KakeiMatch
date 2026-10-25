@@ -87,7 +87,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。
-- セグメントの見た目はPWAの36ptですが、44ptのヒット領域確保のため下地の高さがPWAより8pt高くなります。
+- セグメントは36ptの見た目を44ptのヒット領域に中央配置します。下地の高さ44ptもPWAと一致させ、アクセシビリティのために外側の余白を増やしません。
 - フォントの字形・改行はネイティブの組版に依存します。固定サイズをPWAに合わせた土台であり、Dynamic Typeの拡大対応は後続の検証課題です。
 - 参考画像: `docs/screenshots/apricot-foundation-light-390-{home,chooser,records}.png`。実際に取得したCI画像との残差分・検証SHAはPR本文へ記録します。
 
