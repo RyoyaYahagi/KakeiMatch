@@ -18,17 +18,24 @@ import SwiftUI
     /// UI uses this instant for fixture month/day labels instead of Date.now.
     let referenceDate: Date
     let fixtureName: String?
+    /// Backup UI/sync coordinator uses the same profile boundary, not an independent database.
+    let localStore: KMSQLiteStore?
 
     init(transactions: any TransactionRepository, accounts: any AccountRepository, categories: any CategoryRepository,
          payees: any PayeeRepository, receipts: any ReceiptRepository, statements: any StatementRepository,
          reconciliation: any ReconciliationRepository, budgets: any BudgetRepository, recurring: any RecurringRepository,
          payroll: any PayrollRepository, categoryLearning: any CategoryLearningRepository, settings: any SettingsRepository,
-         referenceDate: Date = Date(), fixtureName: String? = nil) {
+         referenceDate: Date = Date(), fixtureName: String? = nil, localStore: KMSQLiteStore? = nil) {
         self.transactions = transactions; self.accounts = accounts; self.categories = categories; self.payees = payees
         self.receipts = receipts; self.statements = statements; self.reconciliation = reconciliation
         self.budgets = budgets; self.recurring = recurring; self.payroll = payroll
         self.categoryLearning = categoryLearning; self.settings = settings
-        self.referenceDate = referenceDate; self.fixtureName = fixtureName
+        self.referenceDate = referenceDate; self.fixtureName = fixtureName; self.localStore = localStore
+    }
+    convenience init(persistent store: KMSQLiteStore) {
+        self.init(transactions: store, accounts: store, categories: store, payees: store, receipts: store, statements: store,
+            reconciliation: store, budgets: store, recurring: store, payroll: store, categoryLearning: store, settings: store,
+            localStore: store)
     }
     convenience init(inMemory store: KMInMemoryStore, referenceDate: Date = Date(), fixtureName: String? = nil) {
         self.init(transactions: store, accounts: store, categories: store, payees: store, receipts: store, statements: store,

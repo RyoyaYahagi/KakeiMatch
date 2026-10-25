@@ -58,7 +58,7 @@ struct KMMigrationFixture: Decodable, Sendable {
             return try load(named: arguments[index + 1], bundle: bundle)
         }
         #endif
-        return KMRepositories(inMemory: KMInMemoryStore())
+        return try KMRepositories(persistent: KMSQLiteStore.openDefault())
     }
     private static func resource(_ name: String, bundle: Bundle) throws -> Data {
         guard let url = bundle.url(forResource: name, withExtension: "json") else { throw KMDataError.notFound("fixture \(name).json がありません。") }
