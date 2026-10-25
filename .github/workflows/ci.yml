@@ -65,7 +65,7 @@ jobs:
         with:
           node-version: 22
           # A self-hosted host keeps its pnpm store; uploading it only costs time.
-          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
+          cache: ${{ runner.environment == 'github-hosted' && steps.changes.outputs.skip_pwa != 'true' && 'pnpm' || '' }}
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm install --frozen-lockfile
       - if: steps.changes.outputs.skip_pwa != 'true'
