@@ -3,7 +3,7 @@ import Testing
 @testable import KakeiMatch
 
 struct BudgetTests {
-    private func month(_ value: String = "2026-10") throws -> KMYearMonth { try KMYearMonth(value) }
+    private func month(_ value: String = "2026-10") -> KMYearMonth { KMYearMonth(rawValue: value) }
 
     @Test func inheritedDefaultsAndMonthlyOverrides() throws {
         var settings = KMMonthlyBudgetSettings.empty(budgetId: "budget-a")

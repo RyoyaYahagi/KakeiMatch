@@ -32,24 +32,28 @@ import Foundation
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] {
+        try filteredTransactions(query, recentOrder: false)
+    }
+    private func filteredTransactions(_ query: KMTransactionQuery, recentOrder: Bool, includeIncomingTransfers: Bool = false) throws -> [KMTransaction] {
         if let start = query.startDate, let end = query.endDate, start > end { throw KMDataError.invalidData("開始日は終了日以前にしてください。") }
-        if let min = query.minimumAmountYen, min < 0 { throw KMDataError.invalidData("最低金額を確認してください。") }
-        if let max = query.maximumAmountYen, max < 0 { throw KMDataError.invalidData("最高金額を確認してください。") }
-        if let min = query.minimumAmountYen, let max = query.maximumAmountYen, min > max { throw KMDataError.invalidData("最低金額は最高金額以下にしてください。") }
+        if let min = query.minAmountYen, min < 0 { throw KMDataError.invalidData("最低金額を確認してください。") }
+        if let max = query.maxAmountYen, max < 0 { throw KMDataError.invalidData("最高金額を確認してください。") }
+        if let min = query.minAmountYen, let max = query.maxAmountYen, min > max { throw KMDataError.invalidData("最低金額は最高金額以下にしてください。") }
         guard query.keyword.count <= 200, query.limit.map({ $0 >= 0 }) ?? true else { throw KMDataError.invalidData("検索条件を確認してください。") }
         let keyword = normalize(query.keyword)
-        let rows = try orderedTransactions().filter { row in
+        let rows = try orderedTransactions(recentOrder: recentOrder, includeIncomingTransfers: includeIncomingTransfers).filter { row in
             let amount = abs(try KMYen.checked(row.amountYen))
             let receipt = receiptValues.first { $0.registration.status == .applied && $0.registration.actualTransactionId == row.id }
             let itemNames = receipt?.confirmedValue?.items?.map(\.name) ?? receipt?.extraction?.items.map(\.name) ?? []
-            let values = [row.payeeName ?? "", row.memo ?? ""] + itemNames
+            let childValues = (row.splits ?? []).flatMap { [$0.memo ?? "", $0.payeeName ?? ""] }
+            let values = [row.payeeName ?? "", row.memo ?? ""] + itemNames + childValues
             return (query.kind == nil || row.kind == query.kind)
                 && (query.startDate == nil || row.date >= query.startDate!) && (query.endDate == nil || row.date <= query.endDate!)
                 && (query.accountId == nil || row.accountId == query.accountId || row.kind == .transfer && row.transferAccountId == query.accountId)
                 && (query.categoryId == nil || row.categoryId == query.categoryId || (row.splits ?? []).contains { $0.categoryId == query.categoryId })
                 && (keyword.isEmpty || values.contains { normalize($0).contains(keyword) })
-                && (query.minimumAmountYen == nil || amount >= query.minimumAmountYen!)
-                && (query.maximumAmountYen == nil || amount <= query.maximumAmountYen!)
+                && (query.minAmountYen == nil || amount >= query.minAmountYen!)
+                && (query.maxAmountYen == nil || amount <= query.maxAmountYen!)
         }
         return query.limit.map { Array(rows.prefix($0)) } ?? rows
     }
@@ -57,16 +61,19 @@ import Foundation
     func recordDays(matching query: KMTransactionQuery) async throws -> [KMRecordDay] {
         // PWA records-list filters the 100 most recent rows; search is a separate all-history query.
         var allKinds = query; allKinds.kind = nil
-        return try KMTransactionAggregation.recordDays(try await transactions(matching: allKinds), kind: query.kind)
+        let recent = try filteredTransactions(allKinds, recentOrder: true, includeIncomingTransfers: true)
+        let visible = recent.filter { $0.kind != .transfer || $0.amountYen < 0 }
+        return try KMTransactionAggregation.recordDays(visible, kind: query.kind)
     }
     func home(month: KMYearMonth) async throws -> KMHomeSnapshot {
         let summary = try monthly(month)
-        return KMHomeSnapshot(summary: summary, budget: try await budgetSummary(month: month), recentRecords: Array(orderedTransactions().prefix(3)))
+        return KMHomeSnapshot(summary: summary, budget: try await budgetSummary(month: month), recentRecords: Array(orderedTransactions().filter { $0.date.yearMonth == month }.prefix(3)))
     }
-    private func orderedTransactions() -> [KMTransaction] {
-        // Actual returns both transfer sides; PWA presents the outgoing side once.
-        transactionValues.filter { $0.kind != .transfer || $0.amountYen < 0 }.sorted {
-            $0.date == $1.date ? $0.id < $1.id : $0.date > $1.date
+    private func orderedTransactions(recentOrder: Bool = true, includeIncomingTransfers: Bool = false) -> [KMTransaction] {
+        // PWA recent rows tie-break by ID descending; search results use ID ascending.
+        transactionValues.filter { includeIncomingTransfers || $0.kind != .transfer || $0.amountYen < 0 }.sorted {
+            if $0.date != $1.date { return $0.date > $1.date }
+            return recentOrder ? $0.id > $1.id : $0.id < $1.id
         }
     }
     private func monthly(_ month: KMYearMonth) throws -> KMMonthlySummary {
@@ -115,7 +122,7 @@ import Foundation
         guard input.sourceAccountId != input.destinationAccountId, !input.importedId.isEmpty, input.importedId.count <= 200,
               (input.memo?.count ?? 0) <= 2000 else { throw KMDataError.invalidData("振替先・メモを確認してください。") }
         let previous = transactionValues.first { $0.id == id }
-        if id != nil && (previous == nil || previous?.kind != .transfer || previous?.amountYen ?? 0 >= 0) { throw KMDataError.invalidData("振替の記録を確認してください。") }
+        if id != nil && (previous == nil || previous?.kind != .transfer || (previous?.amountYen ?? 0) >= 0) { throw KMDataError.invalidData("振替の記録を確認してください。") }
         if id == nil && transactionValues.contains(where: { $0.importedId == input.importedId }) { throw KMDataError.invalidData("同じ登録IDの振替があります。") }
         let outgoingId = id ?? UUID().uuidString
         let incomingId = previous?.transferId ?? UUID().uuidString
@@ -250,6 +257,9 @@ import Foundation
         let merged = KMCategoryRuleOverride(targetType: value.targetType, normalizedName: value.normalizedName,
             disabled: value.disabled ?? old?.disabled, deleted: value.deleted ?? old?.deleted, categoryId: value.categoryId ?? old?.categoryId)
         ruleOverrides.removeAll { $0.targetType == value.targetType && $0.normalizedName == value.normalizedName }; ruleOverrides.append(merged)
+    }
+    func resetCategoryRuleOverride(targetType: KMCategoryRuleStats.TargetType, normalizedName: String) async throws {
+        ruleOverrides.removeAll { $0.targetType == targetType && $0.normalizedName == normalizedName }
     }
     func resetCategoryRuleOverrides() async throws { ruleOverrides = [] }
     func settings() async throws -> KMAppSettings { settingsValue }

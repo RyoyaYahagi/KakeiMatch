@@ -96,6 +96,39 @@ import Testing
         #expect(try await repositories.accounts.accounts(includeClosed: false)[1].balanceYen == accounts[1].balanceYen)
     }
 
+    @Test func recentMonthScopeTieBreakAndSearchChildNotesMatchPWA() async throws {
+        let date = try KMDate("2026-10-01")
+        let store = KMInMemoryStore(transactions: [
+            KMTransaction(id: "a", date: date, amountYen: -100, kind: .expense, accountId: "cash"),
+            KMTransaction(id: "b", date: date, amountYen: -100, kind: .expense, accountId: "cash", isSplit: true,
+                splits: [.init(id: "child", categoryId: nil, amountYen: -100, memo: "子メモ米", payeeName: "分割の店")])
+        ])
+        #expect(try await store.transactions(matching: .init()).map(\.id) == ["a", "b"]) // filterSearchTransactions
+        #expect(try await store.recordDays(matching: .init()).first?.records.map(\.id) == ["b", "a"]) // getRecentTransactions
+        #expect(try await store.transactions(matching: .init(keyword: "子メモ米", limit: nil)).first?.id == "b")
+        #expect(try await store.home(month: KMYearMonth("2026-09")).recentRecords.isEmpty)
+        #expect(try await store.home(month: KMYearMonth("2026-10")).recentRecords.map(\.id) == ["b", "a"])
+
+        // PWA gets the latest 100 native parents before hiding incoming transfer sides.
+        store.transactionValues = (0..<99).map { index in
+            KMTransaction(id: String(format: "expense-%03d", index), date: date, amountYen: -1, kind: .expense, accountId: "cash")
+        }
+        store.transactionValues += [KMTransaction(id: "z-out", date: date, amountYen: -100, kind: .transfer, accountId: "cash"),
+                                    KMTransaction(id: "z-in", date: date, amountYen: 100, kind: .transfer, accountId: "bank")]
+        #expect(try await store.recordDays(matching: .init()).first?.records.count == 99)
+    }
+
+    @Test func singleRuleResetRestoresLearnedCategory() async throws {
+        let store = KMInMemoryStore(categories: [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")])
+        store.ruleValues = [KMCategoryLearningRule(targetType: .item, normalizedName: "合成品目", categoryId: "food", receipts: 3,
+            matchingReceipts: 3, agreementPercent: 100, enabled: true, deleted: false)]
+        try await store.setCategoryRuleOverride(.init(targetType: .item, normalizedName: "合成品目", deleted: true, categoryId: "daily"))
+        #expect(try await store.categoryRules().first?.enabled == false)
+        try await store.resetCategoryRuleOverride(targetType: .item, normalizedName: "合成品目")
+        #expect(try await store.categoryRules().first?.categoryId == "food")
+        #expect(try await store.categoryRules().first?.enabled == true)
+    }
+
     @Test func usageCountsSplitCategoryOnceAndIgnoresTransfers() async throws {
         let date = try KMDate("2026-10-01")
         let store = KMInMemoryStore(transactions: [

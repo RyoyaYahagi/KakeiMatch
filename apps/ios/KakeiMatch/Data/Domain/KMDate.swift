@@ -57,7 +57,7 @@ struct KMYearMonth: RawRepresentable, Codable, Hashable, Comparable, Sendable, C
     init(from decoder: any Decoder) throws { try self.init(decoder.singleValueContainer().decode(String.self)) }
     func encode(to encoder: any Encoder) throws { var container = encoder.singleValueContainer(); try container.encode(rawValue) }
     private static func isValid(_ value: String) -> Bool {
-        value.range(of: #"^[0-9]{4}-(0[1-9]|1[0-2])$"#, options: .regularExpression) != nil && value.prefix(4) != "0000"
+        value.utf8.count == 7 && value.range(of: #"^[0-9]{4}-(0[1-9]|1[0-2])$"#, options: .regularExpression) != nil && value.prefix(4) != "0000"
     }
 }
 

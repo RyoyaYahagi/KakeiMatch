@@ -232,7 +232,11 @@ struct KMMonthlyBudgetSettings: Codable, Equatable, Sendable {
     static func validIdentifier(_ value: String) -> Bool { !value.isEmpty && value.count <= 128 }
     static func validAmount(_ value: Int) -> Bool { value >= 0 && value <= 9_007_199_254_740_991 }
     static func validSafeInteger(_ value: Int) -> Bool { value >= -9_007_199_254_740_991 && value <= 9_007_199_254_740_991 }
-    static func validYearMonth(_ value: String) -> Bool { (try? KMYearMonth(value).rawValue) != nil }
+    static func validYearMonth(_ value: String) -> Bool {
+        // monthly-budget-settings.ts uses [1-9]\\d{3}, unlike the full ledger calendar (0001...9999).
+        guard let month = try? KMYearMonth(value) else { return false }
+        return month.year >= 1000
+    }
 }
 
 // TS: apps/pwa/src/local-monthly-budget-service.ts — MonthlyBudgetPlan

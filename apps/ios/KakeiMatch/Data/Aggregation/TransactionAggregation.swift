@@ -40,7 +40,7 @@ struct KMMonthlyLedgerRow: Equatable, Sendable {
     var amountYen: Int
     var categoryId: String? = nil
     var parentId: String? = nil
-    var isChild: Bool = false
+    var isChild: Bool? = nil
     var isParent: Bool = false
     var transferId: String? = nil
     var offbudget: Bool = false
@@ -55,7 +55,7 @@ enum KMTransactionAggregation {
     static func monthly(rows: [KMMonthlyLedgerRow], categories: [KMCategory], month: KMYearMonth) throws -> KMMonthlySummary {
         let names = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0.name) })
         let eligible = rows.filter { !$0.offbudget && !($0.excludedFromSpending && $0.amountYen < 0) }
-        let children = Dictionary(grouping: eligible.filter { $0.parentId != nil && $0.isChild }, by: { $0.parentId! })
+        let children = Dictionary(grouping: eligible.filter { $0.parentId != nil && $0.isChild != false }, by: { $0.parentId! })
         var income = 0, expense = 0
         // Optional keys retain the uncategorized bucket, rather than silently dropping it.
         var amounts: [String?: Int] = [:]
@@ -64,7 +64,7 @@ enum KMTransactionAggregation {
         }
         for row in eligible {
             if row.tombstone || row.startingBalance || row.hasError { continue }
-            if row.isChild || row.parentId != nil || row.transferId != nil || row.date.yearMonth != month { continue }
+            if row.isChild == true || row.parentId != nil || row.transferId != nil || row.date.yearMonth != month { continue }
             _ = try KMYen.checked(row.amountYen)
             if row.amountYen > 0 { income = try KMYen.add(income, row.amountYen) }
             else if row.amountYen < 0 { expense = try KMYen.add(expense, -row.amountYen) }

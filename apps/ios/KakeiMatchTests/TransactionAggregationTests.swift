@@ -113,6 +113,7 @@ struct TransactionAggregationTests {
         #expect(try KMYearMonth("9999-12").shifted(by: 1).rawValue == "9999-12")
         #expect(throws: (any Error).self) { try KMDate("2026-02-29") }
         #expect(throws: (any Error).self) { try KMYearMonth("0000-01") }
+        #expect(throws: (any Error).self) { try KMYearMonth("2026-01\n") }
         let instant = try KMJSON.decoder().decode(Date.self, from: Data("\"2026-09-30T15:00:00Z\"".utf8))
         #expect(KMDate(instant: instant).rawValue == "2026-10-01")
     }

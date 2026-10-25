@@ -25,11 +25,13 @@ struct KMTransaction: Codable, Equatable, Identifiable, Sendable {
     var splits: [KMTransactionSplit]? = nil
 }
 
-// TS: src/lib/actual-browser-ledger.ts readBackSplitSet / actualTransactionSchema.subtransactions.
+// TS: src/lib/actual-browser-ledger.ts readBackSplitSet / ActualSearchTransaction child notes/payee projection.
 struct KMTransactionSplit: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var categoryId: String?
     var amountYen: Int
+    var memo: String? = nil
+    var payeeName: String? = nil
 }
 
 // TS: src/lib/actual-ledger.ts ManualTransactionInput; amountYen is positive here (unlike a ledger row).
@@ -63,8 +65,8 @@ struct KMTransactionQuery: Equatable, Sendable {
     var accountId: String? = nil
     var categoryId: String? = nil
     var keyword: String = ""
-    var minimumAmountYen: Int? = nil
-    var maximumAmountYen: Int? = nil
+    var minAmountYen: Int? = nil
+    var maxAmountYen: Int? = nil
     /// PWA records fetch 100 before the kind filter; search callers may use nil.
     var limit: Int? = 100
 }

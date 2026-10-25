@@ -74,6 +74,7 @@ import Foundation
 @MainActor protocol CategoryLearningRepository {
     func categoryRules() async throws -> [KMCategoryLearningRule]
     func setCategoryRuleOverride(_ value: KMCategoryRuleOverride) async throws
+    func resetCategoryRuleOverride(targetType: KMCategoryRuleStats.TargetType, normalizedName: String) async throws
     func resetCategoryRuleOverrides() async throws
 }
 
