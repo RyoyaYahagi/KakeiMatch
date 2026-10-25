@@ -33,10 +33,6 @@ struct KMMigrationFixture: Decodable, Sendable {
     enum Scenario: String, CaseIterable, Sendable {
         case migration, populated, empty, budgetWarning = "budget-warning", receipt, reconciliation, payroll
     }
-    private struct ReconciliationFixture: Decodable {
-        var run: KMReconciliationRun
-        var resolutions: [KMReconciliationResolution]
-    }
     static func document(bundle: Bundle = .main) throws -> KMMigrationFixture {
         let value = try KMJSON.decoder().decode(KMMigrationFixture.self, from: resource("migration", bundle: bundle))
         guard value.version == 1, value.timezone == "Asia/Tokyo" else { throw KMDataError.invalidData("未対応のfixture形式です。") }
@@ -47,11 +43,11 @@ struct KMMigrationFixture: Decodable, Sendable {
         let fixture = try document(bundle: bundle)
         let store = try makeStore(fixture, scenario: scenario)
         if scenario == .reconciliation {
-            let snapshot = try KMJSON.decoder().decode(ReconciliationFixture.self, from: resource("reconciliation", bundle: bundle))
-            store.runValues = [snapshot.run]; store.resolutionValues = snapshot.resolutions
-            for decision in snapshot.resolutions {
-                if let index = store.transactionValues.firstIndex(where: { $0.id == decision.actualTransactionId }) { store.transactionValues[index].cleared = true }
-            }
+            var service = KMLocalReconciliation(statements: store.statementValues, imports: store.importValues,
+                transactions: store.transactionValues, accounts: store.accountValues, categories: store.categoryValues)
+            let run = try service.run(id: "fixture-run", at: fixture.now)
+            store.runValues = [run]; store.resolutionValues = service.resolutions
+            store.transactionValues = service.transactions; store.reconciliationState = service
         }
         return KMRepositories(inMemory: store, referenceDate: fixture.now, fixtureName: name)
     }
@@ -95,7 +91,7 @@ struct KMMigrationFixture: Decodable, Sendable {
             return KMTransaction(id: String(format: "fixture-transaction-%03d", index), date: value.date,
                 amountYen: value.type == .expense ? -value.amountYen : value.amountYen, kind: value.type,
                 payeeName: value.payee, categoryName: category.name, accountId: account.id, categoryId: category.id,
-                importedId: "fixture-manual-\(index)")
+                importedId: "fixture-manual-\(index)", isSplit: false)
         }
         let store = KMInMemoryStore(transactions: transactions, accounts: accounts, categories: categories, groups: groups)
         store.monthlySettings = try store.monthlySettings.applyingDefaultPlan(

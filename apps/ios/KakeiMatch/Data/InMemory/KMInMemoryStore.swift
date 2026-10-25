@@ -1,7 +1,7 @@
 import Foundation
 
 /// One actor-isolated, device-local fixture store shared by every repository in a container.
-/// Nothing survives process exit. No network, database, matching or schedule execution is performed.
+/// Nothing survives process exit. No network or database I/O is performed.
 @MainActor final class KMInMemoryStore: TransactionRepository, AccountRepository, CategoryRepository, PayeeRepository,
     ReceiptRepository, StatementRepository, ReconciliationRepository, BudgetRepository, RecurringRepository,
     PayrollRepository, CategoryLearningRepository, SettingsRepository {
@@ -15,6 +15,7 @@ import Foundation
     var statementValues: [KMStatementTransaction] = []
     var runValues: [KMReconciliationRun] = []
     var resolutionValues: [KMReconciliationResolution] = []
+    var reconciliationState: KMLocalReconciliation?
     var suspectedValues: [KMSuspectedStatement] = []
     var recurringValues: [KMRecurringTransaction] = []
     var payrollValues: [KMPayrollRecord] = []
@@ -215,7 +216,10 @@ import Foundation
     func setSuspected(statementId: String, markedAt: Date?) async throws {
         guard statementValues.contains(where: { $0.id == statementId }) else { throw KMDataError.notFound("明細がありません。") }
         suspectedValues.removeAll { $0.statementId == statementId }
-        if let markedAt { suspectedValues.append(KMSuspectedStatement(statementId: statementId, markedAt: markedAt)) }
+        if let markedAt {
+            suspectedValues.append(KMSuspectedStatement(statementId: statementId, markedAt: markedAt))
+            recordManualReview(statementId: statementId)
+        }
     }
     func budgetSummary(month: KMYearMonth) async throws -> KMMonthlyBudgetSummary {
         let summary = try monthly(month)

@@ -46,6 +46,13 @@ import Foundation
 
 @MainActor protocol ReconciliationRepository {
     func latestRun() async throws -> KMReconciliationRun?
+    func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun
+    func confirmSameExpense(runId: String, statementId: String, receiptId: String, at timestamp: Date) async throws -> KMReconciliationResolution
+    func rejectCandidate(runId: String, statementId: String, receiptId: String) async throws
+    func ignoreStatement(runId: String, statementId: String, at timestamp: Date) async throws -> KMReconciliationResolution
+    func registerStatement(runId: String, statementId: String, categoryId: String?, destinationAccountId: String?, excludedFromSpending: Bool?, newAccountId: String, at timestamp: Date) async throws -> KMReconciliationResolution
+    func retryResolution(id: String, at timestamp: Date) async throws
+    func undoSameExpense(id: String, at timestamp: Date) async throws
     func resolutions() async throws -> [KMReconciliationResolution]
     /// Store a service-produced decision; no matching or ledger mutation belongs in this repository.
     func saveResolution(_ resolution: KMReconciliationResolution) async throws
