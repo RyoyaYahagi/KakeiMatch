@@ -37,7 +37,7 @@ docs/update-ux
 
 変更の大小を問わず直接pushは禁止です。Pull Request経由で統合します。
 
-GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、CIのpath filterは設けません。
+GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、workflowやジョブ自体のpath filterは設けません。`ci` は毎回起動し、PR差分がiOS関連ファイルだけの場合に限ってPWA検査のステップを省略します。
 
 初回設定は `gh api --method POST repos/RyoyaYahagi/KakeiMatch/rulesets --input .github/main-ruleset.json` で作成します。更新時は `gh api repos/RyoyaYahagi/KakeiMatch/rulesets` で対象IDを確認し、同じJSONを `PUT repos/RyoyaYahagi/KakeiMatch/rulesets/<id>` へ渡します。
 
