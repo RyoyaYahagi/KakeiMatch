@@ -29,7 +29,9 @@ struct RecurringScheduleServiceTests {
 
     @Test func validatesSelectedDatesAndChunksAtAuditLimit() throws {
         let schedule = input(.weekly, start: "2026-10-01")
-        #expect(try KMRecurringScheduleService.selectedOccurrences([date("2026-10-15"), date("2026-10-08")], input: schedule, through: date("2026-10-15")).map(\.rawValue) == ["2026-10-08", "2026-10-15"])
+        #expect(try KMRecurringScheduleService.selectedOccurrences([date("2026-10-15"), date("2026-10-08")], input: schedule, through: date("2026-10-15")).map(\.rawValue) == ["2026-10-15", "2026-10-08"])
+        #expect(try KMRecurringScheduleService.selectedOccurrences([date("2026-10-08")], input: schedule,
+            through: date("2026-10-15"), alreadyConsumed: [date("2026-10-08")]).isEmpty)
         #expect(throws: (any Error).self) { try KMRecurringScheduleService.selectedOccurrences([date("2026-10-08"), date("2026-10-08")], input: schedule, through: date("2026-10-15")) }
         #expect(throws: (any Error).self) { try KMRecurringScheduleService.selectedOccurrences([date("2026-10-22")], input: schedule, through: date("2026-10-15")) }
         let dates = KMRecurringScheduleService.occurrenceDates(input: input(.weekly, start: "1900-01-06"), through: date("1996-01-01"))

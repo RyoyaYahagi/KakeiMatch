@@ -109,11 +109,13 @@ enum KMRecurringScheduleService {
     static func selectedOccurrences(_ selected: [KMDate], input: KMRecurringScheduleInput, through: KMDate,
                                     alreadyConsumed: Set<KMDate> = []) throws -> [KMDate] {
         let validated = try validatedInput(input)
-        let allowed = Set(occurrenceDates(input: validated, through: through)).subtracting(alreadyConsumed)
+        let allowed = Set(occurrenceDates(input: validated, through: through))
         guard Set(selected).count == selected.count, selected.allSatisfy(allowed.contains) else {
             throw KMDataError.invalidData("定期登録の対象日が変わりました。画面を更新してください。")
         }
-        return selected.sorted()
+        // PWA validates against due dates first, then skips consumed dates idempotently.
+        // findMissingOccurrences preserves the selected order, including chunk boundaries.
+        return selected.filter { !alreadyConsumed.contains($0) }
     }
 
     static func importedId(scheduleId: String, date: KMDate) -> String {
