@@ -122,7 +122,7 @@ struct ReconciliationEngineTests {
 
     @Test func tolerancesAndInputOrderingAreDeterministic() {
         for (amount, delta, expected) in [(1200, 100, true), (1200, 101, false), (10000, 300, true), (10000, 301, false)] {
-            let result = KMReconciliationEngine.run(statements: [statement("s", amount: amount)], receipts: [receipt("r", amount: amount - delta, merchant: "別の店")])
+            let result = KMReconciliationEngine.run(statements: [statement("s", amount: amount)], receipts: [receipt("r", merchant: "別の店", amount: amount - delta)])
             #expect(!result.candidates.isEmpty == expected)
         }
         let statements = [statement("s2"), statement("s1")]
