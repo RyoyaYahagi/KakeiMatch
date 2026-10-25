@@ -77,7 +77,7 @@ struct KMMonthlyBudgetSettings: Codable, Equatable, Sendable {
     }
 
     func validated(for expectedBudgetId: String) throws -> Self {
-        guard !budgetId.isEmpty, budgetId.count <= 128, budgetId == expectedBudgetId,
+        guard Self.validIdentifier(budgetId), budgetId == expectedBudgetId,
               defaults.keys.allSatisfy(Self.validIdentifier),
               defaults.values.allSatisfy(Self.validAmount),
               (defaultTotal.map(Self.validAmount) ?? true),

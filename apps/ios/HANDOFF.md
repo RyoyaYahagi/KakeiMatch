@@ -93,7 +93,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 
 - `apps/ios/KakeiMatch/Data/` と `API/` は Linux 側の担当。画面からは Repository protocol 経由で使い、画面 PR では Data/API を直接書き換えない。足りない API があれば、PR 本文か Issue #240 のコメントで要望を出す。
 - `feature/ios-domain` は `feature/ios-foundation` 上のstackです。取り込んだ画面は `@Environment(\.repositories)` から `KMRepositories` を使います。全protocolは `@MainActor async throws`、返る値はsnapshotなので保存後に再取得します。Previewは `KMFixturePreview("migration") { HomeView() }`、UI testは `-UITestFixture <name>`。名前・境界はREADMEのData節を参照してください。
-- ドメインPRが未導入の画面では `Features/<Name>/` 内の仮のView用データを保ってよいです。導入後はRepositoryへ置き換えます。fixtureの「今日/今月」は `repositories.referenceDate` を使い、端末の実時計でずらさないでください。照合fixtureは既存PWAエンジンの固定結果であり、Swift照合サービスはまだありません。
+- ドメインPRが未導入の画面では `Features/<Name>/` 内の仮のView用データを保ってよいです。導入後はRepositoryへ置き換えます。fixtureの「今日/今月」は `repositories.referenceDate` を使い、端末の実時計でずらさないでください。PR #282（`feature/ios-reconciliation`、#280上のstack）では照合fixtureをSwiftサービスで計算し、既存PWAエンジンの固定期待値と全値比較します。手動判断後はPWA同様にrunを再計算してから次の操作へ進みます。照合判断の適用/取消はin-memoryのみです。Actual・永続化、定期実行/生成取消、分類履歴とRepositoryの接続は後続です。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数（金額表示）を使い、画面ごとに作らない。
 - 照合・重複検出・状態遷移・カテゴリ学習のロジックを View に書かない（Linux 側で Swift に移植する）。
 

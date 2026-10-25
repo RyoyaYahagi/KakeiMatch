@@ -87,7 +87,8 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 - `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
 - `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
-- `Data/Aggregation/`: PWAの月次集計・日別グループ・予算集計の純粋関数。照合エンジンではありません。
+- `Data/Aggregation/`: PWAの月次集計・日別グループ。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。
+- `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/`: TSの決定的サービス。照合採点・in-memory判断適用/取消、分類履歴の導出・適用根拠、定期日付/補完計画、予算要約を計算します。採点のbinary64演算だけは `KMJSNumber` でTSの丸めを再現し、金額は整数円のままです。
 - `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動も当面は空のin-memoryで、永続化済みとは扱いません。
 - `App/KMRepositories.swift`: **依存注入点はここだけ**です。同じ家計簿の各Repositoryをまとめ、`EnvironmentValues.repositories` で渡します。未注入時はnilで、暗黙のサンプルデータはありません。
 
@@ -115,14 +116,14 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
 | `RecurringRepository` | 定期設定のfixture CRUD（実行・過去分補完はしない） |
 | `PayrollRepository` | 確認済み給与内訳snapshotの保存/参照（収入への反映はしない） |
-| `CategoryLearningRepository` | 事前計算済み分類ルールと利用者の上書き。履歴からの学習計算は後続 |
+| `CategoryLearningRepository` | 事前計算済み分類ルールと利用者の上書き。`KMCategoryLearningService` の履歴計算とのRepository接続は後続 |
 | `SettingsRepository` | テーマ/最終バックアップ時刻のsnapshot |
 
 手入力の登録は `id: nil`、編集は既存IDを渡します。口座残高は読み取り用です。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
 
 ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・選択月内の最近3件をまとめます。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
-`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。登録済みレシートの削除や通常取引APIによる分割/レシート編集は、未実装を隠さずthrowします。Viewで代替エンジンを作らないでください。
+`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。登録済みレシートの削除や通常取引APIによる分割/レシート編集は、未実装を隠さずthrowします。Viewで代替エンジンを作らないでください。
 
 ### UI test / Previewのfixture
 
@@ -150,20 +151,20 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `empty` | 空の家計簿（固定時計のみ共通） |
 | `budget-warning` | 同じ取引、全体予算20,000円で4,730円超過 |
 | `receipt` | 同じ家計簿＋未登録の抽出済みレシート/7品目。原本画像は含まない |
-| `reconciliation` | 明細7件、要確認1・記録なし2・一致4の固定run/適用済み判断。実照合は実行しない |
+| `reconciliation` | 明細7件からSwiftで計算。要確認1・記録なし2・一致4をTSの固定run/適用済み判断と全値比較 |
 | `payroll` | 同じ家計簿＋給与内訳の確認snapshot。収入への反映前、写真なし |
 
 `-UITestFixture` はDebugだけ有効です。指定がない場合は空のin-memoryです。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。正常fixtureの表示はまだplaceholderのままで、データが画面へ描画済みとは扱いません。
 
 同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
 
-`reconciliation.json` は既存TSエンジンの出力から固定しました。再生成はNode 24で `node apps/ios/scripts/generate-reconciliation-fixture.mjs`。Swiftの照合実装ではありません。入力・出力を変えたらRepositoryTestsの件数とPWAスクショ状態を同時に確認します。
+`reconciliation.json` は既存TSエンジンの出力から固定した期待値です。再生成はNode 24で `node apps/ios/scripts/generate-reconciliation-fixture.mjs`。起動時はSwiftの照合サービスで入力から計算し、`LocalReconciliationTests.fixtureIsComputedAndEqualsPWAGolden` で期待値と比較します。入力・出力を変えたらRepositoryTestsの件数とPWAスクショ状態を同時に確認します。
 
 ### 後続Linux PRへの引き継ぎ
 
 - 永続化: in-memoryをadapterへ交換し、家計簿/profile境界、原子的な書き込み、削除Undo・下書き・競合/結果不明時の回復を提供する。このPRの簡易CRUDを永続化の仕様にしない。
 - `.kmb`: Actual ZIP、record envelope、schema version、nullable必須キー、参照整合性、原本、staging/切替を検証する。Codableの合成encodeだけではPWAへのexport互換を保証しない。
-- 決定的サービス: 照合/重複排除、レシート登録状態の実遷移、判断適用/取消、定期実行/補完、分類学習をRepositoryの外へ実装する。今回移植した集計関数とparityテストは再利用する。
+- 決定的サービス: 照合/重複排除・分類学習・定期日付/補完計画・予算要約は移植済みです。重複検出の取込経路接続、カテゴリ学習の履歴保存/Repository接続、定期CRUD/実行/生成取消の監査とActual書込は後続です。照合はin-memoryだけで、永続化・排他・プロセス再起動後の回復・Actual書込/読戻しを保証しません。型のCodableは完全なTS schema検証の代替ではありません。
 - API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
 - 同期・MoneyForward・バックアップ・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
