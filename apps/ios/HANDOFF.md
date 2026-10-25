@@ -56,7 +56,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283（main 起点） | Linux | 統合修正中。設計は `docs/DATA_LAYER.md` |
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
 | iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | 作成中（#283 上） | Linux | 作業中 |
-| Worker API クライアント・ネイティブ認証の整理 | `feature/ios-api-client` | 作成中（#280 上） | Linux | 作業中。Worker 側の変更が要る見込み（利用者判断待ちになる） |
+| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287（base: main） | Linux | typed通信・応答検証・Keychain・給与画像マスキング・URLProtocolテストを追加。認証の制約と未実装は `docs/API_LAYER.md`。CI結果はPR参照 |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
@@ -104,7 +104,8 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - fixture の「今日/今月」は `repositories.referenceDate` を使い、端末の実時計を使わない。
 - 照合・重複検出・状態遷移・カテゴリ学習・定期・予算の計算は `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/` にある。View に計算を書かない。照合の全操作は SQLite に接続済みで、run 入力 snapshot・候補却下・別名・取消履歴も再起動後に残る。カテゴリ学習は `saveCategoryObservation` で確認履歴を保存し、`categoryRules` で導出結果を取得する（レシート確認からの自動呼出しは後続）。定期は `catchUpRecurring(id:dates:through:at:)` で選択日の取引と処理済み記録を一括保存する。予算設定も永続化済み。生成取消・完全な定期監査・自動実行は未実装。旧 v1 DB は v2 へ移行し、旧 run は表示を維持するが操作前に再照合する。
 - `.kmb` 取り込みは `repositories.localStore` の `importBackup(from:)` / `returnToPreviousProfile()`。画面は利用者確認、security-scoped URL、エラー表示、成功後の再取得を担当する。
-- AI（レシート・給与明細の読み取り、カテゴリ提案、問い合わせ）は API PR ができるまで呼べない。画面は読み取り中・失敗・利用枠超過の表示を PWA どおりに作り、呼び出し部分は仮にしておく。
+- APIは `KMWorkerAPI` actorのasync/awaitを使う。`KMAPIConfiguration`で本番/previewを切り替える。既定のnative Originポリシーでは現行WorkerのPOSTは403になるため、通信実装済み＝認証導線完成とは扱わない。互換Originヘッダーは明示オプション。`docs/API_LAYER.md` の判断項目を先に確認する。初回Passkey/ゲスト作成UI、診断recorder、録音UI、Repository連携は未実装。
+- `readReceipt`は元画像を保持する責任を持たない。画面/Repository側で保存してから呼ぶ。給与は `KMMaskedPayrollImage.prepare` に利用者指定マスクと確認を渡し、同じ画像を見せて同意を取る。送信失敗・画面移動時の給与画像破棄も画面側で行う。contactのflowIdは結果不明時に勝手に再発行しない。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数を使い、画面ごとに作らない。
 
 ## 5. 実装担当（モデル）の割り振りの目安
@@ -122,6 +123,11 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 
 - iOS → PWA の書き出しは提供しない（利用者決定 2026-10-26）。PWA の `.kmb` は iOS へ一方向に取り込める。iOS のバックアップは iOS 同士でのみ復元できる
 - 端末間同期は iOS 版では作らない（利用者決定 2026-10-26）
+- 認証: iOSネイティブはWebのoriginを持たない。現行WorkerのOrigin/CSRF検査を無効化しない。互換ヘッダーを使うか、native専用の認証境界を作るかは利用者の判断が必要。今回Workerは変更しない。
+- Cloud Passkey: `ASAuthorizationPlatformPublicKeyCredentialProvider`とAssociated Domainsの対応、およびWorkerの `/.well-known/apple-app-site-association` 公開が必要。実際のApp ID/署名が未確定なので、仮のentitlementsを追加していない。初回登録・ログイン・追加ceremonyは未実装。session参照・Passkey一覧/削除・logout・account削除の通信はあるが、既存sessionを渡す承認済み導線はまだない。
+- ゲスト: PWAのTurnstileダイアログはそのままネイティブ化できない。App Attest中心のサーバー検証、または承認済みWeb認証を提案する。端末合言葉はKeychain、AI JWTは30秒の期限余裕で更新し再起動時は再取得する。詳細・endpoint schema・判断の選択肢は `docs/API_LAYER.md`。
+- 送信前画像: 通常レシートはPWAどおり元JPEG/PNG/WebPを送るため、HEIC変換や自動メタデータ除去を保証しない。給与だけは1800px以下への縮小・黒塗り・JPEG再描画を提供する。マスキング操作と送信後破棄のUIは別担当。
+
 - `.xcodeproj` はコミットせず、XcodeGen の `project.yml` から生成する（Issue の想定構成との差）
 - Liquid Glass の枠部分は PWA と見た目が変わる（利用者の希望による意図的な差）
 - フォントの描画・行間はブラウザーと完全一致しない可能性がある。PWA の金額は等幅フォント表示なので、iOS でも等幅（monospaced digits ではなく等幅書体）で合わせる
