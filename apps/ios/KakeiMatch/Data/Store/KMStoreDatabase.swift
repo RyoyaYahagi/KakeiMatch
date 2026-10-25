@@ -1,6 +1,6 @@
 import Foundation
 
-/// Native schema v1. Collection rows are domain snapshots, not Actual's CRDT tables.
+/// Native schema v2. Collection rows are domain snapshots, not Actual's CRDT tables.
 /// Original portable records and artifacts are retained losslessly, independently of projections.
 @MainActor final class KMStoreDatabase {
     let sql: KMSQLite
@@ -8,7 +8,7 @@ import Foundation
     init(url: URL) throws {
         sql = try KMSQLite(url: url)
         let version = try sql.rows("PRAGMA user_version").first?.int("user_version") ?? -1
-        guard (0...1).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
+        guard (0...2).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
         // Only configure writable journaling after the future-version guard has passed.
         try sql.execute("PRAGMA journal_mode=DELETE"); try sql.execute("PRAGMA synchronous=FULL")
         if version == 0 {
@@ -19,7 +19,7 @@ import Foundation
                 try sql.execute("CREATE TABLE provenance (id TEXT PRIMARY KEY NOT NULL, payload BLOB NOT NULL)")
                 try sql.execute("CREATE TABLE control (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)")
                 try sql.execute("INSERT INTO control VALUES(1,0)")
-                try sql.execute("PRAGMA user_version=1")
+                try sql.execute("PRAGMA user_version=2")
             }
             try save(KMInMemoryStore(budgetId: UUID().uuidString))
         }
@@ -28,6 +28,22 @@ import Foundation
         _ = try sql.rows("SELECT id,metadata,payload FROM artifacts LIMIT 0")
         _ = try sql.rows("SELECT id,payload FROM provenance LIMIT 0")
         _ = try revision()
+        if version == 1 {
+            try sql.transaction {
+                // v1 already persisted runs/decisions, but not service inputs. Recover lossless
+                // imported histories from provenance; do not invent a valid prepared run snapshot.
+                var state = KMServiceState()
+                if let manifest = try provenance("manifest.json"), let local = try provenance("local-data.json") {
+                    let records = try KMBackupSchema.validate(manifest: manifest, local: local).1
+                    state = try KMActualImport.serviceState(records: records)
+                }
+                try put("service-state", [state])
+                let current = try revision()
+                guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
+                try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(current + 1)])
+                try sql.execute("PRAGMA user_version=2")
+            }
+        }
     }
     private func values<T: Decodable>(_ collection: String, _: T.Type) throws -> [T] {
         try sql.rows("SELECT json FROM objects WHERE collection=? ORDER BY ordinal", [.text(collection)]).map {
@@ -60,6 +76,7 @@ import Foundation
         store.payrollValues = try values("payroll", KMPayrollRecord.self)
         store.ruleValues = try values("rules", KMCategoryLearningRule.self)
         store.ruleOverrides = try values("rule-overrides", KMCategoryRuleOverride.self)
+        store.serviceState = try singleton("service-state", KMServiceState.self)
         store.settingsValue = try singleton("settings", KMAppSettings.self)
         store.monthlySettings = settings
         store.nativeBudgets = try singleton("native-budgets", [String: [String: Int]].self)
@@ -90,6 +107,7 @@ import Foundation
             try put("runs", store.runValues); try put("resolutions", store.resolutionValues); try put("suspected", store.suspectedValues)
             try put("recurring", store.recurringValues); try put("payroll", store.payrollValues)
             try put("rules", store.ruleValues); try put("rule-overrides", store.ruleOverrides)
+            try put("service-state", [store.serviceState])
             try put("settings", [store.settingsValue]); try put("monthly-settings", [store.monthlySettings]); try put("native-budgets", [store.nativeBudgets])
             // Draft deletion also removes its image in the same transaction; imported CSVs remain intact.
             for row in try sql.rows("SELECT id FROM artifacts") {

@@ -165,7 +165,46 @@ import ZIPFoundation
         guard let value else { throw KMPortableBackup.invalid() }
         return try KMDate(String(format: "%04d-%02d-%02d", value / 10000, value / 100 % 100, value % 100))
     }
+    /// Shared by portable import and the native v1 → v2 migration. Inputs have passed the strict portable validator.
+    static func serviceState(records: [KMPortableRecord]) throws -> KMServiceState {
+        var result = KMServiceState()
+        var reconciliation = KMLocalReconciliation(statements: [], imports: [], transactions: [], accounts: [], categories: [])
+        for record in records {
+            let object = try record.object()
+            if record.kind == .merchantMapping, object["merchant"] != nil, object["aliasMerchant"] != nil {
+                reconciliation.aliases.append(try record.decode(KMReconciliationAlias.self))
+            }
+            if record.kind == .appSettings, record.id.hasPrefix("settings:reconciliation-manual:"), let id = object["statementId"] as? String {
+                reconciliation.manualStatementIds.insert(id)
+            }
+            guard record.kind == .correctionAudit else { continue }
+            switch object["targetType"] as? String {
+            case "category-learning": result.observations.append(try record.decode(KMCategoryLearningObservation.self))
+            case "reconciliation-undo": reconciliation.undoHistory.append(try record.decode(KMReconciliationUndo.self))
+            case "recurring-catch-up":
+                struct Audit: Decodable {
+                    struct Occurrence: Decodable { var date: KMDate; var importedId: String; var status: String }
+                    var operation: String; var scheduleId: String; var occurrences: [Occurrence]; var createdAt: Date
+                }
+                let audit = try record.decode(Audit.self)
+                // PWA consumes every date reserved by a create audit, even after undo/deletion.
+                // Delete audits must not overwrite the original reservation.
+                for row in audit.occurrences where audit.operation == "create" {
+                    result.occurrences.removeAll { $0.scheduleId == audit.scheduleId && $0.date == row.date }
+                    result.occurrences.append(.init(scheduleId: audit.scheduleId, date: row.date, importedId: row.importedId, processedAt: audit.createdAt))
+                }
+            default:
+                if object["statementId"] != nil, object["receiptId"] != nil, object["runId"] != nil {
+                    reconciliation.rejections.append(try record.decode(KMReconciliationPairRejection.self))
+                }
+            }
+        }
+        // A TS fingerprint cannot be used as Swift's prepared snapshot. Require a new run for review.
+        result.reconciliation = reconciliation
+        return result
+    }
     private static func apply(records: [KMPortableRecord], to store: KMInMemoryStore, budgetId: String) throws {
+        store.serviceState = try serviceState(records: records)
         for record in records {
             switch record.kind {
             case .receiptMetadata: store.receiptValues.append(try record.decode(KMReceipt.self))

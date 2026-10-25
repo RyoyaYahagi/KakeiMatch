@@ -1,6 +1,6 @@
 # Issue #240 iOS移行: Mac への引き継ぎ書
 
-作成: 2026-10-25（Linux 側オーケストレーター）。Mac 側で画面実装（Phase 3〜5）を進めるための指示書です。
+作成: 2026-10-25、更新: 2026-10-26（Linux 側オーケストレーター）。Mac 側で画面実装（Phase 3〜5）を進めるための指示書です。
 Linux 側の作業が進むたびに「2. 現在の状態」と「4. Linux 側との境界」を更新します。
 
 ## 0. 前提（必ず読む）
@@ -13,14 +13,20 @@ Linux 側の作業が進むたびに「2. 現在の状態」と「4. Linux 側�
 
 ## 1. Mac の環境準備
 
+画面実装は **PR #283 マージ後の `main`** から始める。#278〜#282 はマージ済み。#283 は端末内 DB・`.kmb` 取り込みとロジックの永続化を統合する。旧統合ブランチ `feature/ios-screens-base` は使わない。
+
 ```sh
 xcode-select -p          # Xcode 26 以上
 brew install xcodegen gh pnpm node
 gh auth login
 git clone https://github.com/RyoyaYahagi/KakeiMatch.git && cd KakeiMatch
-git fetch origin && git switch feature/ios-foundation   # PR #278 がマージ済みなら main
+git fetch origin && git switch main && git pull --ff-only
+# PR #283 がマージ済みであることを確認する
+# 参照スクショ・fixture は #279 で main に追加済み
 cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 ```
+
+画面 PR は #283 マージ後の `main` から作業 branch を切り、base も `main` にする。参照スクショは既存のものを使い、画面実装と無関係に更新しない。
 
 コマンドで確認する場合（ios.yml と同じ形。simulator 名は `xcrun simctl list devices available` で実在するものを使う）:
 
@@ -29,28 +35,30 @@ xcodebuild -project apps/ios/KakeiMatch.xcodeproj -scheme KakeiMatch \
   -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-PWA を横に並べて見比べる:
+PWA を横に並べて見比べる（Mac の WebKit で `pnpm --dir apps/pwa screenshots:migration` を撮り直すと iPhone に近い基準になる。6 節参照）:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 ```
 
-参照スクショは `docs/screenshots/migration/<画面>/<状態>-<light|dark>.png`。共通 fixture は `test/fixtures/ios-migration/fixture.json`、合成バックアップは `test/fixtures/ios-migration/synthetic.kmb`。どちらも Phase 0 の PR（作成中。下の表を参照）で入る。
+参照スクショは `docs/screenshots/migration/<画面>/<状態>-<light|dark>.png`、状態一覧は同じ場所の `README.md`、操作と identifier の対応は `flows.md`。
 
 ## 2. 現在の状態（PR の地図）
 
 | 内容 | branch | PR | 担当 | 状態 |
 | --- | --- | --- | --- | --- |
-| 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | CI 成功・レビュー待ち（各画面は placeholder） |
-| Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md（identifier 表） | `test/pwa-migration-screenshots` | #279 | Linux | 27状態×light/dark 54枚・fixture.json・synthetic.kmb 完了、レビュー待ち |
-| データ層・API 層の仕様調査 | なし（Linux 側の作業メモ） | なし | Linux | 作業中 |
-| ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | `feature/ios-domain` | #280（#278上のstack） | Linux | 型・protocol・fixture注入・PWA同入力の集計テストを追加。使い方はREADMEのData節。CI結果はPR参照 |
-| ローカル DB（local-first）・`.kmb` 取り込み | 未作成 | 未作成 | Linux | 予定 |
-| 明細CSVパーサー（Vpass・楽天カード・PayPayカード） | `feature/ios-statement-parsers` | #281 | Linux | Swift移植・Swift Testing追加済み。iOS CI（build・Swift Testing・XCUITest）成功 |
-| 端末間同期プロトコル（PWA と相互接続）・MoneyForward CSV 解析 | 同期: 未作成 / MoneyForward: `feature/ios-statement-parsers` | 同期: 未作成 / MoneyForward: #281 | Linux | MoneyForward CSV解析・カテゴリ対応・類似候補検索をSwiftへ移植。端末間同期は後続タスク |
-| Worker API クライアント（Gemini/Jev は Worker 経由） | 未作成 | 未作成 | Linux | 予定。ネイティブから呼ぶときの認証の扱いは調査結果を見て決める |
-| 各画面（下の 3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
+| 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | マージ済み（各画面は placeholder） |
+| Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md | `test/pwa-migration-screenshots` | #279（main 起点） | Linux | マージ済み。27状態×light/dark 54枚 |
+| ドメインモデル・Repository protocol・fixture 注入 | `feature/ios-domain` | #280（#278 上） | Linux | マージ済み |
+| 明細 CSV・MoneyForward CSV 解析 | `feature/ios-statement-parsers` | #281（#280 上） | Linux | マージ済み・TS テスト対応表あり |
+| 照合・重複検出・カテゴリ学習・定期・予算のロジック | `feature/ios-reconciliation` | #282（#280 上） | Linux | マージ済み・golden 273 件 TS と一致 |
+| 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283（main 起点） | Linux | 統合修正中。設計は `docs/DATA_LAYER.md` |
+| 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
+| iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | 作成中（#283 上） | Linux | 作業中 |
+| Worker API クライアント・ネイティブ認証の整理 | `feature/ios-api-client` | 作成中（#280 上） | Linux | 作業中。Worker 側の変更が要る見込み（利用者判断待ちになる） |
+| ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
+| 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
 
 ## 3. Mac 側でやること: 画面ごとの PR
@@ -72,16 +80,16 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 11 | 問い合わせ | `contact-ui.ts`, `contact-diagnostics.ts` | `migration/contact/*` |
 | 12 | バックアップ / 復元 | `local-backup-ui.ts` | `migration/backup/*` |
 | 13 | 給与明細 | `payroll-ui.ts` | 既存 `docs/screenshots` を確認 |
-| 14 | 端末間同期（QR / 文字コードの受け渡し・進行表示・変更前に戻す） | `device-link-ui.ts`, `device-link-status.ts`, `device-link-qr.ts`, `device-link-code.ts` | 既存 `docs/screenshots` を確認 |
-| 15 | MoneyForward CSV 取り込み | `moneyforward-ui.ts` | 既存 `docs/screenshots` を確認 |
+| 14 | MoneyForward CSV 取り込み | `moneyforward-ui.ts` | 既存 `docs/screenshots` を確認 |
 
-13〜15 は Issue の画面リストに無いが、利用者の指示（2026-10-25）で第一段階の対象に含める。
+13・14 は Issue の画面リストに無いが、利用者の指示（2026-10-25）で第一段階の対象に含める。端末間同期（PWA の `device-link*.ts`）は利用者の決定（2026-10-26）で iOS 版では作らない。設定画面にある同期への入口も出さない。
 
-14 の通信部分（WebRTC データチャネル、session description のコード化、家計簿全体の送受信と SHA-256 検証、PWA の端末とつながる互換性）は Linux 側が `Data/` に実装する。Mac 側は UI と QR の読み取り・表示（カメラ）を担当する。iOS で WebRTC を使うには外部 framework（SPM）が必要になる見込みなので、採用するものは Linux 側の PR で決める。15 の CSV 解析・カテゴリ対応も Linux 側が担当する。
+バックアップ画面（12）は「PWA の `.kmb` を取り込む」と「iOS 用バックアップの書き出し・復元」を扱う。iOS → PWA の書き出しは作らない（利用者決定 2026-10-26）ので、PWA の画面にある書き出しの文言は iOS 用バックアップの説明に置き換え、差分として PR に書く。
+
 
 各画面 PR の完了条件（Issue #240 Phase 3 より）:
 
-- fixture.json と同じデータで表示できる（Linux 側の in-memory Repository を使う。4 節）
+- fixture.json と同じデータで表示できる（`-UITestFixture <name>` と `KMFixturePreview`。4 節）
 - 文言・画面遷移・主な余白/サイズ/色/角丸が PWA と一致
 - Light / Dark、safe area、横スクロールなし、44pt 以上のタップ領域、長い文字列で崩れない
 - 参照スクショと同じ状態の iOS スクショを撮って並べて比べ、PR 本文に両方の画像と差分一覧を載せる
@@ -91,17 +99,20 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 
 ## 4. Linux 側との境界（衝突を防ぐ）
 
-- `apps/ios/KakeiMatch/Data/` と `API/` は Linux 側の担当。画面からは Repository protocol 経由で使い、画面 PR では Data/API を直接書き換えない。足りない API があれば、PR 本文か Issue #240 のコメントで要望を出す。
-- `feature/ios-domain` は `feature/ios-foundation` 上のstackです。取り込んだ画面は `@Environment(\.repositories)` から `KMRepositories` を使います。全protocolは `@MainActor async throws`、返る値はsnapshotなので保存後に再取得します。Previewは `KMFixturePreview("migration") { HomeView() }`、UI testは `-UITestFixture <name>`。名前・境界はREADMEのData節を参照してください。
-- ドメインPRが未導入の画面では `Features/<Name>/` 内の仮のView用データを保ってよいです。導入後はRepositoryへ置き換えます。fixtureの「今日/今月」は `repositories.referenceDate` を使い、端末の実時計でずらさないでください。PR #282（`feature/ios-reconciliation`、#280上のstack）では照合fixtureをSwiftサービスで計算し、既存PWAエンジンの固定期待値と全値比較します。手動判断後はPWA同様にrunを再計算してから次の操作へ進みます。照合判断の適用/取消はin-memoryのみです。Actual・永続化、定期実行/生成取消、分類履歴とRepositoryの接続は後続です。
-- 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数（金額表示）を使い、画面ごとに作らない。
-- 照合・重複検出・状態遷移・カテゴリ学習のロジックを View に書かない（Linux 側で Swift に移植する）。
+- `apps/ios/KakeiMatch/Data/` と `API/` は Linux 側の担当。画面からは `@Environment(\.repositories)` の `KMRepositories` 経由で使い、画面 PR では Data/API を書き換えない。足りない操作があれば PR 本文か Issue #240 のコメントで要望を出す（Linux 側で追加する）。
+- 全 protocol は `@MainActor async throws`。返る値は snapshot なので、保存後に再取得する。通常起動は SQLite（`KMSQLiteStore`）、`-UITestFixture <name>` と Preview（`KMFixturePreview("migration") { HomeView() }`）は in-memory。fixture 名と内容は README の Data 節。
+- fixture の「今日/今月」は `repositories.referenceDate` を使い、端末の実時計を使わない。
+- 照合・重複検出・状態遷移・カテゴリ学習・定期・予算の計算は `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/` にある。View に計算を書かない。照合の全操作は SQLite に接続済みで、run 入力 snapshot・候補却下・別名・取消履歴も再起動後に残る。カテゴリ学習は `saveCategoryObservation` で確認履歴を保存し、`categoryRules` で導出結果を取得する（レシート確認からの自動呼出しは後続）。定期は `catchUpRecurring(id:dates:through:at:)` で選択日の取引と処理済み記録を一括保存する。予算設定も永続化済み。生成取消・完全な定期監査・自動実行は未実装。旧 v1 DB は v2 へ移行し、旧 run は表示を維持するが操作前に再照合する。
+- `.kmb` 取り込みは `repositories.localStore` の `importBackup(from:)` / `returnToPreviousProfile()`。画面は利用者確認、security-scoped URL、エラー表示、成功後の再取得を担当する。
+- AI（レシート・給与明細の読み取り、カテゴリ提案、問い合わせ）は API PR ができるまで呼べない。画面は読み取り中・失敗・利用枠超過の表示を PWA どおりに作り、呼び出し部分は仮にしておく。
+- 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数を使い、画面ごとに作らない。
 
 ## 5. 実装担当（モデル）の割り振りの目安
 
+- GPT 系は pi（`openai-codex/*`）経由だけで使う。opencode・dsh 経由の GPT / Claude は使わない（利用者指示 2026-10-25）。
 - gpt-6.1-sol: レシート登録、明細照合、記録一覧（インライン編集）、Visual regression の仕組みづくり
-- gpt-6-luna: 定期、予算、マスタ管理、設定、問い合わせ、バックアップ画面、各画面の見た目の微調整
-- 調査・スクショの見比べ表づくり: 無料の deepseek-v4.1-flash でよい（遅い）
+- gpt-6-luna: 定期、予算、マスタ管理、設定、問い合わせ、バックアップ、給与明細、MoneyForward 取り込み、各画面の見た目の微調整
+- luna で足りる作業は luna に任せる（利用者指示 2026-10-26）
 
 ## 6. 再現できない可能性が高い点（判明しているもの）
 
@@ -109,6 +120,8 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 
 最後に利用者へまとめて報告するため、見つけたら PR に追記する。
 
+- iOS → PWA の書き出しは提供しない（利用者決定 2026-10-26）。PWA の `.kmb` は iOS へ一方向に取り込める。iOS のバックアップは iOS 同士でのみ復元できる
+- 端末間同期は iOS 版では作らない（利用者決定 2026-10-26）
 - `.xcodeproj` はコミットせず、XcodeGen の `project.yml` から生成する（Issue の想定構成との差）
 - Liquid Glass の枠部分は PWA と見た目が変わる（利用者の希望による意図的な差）
 - フォントの描画・行間はブラウザーと完全一致しない可能性がある。PWA の金額は等幅フォント表示なので、iOS でも等幅（monospaced digits ではなく等幅書体）で合わせる

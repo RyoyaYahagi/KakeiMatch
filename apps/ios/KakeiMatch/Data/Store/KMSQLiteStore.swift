@@ -65,7 +65,7 @@ import Foundation
             try db.preserve("manifest.json", data: backup.manifestJSON)
             // Full object and raw-byte readback before publication; hashes are verified by the reader too.
             let readback = try db.load()
-            guard try fingerprint(working) == fingerprint(readback) else { throw KMDataError.invalidData("復元した記録の読み戻しに失敗しました。") }
+            guard try fingerprint(working) == fingerprint(readback), working.serviceState == readback.serviceState else { throw KMDataError.invalidData("復元した記録の読み戻しに失敗しました。") }
             for artifact in backup.artifacts {
                 guard try db.original(artifact.metadata.id) == artifact.data else { throw KMDataError.invalidData("復元した原本の読み戻しに失敗しました。") }
             }
@@ -139,6 +139,13 @@ import Foundation
     func statementImports() async throws -> [KMLocalRecord<KMStatementImport>] { try await access { try await $0.statementImports() } }
     func statementTransactions() async throws -> [KMStatementTransaction] { try await access { try await $0.statementTransactions() } }
     func latestRun() async throws -> KMReconciliationRun? { try await access { try await $0.latestRun() } }
+    func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun { try await access(true) { try await $0.runReconciliation(id: id, at: timestamp) } }
+    func confirmSameExpense(runId: String, statementId: String, receiptId: String, at timestamp: Date) async throws -> KMReconciliationResolution { try await access(true) { try await $0.confirmSameExpense(runId: runId, statementId: statementId, receiptId: receiptId, at: timestamp) } }
+    func rejectCandidate(runId: String, statementId: String, receiptId: String) async throws { try await access(true) { try await $0.rejectCandidate(runId: runId, statementId: statementId, receiptId: receiptId) } }
+    func ignoreStatement(runId: String, statementId: String, at timestamp: Date) async throws -> KMReconciliationResolution { try await access(true) { try await $0.ignoreStatement(runId: runId, statementId: statementId, at: timestamp) } }
+    func registerStatement(runId: String, statementId: String, categoryId: String?, destinationAccountId: String?, excludedFromSpending: Bool?, newAccountId: String, at timestamp: Date) async throws -> KMReconciliationResolution { try await access(true) { try await $0.registerStatement(runId: runId, statementId: statementId, categoryId: categoryId, destinationAccountId: destinationAccountId, excludedFromSpending: excludedFromSpending, newAccountId: newAccountId, at: timestamp) } }
+    func retryResolution(id: String, at timestamp: Date) async throws { try await access(true) { try await $0.retryResolution(id: id, at: timestamp) } }
+    func undoSameExpense(id: String, at timestamp: Date) async throws { try await access(true) { try await $0.undoSameExpense(id: id, at: timestamp) } }
     func resolutions() async throws -> [KMReconciliationResolution] { try await access { try await $0.resolutions() } }
     func saveResolution(_ resolution: KMReconciliationResolution) async throws { try await access(true) { try await $0.saveResolution(resolution) } }
     func suspectedStatements() async throws -> [KMSuspectedStatement] { try await access { try await $0.suspectedStatements() } }
@@ -151,6 +158,10 @@ import Foundation
     func deleteRecurring(id: String) async throws { try await access(true) { try await $0.deleteRecurring(id: id) } }
     func payrollRecords() async throws -> [KMPayrollRecord] { try await access { try await $0.payrollRecords() } }
     func savePayrollRecord(_ record: KMPayrollRecord) async throws { try await access(true) { try await $0.savePayrollRecord(record) } }
+    func categoryObservations() async throws -> [KMCategoryLearningObservation] { try await access { try await $0.categoryObservations() } }
+    func saveCategoryObservation(_ value: KMCategoryLearningObservation) async throws { try await access(true) { try await $0.saveCategoryObservation(value) } }
+    func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence] { try await access { try await $0.recurringOccurrences(scheduleId: scheduleId) } }
+    func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws { try await access(true) { try await $0.catchUpRecurring(id: id, dates: dates, through: through, at: timestamp) } }
     func categoryRules() async throws -> [KMCategoryLearningRule] { try await access { try await $0.categoryRules() } }
     func setCategoryRuleOverride(_ value: KMCategoryRuleOverride) async throws { try await access(true) { try await $0.setCategoryRuleOverride(value) } }
     func resetCategoryRuleOverride(targetType: KMCategoryRuleStats.TargetType, normalizedName: String) async throws { try await access(true) { try await $0.resetCategoryRuleOverride(targetType: targetType, normalizedName: normalizedName) } }

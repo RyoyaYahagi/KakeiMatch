@@ -40,18 +40,18 @@ import ZIPFoundation
         try await store.deleteTransaction(id: row.id)
         #expect(try await reopened.transactions(matching: .init()).isEmpty)
     }
-    @Test func migrationZeroToOneAndFutureVersionAreNonDestructive() throws {
+    @Test func migrationZeroToTwoAndFutureVersionAreNonDestructive() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("v0.sqlite")
         let db = try KMStoreDatabase(url: file)
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 1)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 2)
         #expect(try db.load().transactionValues.isEmpty)
         try db.sql.execute("CREATE TABLE sentinel (value TEXT)")
         try db.sql.execute("INSERT INTO sentinel VALUES('synthetic survives')")
-        try db.sql.execute("PRAGMA user_version=2")
+        try db.sql.execute("PRAGMA user_version=3")
         #expect(throws: (any Error).self) { try KMStoreDatabase(url: file) }
         #expect(try db.sql.rows("SELECT value FROM sentinel").first?.string("value") == "synthetic survives")
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 2)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
         let malformed = directory.appendingPathComponent("malformed.sqlite")
         let invalid = try KMSQLite(url: malformed)
         try invalid.execute("CREATE TABLE sentinel (value TEXT)")
@@ -117,6 +117,14 @@ import ZIPFoundation
         #expect(try await reopened.resolutions().filter { $0.status == .applied }.count == 4)
         #expect(try reopened.importedRecords().count == 44)
         #expect(try reopened.importedRecords().contains { $0.kind == .correctionAudit })
+        let observations = try reopened.importedRecords().filter { record in
+            guard record.kind == .correctionAudit else { return false }
+            return try record.object()["targetType"] as? String == "category-learning"
+        }.map { try $0.decode(KMCategoryLearningObservation.self) }
+        #expect(!observations.isEmpty)
+        #expect(try await reopened.categoryObservations() == observations)
+        let derived = KMCategoryLearningService.deriveStats(observations: observations, availableCategoryIds: Set(categories.filter { !$0.isIncome }.map(\.id)))
+        #expect(try await reopened.categoryRules() == KMCategoryLearningService.applyingOverrides(derived, overrides: [], availableCategoryIds: Set(categories.map(\.id))))
         try reopened.returnToPreviousProfile()
         #expect(try await reopened.transaction(id: before.id) == before)
         try reopened.returnToPreviousProfile()

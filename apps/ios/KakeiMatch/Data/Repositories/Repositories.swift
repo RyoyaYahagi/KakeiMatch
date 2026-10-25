@@ -68,7 +68,9 @@ import Foundation
 
 @MainActor protocol RecurringRepository {
     func recurringTransactions() async throws -> [KMRecurringTransaction]
-    /// Fixture CRUD only: schedule execution/catch-up is a later service.
+    func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence]
+    /// Native catch-up commits generated transactions and consumed dates together.
+    func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws
     func saveRecurring(_ value: KMRecurringTransaction) async throws
     func deleteRecurring(id: String) async throws
 }
@@ -79,6 +81,9 @@ import Foundation
 }
 
 @MainActor protocol CategoryLearningRepository {
+    func categoryObservations() async throws -> [KMCategoryLearningObservation]
+    /// Replaces the receipt's observation only when its confirmation is not older.
+    func saveCategoryObservation(_ value: KMCategoryLearningObservation) async throws
     func categoryRules() async throws -> [KMCategoryLearningRule]
     func setCategoryRuleOverride(_ value: KMCategoryRuleOverride) async throws
     func resetCategoryRuleOverride(targetType: KMCategoryRuleStats.TargetType, normalizedName: String) async throws
