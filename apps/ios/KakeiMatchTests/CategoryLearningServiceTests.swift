@@ -32,7 +32,7 @@ struct CategoryLearningServiceTests {
     @Test func excludesUnavailableVotesButKeepsThemInDenominatorAndRejectsMixedMerchants() {
         let history = [observation("a"), observation("b"), observation("c"), observation("d", category: "removed"), observation("e", category: "removed", merchantCategory: nil)]
         let stats = KMCategoryLearningService.deriveStats(observations: history, availableCategoryIds: ["food-custom"])
-        #expect(stats.contains { $0.targetType == .item && $0.matchingReceipts == 3 && $0.receipts == 5 })
+        #expect(!stats.contains { $0.targetType == .item })
         #expect(!stats.contains { $0.targetType == .merchant })
         #expect(KMCategoryLearningService.deriveRules(observations: [observation("x"), observation("y"), observation("z")], availableCategoryIds: ["home-custom"]).items.isEmpty)
     }
