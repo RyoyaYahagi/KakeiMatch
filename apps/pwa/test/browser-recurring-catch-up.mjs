@@ -208,8 +208,10 @@ try {
   await octoberOperation.locator('[data-catch-up-undo]').click();
   await recordNames();
   names = await page.locator('.record-groups').innerText();
+  assert.equal(names.split('Synthetic Catch-up Monthly').length - 1, 0,
+    'Undo must remove the generated transaction with its exact payee name');
   assert.equal(occurrencesOf(names, 'Synthetic Catch-up Monthly'), 2,
-    'Undo must remove only the generated transaction and preserve the identical manual transaction');
+    'Undo must preserve the case-normalized manual transaction and the edited August transaction');
   assert.equal(occurrencesOf(names, 'Synthetic Catch-up Other'), 1);
 
   // Saving the unchanged schedule again must not create already-audited dates a second time.
