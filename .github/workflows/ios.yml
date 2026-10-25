@@ -1,0 +1,81 @@
+name: iOS
+
+on:
+  pull_request:
+    paths:
+      - 'apps/ios/**'
+      - '.github/workflows/ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/ios
+        shell: bash
+    env:
+      DESTINATION: 'platform=iOS Simulator,name=iPhone 17,OS=26.2'
+    steps:
+      - uses: actions/checkout@v4
+      # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
+      # https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
+      - name: Select Xcode and verify simulator
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+          xcodebuild -version
+          xcrun simctl list devices available
+          device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for x in d["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-2"] if x["name"] == "iPhone 17"))')
+          xcrun simctl boot "$device_id"
+          xcrun simctl bootstatus "$device_id" -b
+          xcrun simctl status_bar "$device_id" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+          xcrun simctl ui "$device_id" appearance light
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen --version
+          xcodegen generate
+      - name: Build
+        run: |
+          set -o pipefail
+          xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
+            -destination "$DESTINATION" -derivedDataPath DerivedData \
+            -resultBundlePath Build.xcresult build-for-testing CODE_SIGNING_ALLOWED=NO
+      - name: Swift Testing
+        run: |
+          set -o pipefail
+          xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
+            -destination "$DESTINATION" -derivedDataPath DerivedData \
+            -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
+            -only-testing:KakeiMatchTests test-without-building CODE_SIGNING_ALLOWED=NO
+      - name: XCUITest and screenshots
+        run: |
+          set -o pipefail
+          xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
+            -destination "$DESTINATION" -derivedDataPath DerivedData \
+            -resultBundlePath UITests.xcresult -parallel-testing-enabled NO \
+            -only-testing:KakeiMatchUITests test-without-building CODE_SIGNING_ALLOWED=NO
+      - name: Export screenshots
+        if: always()
+        run: |
+          if [ -d UITests.xcresult ]; then
+            xcrun xcresulttool export attachments --path UITests.xcresult --output-path screenshots
+          fi
+      - name: Upload test results and screenshots (also on failure)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: |
+            apps/ios/*.xcresult
+            apps/ios/screenshots/
+          if-no-files-found: warn
+          retention-days: 14
