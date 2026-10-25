@@ -25,9 +25,9 @@ struct MoneyForwardParserTests {
     }
 
     @Test func mapsNegativeAmountsFlagsAndFutureDates() {
-        let csv = "日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,計算対象\n2026/10/08,合成過去,-100,口座,食費,食料品,,0,1\n2026/10/10,合成未来,-300,口座,食費,食料品,,0,1\n2026/10/08,移動,-400,口座,振替,振替,,1,1\n2026/10/08,無効,-500,口座,食費,食料品,,unknown,1"
+        let csv = "日付,内容,金額（円）,保有金融機関,大項目,中項目,メモ,振替,計算対象\n2026/10/08,合成過去,-100,口座,食費,食料品,,0,1\n2026/10/09,合成今日,-200,口座,食費,食料品,,0,1\n2026/10/10,合成未来,-300,口座,食費,食料品,,0,1\n2026/10/08,移動,-400,口座,振替,振替,,1,1\n2026/10/08,無効,-500,口座,食費,食料品,,unknown,1"
         let result = KMMoneyForwardParser.parse(data: Data(csv.utf8), now: now)
-        #expect(result.transactions.map(\.amountYen) == [-100])
+        #expect(result.transactions.map(\.amountYen) == [-100, -200])
         #expect(result.excludedRows.map(\.reason) == ["future_date", "transfer"])
         #expect(result.rowErrors.map(\.reason) == ["振替の値を確認できません"])
     }

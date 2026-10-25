@@ -73,6 +73,19 @@ struct StatementParserTests {
         #expect(result.transactions.map(\.merchant) == ["人工\"商店"])
     }
 
+    @Test func reviewsPayPayMalformedAmountsAndDates() {
+        let headers = paypayHeader.split(separator: ",").map(String.init)
+        let valid = ["2026/09/28", "人工商店", "本人", "PayPayクレジット", "1回", "1000", "0", "1000", "1000", "0", "0", "2026/10/27"]
+        var badAmount = valid
+        badAmount[5] = "1.5"
+        var badDate = valid
+        badDate[0] = "2026/02/30"
+        let result = KMStatementParser.parse(data: csv([headers, badAmount, badDate]), provider: .paypayCard)
+        #expect(result.fatalErrors.isEmpty)
+        #expect(result.transactions.isEmpty)
+        #expect(result.needsReviewRows.map(\.rowNumber) == [2, 3])
+    }
+
     @Test func reviewsUnsupportedPayPayMethodsAndTypes() {
         let headers = paypayHeader.split(separator: ",").map(String.init)
         for (method, kind) in [("クレジットカード", "1回"), ("PayPay残高", "1回"), ("PayPayクレジット", "分割払い")] {
@@ -148,6 +161,23 @@ struct StatementParserTests {
         let partialResult = KMStatementParser.parse(data: csv([headers, partial]), provider: .rakutenCard)
         #expect(partialResult.transactions.isEmpty)
         #expect(partialResult.needsReviewRows == [.init(rowNumber: 2, reason: "複数行明細または部分行の可能性があります")])
+    }
+
+    @Test func reviewsMalformedRakutenDatesAndAmounts() {
+        let headers = rakutenHeader.split(separator: ",").map(String.init)
+        let base = ["2026/09/01", "Synthetic Market", "本人", "1回払い", "100", "0", "100", "100", "80", "0", ""]
+        var badDate = base
+        badDate[0] = "2026/02/30"
+        var badAmount = base
+        badAmount[4] = "12.5"
+        var dashedDate = base
+        dashedDate[0] = "2026-09-01"
+        var unsafeAmount = base
+        unsafeAmount[4] = "9007199254740992"
+        let result = KMStatementParser.parse(data: csv([headers, badDate, badAmount, dashedDate, unsafeAmount]), provider: .rakutenCard)
+        #expect(result.fatalErrors.isEmpty)
+        #expect(result.transactions.isEmpty)
+        #expect(result.needsReviewRows.map(\.rowNumber) == [2, 3, 4, 5])
     }
 
     @Test func routesSmbcFeesAndInvalidDatesOrAmountsToReview() {
