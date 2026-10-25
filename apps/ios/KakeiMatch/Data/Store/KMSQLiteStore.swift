@@ -50,10 +50,7 @@ import Foundation
     func importBackup(from url: URL) async throws {
         guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
         busy = true; defer { busy = false }
-        let prefix = try FileHandle(forReadingFrom: url)
-        defer { try? prefix.close() }
-        var magic = Data()
-        while magic.count < 8, let chunk = try prefix.read(upToCount: 8 - magic.count), !chunk.isEmpty { magic.append(chunk) }
+        let magic = try Data(contentsOf: url, options: [.mappedIfSafe]).prefix(8)
         if magic == KMNativeBackup.magic {
             let backup = try KMNativeBackup.read(url: url)
             try importNativeBackup(backup)
