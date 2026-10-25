@@ -1,0 +1,323 @@
+{
+  "run": {
+    "runId": "fixture-run",
+    "createdAt": "2026-10-14T03:30:00.000Z",
+    "completedAt": "2026-10-14T03:30:00.000Z",
+    "ruleVersion": "1.1.0",
+    "candidates": [
+      {
+        "statementTransactionId": "fixture-statement-0",
+        "receiptId": "actual:fixture-transaction-000",
+        "rank": 1,
+        "score": 0.89,
+        "amountDeltaYen": 20,
+        "dateDistanceDays": 0,
+        "merchantSimilarity": 1,
+        "reasons": [
+          "amount_close",
+          "date_close",
+          "merchant_similar",
+          "payment_source_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-1",
+        "receiptId": "actual:fixture-transaction-002",
+        "rank": 1,
+        "score": 1,
+        "amountDeltaYen": 0,
+        "dateDistanceDays": 0,
+        "merchantSimilarity": 1,
+        "reasons": [
+          "amount_exact",
+          "date_close",
+          "merchant_similar",
+          "payment_source_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-3",
+        "receiptId": "actual:fixture-transaction-004",
+        "rank": 1,
+        "score": 1,
+        "amountDeltaYen": 0,
+        "dateDistanceDays": 0,
+        "merchantSimilarity": 1,
+        "reasons": [
+          "amount_exact",
+          "date_close",
+          "merchant_similar",
+          "payment_source_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-4",
+        "receiptId": "actual:fixture-transaction-005",
+        "rank": 1,
+        "score": 1,
+        "amountDeltaYen": 0,
+        "dateDistanceDays": 0,
+        "merchantSimilarity": 1,
+        "reasons": [
+          "amount_exact",
+          "date_close",
+          "merchant_similar",
+          "payment_source_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-6",
+        "receiptId": "actual:fixture-transaction-007",
+        "rank": 1,
+        "score": 1,
+        "amountDeltaYen": 0,
+        "dateDistanceDays": 0,
+        "merchantSimilarity": 1,
+        "reasons": [
+          "amount_exact",
+          "date_close",
+          "merchant_similar",
+          "payment_source_match"
+        ]
+      }
+    ],
+    "statementResults": [
+      {
+        "statementTransactionId": "fixture-statement-0",
+        "status": "needs_review",
+        "matchedReceiptId": null,
+        "reasonCodes": [
+          "candidate_requires_review"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-1",
+        "status": "matched",
+        "matchedReceiptId": "actual:fixture-transaction-002",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-2",
+        "status": "unmatched_statement",
+        "matchedReceiptId": null,
+        "reasonCodes": [
+          "no_candidate"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-3",
+        "status": "matched",
+        "matchedReceiptId": "actual:fixture-transaction-004",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-4",
+        "status": "matched",
+        "matchedReceiptId": "actual:fixture-transaction-005",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-5",
+        "status": "unmatched_statement",
+        "matchedReceiptId": null,
+        "reasonCodes": [
+          "no_candidate"
+        ]
+      },
+      {
+        "statementTransactionId": "fixture-statement-6",
+        "status": "matched",
+        "matchedReceiptId": "actual:fixture-transaction-007",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      }
+    ],
+    "receiptResults": [
+      {
+        "receiptId": "actual:fixture-transaction-000",
+        "status": "needs_review",
+        "matchedStatementTransactionId": null,
+        "reasonCodes": [
+          "candidate_requires_review"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-002",
+        "status": "matched",
+        "matchedStatementTransactionId": "fixture-statement-1",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-004",
+        "status": "matched",
+        "matchedStatementTransactionId": "fixture-statement-3",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-005",
+        "status": "matched",
+        "matchedStatementTransactionId": "fixture-statement-4",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-007",
+        "status": "matched",
+        "matchedStatementTransactionId": "fixture-statement-6",
+        "reasonCodes": [
+          "automatic_high_confidence_match"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-008",
+        "status": "unmatched_receipt",
+        "matchedStatementTransactionId": null,
+        "reasonCodes": [
+          "no_candidate"
+        ]
+      },
+      {
+        "receiptId": "actual:fixture-transaction-010",
+        "status": "unmatched_receipt",
+        "matchedStatementTransactionId": null,
+        "reasonCodes": [
+          "no_candidate"
+        ]
+      }
+    ]
+  },
+  "resolutions": [
+    {
+      "id": "reconciliation-resolution:fixture-statement-1",
+      "runId": "fixture-run",
+      "statementId": "fixture-statement-1",
+      "resolution": "same_expense",
+      "source": "automatic",
+      "receiptId": "actual:fixture-transaction-002",
+      "categoryId": null,
+      "accountId": null,
+      "statementAmountYen": 1650,
+      "importedId": null,
+      "status": "applied",
+      "actualTransactionId": "fixture-transaction-002",
+      "actualSnapshot": {
+        "date": "2026-10-03",
+        "amountYen": -1650,
+        "payeeName": "ドラッグひまわり",
+        "accountId": "fixture-account-0",
+        "isSplit": false,
+        "cleared": false
+      },
+      "statementSnapshot": {
+        "usedDate": "2026-10-03",
+        "merchant": "ドラッグひまわり",
+        "kind": "purchase"
+      },
+      "errorCode": null,
+      "createdAt": "2026-10-14T03:30:00.000Z",
+      "updatedAt": "2026-10-14T03:30:00.000Z"
+    },
+    {
+      "id": "reconciliation-resolution:fixture-statement-3",
+      "runId": "fixture-run",
+      "statementId": "fixture-statement-3",
+      "resolution": "same_expense",
+      "source": "automatic",
+      "receiptId": "actual:fixture-transaction-004",
+      "categoryId": null,
+      "accountId": null,
+      "statementAmountYen": 3284,
+      "importedId": null,
+      "status": "applied",
+      "actualTransactionId": "fixture-transaction-004",
+      "actualSnapshot": {
+        "date": "2026-10-07",
+        "amountYen": -3284,
+        "payeeName": "スーパーみどり",
+        "accountId": "fixture-account-0",
+        "isSplit": false,
+        "cleared": false
+      },
+      "statementSnapshot": {
+        "usedDate": "2026-10-07",
+        "merchant": "スーパーみどり",
+        "kind": "purchase"
+      },
+      "errorCode": null,
+      "createdAt": "2026-10-14T03:30:00.000Z",
+      "updatedAt": "2026-10-14T03:30:00.000Z"
+    },
+    {
+      "id": "reconciliation-resolution:fixture-statement-4",
+      "runId": "fixture-run",
+      "statementId": "fixture-statement-4",
+      "resolution": "same_expense",
+      "source": "automatic",
+      "receiptId": "actual:fixture-transaction-005",
+      "categoryId": null,
+      "accountId": null,
+      "statementAmountYen": 1980,
+      "importedId": null,
+      "status": "applied",
+      "actualTransactionId": "fixture-transaction-005",
+      "actualSnapshot": {
+        "date": "2026-10-08",
+        "amountYen": -1980,
+        "payeeName": "本屋あおば",
+        "accountId": "fixture-account-0",
+        "isSplit": false,
+        "cleared": false
+      },
+      "statementSnapshot": {
+        "usedDate": "2026-10-08",
+        "merchant": "本屋あおば",
+        "kind": "purchase"
+      },
+      "errorCode": null,
+      "createdAt": "2026-10-14T03:30:00.000Z",
+      "updatedAt": "2026-10-14T03:30:00.000Z"
+    },
+    {
+      "id": "reconciliation-resolution:fixture-statement-6",
+      "runId": "fixture-run",
+      "statementId": "fixture-statement-6",
+      "resolution": "same_expense",
+      "source": "automatic",
+      "receiptId": "actual:fixture-transaction-007",
+      "categoryId": null,
+      "accountId": null,
+      "statementAmountYen": 1080,
+      "importedId": null,
+      "status": "applied",
+      "actualTransactionId": "fixture-transaction-007",
+      "actualSnapshot": {
+        "date": "2026-10-10",
+        "amountYen": -1080,
+        "payeeName": "カフェこもれび",
+        "accountId": "fixture-account-0",
+        "isSplit": false,
+        "cleared": false
+      },
+      "statementSnapshot": {
+        "usedDate": "2026-10-10",
+        "merchant": "カフェこもれび",
+        "kind": "purchase"
+      },
+      "errorCode": null,
+      "createdAt": "2026-10-14T03:30:00.000Z",
+      "updatedAt": "2026-10-14T03:30:00.000Z"
+    }
+  ]
+}
