@@ -36,7 +36,7 @@ indirect enum KMAPIShape: Sendable {
     case decimal(min: Decimal, max: Decimal)
     case values(Set<String>)
     case nullable(KMAPIShape)
-    case boolean, null, date, month, payrollText
+    case boolean, null, date, month, payrollText, any
 
     /// Domain encoders omit nil optionals; wire responses must still include required nulls.
     var encodingShape: KMAPIShape {
@@ -74,7 +74,7 @@ indirect enum KMAPIShape: Sendable {
             guard !number.isNaN, number >= min, number <= max else { throw KMAPIError.invalidResponse }
         case (.values(let allowed), .string(let text)):
             guard allowed.contains(text) else { throw KMAPIError.invalidResponse }
-        case (.nullable, .null), (.null, .null), (.boolean, .bool): break
+        case (.nullable, .null), (.null, .null), (.boolean, .bool), (.any, _): break
         case (.nullable(let shape), _): try shape.validate(value)
         case (.date, .string(let text)): _ = try KMDate(text)
         case (.month, .string(let text)): _ = try KMYearMonth(text)

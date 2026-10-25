@@ -14,6 +14,9 @@ export default defineConfig(({ mode, isPreview }) => {
   if (!turnstileSiteKey) {
     throw new Error('Production requires TURNSTILE_SITE_KEY so guest AI use has bot protection.');
   }
+  // Native auth stays disabled until an operator supplies all explicit values.
+  // Preview build variables never inherit the production identity/origin.
+  const nativeVariable = (name: string) => bindings.text(process.env[`${production ? '' : 'PREVIEW_'}${name}`] ?? '');
   return {
     worker: {
       name: production ? 'kakeimatch' : 'kakeimatch-issue-39-preview',
@@ -21,7 +24,7 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
       triggers: [{ type: 'scheduled', schedule: '0 18 * * *' }],
-      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html'] },
+      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html', '/.well-known/apple-app-site-association'] },
       env: {
         ASSETS: bindings.assets(),
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),
@@ -29,6 +32,11 @@ export default defineConfig(({ mode, isPreview }) => {
         ACCOUNT_BOOTSTRAP_SECRET: bindings.secret(),
         CLOUD_ACCOUNT_ORIGIN: production ? bindings.text('https://kakeimatch.yhgry.workers.dev') : bindings.secret(),
         AI_GATEWAY_AUTH_SECRET: bindings.secret(),
+        NATIVE_APP_TEAM_ID: nativeVariable('NATIVE_APP_TEAM_ID'),
+        NATIVE_APP_ID: nativeVariable('NATIVE_APP_ID'),
+        NATIVE_APP_ORIGIN: nativeVariable('NATIVE_APP_ORIGIN'),
+        NATIVE_APP_RP_ID: nativeVariable('NATIVE_APP_RP_ID'),
+        NATIVE_APP_ATTEST_ENVIRONMENT: nativeVariable('NATIVE_APP_ATTEST_ENVIRONMENT'),
         AI_EMERGENCY_STOP: bindings.secret(),
         AI_GUARDRAILS_JSON: bindings.secret(),
         AI_FREE_MONTHLY_LIMIT: bindings.text('30'),

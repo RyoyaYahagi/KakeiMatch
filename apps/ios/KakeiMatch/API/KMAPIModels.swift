@@ -5,7 +5,7 @@ enum KMAPIError: Error, Equatable, Sendable {
     case authenticationRequired, quotaExceeded, aiTemporarilyPaused, rateLimited
     case network, invalidResponse, invalidRequest, invalidFlow, forbiddenOrigin
     case providerUnavailable, providerTimeout, notConfigured, botCheckFailed, guestLimitReached
-    case nativeAuthenticationRequired, credentialStorage, server(status: Int, code: String?)
+    case nativeAuthenticationRequired, nativeUnsupported, credentialStorage, server(status: Int, code: String?)
 
     var pwaCode: String {
         switch self {
@@ -21,6 +21,7 @@ enum KMAPIError: Error, Equatable, Sendable {
         case .botCheckFailed: "bot_check_failed"
         case .guestLimitReached: "guest_limit_reached"
         case .nativeAuthenticationRequired: "account_session_required"
+        case .nativeUnsupported: "native_authentication_unavailable"
         case .credentialStorage: "storage"
         case .server: "request_failed"
         }
@@ -64,6 +65,12 @@ enum KMAPIError: Error, Equatable, Sendable {
 
 struct KMAIToken: Codable, Sendable { let token: String; let expiresAt: Int }
 struct KMGuestConfiguration: Codable, Sendable { let guestAvailable: Bool; let turnstileSiteKey: String? }
+struct KMNativeConfiguration: Codable, Sendable {
+    let available: Bool
+    let rpId: String?
+    let appAttestEnvironment: String?
+}
+
 struct KMGuestCreated: Codable, Sendable { let guestSecret: String }
 struct KMAIUsage: Codable, Sendable {
     enum Plan: String, Codable, Sendable { case free, pro, family, guest }

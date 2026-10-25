@@ -70,7 +70,7 @@ struct KMStoredSession: Codable, Sendable {
 }
 
 struct KMAPIConfiguration: Sendable {
-    enum OriginPolicy: Sendable {
+    enum OriginPolicy: Sendable, Equatable {
         /// Native has no web origin. POST is rejected by the current Worker.
         case native
         /// Explicit compatibility choice, not proof that this request is from the app.
@@ -81,11 +81,19 @@ struct KMAPIConfiguration: Sendable {
 
     static let productionURL = URL(string: "https://kakeimatch.yhgry.workers.dev")!
 
-    init(baseURL: URL = Self.productionURL, originPolicy: OriginPolicy = .native) throws {
-        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil, baseURL.password == nil,
-              baseURL.query == nil, baseURL.fragment == nil, baseURL.port == nil,
-              baseURL.path.isEmpty || baseURL.path == "/" else { throw KMAPIError.invalidRequest }
-        self.baseURL = baseURL
+    init(baseURL: URL? = nil, originPolicy: OriginPolicy = .native) throws {
+        let resolvedURL: URL
+        if let baseURL {
+            resolvedURL = baseURL
+        } else {
+            guard let host = Bundle.main.object(forInfoDictionaryKey: "KMNativeAPIHost") as? String,
+                  !host.isEmpty, let configuredURL = URL(string: "https://\(host)") else { throw KMAPIError.invalidRequest }
+            resolvedURL = configuredURL
+        }
+        guard resolvedURL.scheme == "https", resolvedURL.host != nil, resolvedURL.user == nil, resolvedURL.password == nil,
+              resolvedURL.query == nil, resolvedURL.fragment == nil, resolvedURL.port == nil,
+              resolvedURL.path.isEmpty || resolvedURL.path == "/" else { throw KMAPIError.invalidRequest }
+        self.baseURL = resolvedURL
         self.originPolicy = originPolicy
     }
 
