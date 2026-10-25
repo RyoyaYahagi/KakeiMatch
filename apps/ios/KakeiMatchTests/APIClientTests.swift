@@ -43,8 +43,9 @@ private final class APITestCredentials: KMCloudCredentialStore, Sendable {
     func write(_ data: Data?, key: String) { values.withLock { $0[key] = data } }
 }
 
-private struct FakeAppAttest: KMAppAttesting {
+private final class FakeAppAttest: KMAppAttesting {
     let isSupported: Bool
+    init(isSupported: Bool) { self.isSupported = isSupported }
     static let syntheticKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
     let generatedKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
     let hashes = Mutex<[Data]>([])
@@ -99,10 +100,14 @@ private struct AttestCallCounts: Sendable {
     var assertions = 0
 }
 
-private struct ControlledAppAttest: KMAppAttesting {
+private final class ControlledAppAttest: KMAppAttesting {
     let isSupported = true
     let generateGate: AsyncTestGate?
     let assertionGate: AsyncTestGate?
+    init(generateGate: AsyncTestGate?, assertionGate: AsyncTestGate?) {
+        self.generateGate = generateGate
+        self.assertionGate = assertionGate
+    }
     let counts = Mutex(AttestCallCounts())
     let hashes = Mutex<[Data]>([])
     let generatedKeyID = FakeAppAttest.syntheticKeyID
