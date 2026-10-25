@@ -120,11 +120,15 @@ import Foundation
             // Saving the device-local theme prunes removed receipt images; retain CSV originals too.
             try incoming.saveArtifacts(preservedArtifacts)
             let actualArtifacts = try incoming.artifacts()
-            guard actualArtifacts.count == backup.artifacts.count else { throw KMPortableBackup.invalid() }
+            guard actualArtifacts.count == backup.artifacts.count else {
+                throw KMDataError.invalidData("バックアップ内の原本件数とSQLiteの原本件数が一致しません。")
+            }
             let expected = Dictionary(uniqueKeysWithValues: actualArtifacts.map { ($0.0, $0.1) })
             for (path, bytes) in backup.artifacts {
                 guard let encoded = path.split(separator: "/").last,
-                      let artifactId = Self.decodeArtifactPath(String(encoded)), expected[artifactId] == bytes else { throw KMPortableBackup.invalid() }
+                      let artifactId = Self.decodeArtifactPath(String(encoded)), expected[artifactId] == bytes else {
+                    throw KMDataError.invalidData("バックアップ内の原本とSQLiteの原本を照合できません。")
+                }
             }
             let reopened = try KMStoreDatabase(url: databaseURL)
             let verified = try reopened.load()
