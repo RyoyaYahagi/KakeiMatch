@@ -47,7 +47,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | データ層・API 層の仕様調査 | なし（Linux 側の作業メモ） | なし | Linux | 作業中 |
 | ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | `feature/ios-domain` | #280（#278上のstack） | Linux | 型・protocol・fixture注入・PWA同入力の集計テストを追加。使い方はREADMEのData節。CI結果はPR参照 |
 | ローカル DB（local-first）・`.kmb` 取り込み | 未作成 | 未作成 | Linux | 予定 |
-| 明細CSVパーサー（Vpass・楽天カード・PayPayカード） | `feature/ios-statement-parsers` | #281 | Linux | Swift移植・Swift Testing追加済み。iOS CI確認中 |
+| 明細CSVパーサー（Vpass・楽天カード・PayPayカード） | `feature/ios-statement-parsers` | #281 | Linux | Swift移植・Swift Testing追加済み。iOS CI（build・Swift Testing・XCUITest）成功 |
 | 端末間同期プロトコル（PWA と相互接続）・MoneyForward CSV 解析 | 同期: 未作成 / MoneyForward: `feature/ios-statement-parsers` | 同期: 未作成 / MoneyForward: #281 | Linux | MoneyForward CSV解析・カテゴリ対応・類似候補検索をSwiftへ移植。端末間同期は後続タスク |
 | Worker API クライアント（Gemini/Jev は Worker 経由） | 未作成 | 未作成 | Linux | 予定。ネイティブから呼ぶときの認証の扱いは調査結果を見て決める |
 | 各画面（下の 3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
