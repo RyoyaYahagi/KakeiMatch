@@ -30,6 +30,7 @@ struct KMBottomSheet<Content: View>: View {
                                 .frame(width: KMLayout.minimumHit, height: KMLayout.minimumHit)
                         }
                         .buttonStyle(.plain).foregroundStyle(KMColor.primary)
+                        .keyboardShortcut(.cancelAction)
                         .accessibilityLabel("閉じる").accessibilityIdentifier("record-sheet.close")
                     }
                     .contentShape(Rectangle()).gesture(dismissDrag)
@@ -49,7 +50,7 @@ struct KMBottomSheet<Content: View>: View {
             }
             .ignoresSafeArea(edges: .bottom)
             .onAppear { titleFocused = true }
-            .onExitCommand { isPresented = false }
+            .accessibilityAction(.escape) { isPresented = false }
         }
     }
 
