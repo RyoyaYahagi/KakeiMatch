@@ -10,6 +10,8 @@ import Foundation
     var categoryValues: [KMCategory]
     var groupValues: [KMCategoryGroup]
     var receiptValues: [KMReceipt]
+    /// Native IDs are preserved on import; fixture-only names are synthesized below.
+    var payeeValues: [KMPayee] = []
     var imageValues: [String: Data] = [:]
     var importValues: [KMLocalRecord<KMStatementImport>] = []
     var statementValues: [KMStatementTransaction] = []
@@ -20,7 +22,7 @@ import Foundation
     var recurringValues: [KMRecurringTransaction] = []
     var payrollValues: [KMPayrollRecord] = []
     var ruleValues: [KMCategoryLearningRule] = []
-    private var ruleOverrides: [KMCategoryRuleOverride] = []
+    var ruleOverrides: [KMCategoryRuleOverride] = []
     var settingsValue = KMAppSettings()
     var monthlySettings: KMMonthlyBudgetSettings
     /// Untouched native Actual amounts are separate from KakeiMatch overrides.
@@ -193,7 +195,8 @@ import Foundation
         categoryValues.removeAll { $0.id == id }
     }
     func payees() async throws -> [KMPayee] {
-        Array(Set(transactionValues.compactMap(\.payeeName))).sorted().map { KMPayee(id: "fixture-payee:" + $0, name: $0) }
+        let known = Set(payeeValues.map(\.name))
+        return payeeValues + Array(Set(transactionValues.compactMap(\.payeeName)).subtracting(known)).sorted().map { KMPayee(id: "fixture-payee:" + $0, name: $0) }
     }
     func receipts() async throws -> [KMReceipt] { receiptValues.sorted { $0.createdAt > $1.createdAt } }
     func receipt(id: String) async throws -> KMReceipt? { receiptValues.first { $0.id == id } }

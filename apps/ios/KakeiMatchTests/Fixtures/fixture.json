@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "timezone": "Asia/Tokyo",
+  "now": "2026-10-14T03:30:00.000Z",
+  "accounts": [
+    { "name": "PayPayカード", "type": "credit_card", "provider": "paypay_card" },
+    { "name": "メイン口座", "type": "bank", "provider": null },
+    { "name": "現金", "type": "cash", "provider": null }
+  ],
+  "categories": ["食費", "外食", "日用品", "交通", "水道・光熱", "教育・学習", "通信"],
+  "incomeCategory": "給与",
+  "transactions": [
+    { "date": "2026-10-01", "payee": "青空食堂", "amountYen": 860, "category": "外食", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-02", "payee": "電気料金", "amountYen": 6820, "category": "水道・光熱", "account": "メイン口座", "type": "expense" },
+    { "date": "2026-10-03", "payee": "ドラッグひまわり", "amountYen": 1650, "category": "日用品", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-05", "payee": "市営バス", "amountYen": 420, "category": "交通", "account": "現金", "type": "expense" },
+    { "date": "2026-10-07", "payee": "スーパーみどり", "amountYen": 3284, "category": "食費", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-08", "payee": "本屋あおば", "amountYen": 1980, "category": "教育・学習", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-10", "payee": "給与", "amountYen": 248000, "category": "給与", "account": "メイン口座", "type": "income" },
+    { "date": "2026-10-10", "payee": "カフェこもれび", "amountYen": 1080, "category": "外食", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-11", "payee": "スーパーみどり", "amountYen": 2416, "category": "食費", "account": "PayPayカード", "type": "expense" },
+    { "date": "2026-10-12", "payee": "青果てらだ", "amountYen": 1240, "category": "食費", "account": "現金", "type": "expense" },
+    { "date": "2026-10-13", "payee": "携帯料金", "amountYen": 4980, "category": "通信", "account": "PayPayカード", "type": "expense" }
+  ],
+  "budgetYen": 80000,
+  "warningBudgetYen": 20000,
+  "searchKeyword": "スーパーみどり",
+  "payroll": { "employerName": "架空商事（テスト専用）", "period": "2026年10月", "grossPayYen": 340000, "deductionsYen": 80000, "netPayYen": 260000 },
+  "receipt": { "merchant": "スーパーみどり", "date": "2026-10-14", "time": "12:31", "totalYen": 2138, "taxYen": 158, "items": [{ "name": "牛乳", "amountYen": 238 }, { "name": "食パン", "amountYen": 198 }, { "name": "たまご 10個", "amountYen": 278 }, { "name": "鶏むね肉", "amountYen": 512 }, { "name": "キャベツ", "amountYen": 168 }, { "name": "バナナ", "amountYen": 198 }, { "name": "台所用洗剤", "amountYen": 546 }] },
+  "statement": [{ "date": "2026/10/01", "merchant": "青空食堂", "amountYen": 880 }, { "date": "2026/10/03", "merchant": "ドラッグひまわり", "amountYen": 1650 }, { "date": "2026/10/04", "merchant": "オンラインストア ほしぞら", "amountYen": 3960 }, { "date": "2026/10/07", "merchant": "スーパーみどり", "amountYen": 3284 }, { "date": "2026/10/08", "merchant": "本屋あおば", "amountYen": 1980 }, { "date": "2026/10/09", "merchant": "シネマひだまり", "amountYen": 1800 }, { "date": "2026/10/10", "merchant": "カフェこもれび", "amountYen": 1080 }]
+}

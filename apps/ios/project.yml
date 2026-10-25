@@ -11,11 +11,18 @@ settings:
     GENERATE_INFOPLIST_FILE: YES
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
+packages:
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation.git
+    exactVersion: 0.9.20
 targets:
   KakeiMatch:
     type: application
     platform: iOS
     sources: [KakeiMatch]
+    dependencies:
+      - sdk: libsqlite3.tbd
+      - package: ZIPFoundation
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios
@@ -26,7 +33,12 @@ targets:
   KakeiMatchTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [KakeiMatchTests]
+    sources:
+      - path: KakeiMatchTests
+        excludes: [Fixtures]
+      - path: KakeiMatchTests/Fixtures
+        buildPhase: resources
+        type: folder
     dependencies:
       - target: KakeiMatch
     settings:
