@@ -120,9 +120,17 @@ import Foundation
     func saveArtifacts(_ artifacts: [KMBackupArtifact]) throws {
         try sql.transaction {
             for artifact in artifacts {
-                try sql.execute("INSERT INTO artifacts(id,metadata,payload) VALUES(?,?,?)", [.text(artifact.metadata.id),
+                try sql.execute("INSERT OR REPLACE INTO artifacts(id,metadata,payload) VALUES(?,?,?)", [.text(artifact.metadata.id),
                     .blob(try KMJSON.encoder().encode(artifact.metadata)), .blob(artifact.data)])
             }
+        }
+    }
+    func backupArtifacts() throws -> [KMBackupArtifact] {
+        try sql.rows("SELECT metadata,payload FROM artifacts ORDER BY id").map {
+            guard let metadata = $0.data("metadata"), let payload = $0.data("payload") else {
+                throw KMDataError.invalidData("端末DBの原本が不正です。")
+            }
+            return KMBackupArtifact(metadata: try KMJSON.decoder().decode(KMBackupManifest.Raw.self, from: metadata), data: payload)
         }
     }
     func preserve(_ id: String, data: Data) throws {

@@ -79,7 +79,6 @@ import ZIPFoundation
         let beforeReceipts = try await source.receipts(), beforeStatements = try await source.statementTransactions()
         let beforeRuns = try await source.latestRun(), beforeResolutions = try await source.resolutions()
         let beforeBudget = try await source.budgetSettings(), beforePayroll = try await source.payrollRecords()
-        let beforeSettings = try await source.settings()
         let originalRecords = try source.importedRecords()
         let original = try #require(beforeReceipts.first { $0.image != nil })
         let blobId = try #require(original.image?.blobId)
@@ -90,6 +89,7 @@ import ZIPFoundation
         #expect(output.pathExtension == "kmib")
         #expect(try await source.settings().lastExportAt != nil)
         let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
+        try await restored.saveSettings(.init(theme: .dark))
         try await restored.importBackup(from: output)
         #expect(try await restored.transactions(matching: .init(limit: nil)) == beforeTransactions)
         #expect(try await restored.accounts() == beforeAccounts)
@@ -108,7 +108,7 @@ import ZIPFoundation
         #expect(restoredRecords.map(\.kind.rawValue) == originalRecords.map(\.kind.rawValue))
         #expect(restoredRecords.map(\.value) == originalRecords.map(\.value))
         #expect(restoredRecords.map(\.updatedAt) == originalRecords.map(\.updatedAt))
-        #expect(try await restored.settings().theme == beforeSettings.theme)
+        #expect(try await restored.settings().theme == .dark) // Keep device-local appearance while restoring all originals.
     }
 
     private func rewriteNative(_ data: Data, _ change: (inout [String: Any]) -> Void) throws -> Data {

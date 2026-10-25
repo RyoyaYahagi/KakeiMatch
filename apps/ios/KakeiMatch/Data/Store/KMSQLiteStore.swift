@@ -113,9 +113,12 @@ import Foundation
             try backup.database.write(to: databaseURL, options: [.atomic])
             let incoming = try KMStoreDatabase(url: databaseURL)
             let imported = try incoming.load()
+            let preservedArtifacts = try incoming.backupArtifacts()
             let currentStore = try database().load()
             imported.settingsValue.theme = currentStore.settingsValue.theme
             try incoming.save(imported)
+            // Saving the device-local theme prunes removed receipt images; retain CSV originals too.
+            try incoming.saveArtifacts(preservedArtifacts)
             let actualArtifacts = try incoming.artifacts()
             guard actualArtifacts.count == backup.artifacts.count else { throw KMPortableBackup.invalid() }
             let expected = Dictionary(uniqueKeysWithValues: actualArtifacts.map { ($0.0, $0.1) })
