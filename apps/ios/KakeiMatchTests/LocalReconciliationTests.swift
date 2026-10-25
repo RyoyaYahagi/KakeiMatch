@@ -50,7 +50,7 @@ struct LocalReconciliationTests {
         #expect(exact.transactions[0].cleared && exact.transactions[0].amountYen == -1000)
         #expect(throws: KMReconciliationError("undo_unavailable")) { try exact.undoSameExpense(exact.resolutions[0].id, at: now) }
     }
-    @Test func keepsLatestRunUsableAfterMultipleManualMatches() throws {
+    @Test func manualDecisionInvalidatesRunLikePWAFingerprint() throws {
         let transactions = ["t1", "t2"].map { id in
             KMTransaction(id: id, date: KMDate(rawValue: "2026-10-01"), amountYen: -1000, kind: .expense,
                 payeeName: "人工ストア", accountId: "card", cleared: false)
@@ -61,9 +61,41 @@ struct LocalReconciliationTests {
         let run = try state.run(id: "one", at: now)
         #expect(run.statementResults.allSatisfy { $0.status == .needsReview })
         let first = try state.sameExpense(runId: "one", statementId: "s1", receiptId: "actual:t1", at: now)
-        let second = try state.sameExpense(runId: "one", statementId: "s2", receiptId: "actual:t2", at: now)
+        #expect(throws: KMReconciliationError("stale_run")) {
+            try state.sameExpense(runId: "one", statementId: "s2", receiptId: "actual:t2", at: now)
+        }
+        _ = try state.run(id: "two", at: now)
+        // The remaining exact unique pair was automatically applied by the new run.
+        let second = try #require(state.resolutions.first { $0.statementId == "s2" })
         #expect(first.status == .applied && second.status == .applied)
         #expect(state.resolutions.map(\.statementId) == ["s1", "s2"])
+    }
+
+    @Test func legacySnapshotRetryRequiresConfirmedReceiptAndCannotUndo() throws {
+        for alreadyApplied in [false, true] {
+            var state = service()
+            state.receipts = [KMReceipt(id: "receipt", createdAt: now, updatedAt: now,
+                confirmedValue: .init(merchant: "人工ストア", purchasedDate: KMDate(rawValue: "2026-10-01"),
+                    totalAmountYen: 980, categoryId: "food", accountId: "card"),
+                aiSuggestion: .init(source: .unclassified), registration: .init(status: .applied, actualTransactionId: "t"))]
+            _ = try state.run(id: "one", at: now)
+            let decision = try state.sameExpense(runId: "one", statementId: "s", receiptId: "receipt", at: now)
+            state.resolutions[0].actualSnapshot = nil
+            state.resolutions[0].status = .failed
+            if !alreadyApplied { state.transactions[0].amountYen = -980; state.transactions[0].cleared = false }
+            try state.retry(decision.id, at: now)
+            #expect(state.resolutions[0].status == .applied)
+            #expect(state.transactions[0].amountYen == -1000 && state.transactions[0].cleared)
+            #expect(state.resolutions[0].actualSnapshot?.cleared == nil)
+            #expect(throws: KMReconciliationError("undo_unavailable")) { try state.undoSameExpense(decision.id, at: now) }
+        }
+        var unsafe = service()
+        _ = try unsafe.run(id: "one", at: now)
+        let decision = try unsafe.sameExpense(runId: "one", statementId: "s", receiptId: "actual:t", at: now)
+        unsafe.resolutions[0].actualSnapshot = nil; unsafe.resolutions[0].status = .failed
+        try unsafe.retry(decision.id, at: now)
+        #expect(unsafe.resolutions[0].status == .failed)
+        #expect(unsafe.resolutions[0].errorCode == "resolution_snapshot_invalid")
     }
 
     @Test func cashClearedAndFailedDecisionsAreExcluded() throws {
@@ -87,7 +119,11 @@ struct LocalReconciliationTests {
             try state.noReceipt(runId: "one", statementId: "s", categoryId: "food", newAccountId: "new", at: now)
         }
         try state.rejectPair(runId: "one", statementId: "s", receiptId: "actual:t")
-        let value = try state.noReceipt(runId: "one", statementId: "s", categoryId: "food", excludedFromSpending: true, newAccountId: "new", at: now)
+        #expect(throws: KMReconciliationError("stale_run")) {
+            try state.noReceipt(runId: "one", statementId: "s", categoryId: "food", newAccountId: "new", at: now)
+        }
+        _ = try state.run(id: "after-rejection", at: now)
+        let value = try state.noReceipt(runId: "after-rejection", statementId: "s", categoryId: "food", excludedFromSpending: true, newAccountId: "new", at: now)
         #expect(value.resolution == .noReceipt && value.status == .applied)
         #expect(state.transactions.count == 2 && state.transactions.last?.excludedFromSpending == true)
         _ = try state.run(id: "two", at: now)

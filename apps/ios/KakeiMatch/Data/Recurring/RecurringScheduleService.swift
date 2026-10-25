@@ -70,7 +70,7 @@ enum KMRecurringScheduleService {
     }
 
     static func validatedInput(_ input: KMRecurringScheduleInput) throws -> KMRecurringScheduleInput {
-        let name = input.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = KMJSString.trim(input.name)
         guard !name.isEmpty, name.utf16.count <= 200, input.amountYen > 0, KMMonthlyBudgetSettings.validAmount(input.amountYen),
               KMMonthlyBudgetSettings.validIdentifier(input.categoryId), KMMonthlyBudgetSettings.validIdentifier(input.accountId) else {
             throw KMDataError.invalidData("名前・金額・日付・カテゴリ・口座を確認してください。")
@@ -78,6 +78,21 @@ enum KMRecurringScheduleService {
         return KMRecurringScheduleInput(name: name, kind: input.kind, amountYen: input.amountYen,
             categoryId: input.categoryId, accountId: input.accountId, frequency: input.frequency,
             startDate: input.startDate, postsTransaction: input.postsTransaction)
+    }
+
+    static func validateMastersAndUniqueness(input: KMRecurringScheduleInput, editingId: String? = nil,
+                                            categories: [KMCategory], accounts: [KMAccount],
+                                            schedules: [KMRecurringTransaction]) throws {
+        let value = try validatedInput(input)
+        guard categories.contains(where: { $0.id == value.categoryId && !$0.hidden && $0.isIncome == (value.kind == .income) }) else {
+            throw KMDataError.invalidData("種類に合う利用中のカテゴリを選んでください。")
+        }
+        guard accounts.contains(where: { $0.id == value.accountId && !$0.closed }) else {
+            throw KMDataError.invalidData("利用中の口座を選んでください。")
+        }
+        guard !schedules.contains(where: { $0.id != editingId && KMJSString.trim($0.name) == value.name }) else {
+            throw KMDataError.invalidData("同じ名前の定期登録があります。既存の定期登録を編集してください。")
+        }
     }
 
     static func preview(input: KMRecurringScheduleInput, scheduleId: String, through: KMDate,

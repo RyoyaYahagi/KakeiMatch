@@ -151,15 +151,10 @@ struct KMLocalReconciliation: Sendable {
         guard let latest, latest.runId == id, preparedAtRun == snapshot() else { throw KMReconciliationError("stale_run") }
         return latest
     }
-    /// Own decisions change the prepared inputs; rebase the stale-run guard so other rows in
-    /// the same immutable run can still be reviewed. External edits remain stale.
-    private mutating func refreshPreparedSnapshot() {
-        guard latest != nil else { return }
-        preparedAtRun = snapshot()
-    }
+    // Like PWA inputFingerprint, preparedAtRun is captured only by run().
+    // Every decision changes the inputs and requires a new run before further review.
     mutating func recordManualReview(statementId: String) {
         manualStatementIds.insert(statementId)
-        refreshPreparedSnapshot()
     }
     private func decision(run: KMReconciliationRun, statement: KMStatementTransaction, kind: KMReconciliationResolution.Resolution, at timestamp: Date) -> KMReconciliationResolution {
         .init(id: "reconciliation-resolution:\(statement.id)", runId: run.runId, statementId: statement.id, resolution: kind, source: .user,
@@ -181,7 +176,6 @@ struct KMLocalReconciliation: Sendable {
         var value = decision(run: run, statement: statement, kind: .sameExpense, at: timestamp)
         value.receiptId = receiptId; value.actualTransactionId = row.id; value.actualSnapshot = Self.actualSnapshot(row)
         resolutions.append(value); try apply(value.id, at: timestamp)
-        refreshPreparedSnapshot()
         return resolutions.first { $0.id == value.id }!
     }
     mutating func rejectPair(runId: String, statementId: String, receiptId: String) throws {
@@ -190,7 +184,6 @@ struct KMLocalReconciliation: Sendable {
         try requireUndecided(statementId)
         guard !rejections.contains(where: { $0.runId == runId && $0.statementId == statementId && $0.receiptId == receiptId }) else { throw KMReconciliationError("decision_conflict") }
         rejections.append(.init(runId: runId, statementId: statementId, receiptId: receiptId))
-        refreshPreparedSnapshot()
     }
     @discardableResult mutating func ignore(runId: String, statementId: String, at timestamp: Date) throws -> KMReconciliationResolution {
         let run = try requireLatest(runId); try requireUndecided(statementId)
@@ -198,7 +191,6 @@ struct KMLocalReconciliation: Sendable {
               let statement = statements.first(where: { $0.id == statementId }) else { throw KMReconciliationError("decision_unavailable") }
         var value = decision(run: run, statement: statement, kind: .ignored, at: timestamp)
         value.status = .applied; resolutions.append(value)
-        refreshPreparedSnapshot()
         return value
     }
     /// Resolves current provider mapping. Callers provide a deterministic ID only when creation is needed.
@@ -236,7 +228,6 @@ struct KMLocalReconciliation: Sendable {
         value.destinationAccountId = destinationAccountId; value.excludedFromSpending = excludedFromSpending
         value.importedId = "kakeimatch:statement:\(statement.id)"
         resolutions.append(value); try apply(value.id, at: timestamp)
-        refreshPreparedSnapshot()
         return resolutions.first { $0.id == value.id }!
     }
     static func actualSnapshot(_ row: KMTransaction) -> KMReconciliationResolution.ActualSnapshot {
@@ -251,11 +242,30 @@ struct KMLocalReconciliation: Sendable {
         guard value.undoRequestedAt == nil else { throw KMReconciliationError("undo_unavailable") }
         try apply(id, at: timestamp)
     }
+    /// Older decisions did not store an Actual snapshot. Reconstruct it only from
+    /// the confirmed receipt and a matching ledger row; never permit undo of this snapshot.
+    private func hydrateLegacySnapshot(_ input: KMReconciliationResolution) throws -> KMReconciliationResolution {
+        guard input.resolution == .sameExpense, input.actualSnapshot == nil else { return input }
+        guard let receiptId = input.receiptId, let actualId = input.actualTransactionId,
+              let receipt = receipts.first(where: { $0.id == receiptId }), let confirmed = receipt.confirmedValue,
+              receipt.registration.actualTransactionId == actualId else { throw KMReconciliationError("resolution_snapshot_invalid") }
+        guard let row = transactions.first(where: { $0.id == actualId }), row.kind == .expense,
+              row.date == confirmed.purchasedDate, row.accountId == confirmed.accountId, let payee = row.payeeName,
+              KMReconciliationEngine.normalizeMerchant(payee) == KMReconciliationEngine.normalizeMerchant(confirmed.merchant),
+              row.amountYen == -confirmed.totalAmountYen || (input.source == .user && row.cleared && row.amountYen == -input.statementAmountYen),
+              input.source != .automatic || row.amountYen == -input.statementAmountYen,
+              row.isSplit != true || row.amountYen == -input.statementAmountYen else { throw KMReconciliationError("actual_readback_mismatch") }
+        var value = input
+        value.actualSnapshot = Self.actualSnapshot(row)
+        value.actualSnapshot?.cleared = nil
+        return value
+    }
     private mutating func apply(_ id: String, at timestamp: Date) throws {
         guard let index = resolutions.firstIndex(where: { $0.id == id }) else { throw KMReconciliationError("retry_unavailable") }
         var value = resolutions[index]; value.status = .processing; value.updatedAt = timestamp; value.errorCode = nil
         resolutions[index] = value
         do {
+            value = try hydrateLegacySnapshot(value)
             if value.resolution == .sameExpense {
                 guard value.receiptId != nil, let actualId = value.actualTransactionId, let snapshot = value.actualSnapshot,
                       let rowIndex = transactions.firstIndex(where: { $0.id == actualId }) else { throw KMReconciliationError("resolution_snapshot_invalid") }
@@ -269,7 +279,10 @@ struct KMLocalReconciliation: Sendable {
                 if value.source == .user, let merchant = value.statementSnapshot?.merchant, let payee = snapshot.payeeName, merchant != payee {
                     let key = KMReconciliationEngine.aliasKey(merchant, payee)
                     if !aliases.contains(where: { KMReconciliationEngine.aliasKey($0.merchant, $0.aliasMerchant) == key }) {
-                        aliases.append(.init(merchant: merchant, aliasMerchant: payee, learnedBy: value.id))
+                        let formatter = ISO8601DateFormatter()
+                        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                        aliases.append(.init(merchant: merchant, aliasMerchant: payee,
+                            learnedBy: value.id + ":" + formatter.string(from: value.createdAt)))
                     }
                 }
             } else if value.resolution != .ignored {
@@ -305,7 +318,6 @@ struct KMLocalReconciliation: Sendable {
             value.status = .failed; value.errorCode = (error as? KMReconciliationError)?.code ?? "actual_apply_failed"
         }
         resolutions[index] = value
-        refreshPreparedSnapshot()
     }
     mutating func markSuspected(runId: String, statementId: String, at timestamp: Date) throws {
         let run = try requireLatest(runId)
@@ -313,11 +325,9 @@ struct KMLocalReconciliation: Sendable {
         try requireUndecided(statementId)
         if suspected.contains(where: { $0.statementId == statementId }) { return }
         manualStatementIds.insert(statementId); suspected.append(.init(statementId: statementId, markedAt: timestamp))
-        refreshPreparedSnapshot()
     }
     mutating func clearSuspected(statementId: String) {
         suspected.removeAll { $0.statementId == statementId }
-        refreshPreparedSnapshot()
     }
     mutating func undoSameExpense(_ id: String, at timestamp: Date) throws {
         guard let index = resolutions.firstIndex(where: { $0.id == id }), resolutions[index].source == .user,
@@ -341,6 +351,5 @@ struct KMLocalReconciliation: Sendable {
             if !supported { aliases.removeAll { KMReconciliationEngine.aliasKey($0.merchant, $0.aliasMerchant) == key && ($0.learnedBy == nil || $0.learnedBy!.hasPrefix("reconciliation-resolution:")) } }
         }
         undoHistory.append(.init(resolution: value, undoneAt: value.undoRequestedAt ?? timestamp)); resolutions.remove(at: index)
-        refreshPreparedSnapshot()
     }
 }

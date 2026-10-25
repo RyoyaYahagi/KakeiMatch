@@ -11,6 +11,42 @@ struct CategoryLearningServiceTests {
             confirmedAt: Date(timeIntervalSince1970: time))
     }
 
+    @Test func javascriptWhitespaceAndCombiningCharactersMatchNodeOracle() {
+        // Expected values from /tmp/ios-282-oracle.ts running the unchanged TS.
+        #expect(KMCategoryLearningService.normalizeName("\u{FEFF}Ａ\u{FEFF}Ｂ\u{FEFF}") == "a b")
+        #expect(KMCategoryLearningService.normalizeName("\u{0085}Ａ\u{0085}Ｂ\u{0085}") == "\u{0085}a\u{0085}b\u{0085}")
+        #expect(KMCategoryLearningService.normalizeName("A\u{0301} B") == "Á b")
+        #expect(KMReconciliationEngine.normalizeMerchant("\u{FEFF}Ａ\u{FEFF}Ｂ\u{FEFF}") == "ab")
+        #expect(KMReconciliationEngine.normalizeMerchant("\u{0085}Ａ\u{0085}Ｂ\u{0085}") == "\u{0085}a\u{0085}b\u{0085}")
+    }
+
+    @Test func confirmationResolvesLegacyCategoryLabelsAndPreservesInvalidVotes() throws {
+        let categories: [KMCategoryLearningCandidate] = [.init(id: "actual-food", name: "食費"), .init(id: "custom", name: "Custom")]
+        let timestamp = Date(timeIntervalSince1970: 0)
+        let cases: [[(name: String, categoryId: String?)]] = [[], [("Milk", "food")]]
+        for items in cases {
+            let value = try #require(KMCategoryLearningService.observation(receiptId: "r", merchant: "Store", defaultCategoryId: "food",
+                items: items, categories: categories, confirmedAt: timestamp))
+            #expect(value.merchantCategoryId == "actual-food")
+            #expect(value.items.allSatisfy { $0.categoryId == "actual-food" })
+        }
+        let invalid = KMCategoryLearningService.observation(receiptId: "r", merchant: "Store", defaultCategoryId: "food",
+            items: [("Milk", "removed")], categories: categories, confirmedAt: timestamp)
+        #expect(invalid?.merchantCategoryId == nil)
+        #expect(invalid?.items.first?.categoryId == nil)
+    }
+
+    @Test func appliedRulesCarryImmutableCategoryNameEvidence() throws {
+        let history = [observation("a"), observation("b"), observation("c")]
+        let suggestion = KMCategoryLearningService.suggest(merchant: "Synthetic Market", itemNames: ["Synthetic Milk"],
+            categories: [.init(id: "food-custom", name: "Food")], observations: history, overrides: [])
+        let rule = try #require(suggestion.itemRules.first ?? nil)
+        #expect(rule.categoryName == "Food" && rule.receipts == 3 && rule.agreementPercent == 100)
+        let unnamed = KMCategoryLearningService.suggest(merchant: nil, itemNames: ["Synthetic Milk"],
+            categories: [.init(id: "food-custom", name: "")], observations: history, overrides: [])
+        #expect(unnamed.itemCategories == [nil])
+    }
+
     @Test func requiresThreeIndependentReceiptsAndEightyPercentAgreement() {
         #expect(KMCategoryLearningService.deriveRules(observations: [observation("a"), observation("b")], availableCategoryIds: ["food-custom"]).items.isEmpty)
         let unanimous = [observation("a"), observation("b"), observation("c")]

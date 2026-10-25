@@ -9,8 +9,8 @@ struct KMCategoryLearningSuggestion: Equatable, Sendable {
     var merchantCategoryId: String?
     var itemCategories: [String?]
     var hasMerchantHistory: Bool
-    var merchantRule: KMCategoryLearningRule?
-    var itemRules: [KMCategoryLearningRule?]
+    var merchantRule: KMReceipt.CategoryRuleApplication?
+    var itemRules: [KMReceipt.CategoryRuleApplication?]
 }
 
 /// Deterministic port of src/lib/category-learning.ts and the pure learning
@@ -20,15 +20,7 @@ enum KMCategoryLearningService {
     static let minimumAgreementPercent = 80
 
     static func normalizeName(_ value: String) -> String {
-        let folded = value.precomposedStringWithCompatibilityMapping
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
-        guard folded.utf16.count <= 1_000 else { return "" }
-        return String(folded.map { character in
-            guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first,
-                  (65...90).contains(scalar.value) else { return character }
-            return Character(String(scalar).lowercased())
-        })
+        KMJSString.normalizedLearningName(value)
     }
 
     /// Creates the replacement observation for one confirmed receipt. Empty normalized
@@ -53,6 +45,30 @@ enum KMCategoryLearningService {
         return KMCategoryLearningObservation(targetType: .categoryLearning, receiptId: receiptId,
             normalizedMerchant: merchantName, merchantCategoryId: effectiveCategories.count == 1 ? effectiveCategories.first! : nil,
             items: normalizedItems, confirmedAt: confirmedAt)
+    }
+
+    /// Resolve legacy category names only after checking for a current exact ID.
+    static func observation(receiptId: String, merchant: String, defaultCategoryId: String?,
+                            items: [(name: String, categoryId: String?)], categories: [KMCategoryLearningCandidate],
+                            confirmedAt: Date) -> KMCategoryLearningObservation? {
+        let labels = ["food": "食費", "household": "日用品", "transport": "交通", "medical": "医療・健康",
+                      "clothing": "衣服・美容", "entertainment": "趣味・娯楽", "utilities": "水道・光熱",
+                      "communications": "通信", "other": "その他"]
+        func resolve(_ id: String?) -> String? {
+            guard let id else { return nil }
+            if categories.contains(where: { $0.id == id }) { return id }
+            guard let name = labels[id] else { return nil }
+            return categories.first { $0.name == name }?.id
+        }
+        // Resolve after applying the default: an invalid explicit item category must
+        // remain nil, not silently fall back to the receipt's category.
+        let resolvedItems = items.map { (name: $0.name, categoryId: resolve($0.categoryId ?? defaultCategoryId)) }
+        let value = observation(receiptId: receiptId, merchant: merchant, defaultCategoryId: nil,
+            items: resolvedItems, availableCategoryIds: Set(categories.map(\.id)), confirmedAt: confirmedAt)
+        guard items.isEmpty else { return value }
+        var result = value
+        result?.merchantCategoryId = resolve(defaultCategoryId)
+        return result
     }
 
     static func deriveStats(observations: [KMCategoryLearningObservation], availableCategoryIds: Set<String>) -> [KMCategoryRuleStats] {
@@ -117,12 +133,12 @@ enum KMCategoryLearningService {
         let available = Set(categories.map(\.id))
         let stats = deriveStats(observations: observations, availableCategoryIds: available)
         let rules = applyingOverrides(stats, overrides: overrides, availableCategoryIds: available)
-        let active: (KMCategoryRuleStats.TargetType, String) -> KMCategoryLearningRule? = { type, name in
+        let active: (KMCategoryRuleStats.TargetType, String) -> KMReceipt.CategoryRuleApplication? = { type, name in
             guard let rule = rules.first(where: { $0.targetType == type && $0.normalizedName == name }), rule.enabled,
-                  categories.contains(where: { $0.id == rule.categoryId }) else { return nil }
-            return KMCategoryLearningRule(targetType: rule.targetType, normalizedName: rule.normalizedName,
-                categoryId: rule.categoryId, receipts: rule.receipts, matchingReceipts: rule.matchingReceipts,
-                agreementPercent: rule.agreementPercent, enabled: true, deleted: false)
+                  let category = categories.first(where: { $0.id == rule.categoryId }), !category.name.isEmpty else { return nil }
+            return KMReceipt.CategoryRuleApplication(targetType: rule.targetType == .item ? .item : .merchant,
+                normalizedName: rule.normalizedName, categoryId: rule.categoryId, categoryName: category.name,
+                receipts: rule.receipts, matchingReceipts: rule.matchingReceipts, agreementPercent: rule.agreementPercent)
         }
         let merchantKey = normalizeName(merchant ?? "")
         let merchantRule = active(.merchant, merchantKey)

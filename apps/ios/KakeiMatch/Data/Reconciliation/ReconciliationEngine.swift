@@ -33,15 +33,11 @@ enum KMReconciliationEngine {
 
     static func normalizeMerchant(_ merchant: String) -> String {
         let normalized = merchant.precomposedStringWithCompatibilityMapping
-            .trimmingCharacters(in: .whitespacesAndNewlines)
         let asciiLowercased = String(normalized.unicodeScalars.map { scalar -> Character in
             if scalar.value >= 65 && scalar.value <= 90 { return Character(UnicodeScalar(scalar.value + 32)!) }
             return Character(scalar)
         })
-        let noWhitespace = asciiLowercased.unicodeScalars.filter {
-            !CharacterSet.whitespacesAndNewlines.contains($0)
-                && !CharacterSet(charactersIn: "\u{feff}").contains($0)
-        }
+        let noWhitespace = asciiLowercased.unicodeScalars.filter { !KMJSString.isWhitespace($0) }
         let separators = Set("-‐‑‒–—―・,，.．/／\\:：;；|｜_＿()（）[]［］{}｛｝「」『』【】".unicodeScalars)
         return String(String.UnicodeScalarView(noWhitespace.filter { !separators.contains($0) }))
     }

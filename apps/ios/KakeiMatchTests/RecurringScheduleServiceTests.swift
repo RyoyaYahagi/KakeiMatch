@@ -41,8 +41,31 @@ struct RecurringScheduleServiceTests {
         var schedule = input(.monthly, start: "2026-10-01")
         schedule.name = "  Synthetic rent  "
         #expect(try KMRecurringScheduleService.validatedInput(schedule).name == "Synthetic rent")
+        schedule.name = "\u{FEFF}Rent\u{FEFF}"
+        #expect(try KMRecurringScheduleService.validatedInput(schedule).name == "Rent")
+        schedule.name = "\u{0085}Rent\u{0085}"
+        #expect(try KMRecurringScheduleService.validatedInput(schedule).name == "\u{0085}Rent\u{0085}")
         schedule.amountYen = 0
         #expect(throws: (any Error).self) { try KMRecurringScheduleService.validatedInput(schedule) }
+    }
+
+    @Test func masterValidationRejectsHiddenWrongKindClosedAndDuplicateNames() throws {
+        let value = input(.monthly, start: "2026-10-01")
+        let categories = [KMCategory(id: "rent", name: "Rent")]
+        let accounts = [KMAccount(id: "bank", name: "Bank")]
+        let existing = KMRecurringTransaction(id: "existing", name: " Synthetic recurring ", kind: .expense,
+            amountYen: 1, categoryId: "rent", accountId: "bank", frequency: .monthly, startDate: value.startDate,
+            postsTransaction: true, completed: false, editable: true)
+        try KMRecurringScheduleService.validateMastersAndUniqueness(input: value, categories: categories, accounts: accounts, schedules: [])
+        try KMRecurringScheduleService.validateMastersAndUniqueness(input: value, editingId: "existing", categories: categories, accounts: accounts, schedules: [existing])
+        #expect(throws: (any Error).self) { try KMRecurringScheduleService.validateMastersAndUniqueness(input: value,
+            categories: categories, accounts: accounts, schedules: [existing]) }
+        #expect(throws: (any Error).self) { try KMRecurringScheduleService.validateMastersAndUniqueness(input: value,
+            categories: [.init(id: "rent", name: "Rent", hidden: true)], accounts: accounts, schedules: []) }
+        #expect(throws: (any Error).self) { try KMRecurringScheduleService.validateMastersAndUniqueness(input: value,
+            categories: [.init(id: "rent", name: "Rent", isIncome: true)], accounts: accounts, schedules: []) }
+        #expect(throws: (any Error).self) { try KMRecurringScheduleService.validateMastersAndUniqueness(input: value,
+            categories: categories, accounts: [.init(id: "bank", name: "Bank", closed: true)], schedules: []) }
     }
 
     @Test func validatesNameLengthInJavaScriptUtf16Units() throws {
