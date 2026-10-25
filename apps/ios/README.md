@@ -36,7 +36,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 
 ## 配置と後続PR
 
-- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先だけを管理。標準TabView / NavigationStackによるナビ再解釈はしません。
+- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、本文のScrollViewを管理。画面ViewはVStack等で本文を返します。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。
 - `Features/{Home,Records,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は不要です。
 - `Features/{Receipt,ManualEntry,Income,Transfer}`: 追加から進むplaceholder。カメラや写真選択は未実装です。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。

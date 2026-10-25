@@ -28,7 +28,9 @@ struct AppShell: View {
                         }
                     }
                 }
-                .padding(KMSpacing.space4)
+                // On portrait iPhones the OS top inset already exceeds 16pt:
+                // PWA main uses max(16px, safe-area-inset-top), not their sum.
+                .padding(.horizontal, KMSpacing.space4)
                 .padding(.bottom, KMSpacing.space8)
                 .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
                 .frame(maxWidth: .infinity)

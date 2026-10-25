@@ -49,9 +49,12 @@ struct KMBottomNavigation: View {
         }
         .padding(.horizontal, KMSpacing.space2)
         .frame(height: KMLayout.navHeight)
-        // Border belongs behind the floating add button, not across its face.
+        // Material is a separate background layer: nesting the FAB inside the
+        // bar's glassEffect lets the bar's specular edge cross the FAB.
         .background(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
-        .glassEffect(.regular, in: Rectangle())
+        .background {
+            Color.clear.glassEffect(.regular, in: Rectangle()).accessibilityHidden(true)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("アプリ")
     }
