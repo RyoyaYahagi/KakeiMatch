@@ -65,11 +65,11 @@ fixture 正本: [`test/fixtures/ios-migration/fixture.json`](../../../test/fixtu
 | 7 | 明細と候補の差分を確認 | `reconciliation.candidate.<index>` | 開いた `.review-item` 内の `.compare-candidate`（日付・店名・金額の比較） |
 | 8 | 同じ支出として確定 | `reconciliation.confirmMatch` | 対象候補内の `button("同じ支出")`。反映完了まで待つ |
 | 9 | 一致履歴を開く | `reconciliation.matchedGroup` | `#reconciliation-matched > summary` |
-| 10 | 対象の一致内容を確認 | `reconciliation.matchedItem.<index>` | `#reconciliation-matched details.review-item > summary` を対象店名で絞る |
+| 10 | 対象の一致内容を確認 | `reconciliation.matchedItem.<index>` | `#reconciliation-matched > .review-list > li > details > summary` を対象店名で絞る |
 
 この操作フローの手動一致後は一致が5件になる。基準画像 `reconciliation/matched` は、手動判断前の自動一致4件の履歴を展開した状態なので区別する。`<index>` は fixture 内の行順を使い、PWAの生成IDを共通仕様にしない。
 
-根拠: `apps/pwa/src/local-ui.ts`（`showReconciliation`、`#statement-provider`、`#reconciliation-pending`、`#reconciliation-matched`、`sameExpense`）、`apps/pwa/src/reconciliation-ui.ts`、`apps/pwa/test/browser-reconciliation.mjs`。
+根拠: `apps/pwa/src/local-ui.ts`（`reviewPage`、`#statement-provider`、`#reconciliation-pending`、`#reconciliation-matched`、`sameExpense`）、`apps/pwa/src/reconciliation-ui.ts`、`apps/pwa/test/browser-reconciliation.mjs`。
 
 ## その他の基準画面への入口
 
