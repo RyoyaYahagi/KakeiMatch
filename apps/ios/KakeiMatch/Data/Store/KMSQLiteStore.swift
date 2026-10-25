@@ -139,10 +139,15 @@ import Foundation
         } catch { try cleanup(target, after: error) }
     }
     private static func decodeArtifactPath(_ component: String) -> String? {
-        var value = component.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
-        guard let data = Data(base64Encoded: value), let decoded = String(data: data, encoding: .utf8) else { return nil }
-        return decoded
+        guard component.count.isMultiple(of: 2) else { return nil }
+        var bytes: [UInt8] = []
+        var index = component.startIndex
+        while index < component.endIndex {
+            let next = component.index(index, offsetBy: 2)
+            guard let byte = UInt8(component[index..<next], radix: 16) else { return nil }
+            bytes.append(byte); index = next
+        }
+        return String(data: Data(bytes), encoding: .utf8)
     }
     func returnToPreviousProfile() throws {
         guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }

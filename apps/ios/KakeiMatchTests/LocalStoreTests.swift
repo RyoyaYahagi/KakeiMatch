@@ -72,8 +72,7 @@ import ZIPFoundation
     @Test func nativeBackupRoundTripsEveryProjectionAndOriginal() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let source = try KMSQLiteStore(directory: directory.appendingPathComponent("source"))
-        do { try await source.importBackup(from: fixture("synthetic", "kmb")) }
-        catch { throw KMDataError.invalidData("seed PWA import stage: \(error)") }
+        try await source.importBackup(from: fixture("synthetic", "kmb"))
         let beforeHome = try await source.home(month: KMYearMonth("2026-10"))
         let beforeTransactions = try await source.transactions(matching: .init(limit: nil))
         let beforeAccounts = try await source.accounts(), beforeCategories = try await source.categories()
@@ -86,20 +85,14 @@ import ZIPFoundation
         let image = try #require(try await source.receiptImage(blobId: blobId))
         let importRecord = try #require(try await source.statementImports().first)
         let csv = try #require(try source.originalArtifact(id: "statement-source:\(importRecord.id)"))
-        let output: URL
-        do { output = try await source.exportNativeBackup() }
-        catch { throw KMDataError.invalidData("native export stage: \(error)") }
+        let output = try await source.exportNativeBackup()
         #expect(output.pathExtension == "kmib")
-        let parsedBackup: KMNativeBackupContents
-        do { parsedBackup = try KMNativeBackup.read(url: output) }
-        catch { throw KMDataError.invalidData("native parse stage: \(error)") }
+        let parsedBackup = try KMNativeBackup.read(url: output)
         #expect(parsedBackup.artifacts.count == 2)
         #expect(try await source.settings().lastExportAt != nil)
         let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
-        do { try await restored.saveSettings(.init(theme: .dark)) }
-        catch { throw KMDataError.invalidData("restored settings stage: \(error)") }
-        do { try await restored.importBackup(from: output) }
-        catch { throw KMDataError.invalidData("native restore stage: \(error)") }
+        try await restored.saveSettings(.init(theme: .dark))
+        try await restored.importBackup(from: output)
         #expect(try await restored.transactions(matching: .init(limit: nil)) == beforeTransactions)
         #expect(try await restored.accounts() == beforeAccounts)
         #expect(try await restored.categories() == beforeCategories)

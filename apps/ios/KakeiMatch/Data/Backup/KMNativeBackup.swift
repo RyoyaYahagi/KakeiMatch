@@ -28,7 +28,7 @@ struct KMNativeBackupContents: Sendable { var exportedAt: Date; var database: Da
 
     static func package(database: Data, artifacts: [(String, Data)], exportedAt: Date) throws -> Data {
         var entries: [(String, Data)] = [("household.sqlite", database)]
-        entries += artifacts.map { ("artifacts/\(Data($0.0.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "=", with: ""))", $0.1) }
+        entries += artifacts.map { ("artifacts/\(Data($0.0.utf8).map { String(format: "%02x", $0) }.joined())", $0.1) }
         let paths = entries.map(\.0)
         guard entries.count <= maxEntries, Set(paths).count == paths.count, paths.allSatisfy(KMPortableBackup.safePath),
               entries.allSatisfy({ $0.1.count <= maxEntry }), entries.reduce(0, { $0 + $1.1.count }) <= maxTotal else { throw KMPortableBackup.invalid() }
