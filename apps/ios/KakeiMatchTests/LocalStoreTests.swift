@@ -92,7 +92,8 @@ import ZIPFoundation
         #expect(try await source.settings().lastExportAt != nil)
         let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
         try await restored.saveSettings(.init(theme: .dark))
-        try await restored.importBackup(from: output)
+        do { try await restored.importBackup(from: output) }
+        catch { throw KMDataError.invalidData("native restore stage: \(error)") }
         #expect(try await restored.transactions(matching: .init(limit: nil)) == beforeTransactions)
         #expect(try await restored.accounts() == beforeAccounts)
         #expect(try await restored.categories() == beforeCategories)
