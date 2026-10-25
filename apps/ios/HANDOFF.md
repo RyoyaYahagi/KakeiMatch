@@ -45,7 +45,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | CI 成功・レビュー待ち（各画面は placeholder） |
 | Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md（identifier 表） | `test/pwa-migration-screenshots` | #279 | Linux | 27状態×light/dark 54枚・fixture.json・synthetic.kmb 完了、レビュー待ち |
 | データ層・API 層の仕様調査 | なし（Linux 側の作業メモ） | なし | Linux | 作業中 |
-| ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | 未作成 | 未作成 | Linux | 次に着手 |
+| ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | `feature/ios-domain` | 本PR（#278上のstack） | Linux | 型・protocol・fixture注入・PWA同入力の集計テストを追加。使い方はREADMEのData節。CI結果はPR参照 |
 | ローカル DB（local-first）・`.kmb` 取り込み | 未作成 | 未作成 | Linux | 予定 |
 | 明細パーサ・照合・重複検出・定期・予算などの決定的ロジックを Swift へ移植 | 未作成 | 未作成 | Linux | 予定 |
 | 端末間同期プロトコル（PWA と相互接続）・MoneyForward CSV 解析 | 未作成 | 未作成 | Linux | 予定 |
@@ -92,7 +92,8 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 ## 4. Linux 側との境界（衝突を防ぐ）
 
 - `apps/ios/KakeiMatch/Data/` と `API/` は Linux 側の担当。画面からは Repository protocol 経由で使い、画面 PR では Data/API を直接書き換えない。足りない API があれば、PR 本文か Issue #240 のコメントで要望を出す。
-- ドメインモデルと protocol の PR が入るまでは、画面ごとの `Features/<Name>/` 内に仮の View 用データを置いてよい。protocol が入ったら置き換える。
+- `feature/ios-domain` は `feature/ios-foundation` 上のstackです。取り込んだ画面は `@Environment(\.repositories)` から `KMRepositories` を使います。全protocolは `@MainActor async throws`、返る値はsnapshotなので保存後に再取得します。Previewは `KMFixturePreview("migration") { HomeView() }`、UI testは `-UITestFixture <name>`。名前・境界はREADMEのData節を参照してください。
+- ドメインPRが未導入の画面では `Features/<Name>/` 内の仮のView用データを保ってよいです。導入後はRepositoryへ置き換えます。fixtureの「今日/今月」は `repositories.referenceDate` を使い、端末の実時計でずらさないでください。照合fixtureは既存PWAエンジンの固定結果であり、Swift照合サービスはまだありません。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数（金額表示）を使い、画面ごとに作らない。
 - 照合・重複検出・状態遷移・カテゴリ学習のロジックを View に書かない（Linux 側で Swift に移植する）。
 

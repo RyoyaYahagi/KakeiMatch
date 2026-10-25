@@ -1,6 +1,6 @@
 # KakeiMatch iOS の土台
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。各画面は **placeholder** です。保存・カメラ・API・家計機能はありません。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。各画面は **placeholder** です。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。永続保存・カメラ・APIはありません。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -40,7 +40,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 - `Features/{Home,Records,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は不要です。
 - `Features/{Receipt,ManualEntry,Income,Transfer}`: 追加から進むplaceholder。カメラや写真選択は未実装です。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
-- `Data` / `API`: 今は `.gitkeep` のみ。永続化・認可・API設計を先回りしません。
+- `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装。使い方と未実装の境界は下記を参照してください。`API` は `.gitkeep` のみです。
 - `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIconはPWAの `public/icon.svg` から角のマスクを外して1024pxで生成しています。再生成はworkspace依存をインストール後に `node apps/ios/scripts/render-app-icon.mjs`（必要なら `PWA_BROWSER_PATH` を指定）。PWAファイルは変更しません。
 
 ### 共通部品のAPI
@@ -80,6 +80,92 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 色は動的UIColorでlight/darkを切り替えます。全色ペアをSwift Testingで固定値と照合します。カテゴリの既知名・UInt32 wrapping hashもPWAに合わせます（未知カテゴリは現行コードに従い6色から選びます）。DESIGNにある「順番」ではなくbaseline実装が正解です。
 
 `--shadow` / `--shadow-raised` は今回の適用先である下部ナビ・FAB・シートではLiquid GlassのOS描画に置換します。行・金額には適用しません。将来 `design-tokens.json` を正本にしてCSS/Swift両方を生成する案はありますが、現時点では生成器や共有JSONを追加しません。
+
+## Data層と画面からの使い方
+
+### 構成と型の約束
+
+- `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
+- `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
+- `Data/Aggregation/`: PWAの月次集計・日別グループ・予算集計の純粋関数。照合エンジンではありません。
+- `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動も当面は空のin-memoryで、永続化済みとは扱いません。
+- `App/KMRepositories.swift`: **依存注入点はここだけ**です。同じ家計簿の各Repositoryをまとめ、`EnvironmentValues.repositories` で渡します。未注入時はnilで、暗黙のサンプルデータはありません。
+
+金額は `Int` の円です。`KMTransaction.amountYen` はActualと同じ符号付き（流出は負、流入は正）です。手入力/振替の入力型とレシート/明細の合計は正額です。JSの安全整数の範囲を超える集計はthrowします。数量・比率は `Decimal` です。
+
+`KMDate` はAsia/Tokyoのグレゴリオ暦日（`YYYY-MM-DD`）、`KMYearMonth` は年月です。未知の入力には `try KMDate(string)` / `try KMYearMonth(string)`、JSONにはCodableを使います。`init(rawValue:)` は検証済み定数用です。不正値はprecondition違反になります。`Date` は作成時刻等の瞬間だけに使います。保存JSONの日時には `KMJSON.decoder()` / `.encoder()` を使ってください（ISO8601、offset・小数秒に対応）。通常のJSONDecoderのDate既定値は互換ではありません。
+
+状態enumのrawValueはPWAに合わせています。`Codable` は将来のデコードの土台であり、`.kmb` 全体の検証/移行器ではありません。未知キーの拒否、nullable必須キーと欠落の区別、IDの参照整合性、AI応答の完全なschema検証は後続の取り込み/API境界で行います。これらの型へdecodeできただけでAI応答を保存してはいけません。
+
+`KMAccount` の明細サービスと `KMCategory` の色トーン・使用件数/順序は、ActualとKakeiMatch記録を合わせた画面用projectionです。`KMTransaction.splits` もActual子行をまとめたprojectionで、保存JSONへそのまま追加するフィールドではありません。色未指定時の見た目は既存 `KMCategoryTone.visual(name:id:)` を使います。Data層はSwiftUIへ依存しません。テーマは端末設定で、家計簿バックアップ・同期に含めません。画面ロックの秘密情報やCloud credentialsはこの型に持たせません。
+
+### protocolと実装境界
+
+全protocolとin-memory実装は **`@MainActor`、全操作は `async throws`** です。ViewもMainActor上で呼び、エラーを表示してください。永続化adapterは別actorでI/Oを実行してからsnapshotを返せます。集計関数と値型はactor非依存・Sendableです。画面へ返す値はsnapshotなので、保存後は再取得します。ライブBindingや自動通知を仮定しません。
+
+| protocol | 主な用途 |
+| --- | --- |
+| `TransactionRepository` | 検索、記録取得、日別グループ、ホーム集計、手入力/振替の保存、対象外フラグ、削除 |
+| `AccountRepository` | 残高込みの一覧、追加/変更/利用終了、未使用口座の削除 |
+| `CategoryRepository` | 使用順/件数込みの一覧、グループ、追加/変更/非表示、未使用カテゴリの削除 |
+| `PayeeRepository` | 支払先候補の一覧 |
+| `ReceiptRepository` | レシートsnapshot/原本の参照、下書き保存、未登録下書きの削除 |
+| `StatementRepository` | 明細取込履歴と明細行の参照 |
+| `ReconciliationRepository` | 最終run、判断snapshotの保存/参照、本人による不正利用疑いのマーク |
+| `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
+| `RecurringRepository` | 定期設定のfixture CRUD（実行・過去分補完はしない） |
+| `PayrollRepository` | 確認済み給与内訳snapshotの保存/参照（収入への反映はしない） |
+| `CategoryLearningRepository` | 事前計算済み分類ルールと利用者の上書き。履歴からの学習計算は後続 |
+| `SettingsRepository` | テーマ/最終バックアップ時刻のsnapshot |
+
+手入力の登録は `id: nil`、編集は既存IDを渡します。口座残高は読み取り用です。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
+
+ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・最近3件をまとめます。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
+
+`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。登録済みレシートの削除や通常取引APIによる分割/レシート編集は、未実装を隠さずthrowします。Viewで代替エンジンを作らないでください。
+
+### UI test / Previewのfixture
+
+```swift
+// Screen (MainActor). The host injects the container.
+@Environment(\.repositories) private var repositories
+// Inside an async load action:
+// guard let repositories else { ... show configuration error ...; return }
+// let month = KMDate(instant: repositories.referenceDate).yearMonth
+// let snapshot = try await repositories.transactions.home(month: month)
+
+#Preview {
+    KMFixturePreview("migration") { HomeView() }
+}
+
+// XCUITest (Debug only)
+// app.launchArguments += ["-UITestFixture", "reconciliation"]
+```
+
+`KMFixtureLoader.load(named:)` はPreview/Swift Testingからも共通で使えます。独自の空/エラー/長い名前等は `KMInMemoryStore(...)` に値を渡し、`KMRepositories(inMemory:)` を注入してください。
+
+| 名前 | 状態 |
+| --- | --- |
+| `migration` / `populated` | 共通fixtureの取引11件、基本カテゴリ15件＋給与、口座3件、全体予算80,000円。今月支出24,730円 |
+| `empty` | 空の家計簿（固定時計のみ共通） |
+| `budget-warning` | 同じ取引、全体予算20,000円で4,730円超過 |
+| `receipt` | 同じ家計簿＋未登録の抽出済みレシート/7品目。原本画像は含まない |
+| `reconciliation` | 明細7件、要確認1・記録なし2・一致4の固定run/適用済み判断。実照合は実行しない |
+| `payroll` | 同じ家計簿＋給与内訳の確認snapshot。収入への反映前、写真なし |
+
+`-UITestFixture` はDebugだけ有効です。指定がない場合は空のin-memoryです。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。正常fixtureの表示はまだplaceholderのままで、データが画面へ描画済みとは扱いません。
+
+同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
+
+`reconciliation.json` は既存TSエンジンの出力から固定しました。再生成はNode 24で `node apps/ios/scripts/generate-reconciliation-fixture.mjs`。Swiftの照合実装ではありません。入力・出力を変えたらRepositoryTestsの件数とPWAスクショ状態を同時に確認します。
+
+### 後続Linux PRへの引き継ぎ
+
+- 永続化: in-memoryをadapterへ交換し、家計簿/profile境界、原子的な書き込み、削除Undo・下書き・競合/結果不明時の回復を提供する。このPRの簡易CRUDを永続化の仕様にしない。
+- `.kmb`: Actual ZIP、record envelope、schema version、nullable必須キー、参照整合性、原本、staging/切替を検証する。Codableの合成encodeだけではPWAへのexport互換を保証しない。
+- 決定的サービス: 照合/重複排除、レシート登録状態の実遷移、判断適用/取消、定期実行/補完、分類学習をRepositoryの外へ実装する。今回移植した集計関数とparityテストは再利用する。
+- API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
+- 同期・MoneyForward・バックアップ・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
 ## PWAとの差分・検証範囲
 
