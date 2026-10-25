@@ -151,7 +151,7 @@ struct StatementParserTests {
     }
 
     @Test func routesSmbcFeesAndInvalidDatesOrAmountsToReview() {
-        let fee = smbcPurchase("手数料", "500")
+        let fee = ["2026/09/28", "手数料", "500", "１", "１", "500", ""]
         let badDate = ["2026/02/30", "Synthetic Store", "1200", "１", "１", "1200", ""]
         let badAmount = ["2026/09/28", "Synthetic Store", "12.5", "１", "１", "12.5", ""]
         let result = KMStatementParser.parse(
@@ -161,11 +161,12 @@ struct StatementParserTests {
         )
         #expect(result.fatalErrors.isEmpty)
         #expect(result.transactions.isEmpty)
-        #expect(result.needsReviewRows == [
+        let expected: [KMStatementRowIssue] = [
             .init(rowNumber: 2, reason: "特殊な利用の可能性があります"),
             .init(rowNumber: 3, reason: "利用日を確認できません"),
             .init(rowNumber: 4, reason: "利用金額を確認できません"),
-        ])
+        ]
+        #expect(result.needsReviewRows == expected)
     }
 
     @Test func decodesCp932VpassBytesAndRejectsUnsafeTotals() {
