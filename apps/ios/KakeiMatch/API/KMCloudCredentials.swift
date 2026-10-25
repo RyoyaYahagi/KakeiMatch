@@ -9,15 +9,39 @@ protocol KMCloudCredentialStore: Sendable {
 /// No synchronizable keys and no backup migration to another device.
 struct KMKeychainCredentials: KMCloudCredentialStore {
     let service: String
+    private let operations: Operations
+
+    /// Security framework seam for deterministic tests without a signed Keychain host.
+    struct Operations: Sendable {
+        var copy: @Sendable ([String: Any]) -> (OSStatus, Data?)
+        var update: @Sendable ([String: Any], [String: Any]) -> OSStatus
+        var add: @Sendable ([String: Any]) -> OSStatus
+        var delete: @Sendable ([String: Any]) -> OSStatus
+
+        static let live = Self(
+            copy: { query in
+                var result: CFTypeRef?
+                let status = SecItemCopyMatching(query as CFDictionary, &result)
+                return (status, result as? Data)
+            },
+            update: { SecItemUpdate($0 as CFDictionary, $1 as CFDictionary) },
+            add: { SecItemAdd($0 as CFDictionary, nil) },
+            delete: { SecItemDelete($0 as CFDictionary) }
+        )
+    }
+
+    init(service: String, operations: Operations = .live) {
+        self.service = service
+        self.operations = operations
+    }
 
     func read(_ key: String) throws -> Data? {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: service, kSecAttrAccount as String: key,
                                     kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, result) = operations.copy(query)
         if status == errSecItemNotFound { return nil }
-        guard status == errSecSuccess, let data = result as? Data else { throw KMAPIError.credentialStorage }
+        guard status == errSecSuccess, let data = result else { throw KMAPIError.credentialStorage }
         return data
     }
 
@@ -25,16 +49,16 @@ struct KMKeychainCredentials: KMCloudCredentialStore {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: service, kSecAttrAccount as String: key]
         guard let data else {
-            let status = SecItemDelete(query as CFDictionary)
+            let status = operations.delete(query)
             guard status == errSecSuccess || status == errSecItemNotFound else { throw KMAPIError.credentialStorage }
             return
         }
         let attributes: [String: Any] = [kSecValueData as String: data,
                                         kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
-        let updated = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        let updated = operations.update(query, attributes)
         if updated == errSecSuccess { return }
         guard updated == errSecItemNotFound else { throw KMAPIError.credentialStorage }
-        guard SecItemAdd(query.merging(attributes, uniquingKeysWith: { _, new in new }) as CFDictionary, nil) == errSecSuccess else {
+        guard operations.add(query.merging(attributes, uniquingKeysWith: { _, new in new })) == errSecSuccess else {
             throw KMAPIError.credentialStorage
         }
     }

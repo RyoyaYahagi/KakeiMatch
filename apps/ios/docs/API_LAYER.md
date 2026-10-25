@@ -112,6 +112,8 @@ Passkey / Associated Domains の要件はApple公式資料で確認した。App 
 
 `KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocol stubで全実装endpointの正常・HTTPエラー・不正JSON/未知キー拒否を確認する。token期限30秒・guest fallback/account限定・資格情報の分離/削除・schemaの金額/日付/確率を確認する。実Worker・Gemini・Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`を完了判定に使い、SHA・run URLはPR本文に記録する。[実装: APIClientTests.swift; .github/workflows/ios.yml]
 
+CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
+
 未実装: 初回ログイン/招待登録/Passkey追加のネイティブceremony、challenge Cookie jar、ロボット確認UI/App Attest、診断recorder/添付、録音/カメラUI、APIとRepositoryの接続、実機でのサーバー認証・精度・マスキング操作確認。`project.yml`やentitlementsに仮のTeam IDは置いていない。手動でsession Cookieを取り出す運用は提供しない。[実装: API/]
 
 ## 参照資料

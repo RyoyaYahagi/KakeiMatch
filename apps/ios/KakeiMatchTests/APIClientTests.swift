@@ -1,5 +1,6 @@
 import Foundation
 import ImageIO
+import Security
 import Synchronization
 import Testing
 import UIKit
@@ -182,6 +183,17 @@ struct APIClientTests {
     }
 
     @Test
+    func betterAuthFailuresAndUnknownErrorsDoNotExposeMessages() async throws {
+        let api = try client()
+        APIStub.reset { _ in .init(status: 401, body: #"{"code":"UNAUTHORIZED","message":"synthetic private detail"}"#) }
+        await #expect(throws: KMAPIError.authenticationRequired) { _ = try await api.accountSession() }
+        APIStub.reset { _ in .init(status: 503, body: #"{"error":"synthetic_private_detail"}"#) }
+        await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.guestConfiguration() }
+        APIStub.reset { _ in .init(status: 503, body: #"{"error":"not_configured","unknown":true}"#) }
+        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.guestConfiguration() }
+    }
+
+    @Test
     func nativeDoesNotPretendToHaveAWebOrigin() async throws {
         APIStub.reset { request in
             #expect(request.value(forHTTPHeaderField: "Origin") == nil)
@@ -281,9 +293,38 @@ struct APIClientTests {
 
     @Test
     func keychainRoundTripUsesSeparateOriginServices() throws {
-        let suffix = UUID().uuidString
-        let production = KMKeychainCredentials(service: "jp.kakeimatch.tests.production.\(suffix)")
-        let preview = KMKeychainCredentials(service: "jp.kakeimatch.tests.preview.\(suffix)")
+        // Do not require a signed Keychain host in CODE_SIGNING_ALLOWED=NO CI.
+        // Exercise the real query/status logic through a stub of only the Security calls.
+        let values = Mutex<[String: Data]>([:])
+        let operations = KMKeychainCredentials.Operations(
+            copy: { query in
+                #expect(query[kSecClass as String] as? String == kSecClassGenericPassword as String)
+                #expect(query[kSecReturnData as String] as? Bool == true)
+                #expect(query[kSecMatchLimit as String] as? String == kSecMatchLimitOne as String)
+                let value = values.withLock { $0[Self.keychainKey(query)] }
+                return (value == nil ? errSecItemNotFound : errSecSuccess, value)
+            },
+            update: { query, attributes in
+                Self.expectDeviceOnly(attributes)
+                return values.withLock { items in
+                    let key = Self.keychainKey(query)
+                    guard items[key] != nil else { return errSecItemNotFound }
+                    items[key] = attributes[kSecValueData as String] as? Data
+                    return errSecSuccess
+                }
+            },
+            add: { query in
+                Self.expectDeviceOnly(query)
+                values.withLock { $0[Self.keychainKey(query)] = query[kSecValueData as String] as? Data }
+                return errSecSuccess
+            },
+            delete: { query in
+                let removed = values.withLock { $0.removeValue(forKey: Self.keychainKey(query)) }
+                return removed == nil ? errSecItemNotFound : errSecSuccess
+            }
+        )
+        let production = KMKeychainCredentials(service: "jp.kakeimatch.tests.production", operations: operations)
+        let preview = KMKeychainCredentials(service: "jp.kakeimatch.tests.preview", operations: operations)
         let synthetic = Data("synthetic-only".utf8)
         try production.write(synthetic, key: "guest")
         #expect(try production.read("guest") == synthetic)
@@ -292,6 +333,30 @@ struct APIClientTests {
         #expect(try production.read("guest") == Data("updated-synthetic".utf8))
         try production.write(nil, key: "guest")
         #expect(try production.read("guest") == nil)
+    }
+
+    private static func keychainKey(_ query: [String: Any]) -> String {
+        #expect(query[kSecClass as String] as? String == kSecClassGenericPassword as String)
+        #expect(query[kSecAttrSynchronizable as String] as? Bool != true)
+        return "\(query[kSecAttrService as String] as! String)/\(query[kSecAttrAccount as String] as! String)"
+    }
+
+    private static func expectDeviceOnly(_ attributes: [String: Any]) {
+        #expect(attributes[kSecAttrAccessible as String] as? String == kSecAttrAccessibleWhenUnlockedThisDeviceOnly as String)
+        #expect(attributes[kSecAttrSynchronizable as String] as? Bool != true)
+    }
+
+    @Test
+    func keychainErrorsNeverBecomeMissingCredentials() throws {
+        let denied = KMKeychainCredentials(service: "synthetic", operations: .init(
+            copy: { _ in (errSecMissingEntitlement, nil) },
+            update: { _, _ in errSecMissingEntitlement },
+            add: { _ in Issue.record("Must not add after a denied update"); return errSecSuccess },
+            delete: { _ in errSecMissingEntitlement }
+        ))
+        #expect(throws: KMAPIError.credentialStorage) { _ = try denied.read("guest") }
+        #expect(throws: KMAPIError.credentialStorage) { try denied.write(Data(), key: "guest") }
+        #expect(throws: KMAPIError.credentialStorage) { try denied.write(nil, key: "guest") }
     }
 
     @Test
@@ -313,6 +378,9 @@ struct APIClientTests {
         }
         let masked = try KMMaskedPayrollImage.prepare(data: input, contentType: "image/jpeg",
             masks: [CGRect(x: 0, y: 0, width: 0.5, height: 1)], maskingConfirmed: true)
+        let reversed = try KMMaskedPayrollImage.prepare(data: input, contentType: "image/jpeg",
+            masks: [CGRect(x: 0.5, y: 1, width: -0.5, height: -1)], maskingConfirmed: true)
+        #expect(reversed.upload.data == masked.upload.data)
         let decoded = try #require(CGImageSourceCreateWithData(masked.upload.data as CFData, nil))
         let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
         #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 1800)
@@ -338,7 +406,7 @@ struct APIClientTests {
         }
         let api = try client(credentials: store)
         #expect(try await api.usage(as: .guest).remaining == 0)
-        APIStub.reset { _ in .init(body: Endpoint.usage.body, headers: ["Set-Cookie": "__Secure-better-auth.session_token=refreshed.synthetic; Path=/; Max-Age=1209600; Secure; HttpOnly; SameSite=Lax"]) }
+        APIStub.reset { _ in .init(body: Endpoint.usage.body, headers: ["Set-Cookie": "__Secure-better-auth.session_token=refreshed.synthetic; Path=/; Expires=Fri, 29 Jan 2027 08:00:00 GMT; Secure; HttpOnly; SameSite=Lax"]) }
         _ = try await api.usage()
         let saved = try #require(store.read("session"))
         #expect(try KMJSON.decoder().decode(KMStoredSession.self, from: saved).value == "refreshed.synthetic")

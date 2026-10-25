@@ -32,6 +32,7 @@ struct KMMaskedPayrollImage: Sendable {
     /// Same normalized two-corner rectangles as financial-image.ts. No OCR/redaction guesswork.
     @MainActor
     static func prepare(data: Data, contentType: String, masks: [CGRect], maskingConfirmed: Bool) throws -> Self {
+        let normalizedMasks = masks.map(\.standardized)
         guard maskingConfirmed, !data.isEmpty, data.count <= 20 * 1024 * 1024,
               KMUploadImage.matches(data, contentType: contentType), masks.count <= 100,
               masks.allSatisfy({ $0.origin.x.isFinite && $0.origin.y.isFinite && $0.width.isFinite && $0.height.isFinite &&
@@ -50,7 +51,7 @@ struct KMMaskedPayrollImage: Sendable {
             UIColor.white.setFill(); context.fill(CGRect(origin: .zero, size: size))
             UIImage(cgImage: image).draw(in: CGRect(origin: .zero, size: size))
             UIColor.black.setFill()
-            for rect in masks {
+            for rect in normalizedMasks {
                 context.fill(CGRect(x: rect.minX * size.width, y: rect.minY * size.height,
                                     width: max(0.005, rect.width) * size.width, height: max(0.005, rect.height) * size.height))
             }
