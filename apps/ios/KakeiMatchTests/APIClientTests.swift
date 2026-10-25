@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import Synchronization
 import Testing
 import UIKit
@@ -276,6 +277,89 @@ struct APIClientTests {
             APIStub.reset { request in .init(body: request.url?.path == "/api/ai/token" ? Self.token : body) }
             await #expect(throws: KMAPIError.invalidResponse) { try await perform(.jev, client: client()) }
         }
+    }
+
+    @Test
+    func keychainRoundTripUsesSeparateOriginServices() throws {
+        let suffix = UUID().uuidString
+        let production = KMKeychainCredentials(service: "jp.kakeimatch.tests.production.\(suffix)")
+        let preview = KMKeychainCredentials(service: "jp.kakeimatch.tests.preview.\(suffix)")
+        let synthetic = Data("synthetic-only".utf8)
+        try production.write(synthetic, key: "guest")
+        #expect(try production.read("guest") == synthetic)
+        #expect(try preview.read("guest") == nil)
+        try production.write(Data("updated-synthetic".utf8), key: "guest")
+        #expect(try production.read("guest") == Data("updated-synthetic".utf8))
+        try production.write(nil, key: "guest")
+        #expect(try production.read("guest") == nil)
+    }
+
+    @Test
+    @MainActor
+    func payrollIsResizedMaskedAndDoesNotCopyGPS() throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = true
+        let source = UIGraphicsImageRenderer(size: CGSize(width: 2400, height: 1200), format: format).image { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 2400, height: 1200))
+        }
+        let encoded = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(encoded, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try #require(source.cgImage), [
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 0, kCGImagePropertyGPSLatitudeRef: "N"]
+        ] as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        let input = encoded as Data
+        #expect(throws: KMAPIError.invalidRequest) {
+            _ = try KMMaskedPayrollImage.prepare(data: input, contentType: "image/jpeg", masks: [], maskingConfirmed: false)
+        }
+        let masked = try KMMaskedPayrollImage.prepare(data: input, contentType: "image/jpeg",
+            masks: [CGRect(x: 0, y: 0, width: 0.5, height: 1)], maskingConfirmed: true)
+        let decoded = try #require(CGImageSourceCreateWithData(masked.upload.data as CFData, nil))
+        let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
+        #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 1800)
+        #expect(props[kCGImagePropertyPixelHeight as String] as? Int == 900)
+        #expect(props[kCGImagePropertyGPSDictionary as String] == nil)
+        let image = try #require(CGImageSourceCreateImageAtIndex(decoded, 0, nil))
+        var pixels = [UInt8](repeating: 0, count: 8)
+        let context = try #require(CGContext(data: &pixels, width: 2, height: 1, bitsPerComponent: 8, bytesPerRow: 8,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 1))
+        #expect(pixels[0] < 10 && pixels[1] < 10 && pixels[2] < 10)
+        #expect(pixels[4] > 240 && pixels[5] > 240 && pixels[6] > 240)
+    }
+
+    @Test
+    func guestDailyUsageAndCookieRefreshFollowServerValues() async throws {
+        let store = APITestCredentials()
+        store.write(Data(String(repeating: "A", count: 43).utf8), key: "guest")
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Guest " + String(repeating: "A", count: 43))
+            return .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":5,"limit":5,"remaining":0}"#)
+        }
+        let api = try client(credentials: store)
+        #expect(try await api.usage(as: .guest).remaining == 0)
+        APIStub.reset { _ in .init(body: Endpoint.usage.body, headers: ["Set-Cookie": "__Secure-better-auth.session_token=refreshed.synthetic; Path=/; Max-Age=1209600; Secure; HttpOnly; SameSite=Lax"]) }
+        _ = try await api.usage()
+        let saved = try #require(store.read("session"))
+        #expect(try KMJSON.decoder().decode(KMStoredSession.self, from: saved).value == "refreshed.synthetic")
+    }
+
+    @Test
+    func bearer401DropsTokenAndDoesNotRetryPaidRequest() async throws {
+        let store = APITestCredentials()
+        APIStub.reset { request in
+            request.url?.path == "/api/ai/token" ? .init(body: Self.token) : .init(status: 401, body: #"{"error":"unauthorized"}"#)
+        }
+        await #expect(throws: KMAPIError.authenticationRequired) { try await perform(.receipt, client: client(credentials: store)) }
+        #expect(store.read("ai-token") == nil)
+        #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/ai/gemini" }.count } == 1)
+    }
+
+    @Test
+    func cancellationIsNotConvertedToNetworkFailure() async throws {
+        APIStub.reset { _ in throw URLError(.cancelled) }
+        let api = try client()
+        await #expect(throws: CancellationError.self) { _ = try await api.guestConfiguration() }
     }
 
     @Test
