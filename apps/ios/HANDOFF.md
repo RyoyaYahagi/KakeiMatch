@@ -45,7 +45,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | CI 成功・レビュー待ち（各画面は placeholder） |
 | Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md（identifier 表） | `test/pwa-migration-screenshots` | #279 | Linux | 27状態×light/dark 54枚・fixture.json・synthetic.kmb 完了、レビュー待ち |
 | データ層・API 層の仕様調査 | なし（Linux 側の作業メモ） | なし | Linux | 作業中 |
-| ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | `feature/ios-domain` | 本PR（#278上のstack） | Linux | 型・protocol・fixture注入・PWA同入力の集計テストを追加。使い方はREADMEのData節。CI結果はPR参照 |
+| ドメインモデル・Repository protocol・fixture 用 in-memory 実装 | `feature/ios-domain` | #280（#278上のstack） | Linux | 型・protocol・fixture注入・PWA同入力の集計テストを追加。使い方はREADMEのData節。CI結果はPR参照 |
 | ローカル DB（local-first）・`.kmb` 取り込み | 未作成 | 未作成 | Linux | 予定 |
 | 明細パーサ・照合・重複検出・定期・予算などの決定的ロジックを Swift へ移植 | 未作成 | 未作成 | Linux | 予定 |
 | 端末間同期プロトコル（PWA と相互接続）・MoneyForward CSV 解析 | 未作成 | 未作成 | Linux | 予定 |
