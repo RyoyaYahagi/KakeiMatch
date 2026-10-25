@@ -54,7 +54,11 @@ import Foundation
         defer { try? prefix.close() }
         var magic = Data()
         while magic.count < 8, let chunk = try prefix.read(upToCount: 8 - magic.count), !chunk.isEmpty { magic.append(chunk) }
-        if magic == KMNativeBackup.magic { try importNativeBackup(from: url); return }
+        if magic == KMNativeBackup.magic {
+            let backup = try KMNativeBackup.read(url: url)
+            try importNativeBackup(backup)
+            return
+        }
         guard magic == Data("KMATCHB1".utf8) else { throw KMPortableBackup.invalid() }
         let backup = try KMPortableBackup.read(url: url)
         let old = try profile(), id = UUID(), target = profileDirectory(id)
@@ -105,8 +109,7 @@ import Foundation
         return output
     }
 
-    private func importNativeBackup(from url: URL) throws {
-        let backup = try KMNativeBackup.read(url: url)
+    private func importNativeBackup(_ backup: KMNativeBackupContents) throws {
         let old = try profile(), id = UUID(), target = profileDirectory(id)
         try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
         do {
