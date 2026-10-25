@@ -75,9 +75,10 @@ struct LocalReconciliationTests {
         for alreadyApplied in [false, true] {
             var state = service()
             state.receipts = [KMReceipt(id: "receipt", createdAt: now, updatedAt: now,
+                aiSuggestion: .init(source: .unclassified),
                 confirmedValue: .init(merchant: "人工ストア", purchasedDate: KMDate(rawValue: "2026-10-01"),
                     totalAmountYen: 980, categoryId: "food", accountId: "card"),
-                aiSuggestion: .init(source: .unclassified), registration: .init(status: .applied, actualTransactionId: "t"))]
+                registration: .init(status: .applied, actualTransactionId: "t"))]
             _ = try state.run(id: "one", at: now)
             let decision = try state.sameExpense(runId: "one", statementId: "s", receiptId: "receipt", at: now)
             state.resolutions[0].actualSnapshot = nil
@@ -99,9 +100,10 @@ struct LocalReconciliationTests {
 
         var automatic = service(amount: 1000)
         automatic.receipts = [KMReceipt(id: "receipt", createdAt: now, updatedAt: now,
+            aiSuggestion: .init(source: .unclassified),
             confirmedValue: .init(merchant: "人工ストア", purchasedDate: KMDate(rawValue: "2026-10-01"),
                 totalAmountYen: 1000, categoryId: "food", accountId: "card"),
-            aiSuggestion: .init(source: .unclassified), registration: .init(status: .applied, actualTransactionId: "t"))]
+            registration: .init(status: .applied, actualTransactionId: "t"))]
         _ = try automatic.run(id: "one", at: now)
         automatic.resolutions[0].actualSnapshot = nil; automatic.resolutions[0].status = .failed
         automatic.transactions[0].amountYen = -980; automatic.transactions[0].cleared = false
