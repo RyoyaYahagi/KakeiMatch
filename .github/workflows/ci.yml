@@ -37,24 +37,27 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          echo "skip_pwa=false" >> "$GITHUB_OUTPUT"
-          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
-            exit 0
+          skip_pwa=false
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            changed_files="$RUNNER_TEMP/changed-files"
+            if git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" > "$changed_files"; then
+              if [ -s "$changed_files" ]; then
+                skip_pwa=true
+                while IFS= read -r -d '' file; do
+                  case "$file" in
+                    apps/ios/*|.github/workflows/ios.yml) ;;
+                    *) skip_pwa=false; break ;;
+                  esac
+                done < "$changed_files"
+              fi
+            else
+              echo "Could not compare PR commits; running all checks."
+            fi
           fi
-          changed_files="$RUNNER_TEMP/changed-files"
-          if ! git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" > "$changed_files"; then
-            echo "Could not compare PR commits; running all checks."
-            exit 0
+          echo "skip_pwa=$skip_pwa" >> "$GITHUB_OUTPUT"
+          if [ "$skip_pwa" = "true" ]; then
+            echo "Only iOS files changed; skipping PWA checks."
           fi
-          [ -s "$changed_files" ] || exit 0
-          while IFS= read -r -d '' file; do
-            case "$file" in
-              apps/ios/*|.github/workflows/ios.yml) ;;
-              *) exit 0 ;;
-            esac
-          done < "$changed_files"
-          echo "skip_pwa=true" >> "$GITHUB_OUTPUT"
-          echo "Only iOS files changed; skipping PWA checks."
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
