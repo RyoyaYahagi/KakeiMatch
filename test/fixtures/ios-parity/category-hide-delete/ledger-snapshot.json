@@ -2,7 +2,520 @@
   "format": "kakeimatch-ledger-snapshot",
   "version": 1,
   "scenario": "category-hide-delete",
-  "status": "pending",
-  "knownDifference": "PWAの操作後snapshotが未出力",
-  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+  "accounts": [
+    {
+      "name": "PayPayカード",
+      "type": "credit_card",
+      "closed": false,
+      "balanceYen": -18388
+    },
+    {
+      "name": "メイン口座",
+      "type": "bank",
+      "closed": false,
+      "balanceYen": 241180
+    },
+    {
+      "name": "現金",
+      "type": "cash",
+      "closed": false,
+      "balanceYen": -1660
+    }
+  ],
+  "categories": [
+    {
+      "name": "外食",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "日用品",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "交通",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "通信",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "教育・学習",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "水道・光熱",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "衣服・美容",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "医療・健康",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "家電・デジタル",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "趣味・娯楽",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "AI・ソフトウェア",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "交際費",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "住居",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "その他",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": false
+    },
+    {
+      "name": "食費",
+      "group": "支出",
+      "isIncome": false,
+      "hidden": true
+    },
+    {
+      "name": "給与",
+      "group": "Income",
+      "isIncome": true,
+      "hidden": false
+    },
+    {
+      "name": "Income",
+      "group": "Income",
+      "isIncome": true,
+      "hidden": false
+    },
+    {
+      "name": "Starting Balances",
+      "group": "Income",
+      "isIncome": true,
+      "hidden": false
+    }
+  ],
+  "transactions": [
+    {
+      "date": "2026-10-14",
+      "amountYen": -2138,
+      "kind": "expense",
+      "payee": "スーパーみどり",
+      "category": "食費",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-13",
+      "amountYen": -4980,
+      "kind": "expense",
+      "payee": "携帯料金",
+      "category": "通信",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-12",
+      "amountYen": -1240,
+      "kind": "expense",
+      "payee": "青果てらだ",
+      "category": "食費",
+      "memo": null,
+      "account": "現金",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-11",
+      "amountYen": -2416,
+      "kind": "expense",
+      "payee": "スーパーみどり",
+      "category": "食費",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-10",
+      "amountYen": -1080,
+      "kind": "expense",
+      "payee": "カフェこもれび",
+      "category": "外食",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": true,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-10",
+      "amountYen": 248000,
+      "kind": "income",
+      "payee": "給与",
+      "category": "給与",
+      "memo": null,
+      "account": "メイン口座",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-08",
+      "amountYen": -1980,
+      "kind": "expense",
+      "payee": "本屋あおば",
+      "category": "教育・学習",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": true,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-07",
+      "amountYen": -3284,
+      "kind": "expense",
+      "payee": "スーパーみどり",
+      "category": "食費",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": true,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-05",
+      "amountYen": -420,
+      "kind": "expense",
+      "payee": "市営バス",
+      "category": "交通",
+      "memo": null,
+      "account": "現金",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-03",
+      "amountYen": -1650,
+      "kind": "expense",
+      "payee": "ドラッグひまわり",
+      "category": "日用品",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": true,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-02",
+      "amountYen": -6820,
+      "kind": "expense",
+      "payee": "電気料金",
+      "category": "水道・光熱",
+      "memo": null,
+      "account": "メイン口座",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    },
+    {
+      "date": "2026-10-01",
+      "amountYen": -860,
+      "kind": "expense",
+      "payee": "青空食堂",
+      "category": "外食",
+      "memo": null,
+      "account": "PayPayカード",
+      "cleared": false,
+      "excludedFromSpending": false,
+      "transferAccount": null,
+      "splits": []
+    }
+  ],
+  "monthly": [
+    {
+      "month": "2026-10",
+      "incomeYen": 248000,
+      "expenseYen": 26868,
+      "balanceYen": 221132,
+      "categories": [
+        {
+          "category": "交通",
+          "amountYen": 420
+        },
+        {
+          "category": "外食",
+          "amountYen": 1940
+        },
+        {
+          "category": "教育・学習",
+          "amountYen": 1980
+        },
+        {
+          "category": "日用品",
+          "amountYen": 1650
+        },
+        {
+          "category": "水道・光熱",
+          "amountYen": 6820
+        },
+        {
+          "category": "通信",
+          "amountYen": 4980
+        },
+        {
+          "category": "食費",
+          "amountYen": 9078
+        }
+      ]
+    }
+  ],
+  "budgets": [
+    {
+      "month": "2026-10",
+      "budgetYen": 80000,
+      "spentYen": 26868,
+      "remainingYen": 53132,
+      "budgetConfigured": true,
+      "overallBudgetConfigured": true,
+      "breakdownEnabled": false,
+      "categories": [
+        {
+          "category": "AI・ソフトウェア",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "その他",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "交通",
+          "budgetYen": null,
+          "spentYen": 420,
+          "remainingYen": 0
+        },
+        {
+          "category": "交際費",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "住居",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "医療・健康",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "外食",
+          "budgetYen": null,
+          "spentYen": 1940,
+          "remainingYen": 0
+        },
+        {
+          "category": "家電・デジタル",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "教育・学習",
+          "budgetYen": null,
+          "spentYen": 1980,
+          "remainingYen": 0
+        },
+        {
+          "category": "日用品",
+          "budgetYen": null,
+          "spentYen": 1650,
+          "remainingYen": 0
+        },
+        {
+          "category": "水道・光熱",
+          "budgetYen": null,
+          "spentYen": 6820,
+          "remainingYen": 0
+        },
+        {
+          "category": "衣服・美容",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "趣味・娯楽",
+          "budgetYen": null,
+          "spentYen": 0,
+          "remainingYen": 0
+        },
+        {
+          "category": "通信",
+          "budgetYen": null,
+          "spentYen": 4980,
+          "remainingYen": 0
+        },
+        {
+          "category": "食費",
+          "budgetYen": null,
+          "spentYen": 9078,
+          "remainingYen": 0
+        }
+      ]
+    }
+  ],
+  "reconciliation": {
+    "counts": {
+      "matched": 4,
+      "needs-review": 1,
+      "unmatched": 2,
+      "ignored": 0,
+      "failed": 0
+    },
+    "statements": [
+      {
+        "merchant": "オンラインストア ほしぞら",
+        "date": "2026-10-04",
+        "amountYen": 3960,
+        "status": "unmatched"
+      },
+      {
+        "merchant": "カフェこもれび",
+        "date": "2026-10-10",
+        "amountYen": 1080,
+        "status": "matched"
+      },
+      {
+        "merchant": "シネマひだまり",
+        "date": "2026-10-09",
+        "amountYen": 1800,
+        "status": "unmatched"
+      },
+      {
+        "merchant": "スーパーみどり",
+        "date": "2026-10-07",
+        "amountYen": 3284,
+        "status": "matched"
+      },
+      {
+        "merchant": "ドラッグひまわり",
+        "date": "2026-10-03",
+        "amountYen": 1650,
+        "status": "matched"
+      },
+      {
+        "merchant": "本屋あおば",
+        "date": "2026-10-08",
+        "amountYen": 1980,
+        "status": "matched"
+      },
+      {
+        "merchant": "青空食堂",
+        "date": "2026-10-01",
+        "amountYen": 880,
+        "status": "needs-review"
+      }
+    ],
+    "items": [
+      {
+        "merchant": "カフェこもれび",
+        "date": "2026-10-10",
+        "amountYen": 1080,
+        "resolution": "same_expense",
+        "status": "applied",
+        "undone": false
+      },
+      {
+        "merchant": "スーパーみどり",
+        "date": "2026-10-07",
+        "amountYen": 3284,
+        "resolution": "same_expense",
+        "status": "applied",
+        "undone": false
+      },
+      {
+        "merchant": "ドラッグひまわり",
+        "date": "2026-10-03",
+        "amountYen": 1650,
+        "resolution": "same_expense",
+        "status": "applied",
+        "undone": false
+      },
+      {
+        "merchant": "本屋あおば",
+        "date": "2026-10-08",
+        "amountYen": 1980,
+        "resolution": "same_expense",
+        "status": "applied",
+        "undone": false
+      }
+    ]
+  }
 }
