@@ -11,6 +11,25 @@ import Foundation
     func saveTransfer(_ input: KMTransferInput, id: String?) async throws -> KMTransaction
     func setSpendingExclusion(id: String, excluded: Bool) async throws
     func deleteTransaction(id: String) async throws
+    /// Expected rows are the root + peer (splits are nested). Stale snapshots are rejected before deletion.
+    func deleteTransaction(id: String, expected: [KMTransaction]?, at timestamp: Date) async throws -> KMTransactionDeletion
+    func transactionDeletions() async throws -> [KMTransactionDeletion]
+    func undoTransactionDeletion(id: String, at timestamp: Date) async throws
+}
+
+// Additive requirements retain source compatibility with screen/test adapters from earlier PRs.
+extension TransactionRepository {
+    func deleteTransaction(id: String, expected: [KMTransaction]?, at timestamp: Date) async throws -> KMTransactionDeletion {
+        throw KMDataError.unsupported("この保存先は削除の取り消しに対応していません。")
+    }
+    func transactionDeletions() async throws -> [KMTransactionDeletion] { throw KMDataError.unsupported("削除履歴を取得できません。") }
+    func undoTransactionDeletion(id: String, at timestamp: Date) async throws { throw KMDataError.unsupported("削除を取り消せません。") }
+}
+extension ReceiptRepository {
+    func registerReceipt(id: String, at timestamp: Date) async throws -> KMReceipt { throw KMDataError.unsupported("レシート登録に対応していません。") }
+    func editReceipt(id: String, value: KMConfirmedReceipt, expectedUpdatedAt: Date, at timestamp: Date) async throws -> KMReceipt {
+        throw KMDataError.unsupported("レシート編集に対応していません。")
+    }
 }
 
 @MainActor protocol AccountRepository {
@@ -37,6 +56,8 @@ import Foundation
     func saveReceipt(_ receipt: KMReceipt) async throws
     func receiptImage(blobId: String) async throws -> Data?
     func deleteReceipt(id: String) async throws
+    func registerReceipt(id: String, at timestamp: Date) async throws -> KMReceipt
+    func editReceipt(id: String, value: KMConfirmedReceipt, expectedUpdatedAt: Date, at timestamp: Date) async throws -> KMReceipt
 }
 
 @MainActor protocol StatementRepository {

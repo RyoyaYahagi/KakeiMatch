@@ -18,6 +18,7 @@ import Foundation
     var runValues: [KMReconciliationRun] = []
     var resolutionValues: [KMReconciliationResolution] = []
     var serviceState = KMServiceState()
+    var ledgerWriteState = KMLedgerWriteState()
     var reconciliationState: KMLocalReconciliation? {
         get { serviceState.reconciliation }
         set { serviceState.reconciliation = newValue }
@@ -90,66 +91,22 @@ import Foundation
         value.precomposedStringWithCompatibilityMapping.lowercased(with: Locale(identifier: "ja_JP"))
             .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
-    private func openAccount(_ id: String) throws {
+    func openAccount(_ id: String) throws {
         guard accountValues.contains(where: { $0.id == id && !$0.closed }) else { throw KMDataError.invalidData("利用中の口座を選んでください。") }
     }
-    private func validCategory(_ id: String, income: Bool) throws {
-        guard categoryValues.contains(where: { $0.id == id && !$0.hidden && $0.isIncome == income }) else { throw KMDataError.invalidData("カテゴリを選んでください。") }
+    func validCategory(_ id: String, income: Bool) throws {
+        guard let category = categoryValues.first(where: { $0.id == id && !$0.hidden && $0.isIncome == income }),
+              !groupValues.contains(where: { $0.id == category.groupId && $0.hidden }) else { throw KMDataError.invalidData("カテゴリを選んでください。") }
     }
-    private func validAmount(_ amount: Int) throws {
+    func validAmount(_ amount: Int) throws {
         guard try KMYen.checked(amount) > 0 else { throw KMDataError.invalidData("金額は1円以上で入力してください。") }
-    }
-    func saveManual(_ input: KMManualTransactionInput, id: String? = nil) async throws -> KMTransaction {
-        guard input.kind != .transfer else { throw KMDataError.invalidData("振替専用の入力を使ってください。") }
-        try validAmount(input.amountYen); try openAccount(input.accountId); try validCategory(input.categoryId, income: input.kind == .income)
-        let name = input.payeeName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name.count <= 200, (input.memo?.count ?? 0) <= 2000,
-              !input.importedId.isEmpty, input.importedId.count <= 200 else { throw KMDataError.invalidData("入力内容を確認してください。") }
-        if let id {
-            guard let old = transactionValues.first(where: { $0.id == id }) else { throw KMDataError.notFound("記録がありません。") }
-            guard old.kind == input.kind, old.isSplit != true, !receiptValues.contains(where: { $0.registration.actualTransactionId == id }) else {
-                throw KMDataError.unsupported("レシート・分割取引は専用の編集サービスで変更してください。")
-            }
-        }
-        let category = categoryValues.first { $0.id == input.categoryId }
-        let result = KMTransaction(id: id ?? UUID().uuidString, date: input.date,
-            amountYen: input.kind == .expense ? -input.amountYen : input.amountYen, kind: input.kind,
-            payeeName: name, categoryName: category?.name, accountId: input.accountId,
-            excludedFromSpending: input.excludedFromSpending, categoryId: input.categoryId, memo: input.memo, importedId: input.importedId)
-        if let existing = transactionValues.first(where: { $0.importedId == input.importedId && $0.id != id }) {
-            var candidate = result; candidate.id = existing.id
-            guard existing == candidate else { throw KMDataError.invalidData("同じ登録IDで異なる記録があります。") }
-            return existing
-        }
-        transactionValues.removeAll { $0.id == result.id }; transactionValues.append(result)
-        return result
-    }
-    func saveTransfer(_ input: KMTransferInput, id: String? = nil) async throws -> KMTransaction {
-        try validAmount(input.amountYen); try openAccount(input.sourceAccountId); try openAccount(input.destinationAccountId)
-        guard input.sourceAccountId != input.destinationAccountId, !input.importedId.isEmpty, input.importedId.count <= 200,
-              (input.memo?.count ?? 0) <= 2000 else { throw KMDataError.invalidData("振替先・メモを確認してください。") }
-        let previous = transactionValues.first { $0.id == id }
-        if id != nil && (previous == nil || previous?.kind != .transfer || (previous?.amountYen ?? 0) >= 0) { throw KMDataError.invalidData("振替の記録を確認してください。") }
-        if id == nil && transactionValues.contains(where: { $0.importedId == input.importedId }) { throw KMDataError.invalidData("同じ登録IDの振替があります。") }
-        let outgoingId = id ?? UUID().uuidString
-        let incomingId = previous?.transferId ?? UUID().uuidString
-        let outgoing = KMTransaction(id: outgoingId, date: input.date, amountYen: -input.amountYen, kind: .transfer,
-            accountId: input.sourceAccountId, memo: input.memo, importedId: input.importedId,
-            transferAccountId: input.destinationAccountId, transferId: incomingId)
-        var incoming = outgoing; incoming.id = incomingId; incoming.amountYen = input.amountYen
-        incoming.accountId = input.destinationAccountId; incoming.transferAccountId = input.sourceAccountId; incoming.transferId = outgoingId
-        transactionValues.removeAll { $0.id == outgoingId || $0.id == incomingId }
-        transactionValues += [outgoing, incoming]
-        return outgoing
     }
     func setSpendingExclusion(id: String, excluded: Bool) async throws {
         guard let index = transactionValues.firstIndex(where: { $0.id == id }), transactionValues[index].kind == .expense else { throw KMDataError.invalidData("支出の記録を選んでください。") }
         transactionValues[index].excludedFromSpending = excluded
     }
     func deleteTransaction(id: String) async throws {
-        guard let row = transactionValues.first(where: { $0.id == id }) else { throw KMDataError.notFound("記録がありません。") }
-        guard !receiptValues.contains(where: { $0.registration.actualTransactionId == id }) else { throw KMDataError.unsupported("レシートの削除サービスは後続PRで提供します。") }
-        transactionValues.removeAll { $0.id == id || (row.transferId != nil && $0.id == row.transferId) }
+        _ = try await deleteTransaction(id: id, expected: nil, at: Date())
     }
 
     func accounts(includeClosed: Bool = true) async throws -> [KMAccount] {
@@ -204,7 +161,12 @@ import Foundation
     }
     func receipts() async throws -> [KMReceipt] { receiptValues.sorted { $0.createdAt > $1.createdAt } }
     func receipt(id: String) async throws -> KMReceipt? { receiptValues.first { $0.id == id } }
-    func saveReceipt(_ receipt: KMReceipt) async throws { receiptValues.removeAll { $0.id == receipt.id }; receiptValues.append(receipt) }
+    func saveReceipt(_ receipt: KMReceipt) async throws {
+        if let old = receiptValues.first(where: { $0.id == receipt.id }), old.registration.status != .pending, old != receipt {
+            throw KMDataError.invalidData("登録済み・登録結果確認中のレシートは専用サービスで変更してください。")
+        }
+        receiptValues.removeAll { $0.id == receipt.id }; receiptValues.append(receipt)
+    }
     func receiptImage(blobId: String) async throws -> Data? { imageValues[blobId] }
     func deleteReceipt(id: String) async throws {
         guard let receipt = receiptValues.first(where: { $0.id == id }) else { throw KMDataError.notFound("レシートがありません。") }
