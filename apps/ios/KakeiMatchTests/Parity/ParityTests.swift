@@ -108,7 +108,7 @@ struct ParityTests {
         let reportURL = temporary.appendingPathComponent("parity-report.json")
         try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: reportURL)
         // CI exports this actual test result from xcresult, not a hard-coded scenario manifest.
-        try Attachment.record(contentsOf: reportURL, named: "parity-report.json")
+        Attachment.record(try Data(contentsOf: reportURL), named: "parity-report.json")
     }
 }
 
