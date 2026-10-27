@@ -56,7 +56,7 @@ import Testing
         await #expect(throws: (any Error).self) { try await repo.transactions.saveManual(conflict, id: nil) }
         #expect(try await repo.transactions.transactions(matching: .init(limit: nil)).count == 1)
         var closed = try #require(try await repo.accounts.accounts(includeClosed: true).first { $0.id == "cash" }); closed.closed = true
-        try await repo.accounts.saveAccount(closed)
+        await #expect(throws: (any Error).self) { try await repo.accounts.saveAccount(closed) }
         #expect(try await repo.transactions.saveManual(input, id: nil).id == created.id)
         closed.closed = false; try await repo.accounts.saveAccount(closed)
         // Add native lock state as if imported; the edit API must not replace it with defaults.
@@ -298,7 +298,7 @@ import Testing
         try db.sql.execute("DROP TRIGGER fail_migration")
         let reopened = try KMSQLiteStore(directory: dir)
         #expect(try await reopened.transaction(id: row.id) == row)
-        #expect(try database(reopened).sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
+        #expect(try database(reopened).sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
         let audit = try await reopened.deleteTransaction(id: row.id, expected: nil, at: timestamp)
         let backup = try await reopened.exportNativeBackup(); defer { try? FileManager.default.removeItem(at: backup) }
         try await reopened.importBackup(from: backup)

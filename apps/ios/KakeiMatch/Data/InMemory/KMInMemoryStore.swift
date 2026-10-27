@@ -19,6 +19,9 @@ import Foundation
     var resolutionValues: [KMReconciliationResolution] = []
     var serviceState = KMServiceState()
     var ledgerWriteState = KMLedgerWriteState()
+    var masterWriteState = KMMasterWriteState()
+    /// New CSV originals are staged here and committed with their metadata and rows.
+    var pendingArtifacts: [KMBackupArtifact] = []
     var reconciliationState: KMLocalReconciliation? {
         get { serviceState.reconciliation }
         set { serviceState.reconciliation = newValue }
@@ -110,24 +113,7 @@ import Foundation
     }
 
     func accounts(includeClosed: Bool = true) async throws -> [KMAccount] {
-        try accountValues.filter { includeClosed || !$0.closed }.map { value in
-            var result = value
-            result.balanceYen = try transactionValues.filter { $0.accountId == value.id }.reduce(value.balanceYen) { try KMYen.add($0, $1.amountYen) }
-            return result
-        }
-    }
-    func saveAccount(_ account: KMAccount) async throws {
-        guard !account.id.isEmpty, !account.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw KMDataError.invalidData("支払元の名前を入力してください。") }
-        var value = account
-        // Balance is a read projection; renaming/closing must not count existing transactions twice.
-        value.balanceYen = accountValues.first(where: { $0.id == account.id })?.balanceYen ?? 0
-        accountValues.removeAll { $0.id == account.id }; accountValues.append(value)
-    }
-    func deleteAccount(id: String) async throws {
-        guard accountValues.contains(where: { $0.id == id }) else { throw KMDataError.notFound("口座がありません。") }
-        guard !transactionValues.contains(where: { $0.accountId == id || $0.transferAccountId == id }),
-              accountValues.first(where: { $0.id == id })?.balanceYen == 0 else { throw KMDataError.invalidData("記録または残高がある口座は削除できません。") }
-        accountValues.removeAll { $0.id == id }
+        try await accounts(asOf: KMDate(instant: Date()), includeClosed: includeClosed)
     }
     func categories(includeHidden: Bool = true) async throws -> [KMCategory] {
         var usage: [String: Int] = [:]
@@ -135,26 +121,17 @@ import Foundation
             let ids = Set(([row.categoryId] + (row.splits ?? []).map(\.categoryId)).compactMap { $0 })
             for id in ids { usage[id, default: 0] += 1 }
         }
-        return categoryValues.enumerated().filter { includeHidden || !$0.element.hidden }.map { index, category in
+        return categoryValues.enumerated().map { index, category in
             var value = category; value.usageCount = usage[value.id] ?? 0
+            value.hidden = value.hidden || groupValues.contains { $0.id == value.groupId && $0.hidden }
             return (index, value)
         }.sorted {
             if $0.1.usageCount != $1.1.usageCount { return $0.1.usageCount > $1.1.usageCount }
             let left = KMCategoryOrdering.rank($0.1.name), right = KMCategoryOrdering.rank($1.1.name)
             return left == right ? $0.0 < $1.0 : left < right
-        }.map(\.1)
+        }.map(\.1).filter { includeHidden || !$0.hidden }
     }
     func categoryGroups() async throws -> [KMCategoryGroup] { groupValues }
-    func saveCategory(_ category: KMCategory) async throws {
-        guard !category.id.isEmpty, !category.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw KMDataError.invalidData("カテゴリ名を入力してください。") }
-        if let index = categoryValues.firstIndex(where: { $0.id == category.id }) { categoryValues[index] = category }
-        else { categoryValues.append(category) }
-    }
-    func deleteCategory(id: String) async throws {
-        guard categoryValues.contains(where: { $0.id == id }) else { throw KMDataError.notFound("カテゴリがありません。") }
-        guard !transactionValues.contains(where: { $0.categoryId == id || ($0.splits ?? []).contains { $0.categoryId == id } }) else { throw KMDataError.invalidData("記録で使われているカテゴリは削除できません。") }
-        categoryValues.removeAll { $0.id == id }
-    }
     func payees() async throws -> [KMPayee] {
         let known = Set(payeeValues.map(\.name))
         return payeeValues + Array(Set(transactionValues.compactMap(\.payeeName)).subtracting(known)).sorted().map { KMPayee(id: "fixture-payee:" + $0, name: $0) }
@@ -210,12 +187,6 @@ import Foundation
         monthlySettings = next
     }
     func recurringTransactions() async throws -> [KMRecurringTransaction] { recurringValues }
-    func saveRecurring(_ value: KMRecurringTransaction) async throws {
-        try KMRecurringScheduleService.validateMastersAndUniqueness(input: recurringInput(value), editingId: value.id,
-            categories: categoryValues, accounts: accountValues, schedules: recurringValues)
-        recurringValues.removeAll { $0.id == value.id }; recurringValues.append(value)
-    }
-    func deleteRecurring(id: String) async throws { recurringValues.removeAll { $0.id == id } }
     func payrollRecords() async throws -> [KMPayrollRecord] { payrollValues }
     func savePayrollRecord(_ record: KMPayrollRecord) async throws { payrollValues.removeAll { $0.id == record.id }; payrollValues.append(record) }
     func categoryRules() async throws -> [KMCategoryLearningRule] {
@@ -249,33 +220,12 @@ import Foundation
         if let index = serviceState.observations.firstIndex(where: { $0.receiptId == value.receiptId }) { serviceState.observations[index] = value }
         else { serviceState.observations.append(value) }
     }
-    private func recurringInput(_ value: KMRecurringTransaction) -> KMRecurringScheduleInput {
+    func recurringInput(_ value: KMRecurringTransaction) -> KMRecurringScheduleInput {
         .init(name: value.name, kind: value.kind, amountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId,
             frequency: value.frequency, startDate: value.startDate, postsTransaction: value.postsTransaction)
     }
     func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence] {
         serviceState.occurrences.filter { $0.scheduleId == scheduleId }
-    }
-    func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws {
-        guard let schedule = recurringValues.first(where: { $0.id == id }), !schedule.completed, schedule.postsTransaction else {
-            throw KMDataError.invalidData("実行できる定期登録を選んでください。")
-        }
-        let input = recurringInput(schedule)
-        try KMRecurringScheduleService.validateMastersAndUniqueness(input: input, editingId: id,
-            categories: categoryValues, accounts: accountValues, schedules: recurringValues)
-        let imported = Set(transactionValues.compactMap(\.importedId))
-        let consumed = Set(serviceState.occurrences.filter { $0.scheduleId == id }.map(\.date)).union(
-            dates.filter { imported.contains(KMRecurringScheduleService.importedId(scheduleId: id, date: $0)) })
-        let selected = try KMRecurringScheduleService.selectedOccurrences(dates, input: input, through: through, alreadyConsumed: consumed)
-        // No fallible operations after validation: in-memory and durable adapters share atomic domain behavior.
-        for date in selected {
-            let importedId = KMRecurringScheduleService.importedId(scheduleId: id, date: date)
-            transactionValues.append(.init(id: importedId, date: date, amountYen: schedule.kind == .expense ? -schedule.amountYen : schedule.amountYen,
-                kind: schedule.kind == .expense ? .expense : .income, payeeName: schedule.name,
-                categoryName: categoryValues.first { $0.id == schedule.categoryId }?.name, accountId: schedule.accountId,
-                categoryId: schedule.categoryId, importedId: importedId))
-            serviceState.occurrences.append(.init(scheduleId: id, date: date, importedId: importedId, processedAt: timestamp))
-        }
     }
     func settings() async throws -> KMAppSettings { settingsValue }
     func saveSettings(_ settings: KMAppSettings) async throws { settingsValue = settings }

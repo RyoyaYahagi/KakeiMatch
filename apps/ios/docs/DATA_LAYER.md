@@ -18,7 +18,7 @@ SPMで追加するのは ZIPFoundation **0.9.20固定**だけ。ZIP展開の用�
 Application Support/KakeiMatch/
   active.json                   # current UUID / previous UUID。1回のatomic writeで切り替える
   <profile UUID>/
-    household.sqlite            # Native SQLite schema version 3
+    household.sqlite            # Native SQLite schema version 4
 ```
 
 - `objects(collection,id,ordinal,json)`：Repository用の型付きsnapshot。`id` はcollection内の格納位置で、**ドメインIDはJSON内に元の値を保持**する。配列順を維持する。現段階ではSQLで家計集計せず、読み出した作業用snapshotで既存のCRUD/集計を共有する。
@@ -26,6 +26,7 @@ Application Support/KakeiMatch/
 - `control(id,revision)`：snapshotの世代。読み込みはtransaction内で一貫した版を取得し、保存transaction内で再検査する。別のwriterが先に保存していたら古いsnapshotの上書きを拒否する。
 - `objects` の `service-state` singleton：照合の入力 snapshot・別名・候補却下・手動再確認・取消履歴、分類観測、定期の処理済み日。取引等の全 collection と同じ transaction で保存する。v2 はこの collection を追加し、table/column の追加はない。
 - `objects` の `ledger-writes` singleton：削除済みの印つき取引snapshot、分割編集で除いた子、削除/Undo履歴、編集前後の履歴。`transactions` は有効取引だけのprojectionとし、削除時も完全な取引値はtombstone領域に保持する。削除印を外すUndoは同じ親・子・振替対IDを復元する。原本・確認値を捨てない。
+- `objects` の `master-writes` singleton（v4）：日付付き開始残高/不正行の残高、定期設定監査・生成snapshot/取消結果、MoneyForwardの移行履歴/対応ルール。取引・明細・CSV原本の新規書き込みも同じ世代検査付きtransactionで確定する。
 - `provenance(id,payload)`：検証済みの元 `manifest.json`、`local-data.json`、`actual-budget.zip`。対応済みrecord kindはすべて原形のまま保持する。**現在の家計簿のexportではない**。iOSの編集をここへ逆投影したとは扱わない。
 
 保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本も同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
@@ -36,7 +37,7 @@ DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログ�
 
 | 境界 | 現在 | 方針 |
 | --- | --- | --- |
-| iOS端末DB `PRAGMA user_version` | 3 | 0から3へ作成。1→3では `service-state` を追加しprovenanceから既存の観測/照合履歴を回復、2→3では既存collectionを維持して空の `ledger-writes` を追加する。世代とversionも同じtransactionで更新する。旧JSONにないpayeeId/reconciled/子のclearedはnilとして読める。既存の不正な構造は作り直さず、4以上は非破壊で拒否する |
+| iOS端末DB `PRAGMA user_version` | 4 | 0から4へ作成。1/2/3→4は1つのtransactionで既存collectionを維持し、欠けている `service-state` / `ledger-writes` / `master-writes` を追加する。v3までの無日付開始残高は保存済みActual ZIPから日付を回復し、合計一致を検査して移す。provenanceがない既存基礎残高はそのまま保持する。世代とversionも一括更新。移行失敗は旧版のままrollback、5以上は非破壊で拒否する |
 | `.kmb` 外側 | 1 | `KMATCHB1` + manifest長（4byte big-endian）+ UTF-8 manifest + 宣言順のentry bytes |
 | portable端末記録 | 2 | `records` / `blobs`。未来版・未知kind/fieldは拒否する |
 | Actual内部DB | API 26.9.0の検証範囲 | API packageから生成した59件のmigration一覧（最大1787013118115）のprefixとの一致を検証。必要なtable/columnがないDB、新しい版、未知のmigration、未対応の定期登録は明示的に拒否。内部DBのmigrationは実行しない |
@@ -69,7 +70,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 参照元は `src/lib/actual-browser-ledger.ts` のmapping/集計、`local-backup-format.ts` のrecord schema、導入済みActual APIのSQL/view定義。closed口座も残高計算に残す。[PWA (2026/10), Actual adapter] [Actual API (26.9.0), schema / migrate / cloud-storage]
 
-## 書き込みの意味論（Issue #240、監査 #2・#4・#5・#7・#8・#9・#10）
+## 書き込みの意味論（Issue #240、監査 #2〜#10・#14〜#17）
 
 一致の基準は **KakeiMatchの画面で同じ操作をしたとき同じ結果が見えること**。ActualのDB形式・CRDT・sync自体を再実装しない。正本は `src/lib/actual-browser-ledger.ts` のcreate/updateTransaction、import/editReceipt、create/updateTransfer、delete/restoreTransactionTree、PWA側の `local-transaction-ui.ts`、`local-receipts.ts`、`local-transaction-deletions.ts`。Actual API 26.9.0の `accounts/{payees,sync}.ts`、`transactions/transfer.ts`、`db/index.ts` も確認した。以下のPWA側の操作契約はこれらの実装を根拠とし、右欄がiOS側の実装である。[PWA (2026/10), Actual adapter / local-receipts / local-transaction-deletions] [Actual API (26.9.0), accounts / transactions / db]
 
@@ -86,13 +87,25 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | 予算内外の振替category | Actualは両口座のoffbudgetが同じときcategoryを消し、境界をまたぐと元のcategoryを保持する。ただし **KakeiMatchは振替にcategoryを入力しない** ため新規も編集も両側nil。境界をまたいでも支出を作らない。Actualで作成したcategory付き振替の編集はPWA同様拒否 | 振替の全口座組み合わせ。category入力を勝手に追加しない |
 | 削除 | rootと振替対、または分割の親子全体を削除印付きsnapshotとして保持。有効一覧・検索・集計・残高・使用回数から除く。関連レシートはdeletedにするが画像・品目・確認値は残す。古いexpected snapshot、不完全な対、登録/照合結果確認中は拒否 | `deleteTransaction(id:expected:at:)` → `KMTransactionDeletion`。従来の `deleteTransaction(id:)` も同じ処理 |
 | Undo | 削除完了から10秒未満だけ開始でき、同じ全ID・分割配分・対リンク・照合状態・関連レシートsnapshotを復元。ID/importedIdの衝突・master消失は拒否。削除/復元履歴とtombstoneは再open・`.kmib`復元後も保持 | `transactionDeletions()`、`undoTransactionDeletion(id:at:)`。10秒ちょうどは期限切れ。toastの表示/期限管理は画面側 |
+| 明細CSV | provider由来の取引番号、なければfingerprint＋同一行ordinalで重複を判定。IDは同じJSON配列のSHA-256。口座を要求せず、台帳支出をまだ作らない。同じファイルの再取込は元のimport ID/旧accountIdを維持し、欠けた行だけ回復。番号の同じ異値明細は全体を拒否 | `statements.importStatement(data:provider:at:)`。#281 parser→原本/取込履歴/明細行を一括保存。fatal error時は原本も保存しない |
+| 外部取引/imported_id | 全口座のrootを検索し、既存IDは既存値を返してスキップする（手入力の異値再送エラーとは別）。未分類はnil、新規はcleared=false。payeeは完全名→ActualのUnicode小文字一致、fuzzy照合や振替対生成をしない | `transactions.importExternalTransaction`。`addTransactions(learnCategories:false, runTransfers:false)` 相当 |
+| MoneyForward | parser出力とカテゴリ/口座の一括対応を受ける。全口座のimported ID重複とファイル内重複をスキップ。±3日・同じ符号付き金額/変換後カテゴリの既存記録は統一/別登録の明示判断が必要。将来日付/振替/計算対象外/指定除外は登録しない。新規masterは同名を再利用、未設定口座は「移行元未設定」 | `previewMoneyForward` → `importMoneyForward(id:rows:mappings:choices:at:)`。原CSVは保存しない。対応ルールと元の空欄内容を履歴へ保持。失敗時は全体rollback、同じbatch IDで再送できる |
+| MoneyForward取消 | 今回createdの取引IDだけ削除（後日の編集も削除対象）。duplicate/統一先の既存取引は残す。追加した口座/カテゴリ/対応ルールは残す | `undoMoneyForward(id:at:)`。現在のroot/対/分割を既存の削除経路で削除印にする |
+| 口座作成・残高 | 名前/種類を保存しtransfer payeeを作る。開始残高は一覧/月次収支に出さず残高だけに反映。現在残高は**日本時間の今日まで**の取引＋日付付き基礎残高。振替の両側も加算し、分割を二重加算しない | `createAccount(_:startingBalanceYen:startingDate:)`（PWA通常フォームは0円）。`accounts(asOf:includeClosed:)` は固定時計の検証用、通常の `accounts` は今日を使う |
+| 口座終了・再開・削除 | 利用終了は現在残高と全日付残高が0円の場合だけ。空口座も消さずclosedにする。再開は同じID。完全削除は有効取引/開始残高行なし・残高0円だけ。名称/種類変更で残高を上書きしない | `saveAccount` のclosed遷移、`deleteAccount`。Actual `closeAccount` 内部の全日付残高条件も確認。操作直前のsnapshotを検査 |
+| カテゴリ/グループ | 追加/名前変更/並び替え/非表示/再表示。カテゴリ追加は同じ収支区分の利用中グループを再利用し、なければ作る。グループhiddenを選択可否に反映。使用中カテゴリは未来日/閉口座/分割子も調べ、削除せず非表示を案内 | `saveCategory` / `saveCategoryGroup` / `reorderCategories` / `reorderCategoryGroups`。使用中は `deleteCategory` を拒否。空でないグループの削除も拒否。グループ編集/任意並び替えはPWA画面にはなく、Repository管理操作のみ |
+| 照合確定・取消 | 同じ支出は金額/clearedだけを更新し、ID/importedId/カテゴリ/品目/メモ/reconciledを保持。分割の金額変更は拒否。未記録支出/振替は手入力/振替と同じpayee・対生成経路を通し出金側をclearedにする。取消は変更前の金額/clearedへ戻し判断履歴を残す | `Data/Ledger/KMLedgerReconciliation` と `storeReconciliation`。判断エンジンの結果を作業用copy上で既存台帳APIへ適用し、SQLiteでは取引/判断/履歴を一括保存 |
+| 定期設定・自動実行 | 固定額の毎月/毎週/毎年、カテゴリ/口座/開始日/自動登録。名前の重複と未対応予定の編集を拒否。編集は過去取引を変更せず、設定削除も生成済み取引を残す。保存時と家計簿を開く際の明示呼出しで到来分を処理（バックグラウンドtimerなし） | `saveRecurring(_:at:)`、`deleteRecurring`、`runRecurring(through:at:)`。画面はfixture時計を渡し、起動/復元後にrunを呼ぶ。通常 `saveRecurring` は実時計を使う |
+| 定期の追いつき登録・取消 | 選択日とmasterを再検査、安定imported IDで明示追加。**同じ内容の独立した手入力は統合も削除もしない**。日別snapshotを保存し、一括取消は未編集分だけ削除、編集済みはretainedとして残す。比較はPWAのnative取引snapshotに合わせ、カテゴリ/支払先の表示名変更と別保存の支出集計除外だけでは編集済みにしない。選択削除は古いsnapshotなら全体拒否。削除後も処理済み日を維持し自動再生成しない | `catchUpRecurring` / `recurringGenerations` / `undoRecurringGeneration(id:dates:at:)`。自動登録OFFでも追いつき登録可能。既存 `recurringOccurrences` は旧DB/portableの消費済み日を含む |
 
 ### 意図的に対象外としたActual内部挙動
 
-- Actual画面でしか作成できないtransaction/payee rule、categoryの自動学習rule、schedule ruleの実行は対象外。[Actual API (26.9.0), accounts/sync / transactions/transaction-rules] KakeiMatchの分類学習とは別物で、通常画面から設定できないため。本PRはこれらが存在するActual家計簿での書き込み結果一致を保証しない。元のruleは取り込みprovenanceに残す。
+- Actual画面でしか作成できないtransaction/payee rule、categoryの自動学習rule、schedule ruleの高度な条件（可変金額/終了条件/休日調整等）の実行は対象外。[Actual API (26.9.0), accounts/sync / transactions/transaction-rules] KakeiMatchの分類学習とは別物で、通常画面から設定できないため。本PRはこれらが存在するActual家計簿での書き込み結果一致を保証しない。元のruleは取り込みprovenanceに残す。
 - CRDT、同期メッセージ、Actualのsort_order・APIイベント・内部table配置は画面結果に不要なため再現しない。削除済み取引は独自の `ledger-writes` に保存し、active projectionから除く。Actual DBを再生成できるという意味ではない。
 - PWAはActual/IndexedDBの別保存先を更新するのでprocessing/failed intentと再起動回復が必要。iOSは1つのSQLite transactionで成功かrollbackになるため、中間intentの再実行を追加しない。読み戻し不一致・SQL失敗は全体をrollbackする（Actual側だけ更新されたPWAの内部的な途中状態は再現しない）。
-- 明細取り込み/照合の書き込み副作用、口座/categoryのライフサイクル、現在残高の未来日付cutoff、定期登録のActual連携は後続PR。比較テスト担当の `test/ios-pwa-parity` / `KakeiMatchTests/Parity` は変更しない。本PRの単体テストは画面接続やPWA実行との総合比較完了を意味しない。
+- Actual Schedule/RuleのDB再生成・有効scheduleを含む `.kmb` のprojectionは対象外。既存readerは引き続き明示拒否し、元PWAを保持する。iOS上で作る定期設定は独自SQLiteで実行する。旧portable定期監査は処理済み日として保持するが、旧生成snapshotの取消UIへの投影は未接続。
+- MoneyForwardのPWA既存app-settings履歴はprovenanceに損失なく保持するが、新しいnative移行履歴へのprojectionは未接続。iOSで作った履歴/対応ルールは再open/`.kmib`で維持する。
+- 比較テスト担当の `test/ios-pwa-parity` / `KakeiMatchTests/Parity` は変更しない。単体テストは画面接続やPWA実行との総合比較完了を意味しない。
 
 `LedgerWriteTests` は両adapterの同じ入力で登録・編集・再送・衝突・削除Undo・再open・SQLite失敗rollback・v2→v3・native backupを検査する。`ReceiptAllocationTests` は `src/lib/local-receipts.test.ts` の按分入力/期待値を移植し、64bit積を超える金額の端数処理も検査する。支払先規則の再生成は依存導入後 `node apps/ios/scripts/generate-payee-normalization.mjs`。Actualライセンスは `Data/Ledger/ActualLicense.txt` に同梱する。
 
@@ -127,7 +140,7 @@ TS側のスキーマが変わったら再生成し、migration fixtureと拒否�
 
 ### iOS専用形式 `.kmib`
 
-`.kmib` は非圧縮・非暗号化の独自containerで、PWA `.kmb` と別形式である。先頭magicは `KMIOB001`、manifestの `format` は `kakeimatch-ios-native-backup`、format versionとmanifestのschemaVersionは1（containerのschema）、内部SQLiteのuser_versionは3。旧DBのversion 1/2は復元時に移行する。PWA `.kmb` は従来どおり `KMATCHB1`、`.kmb`、portable schema version 2を使う。どちらも拡張子だけでなくmagicを検査し、iOS readerはmagicにより`.kmb`を既存のPWA取り込みへ、`.kmib`をnative復元へ振り分ける。PWA readerが`.kmib`を`.kmb`として受理することはない。
+`.kmib` は非圧縮・非暗号化の独自containerで、PWA `.kmb` と別形式である。先頭magicは `KMIOB001`、manifestの `format` は `kakeimatch-ios-native-backup`、format versionとmanifestのschemaVersionは1（containerのschema）、内部SQLiteのuser_versionは4。旧DBのversion 1/2/3は復元時に移行する。PWA `.kmb` は従来どおり `KMATCHB1`、`.kmb`、portable schema version 2を使う。どちらも拡張子だけでなくmagicを検査し、iOS readerはmagicにより`.kmb`を既存のPWA取り込みへ、`.kmib`をnative復元へ振り分ける。PWA readerが`.kmib`を`.kmb`として受理することはない。
 
 manifestには生成日時と各entryのpath・size・SHA-256を含める。`household.sqlite` は稼働中のSQLite接続上で `VACUUM INTO` を実行して作った一貫したDB snapshotである。レシート画像・CSV原本も `artifacts/` entryとして同梱し、DB内の原本との対応を復元時に照合する。snapshotと原本は同一snapshot DBから取得する。format/schemaの未来版、未知manifest field、危険なpath、重複path、size/checksum/lengthの不一致、上限超過、余分なpayloadを拒否する。上限はmanifest 2 MiB、entry 128 MiB、entry合計256 MiB、最大10,000 entries。暗号化・改ざん検知は行わず、SHA-256は破損検出用である。ファイルを他人へ渡さないよう画面で案内する。
 
@@ -137,14 +150,15 @@ iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `
 
 ## 検証・既知の制約・後続への申し送り
 
-- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→3の作成・1→3/2→3移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/未対応定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。
+- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→4の作成・1/2/3→4移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/未対応定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。
 - 共通fixtureはPR #279の合成データ。`synthetic.kmb` には `fixture.json` の11取引に加えて画像付きレシート登録分2,138円があり、12取引・支出26,868円になる。レシートは登録済み11＋空下書き1、明細7、照合一致4/要確認1/記録なし2、予算80,000円を確認する。fixtureの7品目は `.kmb` では確認値に保存されていないため、品目を捏造しない。
 - 通常起動だけpersistentへ注入する。Debug `-UITestFixture` とPreviewは従来のin-memoryで、利用者のDBへ触れない。
 - 閲覧・既存Repositoryの保存/検索/集計/復元はオフライン。AI抽出/分類、Cloud認証、問い合わせは別のAPI境界。ログアウトやアカウント削除からこのDBを消さない。
 - 照合の7操作は `KMSQLiteStore` から共通ドメイン処理へ委譲する。取引・口座・判断と `service-state`（prepared snapshot、別名、却下、手動確認、取消履歴）を一括保存する。SQLite失敗は全体をrollbackするため、外部Actual I/Oのprocessing状態からの回復とは異なる。
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
-- レシート画像の新規保存、明細インポート書き込み、レシート確認時の学習呼出し、Actual Schedule/Rule接続、自動実行、定期生成取消・編集行保持付き完全監査は後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
+- `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
+- レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projectionは後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
 - I/O・検証は現段階でMainActor直列。busy中の再入要求はエラーとし、自動再試行しない。大容量での実機メモリ/応答性、アプリ強制終了/容量不足、複数scene/process間の排他は未検証。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。
 - nativeのraw provenanceは監査/後続projection用。iOS編集後の正本と混同しない。端末からの全削除/原本整理は認証情報と分離して別途実装する。

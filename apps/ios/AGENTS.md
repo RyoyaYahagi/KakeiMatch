@@ -30,4 +30,4 @@
 
 ## 生成物と境界
 
-`project.yml` がXcode構成の正本です。`*.xcodeproj` / DerivedData / xcresultはコミットしません。金額は整数円（Int）かDecimal、日付のタイムゾーンはAsia/Tokyoを明示します。API秘密鍵を置かず、AIは既存Worker `/api/ai/*` 経由にします。この土台の `Data` / `API` は空であり、保存や通信を実装したように扱わないでください。
+`project.yml` がXcode構成の正本です。`*.xcodeproj` / DerivedData / xcresultはコミットしません。金額は整数円（Int）かDecimal、日付のタイムゾーンはAsia/Tokyoを明示します。API秘密鍵を置かず、AIは既存Worker `/api/ai/*` 経由にします。`Data` はSQLiteのRepository・明細/MoneyForward取り込み・取引/口座/カテゴリ/照合/定期の書き込み・バックアップを実装済みです。変更時は `docs/DATA_LAYER.md` の「書き込みの意味論」を確認してください。`API` はWorker向けtyped clientとnative認証を実装済みです。通信境界を変更するときは `docs/API_LAYER.md` を確認してください。画面への接続済み範囲と未実装範囲は `README.md` のData節と `HANDOFF.md` の4節を確認し、Repositoryの実装と画面フローの完成を区別してください。

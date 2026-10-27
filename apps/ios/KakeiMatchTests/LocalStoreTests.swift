@@ -40,18 +40,18 @@ import ZIPFoundation
         try await store.deleteTransaction(id: row.id)
         #expect(try await reopened.transactions(matching: .init()).isEmpty)
     }
-    @Test func migrationZeroToThreeAndFutureVersionAreNonDestructive() throws {
+    @Test func migrationZeroToFourAndFutureVersionAreNonDestructive() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("v0.sqlite")
         let db = try KMStoreDatabase(url: file)
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
         #expect(try db.load().transactionValues.isEmpty)
         try db.sql.execute("CREATE TABLE sentinel (value TEXT)")
         try db.sql.execute("INSERT INTO sentinel VALUES('synthetic survives')")
-        try db.sql.execute("PRAGMA user_version=4")
+        try db.sql.execute("PRAGMA user_version=5")
         #expect(throws: (any Error).self) { try KMStoreDatabase(url: file) }
         #expect(try db.sql.rows("SELECT value FROM sentinel").first?.string("value") == "synthetic survives")
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 5)
         let malformed = directory.appendingPathComponent("malformed.sqlite")
         let invalid = try KMSQLite(url: malformed)
         try invalid.execute("CREATE TABLE sentinel (value TEXT)")
@@ -379,6 +379,21 @@ import ZIPFoundation
         let budgetId = try await store.budgetSettings().budgetId
         try await store.saveBudgetSettings(.empty(budgetId: budgetId))
         #expect(try await store.budgetSummary(month: KMYearMonth("2026-10")).budgetYen == 60000)
+        // Simulate the actual v3 representation: hidden dated rows were flattened into base balances.
+        let beforeCutoff = try await store.accounts(asOf: KMDate("2026-10-13"))
+        let path = directory.appendingPathComponent(try store.profile().current.uuidString).appendingPathComponent("household.sqlite")
+        let db = try KMStoreDatabase(url: path), legacy = try db.load()
+        for entry in legacy.masterWriteState.balanceEntries {
+            let index = try #require(legacy.accountValues.firstIndex { $0.id == entry.accountId })
+            legacy.accountValues[index].balanceYen = try KMYen.add(legacy.accountValues[index].balanceYen, entry.amountYen)
+        }
+        try db.save(legacy)
+        try db.sql.execute("DELETE FROM objects WHERE collection='master-writes'")
+        try db.sql.execute("PRAGMA user_version=3")
+        let migrated = try KMSQLiteStore(directory: directory)
+        #expect(try await migrated.accounts(asOf: KMDate("2026-10-13")) == beforeCutoff)
+        #expect(try await migrated.accounts().first { $0.name == "現金" }?.balanceYen == 58340)
+        #expect(try await migrated.transaction(id: "split")?.splits?.map(\.amountYen) == [-1000, -2000])
     }
     @Test func failedActualStagingKeepsExistingDataAndCleansTarget() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }

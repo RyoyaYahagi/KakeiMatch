@@ -133,14 +133,15 @@ import Testing
         try await repo.categoryLearning.saveCategoryObservation(older)
         #expect(try await repo.categoryLearning.categoryRules() == expected)
         let schedule = KMRecurringTransaction(id: "schedule", name: "合成定期", kind: .expense, amountYen: 100, categoryId: "food", accountId: "card",
-            frequency: .monthly, startDate: day, postsTransaction: true, completed: false, editable: true)
+            frequency: .monthly, startDate: day, postsTransaction: false, completed: false, editable: true)
         try await repo.recurring.saveRecurring(schedule)
         try await repo.recurring.catchUpRecurring(id: schedule.id, dates: [day], through: day, at: now)
         repo = try reopen(repo, durable: durable, directory: directory)
         try await repo.recurring.catchUpRecurring(id: schedule.id, dates: [day], through: day, at: now)
         #expect(try await repo.recurring.recurringOccurrences(scheduleId: schedule.id).count == 1)
         let generated = KMRecurringScheduleService.importedId(scheduleId: schedule.id, date: day)
-        try await repo.transactions.deleteTransaction(id: generated)
+        let generatedRow = try #require(try await repo.transactions.transactions(matching: .init(limit: nil)).first { $0.importedId == generated })
+        try await repo.transactions.deleteTransaction(id: generatedRow.id)
         repo = try reopen(repo, durable: durable, directory: directory)
         try await repo.recurring.catchUpRecurring(id: schedule.id, dates: [day], through: day, at: now)
         #expect(try await repo.transactions.transaction(id: generated) == nil) // consumed even after deletion
@@ -156,7 +157,7 @@ import Testing
         let store = try install(seed(), at: directory)
         let schedule = KMRecurringTransaction(id: "schedule", name: "合成定期", kind: .expense, amountYen: 100,
             categoryId: "food", accountId: "card", frequency: .monthly, startDate: day,
-            postsTransaction: true, completed: false, editable: true)
+            postsTransaction: false, completed: false, editable: true)
         try await store.saveRecurring(schedule)
         let db = try database(store)
         let revision = try db.sql.rows("SELECT revision FROM control").first?.int("revision")
@@ -201,6 +202,6 @@ import Testing
         await #expect(throws: KMReconciliationError("stale_run")) {
             try await migrated.confirmSameExpense(runId: "one", statementId: "s", receiptId: "actual:t", at: now)
         }
-        #expect(try database(migrated).sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
+        #expect(try database(migrated).sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
     }
 }
