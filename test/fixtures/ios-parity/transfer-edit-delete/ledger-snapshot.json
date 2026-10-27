@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "transfer-edit-delete",
+  "status": "pending",
+  "knownDifference": "振替の片側編集に対する共通UI操作が未定義",
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}

@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "account-close-reopen",
+  "status": "pending",
+  "knownDifference": "PWA/iOSの同一画面操作のゴールデン結果が未出力",
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}

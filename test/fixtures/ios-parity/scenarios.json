@@ -1,0 +1,12 @@
+[
+  {"id":"baseline","operation":"synthetic.kmbを取り込み、台帳・口座・集計を読む","iosGap":null},
+  {"id":"manual-expense-income-retry","operation":"支出と収入を登録し、同じ入力を再送する","iosGap":"PWAの操作後snapshotが未出力"},
+  {"id":"receipt-single-and-split","operation":"レシート単一取引とカテゴリ別分割を登録する","iosGap":"レシート確認値から台帳へ登録する処理が未実装（receipt posting）"},
+  {"id":"transfer-edit-delete","operation":"振替を作成・編集・削除する","iosGap":"振替の片側編集に対する共通UI操作が未定義"},
+  {"id":"transaction-delete-undo","operation":"取引を削除しUndoする","iosGap":"削除Undoサービスが未実装"},
+  {"id":"statement-import-duplicate","operation":"明細CSVを再取り込みして重複を確認する","iosGap":"明細CSV取り込みwrite経路が未実装"},
+  {"id":"account-close-reopen","operation":"口座を利用終了・再開する","iosGap":"PWA/iOSの同一画面操作のゴールデン結果が未出力"},
+  {"id":"category-hide-delete","operation":"カテゴリを非表示・削除する","iosGap":"PWAの操作後snapshotが未出力"},
+  {"id":"budget-change","operation":"予算を変更する","iosGap":"PWAの操作後snapshotが未出力"},
+  {"id":"reconciliation-confirm-cancel","operation":"照合を確定・取消する","iosGap":"PWAの操作後snapshotが未出力"}
+]

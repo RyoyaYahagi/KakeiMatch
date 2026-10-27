@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "statement-import-duplicate",
+  "status": "pending",
+  "knownDifference": "明細CSV取り込みwrite経路が未実装",
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}

@@ -69,6 +69,28 @@ jobs:
           if [ -d UITests.xcresult ]; then
             xcrun xcresulttool export attachments --path UITests.xcresult --output-path screenshots
           fi
+      - name: Generate parity report
+        if: always()
+        working-directory: .
+        run: |
+          node --input-type=module -e '
+            import { readFile, writeFile } from "node:fs/promises";
+            const scenarios = JSON.parse(await readFile("test/fixtures/ios-parity/scenarios.json", "utf8"));
+            const report = scenarios.map(scenario => ({
+              id: scenario.id,
+              status: scenario.id === "baseline" ? "baseline-test-configured" : "known-difference",
+              reason: scenario.iosGap ?? null
+            }));
+            await writeFile("apps/ios/parity-report.json", JSON.stringify(report, null, 2) + String.fromCharCode(10));
+          '
+      - name: Upload parity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: apps/ios/parity-report.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload test results (also on failure)
         if: always()
         uses: actions/upload-artifact@v4

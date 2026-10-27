@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "manual-expense-income-retry",
+  "status": "pending",
+  "knownDifference": "PWAの操作後snapshotが未出力",
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}

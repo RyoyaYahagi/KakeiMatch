@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "receipt-single-and-split",
+  "status": "pending",
+  "knownDifference": "レシート確認値から台帳へ登録する処理が未実装（receipt posting）",
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}

@@ -1,0 +1,8 @@
+{
+  "format": "kakeimatch-ledger-snapshot",
+  "version": 1,
+  "scenario": "baseline",
+  "status": "pending",
+  "knownDifference": null,
+  "note": "PWA UI action/export has not been implemented for this scenario; no parity claim is made."
+}
