@@ -40,18 +40,18 @@ import ZIPFoundation
         try await store.deleteTransaction(id: row.id)
         #expect(try await reopened.transactions(matching: .init()).isEmpty)
     }
-    @Test func migrationZeroToTwoAndFutureVersionAreNonDestructive() throws {
+    @Test func migrationZeroToThreeAndFutureVersionAreNonDestructive() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("v0.sqlite")
         let db = try KMStoreDatabase(url: file)
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 2)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
         #expect(try db.load().transactionValues.isEmpty)
         try db.sql.execute("CREATE TABLE sentinel (value TEXT)")
         try db.sql.execute("INSERT INTO sentinel VALUES('synthetic survives')")
-        try db.sql.execute("PRAGMA user_version=3")
+        try db.sql.execute("PRAGMA user_version=4")
         #expect(throws: (any Error).self) { try KMStoreDatabase(url: file) }
         #expect(try db.sql.rows("SELECT value FROM sentinel").first?.string("value") == "synthetic survives")
-        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
         let malformed = directory.appendingPathComponent("malformed.sqlite")
         let invalid = try KMSQLite(url: malformed)
         try invalid.execute("CREATE TABLE sentinel (value TEXT)")
@@ -213,7 +213,7 @@ import ZIPFoundation
         // Recreate v1's persisted layout and recover imported history from its untouched provenance.
         let profile = try reopened.profile().current
         let database = try KMStoreDatabase(url: directory.appendingPathComponent(profile.uuidString).appendingPathComponent("household.sqlite"))
-        try database.sql.execute("DELETE FROM objects WHERE collection='service-state'")
+        try database.sql.execute("DELETE FROM objects WHERE collection IN ('service-state','ledger-writes')")
         try database.sql.execute("PRAGMA user_version=1")
         let migrated = try KMSQLiteStore(directory: directory)
         #expect(try await migrated.categoryObservations() == observations)

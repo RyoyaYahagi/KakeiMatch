@@ -188,7 +188,7 @@ import Testing
         #expect(try await store.transaction(id: "t")?.amountYen == -980)
         try db.sql.execute("DROP TRIGGER fail_service")
         // Recreate an actual v1 layout by removing only the v2 collection.
-        try db.sql.execute("DELETE FROM objects WHERE collection='service-state'")
+        try db.sql.execute("DELETE FROM objects WHERE collection IN ('service-state','ledger-writes')")
         try db.sql.execute("PRAGMA user_version=1")
         try db.sql.execute("CREATE TRIGGER fail_migration BEFORE INSERT ON objects WHEN NEW.collection='service-state' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
         #expect(throws: (any Error).self) { try KMSQLiteStore(directory: directory) }
@@ -201,6 +201,6 @@ import Testing
         await #expect(throws: KMReconciliationError("stale_run")) {
             try await migrated.confirmSameExpense(runId: "one", statementId: "s", receiptId: "actual:t", at: now)
         }
-        #expect(try database(migrated).sql.rows("PRAGMA user_version").first?.int("user_version") == 2)
+        #expect(try database(migrated).sql.rows("PRAGMA user_version").first?.int("user_version") == 3)
     }
 }
