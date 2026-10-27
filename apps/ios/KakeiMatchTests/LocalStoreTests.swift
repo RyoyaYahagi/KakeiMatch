@@ -151,6 +151,41 @@ import ZIPFoundation
         pwa.removeAll()
     }
 
+    /// PWA local-ui.ts performs importFile AND reconciliation.run before showing the result.
+    /// Importing alone saves the eighth statement but deliberately leaves the previous run unchanged.
+    @Test func statementReimportAndExplicitReconciliationPreserveAllRows() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        var store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: fixture("synthetic", "kmb"))
+        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-15T03:00:00Z"))
+        let headers = "利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日"
+        let csv = Data("\(headers)\n2026/10/15,Parity CSV,本人,PayPayクレジット,1回,4321,0,4321,4321,0,0,2026/11/27\n".utf8)
+        let previousRun = try #require(try await store.latestRun())
+        #expect(try await store.statementTransactions().count == 7)
+        #expect(previousRun.statementResults.filter { $0.status == .unmatchedStatement }.count == 2)
+
+        let first = try await store.importStatement(data: csv, provider: .paypayCard, at: now)
+        #expect(first.added == 1 && first.duplicates == 0)
+        store = try KMSQLiteStore(directory: directory)
+        let rows = try await store.statementTransactions()
+        let added = try #require(rows.first { $0.merchant == "Parity CSV" })
+        #expect(rows.count == 8 && added.amountYen == 4321)
+        #expect(try await store.latestRun() == previousRun)
+        #expect(!previousRun.statementResults.contains { $0.statementTransactionId == added.id })
+
+        // Reproduce the complete PWA action, not just its persistence half.
+        let run = try await store.runReconciliation(id: "csv-first", at: now)
+        #expect(run.statementResults.first { $0.statementTransactionId == added.id }?.status == .unmatchedStatement)
+        #expect(run.statementResults.filter { $0.status == .unmatchedStatement }.count == 3)
+        let second = try await store.importStatement(data: csv, provider: .paypayCard, at: now)
+        #expect(second.id == first.id && second.added == 0 && second.duplicates == 1)
+        let repeatedRun = try await store.runReconciliation(id: "csv-repeat", at: now.addingTimeInterval(1))
+        store = try KMSQLiteStore(directory: directory)
+        #expect(try await store.statementTransactions() == rows)
+        #expect(try await store.latestRun() == repeatedRun)
+        #expect(repeatedRun.statementResults.first { $0.statementTransactionId == added.id }?.status == .unmatchedStatement)
+        #expect(repeatedRun.statementResults.filter { $0.status == .unmatchedStatement }.count == 3)
+    }
     @Test func importsRealPWABackupWithImagesStatementsAndIDs() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let store = try KMSQLiteStore(directory: directory), before = try await seed(store), old = try store.profile().current
