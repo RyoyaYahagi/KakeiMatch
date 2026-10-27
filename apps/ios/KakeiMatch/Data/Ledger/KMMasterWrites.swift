@@ -41,7 +41,7 @@ import Foundation
         }
         if account.closed && !accountValues[index].closed {
             guard try accountBalance(id: account.id, through: KMDate(instant: Date())) == 0,
-                  accountBalance(id: account.id) == 0 else {
+                  try accountBalance(id: account.id) == 0 else {
                 throw KMDataError.invalidData("残高がある支払元は利用終了にできません。残高を移動して0円にしてから再度お試しください。")
             }
         }
@@ -81,8 +81,7 @@ import Foundation
             throw KMDataError.invalidData("既存の取引で使われているカテゴリは削除できません。利用をやめる場合は非表示にしてください。")
         }
         categoryValues.removeAll { $0.id == id }; syncCategoryGroups()
-        // Actual removes the deleted category's native budget cells as well.
-        for month in nativeBudgets.keys { nativeBudgets[month]?.removeValue(forKey: id) }
+        // Preserve historical budget cells; deleted categories are no longer projected by budgetSummary.
     }
     func syncCategoryGroups() {
         for i in groupValues.indices { groupValues[i].categoryIds = categoryValues.filter { $0.groupId == groupValues[i].id }.map(\.id) }

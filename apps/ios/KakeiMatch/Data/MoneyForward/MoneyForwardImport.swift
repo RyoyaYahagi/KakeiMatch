@@ -25,7 +25,7 @@ import Foundation
             return left == right ? $0.id < $1.id : left < right
         }
     }
-    private func instant(_ day: KMDate) -> Date {
+    private nonisolated func instant(_ day: KMDate) -> Date {
         KMDate.calendar.date(from: DateComponents(year: day.yearMonth.year, month: day.yearMonth.month, day: Int(day.rawValue.suffix(2))!))!
     }
     func previewMoneyForward(rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], at timestamp: Date) async throws -> [KMMoneyForwardPreview] {
