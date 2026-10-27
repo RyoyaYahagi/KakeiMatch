@@ -297,59 +297,85 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Text("支出の内訳").font(KMTypography.heading).foregroundStyle(KMColor.text)
                 .accessibilityAddTraits(.isHeader)
-            if summary.expenseYen == 0 {
-                Text("この月の支出はありません。")
-                    .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
-            } else {
-                let positiveCategories = summary.categories.filter { $0.amountYen > 0 }
-                let categories = Array(positiveCategories.prefix(3))
-                let remainder = positiveCategories.dropFirst(3).reduce(0) { $0 + $1.amountYen }
-                let sliceTotal = positiveCategories.reduce(0) { $0 + $1.amountYen }
-                if categories.isEmpty {
-                    Text("この月は返金・調整だけです。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
-                } else {
-                    GeometryReader { geometry in
-                        HStack(spacing: 2) {
-                            ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
-                                Rectangle().fill(KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground)
-                                    .frame(width: max(0, (geometry.size.width - CGFloat(max(0, categories.count + (remainder > 0 ? 1 : 0) - 1) * 2)) * CGFloat(category.amountYen) / CGFloat(sliceTotal)))
-                            }
-                            if remainder > 0 {
-                                Rectangle().fill(KMColor.cOther)
-                                    .frame(width: max(0, (geometry.size.width - CGFloat(categories.count * 2)) * CGFloat(remainder) / CGFloat(sliceTotal)))
-                            }
-                        }
-                    }
-                    .frame(height: 12).clipShape(Capsule())
-                    .accessibilityElement(children: .ignore).accessibilityLabel("支出の内訳：" + categories.map { "\($0.categoryName) \(percentage($0.amountYen, total: summary.expenseYen))" }.joined(separator: "、"))
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: KMSpacing.space2) {
-                        ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
-                            categoryLegend(name: category.categoryName, amount: category.amountYen, total: summary.expenseYen,
-                                           tone: KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground)
-                        }
-                        if remainder > 0 { categoryLegend(name: "その他", amount: remainder, total: summary.expenseYen, tone: KMColor.cOther) }
-                    }
-                }
-            }
-            DisclosureGroup("すべてのカテゴリ") {
-                VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                    ForEach(Array(summary.categories.enumerated()), id: \.offset) { _, category in
-                        HStack {
-                            Text(category.categoryName).lineLimit(1)
-                            Spacer()
-                            Text("\(category.amountYen < 0 ? "−" : "")\(KMAmountFormatter.yen(category.amountYen)) · \(percentage(category.amountYen, total: summary.expenseYen))")
-                                .font(KMTypography.number(12))
-                        }
-                        .font(KMTypography.note).foregroundStyle(KMColor.text)
-                    }
-                }.padding(.top, KMSpacing.space2)
-            }
-            .font(KMTypography.body(15, weight: .medium)).tint(KMColor.primary)
-            .accessibilityIdentifier("home.categories.all")
+            categoryContent(summary)
+            allCategories(summary)
         }
         .padding(.vertical, KMSpacing.space4)
         .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    @ViewBuilder private func categoryContent(_ summary: KMMonthlySummary) -> some View {
+        if summary.expenseYen == 0 {
+            Text("この月の支出はありません。")
+                .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
+        } else {
+            let positive = summary.categories.filter { $0.amountYen > 0 }
+            let top = Array(positive.prefix(3))
+            let remainder = positive.dropFirst(3).reduce(0) { $0 + $1.amountYen }
+            if top.isEmpty {
+                Text("この月は返金・調整だけです。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
+            } else {
+                categoryChart(categories: top, remainder: remainder,
+                              positiveTotal: positive.reduce(0) { $0 + $1.amountYen }, expenseTotal: summary.expenseYen)
+            }
+        }
+    }
+
+    private func categoryChart(categories: [KMMonthlyCategory], remainder: Int, positiveTotal: Int, expenseTotal: Int) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            GeometryReader { geometry in
+                let sliceCount = categories.count + (remainder > 0 ? 1 : 0)
+                let availableWidth = max(0, geometry.size.width - CGFloat(max(0, sliceCount - 1) * 2))
+                HStack(spacing: 2) {
+                    ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
+                        let width = availableWidth * CGFloat(category.amountYen) / CGFloat(positiveTotal)
+                        Rectangle().fill(KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground)
+                            .frame(width: width)
+                    }
+                    if remainder > 0 {
+                        let width = availableWidth * CGFloat(remainder) / CGFloat(positiveTotal)
+                        Rectangle().fill(KMColor.cOther).frame(width: width)
+                    }
+                }
+            }
+            .frame(height: 12).clipShape(Capsule())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("支出の内訳：" + categories.map { "\($0.categoryName) \(percentage($0.amountYen, total: expenseTotal))" }.joined(separator: "、"))
+            categoryLegends(categories: categories, remainder: remainder, expenseTotal: expenseTotal)
+        }
+    }
+
+    private func categoryLegends(categories: [KMMonthlyCategory], remainder: Int, expenseTotal: Int) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: KMSpacing.space2) {
+            ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
+                let tone = KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground
+                categoryLegend(name: category.categoryName, amount: category.amountYen, total: expenseTotal, tone: tone)
+            }
+            if remainder > 0 {
+                categoryLegend(name: "その他", amount: remainder, total: expenseTotal, tone: KMColor.cOther)
+            }
+        }
+    }
+
+    private func allCategories(_ summary: KMMonthlySummary) -> some View {
+        DisclosureGroup("すべてのカテゴリ") {
+            VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                ForEach(Array(summary.categories.enumerated()), id: \.offset) { _, category in
+                    HStack {
+                        Text(category.categoryName).lineLimit(1)
+                        Spacer()
+                        let sign = category.amountYen < 0 ? "−" : ""
+                        let amount = KMAmountFormatter.yen(category.amountYen)
+                        Text("\(sign)\(amount) · \(percentage(category.amountYen, total: summary.expenseYen))")
+                            .font(KMTypography.number(12))
+                    }
+                    .font(KMTypography.note).foregroundStyle(KMColor.text)
+                }
+            }.padding(.top, KMSpacing.space2)
+        }
+        .font(KMTypography.body(15, weight: .medium)).tint(KMColor.primary)
+        .accessibilityIdentifier("home.categories.all")
     }
 
     private func categoryLegend(name: String, amount: Int, total: Int, tone: Color) -> some View {
