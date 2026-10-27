@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'apps/ios/**'
+      - 'test/fixtures/ios-parity/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
