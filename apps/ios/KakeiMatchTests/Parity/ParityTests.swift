@@ -79,6 +79,15 @@ struct ParityTests {
                             try await store.saveReceipt(receipt)
                             _ = try await store.registerReceipt(id: receipt.id, at: now)
                         }
+                    case "statement-import-duplicate":
+                        let headers = "利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日"
+                        let csv = Data("\(headers)\n2026/10/15,Parity CSV,本人,PayPayクレジット,1回,4321,0,4321,4321,0,0,2026/11/27\n".utf8)
+                        let repositories = KMRepositories(persistent: store)
+                        let first = try await repositories.statements.importStatement(data: csv, provider: .paypayCard, at: now)
+                        #expect(first.added == 1 && first.duplicates == 0)
+                        try await compare("imported")
+                        let second = try await repositories.statements.importStatement(data: csv, provider: .paypayCard, at: now)
+                        #expect(second.id == first.id && second.added == 0 && second.duplicates == 1)
                     case "transaction-delete-undo":
                         let transaction = try #require(try await store.transactions(matching: .init(limit: nil)).first { $0.payeeName == "青空食堂" })
                         let deletion = try await store.deleteTransaction(id: transaction.id, expected: [transaction], at: now)

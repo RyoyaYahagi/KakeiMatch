@@ -7,7 +7,7 @@
 - **PWA**: `apps/pwa/scripts/parity-scenarios.mjs` がシナリオごとに新しいブラウザーcontextを作成し、合成 `test/fixtures/ios-migration/synthetic.kmb` をバックアップ復元UIから取り込みます。その後、登録・編集・削除などをPlaywrightで操作します。レシートも写真選択と確認フォームを使い、登録APIをテストから直接呼びません。今回はAIを使わず確認値を手入力します。
 - **採取**: `parity-snapshot.mjs` がPWA自身の `actual-browser-ledger`、`LocalMonthlyBudgetService`、local repositoryを読みます。テスト専用のVite開発サーバーからのみ読み込むadapterです。`baseline/dom-evidence.json` は、採取した月次支出がホームの「今月の支出」と一致し、既存レシートが記録一覧に出ることをDOMで検査した証拠です。`.kmb` はバックアップ書き出しUIのdownloadから保存します。
 - **iOS取り込み**: Swift Testingが各シナリオの操作後 `.kmb` を `KMSQLiteStore.importBackup` で実際に取り込みます。Repositoryの一覧・個別取得・残高・home・予算・照合状態を正規化し、PWAのJSONと構造比較します。途中状態の `.kmb` も同様に検査します。差は通常のテスト失敗であり、`withKnownIssue` にはしません。
-- **iOS操作再現**: baselineの `.kmb` から開始し、対応するRepository/service操作を実行します。途中状態と最終状態をPWAのJSONと比較します。操作が未実装の明細CSV取り込み1件だけを、処理名つきの `withKnownIssue` として記録します。これはSwiftUIのタップ試験ではなく、画面が呼ぶ保存経路の比較です。
+- **iOS操作再現**: baselineの `.kmb` から開始し、対応するRepository/service操作を実行します。途中状態と最終状態をPWAのJSONと比較します。明細CSVは `StatementRepository.importStatement` で同じ合成CSVを2回取り込み、初回の取り込み後と再取り込み後を比較します。これはSwiftUIのタップ試験ではなく、画面が呼ぶ保存経路の比較です。
 
 ## 共通形式と正規化
 
@@ -48,7 +48,7 @@
 
 PWAの全10シナリオは実操作・採取・書き出しを実行済みです。独立した2回の生成で、最終10件・途中6件・DOM証拠1件、計17 JSONのバイト一致を確認しました。`.kmb` のZIP時刻・UUID等のバイト一致は要求しません。
 
-iOSは commit `698a9dca18a9080752f40ed89abeaeef9620d1ce` の [macOS CI](https://github.com/RyoyaYahagi/KakeiMatch/actions/runs/40539916939) で実測しました。`parity-report` artifactでは10件すべての取り込みが一致し、操作再現は9件一致・明細CSV取り込み1件未実装でした。Swift Testing全188件とXCUITestも成功しています。取り込み・集計のバグは今回の範囲では検出していません。
+更新前は commit `698a9dca18a9080752f40ed89abeaeef9620d1ce` の [macOS CI](https://github.com/RyoyaYahagi/KakeiMatch/actions/runs/40539916939) で実測し、10件すべての取り込みが一致、操作再現は9件一致・明細CSV取り込み1件未実装でした。この更新では#297で追加された `StatementRepository.importStatement` を使って明細CSVの再取り込みを比較し、CIが生成する `parity-report.json` に実測結果を記録します。取り込み・集計の差が見つかった場合は、Data層を変更せず比較差分を報告します。
 
 前回CIの照合差分はData層のバグではなく、テストの正規化が最新runだけを見て過去の確定履歴を落としていたことが原因でした。両側の正規化を履歴込みへ直し、PWAの照合画面に出る件数も各checkpointで検査しました。
 
@@ -59,7 +59,7 @@ iOSは commit `698a9dca18a9080752f40ed89abeaeef9620d1ce` の [macOS CI](https://
 | レシート単一・分割 | 一致 | 一致 | #296 の `registerReceipt` で単一と分割を登録 |
 | 振替の作成・編集・削除 | 一致 | 一致 | 作成10,000円・編集12,000円・削除後をそれぞれ比較。既存 `saveTransfer` を使うため全面的な既知差扱いにはしない |
 | 取引削除とUndo | 一致 | 一致 | #296 の削除履歴・`undoTransactionDeletion` を使用。削除後も比較 |
-| 明細CSV再取り込み | 一致 | 未実装 | 1回目の取り込み後と重複1件の再取り込み後。`statement CSV write/import service` が未実装 |
+| 明細CSV再取り込み | 一致 | CIで確認 | 同じ合成PayPay CSVを1回取り込んだ後と、重複1件として再取り込んだ後を比較 |
 | 口座の利用終了・再開 | 一致 | 一致 | 空口座作成→利用終了→再開。利用終了時も比較 |
 | カテゴリ非表示・削除 | 一致 | 一致 | 使用中の食費を非表示、未使用カテゴリを作成・削除 |
 | 予算変更 | 一致 | 一致 | 基本全体予算80,000→90,000円 |
@@ -83,7 +83,7 @@ CIの `parity-report` artifactはSwift Testingが実際に記録したJSON添付
 
 ## 残る範囲
 
-- 未実装の明細CSV取り込みは、取り込み一致と操作再現を混同しません。
+- 明細CSV取り込みは取り込み一致と操作再現を別々に比較します。操作再現は#297の保存サービスを通します。
 - この合成fixtureには開始残高・offbudget・集計除外・Actual rule・有効scheduleがありません。その互換性を今回の結果から主張しません。PWA画面にないrule設定や同IDの異値再送を、架空のUI操作として追加していません。
 - 日付境界、別月、同名口座/カテゴリ、同名明細の複数件は追加fixtureが必要です。
 - Data層の実装は本PRでは変更しません。取り込み・集計に差があればreportへ具体的なJSON pathと値を記録し、別担当へ渡します。
