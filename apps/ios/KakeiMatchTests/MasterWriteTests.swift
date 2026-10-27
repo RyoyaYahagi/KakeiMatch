@@ -59,6 +59,19 @@ import Testing
         #expect(recovered.id == first.id && recovered.added == 1)
         #expect(try await repo.statements.statementTransactions().first?.id == saved.id)
     }
+    @Test(arguments: [false, true]) func repeatedStatementRowsAndReviewReasonsMatchTS(durable: Bool) async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let repo = try repository(seed(), durable: durable, directory: directory)
+        let lines = String(data: csv(), encoding: .utf8)!.split(separator: "\n").map(String.init)
+        let repeated = Data((lines[0] + "\n" + lines[1] + "\n" + lines[1] + "\n").utf8)
+        let first = try await repo.statements.importStatement(data: repeated, provider: .paypayCard, at: now)
+        #expect(first.added == 2 && first.duplicates == 0 && first.duplicateRowsInFile == 0)
+        let again = try await repo.statements.importStatement(data: repeated, provider: .paypayCard, at: now)
+        #expect(again.id == first.id && again.added == 0 && again.duplicates == 2)
+        let review = Data((lines[0] + "\n" + lines[1] + "\n2026/10/01,合成ストア,本人,PayPayクレジット,分割払い,1200,0,1200,400,800,0,2026/10/27\n").utf8)
+        let result = try await repo.statements.importStatement(data: review, provider: .paypayCard, at: now)
+        #expect(result.added == 0 && result.needsReviewRows == [.init(rowNumber: 3, reason: "1回払い以外の可能性があります")])
+    }
     @Test func externalNumberConflictDoesNotPublishSourceOrRows() throws {
         let memory = seed()
         let row = KMParsedStatementTransaction(provider: .paypayCard, externalId: "stable", usedDate: day,
@@ -72,14 +85,14 @@ import Testing
     @Test(arguments: [false, true]) func externalIdsSkipGloballyAndCreatePayees(durable: Bool) async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         var repo = try repository(seed(), durable: durable, directory: directory)
-        let input = KMExternalTransactionInput(accountId: "bank", date: day, amountYen: 1000, kind: .expense,
-            payeeName: "Synthetic Shop", categoryId: nil, importedId: "moneyforward:one")
+        let input = KMExternalTransactionInput(accountId: "bank", date: KMDate(rawValue: "2026-09-30"), amountYen: 2400, kind: .income,
+            payeeName: "Synthetic Refund", categoryId: nil, importedId: "moneyforward:id:mf-900")
         let first = try await repo.transactions.importExternalTransaction(input)
         repo = try reopened(repo, durable: durable, directory: directory)
         var different = input; different.accountId = "missing"; different.amountYen = 2000
         let repeatResult = try await repo.transactions.importExternalTransaction(different)
         #expect(!first.alreadyExisted && repeatResult.alreadyExisted && repeatResult.transaction == first.transaction)
-        #expect(first.transaction.amountYen == -1000 && first.transaction.categoryId == nil && !first.transaction.cleared)
+        #expect(first.transaction.amountYen == 2400 && first.transaction.kind == .income && first.transaction.categoryId == nil && !first.transaction.cleared)
         #expect(try await repo.payees.payees().contains { $0.id == first.transaction.payeeId })
     }
     @Test(arguments: [false, true]) func accountOpeningBalanceCutoffCloseReopenDelete(durable: Bool) async throws {
@@ -212,7 +225,8 @@ import Testing
         _ = try await repo.reconciliation.runReconciliation(id: "after-reject", at: now)
         let created = try await repo.reconciliation.registerStatement(runId: "after-reject", statementId: "s", categoryId: "food",
             destinationAccountId: nil, excludedFromSpending: true, newAccountId: "new-card", at: now)
-        let registered = try #require(try await repo.transactions.transaction(id: try #require(created.actualTransactionId)))
+        let registeredId = try #require(created.actualTransactionId)
+        let registered = try #require(try await repo.transactions.transaction(id: registeredId))
         #expect(created.status == .applied && registered.cleared && registered.excludedFromSpending == true)
         #expect(try await repo.payees.payees().contains { $0.id == registered.payeeId })
         #expect(registered.importedId == "kakeimatch:statement:s")
