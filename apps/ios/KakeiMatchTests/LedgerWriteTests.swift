@@ -107,6 +107,9 @@ import Testing
     @Test func actualTitleRulesAndASCIIOnlyReadbackKey() throws {
         #expect(try KMPayeeNormalization.importedName("  the API and the coffee SHOP  ") == "The API and the Coffee Shop")
         #expect(try KMPayeeNormalization.importedName("github: the store") == "GitHub: The Store")
+        #expect(try KMPayeeNormalization.importedName("nodeXjs") == "Node.js")
+        #expect(KMPayeeNormalization.merchantKey("\u{FEFF}Ａ\u{FEFF}Ｂ\u{FEFF}") == "a b")
+        #expect(KMPayeeNormalization.merchantKey("\u{0085}Ａ") == "\u{0085}a")
         #expect(KMPayeeNormalization.merchantKey("  ＡＢＣ　店  ") == "abc 店")
         #expect(KMPayeeNormalization.merchantKey("ÉCOLE") == "École")
         #expect(KMPayeeNormalization.merchantKey("école") == "école")
@@ -270,6 +273,16 @@ import Testing
         #expect(try await repo.transactions.transactionDeletions().isEmpty)
         #expect(try await repo.receipts.receipt(id: posted.id)?.registration.status == .applied)
         #expect(try database(store).load().ledgerWriteState.tombstones.isEmpty)
+        try db.sql.execute("DROP TRIGGER fail_write")
+        let audit = try await repo.transactions.deleteTransaction(id: postedTransactionId, expected: nil, at: timestamp)
+        try db.sql.execute("CREATE TRIGGER fail_write BEFORE INSERT ON objects WHEN NEW.collection='ledger-writes' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
+        await #expect(throws: (any Error).self) { try await repo.transactions.undoTransactionDeletion(id: audit.id, at: timestamp.addingTimeInterval(1)) }
+        #expect(try await repo.transactions.transaction(id: postedTransactionId) == nil)
+        #expect(try await repo.receipts.receipt(id: posted.id)?.registration.status == .deleted)
+        #expect(try await repo.transactions.transactionDeletions().last?.restoredAt == nil)
+        try db.sql.execute("DROP TRIGGER fail_write")
+        try await repo.transactions.undoTransactionDeletion(id: audit.id, at: timestamp.addingTimeInterval(2))
+        #expect(try await repo.receipts.receipt(id: posted.id) == posted)
     }
     @Test func v2MigrationAndNativeBackupRetainTombstonesAndUndo() async throws {
         let dir = try directory(); defer { try? FileManager.default.removeItem(at: dir) }
@@ -278,6 +291,11 @@ import Testing
         let db = try database(store)
         try db.sql.execute("DELETE FROM objects WHERE collection='ledger-writes'")
         try db.sql.execute("PRAGMA user_version=2")
+        try db.sql.execute("CREATE TRIGGER fail_migration BEFORE INSERT ON objects WHEN NEW.collection='ledger-writes' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
+        #expect(throws: (any Error).self) { try KMSQLiteStore(directory: dir) }
+        #expect(try db.sql.rows("PRAGMA user_version").first?.int("user_version") == 2)
+        #expect(try db.sql.rows("SELECT id FROM objects WHERE collection='transactions'").count == 1)
+        try db.sql.execute("DROP TRIGGER fail_migration")
         let reopened = try KMSQLiteStore(directory: dir)
         #expect(try await reopened.transaction(id: row.id) == row)
         #expect(try database(reopened).sql.rows("PRAGMA user_version").first?.int("user_version") == 3)

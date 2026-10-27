@@ -95,19 +95,24 @@ import Foundation
         }.map(\.element)
         let exact = matchImportedId ? transactionValues.first { $0.importedId == expected.importedId && $0.accountId == expected.accountId } : nil
         guard var row = exact ?? candidates.first(where: { $0.payeeName?.lowercased() == expected.payeeName?.lowercased() }) ?? candidates.first else { return expected }
-        if row.reconciled == true { guard sameWrite(row, expected) else { throw conflict() }; return row }
+        if row.reconciled == true {
+            guard sameWrite(row, expected) else { throw conflict() }
+            if let excluded = expected.excludedFromSpending { row.excludedFromSpending = excluded }
+            return row
+        }
         row.importedId = expected.importedId
         if row.payeeName == nil { row.payeeName = expected.payeeName; row.payeeId = expected.payeeId }
         if row.categoryId == nil { row.categoryId = expected.categoryId; row.categoryName = expected.categoryName }
         if (row.memo ?? "").isEmpty { row.memo = expected.memo }
         guard sameWrite(row, expected) else { throw conflict() }
-        row.excludedFromSpending = expected.excludedFromSpending
+        if let excluded = expected.excludedFromSpending { row.excludedFromSpending = excluded }
         return row
     }
     private func ledgerInstant(_ day: KMDate) -> Date {
         KMDate.calendar.date(from: DateComponents(year: day.yearMonth.year, month: day.yearMonth.month, day: Int(day.rawValue.suffix(2))!))!
     }
     private func transferPair(_ selected: KMTransaction) throws -> (KMTransaction, KMTransaction) {
+        _ = try KMYen.checked(selected.amountYen)
         guard selected.kind == .transfer, selected.isSplit != true, selected.splits?.isEmpty != false,
               let peer = transactionValues.first(where: { $0.id == selected.transferId }), peer.kind == .transfer,
               peer.transferId == selected.id, peer.accountId != selected.accountId, peer.amountYen == -selected.amountYen,
@@ -238,6 +243,7 @@ import Foundation
     }
     private func deletionTree(_ id: String) throws -> [KMTransaction] {
         guard let row = transactionValues.first(where: { $0.id == id }) else { throw KMDataError.notFound("記録がありません。") }
+        _ = try KMYen.checked(row.amountYen)
         if row.kind == .transfer { let pair = try transferPair(row); return [pair.0, pair.1] }
         guard row.transferId == nil else { throw conflict() }
         if row.isSplit == true {

@@ -48,7 +48,8 @@ enum KMPayeeNormalization {
         }
         for special in rules.specials {
             // JS \b is ASCII word-boundary, unlike Foundation's Unicode \b.
-            let regex = try NSRegularExpression(pattern: "(?<![A-Za-z0-9_])" + NSRegularExpression.escapedPattern(for: special) + "(?![A-Za-z0-9_])", options: .caseInsensitive)
+            // Actual interpolates these trusted patterns verbatim (including the dots in Node.js/Next.js).
+            let regex = try NSRegularExpression(pattern: "(?<![A-Za-z0-9_])" + special + "(?![A-Za-z0-9_])", options: .caseInsensitive)
             result = regex.stringByReplacingMatches(in: result, range: NSRange(location: 0, length: (result as NSString).length), withTemplate: special)
         }
         return result
