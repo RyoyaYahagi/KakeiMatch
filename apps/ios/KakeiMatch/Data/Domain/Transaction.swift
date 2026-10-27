@@ -23,6 +23,9 @@ struct KMTransaction: Codable, Equatable, Identifiable, Sendable {
     var transferId: String? = nil
     /// Projection of Actual's split children, not extra serialized ActualTransaction fields.
     var splits: [KMTransactionSplit]? = nil
+    /// Preserved native lock state; ordinary edits must not clear it.
+    var reconciled: Bool? = nil
+    var payeeId: String? = nil
 }
 
 // TS: src/lib/actual-browser-ledger.ts readBackSplitSet / ActualSearchTransaction child notes/payee projection.
@@ -32,6 +35,9 @@ struct KMTransactionSplit: Codable, Equatable, Identifiable, Sendable {
     var amountYen: Int
     var memo: String? = nil
     var payeeName: String? = nil
+    var cleared: Bool? = nil
+    var reconciled: Bool? = nil
+    var payeeId: String? = nil
 }
 
 // TS: src/lib/actual-ledger.ts ManualTransactionInput; amountYen is positive here (unlike a ledger row).

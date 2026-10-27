@@ -1,6 +1,6 @@
 import Foundation
 
-/// Native schema v2. Collection rows are domain snapshots, not Actual's CRDT tables.
+/// Native schema v3. Collection rows are domain snapshots, not Actual's CRDT tables.
 /// Original portable records and artifacts are retained losslessly, independently of projections.
 @MainActor final class KMStoreDatabase {
     let sql: KMSQLite
@@ -8,7 +8,7 @@ import Foundation
     init(url: URL) throws {
         sql = try KMSQLite(url: url)
         let version = try sql.rows("PRAGMA user_version").first?.int("user_version") ?? -1
-        guard (0...2).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
+        guard (0...3).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
         // Only configure writable journaling after the future-version guard has passed.
         try sql.execute("PRAGMA journal_mode=DELETE"); try sql.execute("PRAGMA synchronous=FULL")
         if version == 0 {
@@ -19,7 +19,7 @@ import Foundation
                 try sql.execute("CREATE TABLE provenance (id TEXT PRIMARY KEY NOT NULL, payload BLOB NOT NULL)")
                 try sql.execute("CREATE TABLE control (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)")
                 try sql.execute("INSERT INTO control VALUES(1,0)")
-                try sql.execute("PRAGMA user_version=2")
+                try sql.execute("PRAGMA user_version=3")
             }
             try save(KMInMemoryStore(budgetId: UUID().uuidString))
         }
@@ -38,10 +38,20 @@ import Foundation
                     state = try KMActualImport.serviceState(records: records)
                 }
                 try put("service-state", [state])
+                try put("ledger-writes", [KMLedgerWriteState()])
                 let current = try revision()
                 guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
                 try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(current + 1)])
-                try sql.execute("PRAGMA user_version=2")
+                try sql.execute("PRAGMA user_version=3")
+            }
+        }
+        if version == 2 {
+            try sql.transaction {
+                try put("ledger-writes", [KMLedgerWriteState()])
+                let current = try revision()
+                guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
+                try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(current + 1)])
+                try sql.execute("PRAGMA user_version=3")
             }
         }
     }
@@ -77,6 +87,7 @@ import Foundation
         store.ruleValues = try values("rules", KMCategoryLearningRule.self)
         store.ruleOverrides = try values("rule-overrides", KMCategoryRuleOverride.self)
         store.serviceState = try singleton("service-state", KMServiceState.self)
+        store.ledgerWriteState = try singleton("ledger-writes", KMLedgerWriteState.self)
         store.settingsValue = try singleton("settings", KMAppSettings.self)
         store.monthlySettings = settings
         store.nativeBudgets = try singleton("native-budgets", [String: [String: Int]].self)
@@ -108,6 +119,7 @@ import Foundation
             try put("recurring", store.recurringValues); try put("payroll", store.payrollValues)
             try put("rules", store.ruleValues); try put("rule-overrides", store.ruleOverrides)
             try put("service-state", [store.serviceState])
+            try put("ledger-writes", [store.ledgerWriteState])
             try put("settings", [store.settingsValue]); try put("monthly-settings", [store.monthlySettings]); try put("native-budgets", [store.nativeBudgets])
             // Draft deletion also removes its image in the same transaction; imported CSVs remain intact.
             for row in try sql.rows("SELECT id FROM artifacts") {

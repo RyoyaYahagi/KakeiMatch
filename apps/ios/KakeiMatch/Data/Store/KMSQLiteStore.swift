@@ -185,13 +185,15 @@ import Foundation
             var budget: KMMonthlyBudgetSettings; var nativeBudgets: [String: [String: Int]]; var payroll: [KMPayrollRecord]
             var recurring: [KMRecurringTransaction]; var rules: [KMCategoryLearningRule]
             var suspected: [KMSuspectedStatement]; var overrides: [KMCategoryRuleOverride]; var settings: KMAppSettings
+            var ledgerWrites: KMLedgerWriteState; var serviceState: KMServiceState
         }
         let encoder = KMJSON.encoder(); encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(Snapshot(transactions: store.transactionValues, accounts: store.accountValues, categories: store.categoryValues,
             groups: store.groupValues, receipts: store.receiptValues, statements: store.statementValues, imports: store.importValues,
             runs: store.runValues, resolutions: store.resolutionValues, payees: store.payeeValues, budget: store.monthlySettings,
             nativeBudgets: store.nativeBudgets, payroll: store.payrollValues, recurring: store.recurringValues, rules: store.ruleValues,
-            suspected: store.suspectedValues, overrides: store.ruleOverrides, settings: store.settingsValue))
+            suspected: store.suspectedValues, overrides: store.ruleOverrides, settings: store.settingsValue,
+            ledgerWrites: store.ledgerWriteState, serviceState: store.serviceState))
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] { try await access { try await $0.transactions(matching: query) } }
@@ -202,6 +204,19 @@ import Foundation
     func saveTransfer(_ input: KMTransferInput, id: String? = nil) async throws -> KMTransaction { try await access(true) { try await $0.saveTransfer(input, id: id) } }
     func setSpendingExclusion(id: String, excluded: Bool) async throws { try await access(true) { try await $0.setSpendingExclusion(id: id, excluded: excluded) } }
     func deleteTransaction(id: String) async throws { try await access(true) { try await $0.deleteTransaction(id: id) } }
+    func deleteTransaction(id: String, expected: [KMTransaction]?, at timestamp: Date) async throws -> KMTransactionDeletion {
+        try await access(true) { try await $0.deleteTransaction(id: id, expected: expected, at: timestamp) }
+    }
+    func transactionDeletions() async throws -> [KMTransactionDeletion] { try await access { try await $0.transactionDeletions() } }
+    func undoTransactionDeletion(id: String, at timestamp: Date) async throws {
+        try await access(true) { try await $0.undoTransactionDeletion(id: id, at: timestamp) }
+    }
+    func registerReceipt(id: String, at timestamp: Date) async throws -> KMReceipt {
+        try await access(true) { try await $0.registerReceipt(id: id, at: timestamp) }
+    }
+    func editReceipt(id: String, value: KMConfirmedReceipt, expectedUpdatedAt: Date, at timestamp: Date) async throws -> KMReceipt {
+        try await access(true) { try await $0.editReceipt(id: id, value: value, expectedUpdatedAt: expectedUpdatedAt, at: timestamp) }
+    }
     func accounts(includeClosed: Bool = true) async throws -> [KMAccount] { try await access { try await $0.accounts(includeClosed: includeClosed) } }
     func saveAccount(_ account: KMAccount) async throws { try await access(true) { try await $0.saveAccount(account) } }
     func deleteAccount(id: String) async throws { try await access(true) { try await $0.deleteAccount(id: id) } }

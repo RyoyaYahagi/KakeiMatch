@@ -129,7 +129,8 @@ import ZIPFoundation
             var value = KMTransaction(id: id, date: date, amountYen: amount, kind: kind,
                 payeeName: payees.first { $0.id == row.string("payee") }?.name, categoryName: category?.name, accountId: accountId,
                 cleared: row.int("cleared") == 1, categoryId: category?.id, memo: row.string("notes"), importedId: row.string("financial_id"),
-                isSplit: row.int("isParent") == 1, transferAccountId: transfer.flatMap { byId[$0]?.string("acct") }, transferId: transfer)
+                isSplit: row.int("isParent") == 1, transferAccountId: transfer.flatMap { byId[$0]?.string("acct") }, transferId: transfer,
+                reconciled: row.int("reconciled") == 1, payeeId: row.string("payee"))
             if let transfer {
                 guard let peer = byId[transfer], peer.string("transferred_id") == id,
                       peer.string("acct") != accountId, try peer.yen("amount") == -amount, peer.int("isChild") != 1,
@@ -143,7 +144,8 @@ import ZIPFoundation
                           child.int("isParent") != 1, child.string("transferred_id") == nil,
                           (child.string("error") ?? "").isEmpty else { throw KMPortableBackup.invalid() }
                     return KMTransactionSplit(id: try child.required("id"), categoryId: categories.first { $0.id == child.string("category") }?.id,
-                        amountYen: try child.yen("amount"), memo: child.string("notes"), payeeName: payees.first { $0.id == child.string("payee") }?.name)
+                        amountYen: try child.yen("amount"), memo: child.string("notes"), payeeName: payees.first { $0.id == child.string("payee") }?.name,
+                        cleared: child.int("cleared") == 1, reconciled: child.int("reconciled") == 1, payeeId: child.string("payee"))
                 }
                 guard try value.splits!.reduce(0, { try KMYen.add($0, $1.amountYen) }) == amount else { throw KMPortableBackup.invalid() }
             }
