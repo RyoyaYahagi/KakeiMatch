@@ -181,6 +181,7 @@ struct HomeView: View {
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("home.budget")
                     if budgetExpanded { budgetDetails(summary) }
+                }
             } else {
                 HStack {
                     Text("予算").foregroundStyle(KMColor.muted)
