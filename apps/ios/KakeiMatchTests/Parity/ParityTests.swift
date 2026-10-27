@@ -85,9 +85,11 @@ struct ParityTests {
                         let repositories = KMRepositories(persistent: store)
                         let first = try await repositories.statements.importStatement(data: csv, provider: .paypayCard, at: now)
                         #expect(first.added == 1 && first.duplicates == 0)
+                        _ = try await store.runReconciliation(id: "parity-csv-first", at: now)
                         try await compare("imported")
                         let second = try await repositories.statements.importStatement(data: csv, provider: .paypayCard, at: now)
                         #expect(second.id == first.id && second.added == 0 && second.duplicates == 1)
+                        _ = try await store.runReconciliation(id: "parity-csv-repeat", at: now.addingTimeInterval(1))
                     case "transaction-delete-undo":
                         let transaction = try #require(try await store.transactions(matching: .init(limit: nil)).first { $0.payeeName == "青空食堂" })
                         let deletion = try await store.deleteTransaction(id: transaction.id, expected: [transaction], at: now)
