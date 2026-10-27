@@ -28,6 +28,25 @@ cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 
 画面 PR は #283 マージ後の `main` から作業 branch を切り、base も `main` にする。参照スクショは既存のものを使い、画面実装と無関係に更新しない。
 
+### 1.1 Apple の署名とネイティブ認証の有効化（Mac で最初に行う）
+
+利用者は Apple Developer Program に登録済み。Team ID は `2L6CD9CNHL`、Bundle ID は `jp.kakeimatch.ios`。
+
+1. Xcode で `KakeiMatch` target の Signing & Capabilities を開き、Team に `2L6CD9CNHL` を選ぶ。署名は `project.yml` の `DEVELOPMENT_TEAM: $(KM_DEVELOPMENT_TEAM)` で外から渡す設計なので、Team ID を `project.yml` へ書かず、`xcodegen generate` 前に `export KM_DEVELOPMENT_TEAM=2L6CD9CNHL` するか Xcode の設定で選ぶ。
+2. Capabilities に **App Attest** と **Associated Domains**（`webcredentials:kakeimatch.yhgry.workers.dev`。`KM_NATIVE_HOST` から生成される）が入っていることを確認する。初回の署名で App ID `jp.kakeimatch.ios` が Apple Developer に作られる。
+3. [developer.apple.com/account](https://developer.apple.com/account) → Certificates, Identifiers & Profiles → Identifiers → `jp.kakeimatch.ios` を開き、**App ID Prefix** を確認する（通常は Team ID と同じ `2L6CD9CNHL`）。
+4. 本番 Worker のビルド変数に `NATIVE_APP_ID=<App ID Prefix>.jp.kakeimatch.ios` を登録する。他の 4 つ（`NATIVE_APP_TEAM_ID`・`NATIVE_APP_ORIGIN`・`NATIVE_APP_RP_ID`・`NATIVE_APP_ATTEST_ENVIRONMENT`）は登録済み。本番の設定変更なので、実行前に利用者の承認を取る。Cloudflare の認証が無い Mac では、App ID Prefix を利用者経由で Linux 側へ伝えれば Linux 側で登録する。
+
+   ```sh
+   # 本番 Worker `kakeimatch` のビルドトリガー: dd4b3c09-9880-47c0-850c-bc30ce881bc5
+   corepack pnpm --dir apps/pwa exec cf builds triggers environment-variables upsert dd4b3c09-9880-47c0-850c-bc30ce881bc5 \
+     --body '{"NATIVE_APP_ID":{"value":"<App ID Prefix>.jp.kakeimatch.ios","is_secret":false}}'
+   ```
+
+5. ビルド変数は次のビルドで反映される。main へ次の PR がマージされるのを待つか、`cf builds create dd4b3c09-9880-47c0-850c-bc30ce881bc5`（body の形は `cf schema builds create` で確認）で再ビルドする。
+6. 反映後に `curl https://kakeimatch.yhgry.workers.dev/api/native/config` が `available:true`、`/.well-known/apple-app-site-association` が 200 で `webcredentials.apps` に `<App ID Prefix>.jp.kakeimatch.ios` を含むことを確認する。
+7. 署名済みの実機で、PWA で登録済みの Passkey によるログイン、App Attest によるゲスト利用、ログアウト・失効を確認する（Simulator は App Attest 非対応なので、クラウド機能が拒否され端末内機能は動くことを確認する）。結果は Issue #240 にコメントする。
+
 コマンドで確認する場合（ios.yml と同じ形。simulator 名は `xcrun simctl list devices available` で実在するものを使う）:
 
 ```sh
@@ -55,8 +74,9 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 照合・重複検出・カテゴリ学習・定期・予算のロジック | `feature/ios-reconciliation` | #282（#280 上） | Linux | マージ済み・golden 273 件 TS と一致 |
 | 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283 | Linux | マージ済み。設計は `docs/DATA_LAYER.md` |
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
-| iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | #284（main 起点） | Linux | 専用`.kmib`の書き出し・iOS間復元・原本同梱を追加。iOS→PWA書き出しは提供しない。詳細は `docs/DATA_LAYER.md` |
+| iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | #284 | Linux | マージ済み。専用`.kmib`の書き出し・iOS間復元・原本同梱を追加。iOS→PWA書き出しは提供しない。詳細は `docs/DATA_LAYER.md` |
 | Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287 | Linux | マージ済み。typed通信・応答検証・Keychain・給与画像マスキング。native API adapter・App Attest / Passkey実装とstubテストを追加。Workerとの契約は `../../docs/NATIVE_APP_AUTH.md`。署名済み実機から実Workerへの通信は未確認。`docs/API_LAYER.md` |
+| Worker のネイティブ認証境界（専用 session・Passkey・AASA・App Attest） | `feature/ios-native-auth` | #292 | Linux | マージ済み・本番デプロイ済み。本番 D1 に migration 0018 適用済み。`NATIVE_APP_ID` が未登録のため本番ではまだ無効（`/api/native/config` が `available:false`）。1.1 節の手順で有効化する |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
