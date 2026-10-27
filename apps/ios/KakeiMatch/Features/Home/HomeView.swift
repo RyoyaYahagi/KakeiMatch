@@ -47,6 +47,7 @@ struct HomeView: View {
     @State private var accounts: [String: String] = [:]
     @State private var selectedMonth: KMYearMonth?
     @State private var budgetExpanded = false
+    @State private var categoriesExpanded = false
     @State private var errorMessage: String?
     var onNavigate: (KMTab) -> Void = { _ in }
 
@@ -366,23 +367,37 @@ struct HomeView: View {
     }
 
     private func allCategories(_ summary: KMMonthlySummary) -> some View {
-        DisclosureGroup("すべてのカテゴリ") {
-            VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                ForEach(Array(summary.categories.enumerated()), id: \.offset) { _, category in
-                    HStack {
-                        Text(category.categoryName).lineLimit(1)
-                        Spacer()
-                        let sign = category.amountYen < 0 ? "−" : ""
-                        let amount = KMAmountFormatter.yen(category.amountYen)
-                        Text("\(sign)\(amount) · \(percentage(category.amountYen, total: summary.expenseYen))")
-                            .font(KMTypography.number(12))
-                    }
-                    .font(KMTypography.note).foregroundStyle(KMColor.text)
+        VStack(alignment: .leading, spacing: 0) {
+            Button { categoriesExpanded.toggle() } label: {
+                HStack(spacing: KMSpacing.space2) {
+                    Image(systemName: "triangle.fill")
+                        .font(.system(size: 9))
+                        .rotationEffect(.degrees(categoriesExpanded ? 180 : 90))
+                    Text("すべてのカテゴリ").font(KMTypography.body(15, weight: .medium))
+                    Spacer(minLength: 0)
                 }
-            }.padding(.top, KMSpacing.space2)
+                .foregroundStyle(KMColor.primary)
+                .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home.categories.all")
+            if categoriesExpanded {
+                VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                    ForEach(Array(summary.categories.enumerated()), id: \.offset) { _, category in
+                        HStack {
+                            Text(category.categoryName).lineLimit(1)
+                            Spacer()
+                            let sign = category.amountYen < 0 ? "−" : ""
+                            let amount = KMAmountFormatter.yen(category.amountYen)
+                            Text("\(sign)\(amount) · \(percentage(category.amountYen, total: summary.expenseYen))")
+                                .font(KMTypography.number(12))
+                        }
+                        .font(KMTypography.note).foregroundStyle(KMColor.text)
+                    }
+                }.padding(.top, KMSpacing.space2)
+            }
         }
-        .font(KMTypography.body(15, weight: .medium)).tint(KMColor.primary)
-        .accessibilityIdentifier("home.categories.all")
     }
 
     private func categoryLegend(name: String, amount: Int, total: Int, tone: Color) -> some View {
