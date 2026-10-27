@@ -96,7 +96,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | カテゴリ/グループ | 追加/名前変更/並び替え/非表示/再表示。カテゴリ追加は同じ収支区分の利用中グループを再利用し、なければ作る。グループhiddenを選択可否に反映。使用中カテゴリは未来日/閉口座/分割子も調べ、削除せず非表示を案内 | `saveCategory` / `saveCategoryGroup` / `reorderCategories` / `reorderCategoryGroups`。使用中は `deleteCategory` を拒否。空でないグループの削除も拒否。グループ編集/任意並び替えはPWA画面にはなく、Repository管理操作のみ |
 | 照合確定・取消 | 同じ支出は金額/clearedだけを更新し、ID/importedId/カテゴリ/品目/メモ/reconciledを保持。分割の金額変更は拒否。未記録支出/振替は手入力/振替と同じpayee・対生成経路を通し出金側をclearedにする。取消は変更前の金額/clearedへ戻し判断履歴を残す | `Data/Ledger/KMLedgerReconciliation` と `storeReconciliation`。判断エンジンの結果を作業用copy上で既存台帳APIへ適用し、SQLiteでは取引/判断/履歴を一括保存 |
 | 定期設定・自動実行 | 固定額の毎月/毎週/毎年、カテゴリ/口座/開始日/自動登録。名前の重複と未対応予定の編集を拒否。編集は過去取引を変更せず、設定削除も生成済み取引を残す。保存時と家計簿を開く際の明示呼出しで到来分を処理（バックグラウンドtimerなし） | `saveRecurring(_:at:)`、`deleteRecurring`、`runRecurring(through:at:)`。画面はfixture時計を渡し、起動/復元後にrunを呼ぶ。通常 `saveRecurring` は実時計を使う |
-| 定期の追いつき登録・取消 | 選択日とmasterを再検査、安定imported IDで明示追加。**同じ内容の独立した手入力は統合も削除もしない**。日別snapshotを保存し、一括取消は未編集分だけ削除、編集済みはretainedとして残す。選択削除は古いsnapshotなら全体拒否。削除後も処理済み日を維持し自動再生成しない | `catchUpRecurring` / `recurringGenerations` / `undoRecurringGeneration(id:dates:at:)`。自動登録OFFでも追いつき登録可能。既存 `recurringOccurrences` は旧DB/portableの消費済み日を含む |
+| 定期の追いつき登録・取消 | 選択日とmasterを再検査、安定imported IDで明示追加。**同じ内容の独立した手入力は統合も削除もしない**。日別snapshotを保存し、一括取消は未編集分だけ削除、編集済みはretainedとして残す。比較はPWAのnative取引snapshotに合わせ、カテゴリ/支払先の表示名変更と別保存の支出集計除外だけでは編集済みにしない。選択削除は古いsnapshotなら全体拒否。削除後も処理済み日を維持し自動再生成しない | `catchUpRecurring` / `recurringGenerations` / `undoRecurringGeneration(id:dates:at:)`。自動登録OFFでも追いつき登録可能。既存 `recurringOccurrences` は旧DB/portableの消費済み日を含む |
 
 ### 意図的に対象外としたActual内部挙動
 
@@ -157,7 +157,7 @@ iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `
 - 照合の7操作は `KMSQLiteStore` から共通ドメイン処理へ委譲する。取引・口座・判断と `service-state`（prepared snapshot、別名、却下、手動確認、取消履歴）を一括保存する。SQLite失敗は全体をrollbackするため、外部Actual I/Oのprocessing状態からの回復とは異なる。
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
-- `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/独立手入力保持/編集行保持取消、照合の同一台帳経路/取消、v3→v4失敗rollback、CSV原本と履歴のSQLite失敗rollback/backup復元を検査する。
+- `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
 - レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projectionは後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
 - I/O・検証は現段階でMainActor直列。busy中の再入要求はエラーとし、自動再試行しない。大容量での実機メモリ/応答性、アプリ強制終了/容量不足、複数scene/process間の排他は未検証。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。

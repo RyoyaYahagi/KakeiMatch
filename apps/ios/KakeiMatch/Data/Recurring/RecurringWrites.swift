@@ -67,7 +67,8 @@ import Foundation
                       dates.allSatisfy({ date in audit.occurrences.contains { $0.date == date && $0.status == .created } }) else { throw KMDataError.invalidData("削除する生成履歴を確認してください。") }
                 // Selective deletion rejects edited rows before changing anything.
                 for row in audit.occurrences where dates.contains(row.date) {
-                    guard working.transactionValues.first(where: { $0.id == row.transaction.id }) == row.transaction else { throw KMDataError.invalidData("一部の取引が編集されています。未編集分を選び直してください。") }
+                    guard let current = working.transactionValues.first(where: { $0.id == row.transaction.id }),
+                          working.sameGeneratedLedgerRow(current, row.transaction) else { throw KMDataError.invalidData("一部の取引が編集されています。未編集分を選び直してください。") }
                 }
             } else if audit.undoneAt != nil { throw KMDataError.invalidData("この生成履歴は取り消し済みです。") }
             for i in audit.occurrences.indices {
@@ -75,15 +76,23 @@ import Foundation
                 guard saved.status == .created, dates == nil || dates!.contains(saved.date) else { continue }
                 let current = working.transactionValues.first { $0.id == saved.transaction.id }
                 if current == nil { working.masterWriteState.catchUps[index].occurrences[i].status = .deleted }
-                else if current != saved.transaction { working.masterWriteState.catchUps[index].occurrences[i].status = .retained }
+                else if !working.sameGeneratedLedgerRow(current!, saved.transaction) { working.masterWriteState.catchUps[index].occurrences[i].status = .retained }
                 else {
-                    _ = try await working.deleteTransaction(id: saved.transaction.id, expected: [saved.transaction], at: timestamp)
+                    _ = try await working.deleteTransaction(id: saved.transaction.id, expected: [current!], at: timestamp)
                     working.masterWriteState.catchUps[index].occurrences[i].status = .deleted
                 }
             }
             if dates == nil { working.masterWriteState.catchUps[index].undoneAt = timestamp }
             // Consumed dates are never removed, including deleted and retained occurrences.
         }
+    }
+    /// PWA compares NativeTransactionSnapshot, not display names or local exclusion metadata.
+    private func sameGeneratedLedgerRow(_ current: KMTransaction, _ saved: KMTransaction) -> Bool {
+        var row = current
+        row.categoryName = saved.categoryName
+        if row.payeeId != nil && row.payeeId == saved.payeeId { row.payeeName = saved.payeeName }
+        row.excludedFromSpending = saved.excludedFromSpending
+        return row == saved
     }
     /// Call on opening the household/recurring screen. No background timer or Cloud dependency.
     func runRecurring(through: KMDate, at timestamp: Date) async throws {

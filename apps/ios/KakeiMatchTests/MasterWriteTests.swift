@@ -192,6 +192,21 @@ import Testing
         try await repo.recurring.deleteRecurring(id: "schedule")
         #expect(try await repo.transactions.transaction(id: created.id) != nil)
     }
+    @Test(arguments: [false, true]) func recurringUndoComparesLedgerFieldsNotMasterDisplayNames(durable: Bool) async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        var repo = try repository(seed(), durable: durable, directory: directory)
+        try await repo.recurring.saveRecurring(schedule(posts: true), at: now)
+        let audit = try #require(try await repo.recurring.recurringGenerations(scheduleId: "schedule").first)
+        let row = audit.occurrences[0].transaction
+        try await repo.categories.saveCategory(.init(id: "food", name: "食費の新しい名前"))
+        try await repo.transactions.setSpendingExclusion(id: row.id, excluded: true)
+        repo = try reopened(repo, durable: durable, directory: directory)
+        // PWA's native snapshot contains the category ID, not its current display name;
+        // spending exclusion is separate local metadata and does not edit the native row.
+        try await repo.recurring.undoRecurringGeneration(id: audit.id, dates: [day], at: now)
+        #expect(try await repo.transactions.transaction(id: row.id) == nil)
+        #expect(try await repo.recurring.recurringGenerations(scheduleId: "schedule").first?.occurrences.first?.status == .deleted)
+    }
     @Test(arguments: [false, true]) func recurringEditsPreserveOtherSchedulesAndRollbackInvalidMaster(durable: Bool) async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         var repo = try repository(seed(), durable: durable, directory: directory)
@@ -252,6 +267,30 @@ import Testing
         #expect(try await repo.payees.payees().contains { $0.id == registered.payeeId })
         #expect(registered.importedId == "kakeimatch:statement:s")
     }
+    @Test(arguments: [false, true]) func statementTransferUsesLedgerPairAndBothAccountBalances(durable: Bool) async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let memory = seed()
+        memory.statementValues = [.init(id: "s", importId: "import", provider: .paypayCard, kind: .purchase, usedDate: day,
+            merchant: "合成チャージ", amountYen: 1000, sourceFingerprint: "fp", duplicateOrdinal: 1)]
+        var repo = try repository(memory, durable: durable, directory: directory)
+        _ = try await repo.reconciliation.runReconciliation(id: "run", at: now)
+        let decision = try await repo.reconciliation.registerStatement(runId: "run", statementId: "s", categoryId: nil,
+            destinationAccountId: "bank", excludedFromSpending: nil, newAccountId: "card", at: now)
+        repo = try reopened(repo, durable: durable, directory: directory)
+        let rootId = try #require(decision.actualTransactionId)
+        let root = try #require(try await repo.transactions.transaction(id: rootId))
+        let peerId = try #require(root.transferId)
+        let peer = try #require(try await repo.transactions.transaction(id: peerId))
+        #expect(root.kind == .transfer && root.cleared && root.amountYen == -1000)
+        #expect(peer.transferId == root.id && peer.accountId == "bank" && peer.amountYen == 1000)
+        #expect(root.importedId == "kakeimatch:statement:s" && peer.importedId == nil)
+        #expect(try await repo.transactions.transactions(matching: .init(limit: nil)).count == 1)
+        let balances = try await repo.accounts.accounts(asOf: day, includeClosed: true)
+        #expect(balances.first { $0.id == "card" }?.balanceYen == -1000)
+        #expect(balances.first { $0.id == "bank" }?.balanceYen == 1000)
+        let summary = try await repo.transactions.home(month: day.yearMonth).summary
+        #expect(summary.expenseYen == 0 && summary.incomeYen == 0)
+    }
     @Test func versionThreeMigrationAndFailedMigrationPreserveLedgerAndRevision() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("legacy.sqlite"), db = try KMStoreDatabase(url: path)
@@ -282,15 +321,28 @@ import Testing
         #expect(try await reopened.statementTransactions().isEmpty)
         #expect(try await reopened.moneyForwardHistory().isEmpty)
         #expect(try await reopened.transactions(matching: .init(limit: nil)).isEmpty)
+        #expect(try await reopened.payees().isEmpty)
+        #expect(try await reopened.accounts(includeClosed: true).count == 2)
         #expect(try database(store).artifacts().isEmpty)
         #expect(try db.sql.rows("SELECT revision FROM control").first?.int("revision") == revision)
         try db.sql.execute("DROP TRIGGER fail_masters")
         _ = try await reopened.importStatement(data: csv(), provider: .paypayCard, at: now)
+        let batch = try await reopened.importMoneyForward(id: "saved", rows: rows, mappings: mappings(rows), at: now)
+        try await reopened.saveRecurring(schedule(posts: true), at: now)
+        let generation = try #require(try await reopened.recurringGenerations(scheduleId: "schedule").first)
         let backup = try await reopened.exportNativeBackup(); defer { try? FileManager.default.removeItem(at: backup) }
         let targetDirectory = try temporary(); defer { try? FileManager.default.removeItem(at: targetDirectory) }
         let target = try KMSQLiteStore(directory: targetDirectory); try await target.importBackup(from: backup)
         #expect(try await target.statementTransactions().count == 1)
         let imported = try #require(try await target.statementImports().first)
         #expect(try target.originalArtifact(id: "statement-source:\(imported.id)") == csv())
+        #expect(try await target.moneyForwardHistory() == [batch])
+        #expect(try await target.recurringGenerations(scheduleId: "schedule") == [generation])
+        try await target.undoRecurringGeneration(id: generation.id, at: now)
+        #expect(try await target.transaction(id: generation.occurrences[0].transaction.id) == nil)
+        let migratedId = try #require(batch.rows.first?.transaction?.id)
+        #expect(try await target.transaction(id: migratedId) != nil)
+        try await target.undoMoneyForward(id: batch.id, at: now)
+        #expect(try await target.transaction(id: migratedId) == nil)
     }
 }
