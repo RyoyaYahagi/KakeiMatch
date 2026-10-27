@@ -53,6 +53,9 @@ targets:
       - path: KakeiMatchTests/Fixtures
         buildPhase: resources
         type: folder
+      - path: ../../test/fixtures/ios-parity
+        buildPhase: resources
+        type: folder
     dependencies:
       - target: KakeiMatch
     settings:

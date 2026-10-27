@@ -1,0 +1,12 @@
+[
+  {"id":"baseline","operation":"synthetic.kmbをUIから取り込み、台帳・口座・集計を読む","checkpoints":[],"iosGap":null},
+  {"id":"manual-expense-income-retry","operation":"支出1500円と収入200000円を登録し再読込（完了したフォームの同ID再送手段はPWA UIにない。iOSでは同入力の冪等性も検査）","checkpoints":[],"iosGap":null},
+  {"id":"receipt-single-and-split","operation":"単一レシート1400円と食費900円・日用品500円の分割レシートを登録","checkpoints":[],"iosGap":null},
+  {"id":"transfer-edit-delete","operation":"メイン口座→現金の振替10000円を作成、12000円に編集、削除","checkpoints":["created","edited"],"iosGap":null},
+  {"id":"transaction-delete-undo","operation":"青空食堂の取引を削除しUndo","checkpoints":["deleted"],"iosGap":null},
+  {"id":"statement-import-duplicate","operation":"合成PayPay CSVを2回取り込み、重複1件を画面で確認","checkpoints":["imported"]},
+  {"id":"account-close-reopen","operation":"空口座を作成し利用終了・再開","checkpoints":["closed"],"iosGap":null},
+  {"id":"category-hide-delete","operation":"使用中の食費を非表示、未使用カテゴリを作成・削除","checkpoints":[],"iosGap":null},
+  {"id":"budget-change","operation":"基本全体予算を90000円に変更","checkpoints":[],"iosGap":null},
+  {"id":"reconciliation-confirm-cancel","operation":"再照合後に青空食堂を同じ支出と確定（860→880円）、一致を取り消す","checkpoints":["confirmed"],"iosGap":null}
+]

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'apps/ios/**'
+      - 'test/fixtures/ios-parity/**'
       - '.github/workflows/ios.yml'
   workflow_dispatch:
 
@@ -69,6 +70,21 @@ jobs:
           if [ -d UITests.xcresult ]; then
             xcrun xcresulttool export attachments --path UITests.xcresult --output-path screenshots
           fi
+      - name: Generate parity report
+        if: always()
+        working-directory: .
+        run: |
+          xcrun xcresulttool export attachments --path apps/ios/UnitTests.xcresult --output-path apps/ios/parity-attachments
+          node --test apps/ios/scripts/collect-parity-report.test.mjs
+          node apps/ios/scripts/collect-parity-report.mjs apps/ios/parity-attachments apps/ios/parity-report.json
+      - name: Upload parity report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: apps/ios/parity-report.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload test results (also on failure)
         if: always()
         uses: actions/upload-artifact@v4
