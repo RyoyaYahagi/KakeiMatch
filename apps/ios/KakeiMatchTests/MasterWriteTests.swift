@@ -192,6 +192,27 @@ import Testing
         try await repo.recurring.deleteRecurring(id: "schedule")
         #expect(try await repo.transactions.transaction(id: created.id) != nil)
     }
+    @Test(arguments: [false, true]) func recurringEditsPreserveOtherSchedulesAndRollbackInvalidMaster(durable: Bool) async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        var repo = try repository(seed(), durable: durable, directory: directory)
+        let first = schedule()
+        var second = schedule(); second.id = "second"; second.name = "二つ目の定期"
+        try await repo.recurring.saveRecurring(first, at: now)
+        try await repo.recurring.saveRecurring(second, at: now)
+        var edited = first; edited.name = "変更後"; edited.amountYen = 900
+        try await repo.recurring.saveRecurring(edited, at: now)
+        repo = try reopened(repo, durable: durable, directory: directory)
+        let saved = try await repo.recurring.recurringTransactions()
+        #expect(saved.count == 2)
+        #expect(saved.first { $0.id == first.id }?.amountYen == 900)
+        #expect(saved.first { $0.id == second.id }?.name == second.name)
+        var invalid = edited; invalid.accountId = "missing"
+        await #expect(throws: (any Error).self) { try await repo.recurring.saveRecurring(invalid, at: now) }
+        #expect(try await repo.recurring.recurringTransactions() == saved)
+        try await repo.recurring.deleteRecurring(id: first.id)
+        repo = try reopened(repo, durable: durable, directory: directory)
+        #expect(try await repo.recurring.recurringTransactions().map(\.id) == [second.id])
+    }
     @Test(arguments: [false, true]) func automaticRecurringRunsOnSaveAndIsIdempotent(durable: Bool) async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let repo = try repository(seed(), durable: durable, directory: directory)

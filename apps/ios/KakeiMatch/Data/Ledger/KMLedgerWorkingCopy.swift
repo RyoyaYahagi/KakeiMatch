@@ -9,6 +9,7 @@ import Foundation
         copy.serviceState = serviceState; copy.resolutionValues = resolutionValues; copy.suspectedValues = suspectedValues
         copy.statementValues = statementValues; copy.importValues = importValues; copy.runValues = runValues
         copy.imageValues = imageValues; copy.pendingArtifacts = pendingArtifacts
+        copy.recurringValues = recurringValues
         copy.nativeBudgets = nativeBudgets; copy.monthlySettings = monthlySettings
         let result = try await action(copy)
         transactionValues = copy.transactionValues; accountValues = copy.accountValues; categoryValues = copy.categoryValues
@@ -17,6 +18,7 @@ import Foundation
         resolutionValues = copy.resolutionValues; suspectedValues = copy.suspectedValues
         statementValues = copy.statementValues; importValues = copy.importValues; runValues = copy.runValues
         imageValues = copy.imageValues; pendingArtifacts = copy.pendingArtifacts
+        recurringValues = copy.recurringValues
         nativeBudgets = copy.nativeBudgets; monthlySettings = copy.monthlySettings
         return result
     }
