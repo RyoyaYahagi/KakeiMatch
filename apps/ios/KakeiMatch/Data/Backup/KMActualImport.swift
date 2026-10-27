@@ -43,6 +43,14 @@ import ZIPFoundation
         try FileManager.default.removeItem(at: dbURL); try FileManager.default.removeItem(at: metaURL); try FileManager.default.removeItem(at: zipURL)
         return store
     }
+    static func legacyBalanceEntries(actualZIP: Data) throws -> [KMBalanceEntry] {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manifest = KMBackupManifest(backupFormatVersion: 1, localDataSchemaVersion: 2, exportedAt: Date(), entries: [], rawArtifacts: [], missingRawArtifacts: [])
+        let projected = try project(backup: .init(manifest: manifest, manifestJSON: Data(), localJSON: Data(), actualZIP: actualZIP, records: [], artifacts: []), staging: directory)
+        return projected.masterWriteState.balanceEntries
+    }
     private static func extract(_ entry: Entry, archive: Archive, to url: URL) throws {
         guard FileManager.default.createFile(atPath: url.path, contents: nil) else { throw KMPortableBackup.invalid() }
         let output = try FileHandle(forWritingTo: url)
@@ -93,7 +101,7 @@ import ZIPFoundation
         let categories = try categoryRows.map { row in
             let groupId = row.string("cat_group")
             return KMCategory(id: try row.required("id"), name: try row.required("name"), isIncome: row.int("is_income") == 1,
-                hidden: row.int("hidden") == 1 || groups.first { $0.id == groupId }?.hidden == true,
+                hidden: row.int("hidden") == 1,
                 groupName: groups.first { $0.id == groupId }?.name ?? "", groupId: groupId)
         }
         for index in groups.indices { groups[index].categoryIds = categories.filter { $0.groupId == groups[index].id }.map(\.id) }
@@ -116,11 +124,11 @@ import ZIPFoundation
         let byId = try Dictionary(uniqueKeysWithValues: rows.map { (try $0.required("id"), $0) })
         for row in rows where row.int("isChild") != 1 {
             let id = try row.required("id"), accountId = try row.required("acct"), amount = try row.yen("amount")
-            guard let accountIndex = store.accountValues.firstIndex(where: { $0.id == accountId }) else { throw KMPortableBackup.invalid() }
+            guard store.accountValues.contains(where: { $0.id == accountId }) else { throw KMPortableBackup.invalid() }
             let date = try actualDate(row.int("date"))
             // Actual includes opening balances/error rows in balances but not the monthly dashboard/search.
             if row.int("starting_balance_flag") == 1 || !(row.string("error") ?? "").isEmpty {
-                store.accountValues[accountIndex].balanceYen = try KMYen.add(store.accountValues[accountIndex].balanceYen, amount)
+                store.masterWriteState.balanceEntries.append(.init(id: id, accountId: accountId, date: date, amountYen: amount))
                 continue
             }
             let category = categories.first { $0.id == row.string("category") }

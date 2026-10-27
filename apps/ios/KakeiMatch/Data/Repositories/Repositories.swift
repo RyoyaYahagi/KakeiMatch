@@ -9,6 +9,7 @@ import Foundation
     func home(month: KMYearMonth) async throws -> KMHomeSnapshot
     func saveManual(_ input: KMManualTransactionInput, id: String?) async throws -> KMTransaction
     func saveTransfer(_ input: KMTransferInput, id: String?) async throws -> KMTransaction
+    func importExternalTransaction(_ input: KMExternalTransactionInput) async throws -> KMExternalTransactionResult
     func setSpendingExclusion(id: String, excluded: Bool) async throws
     func deleteTransaction(id: String) async throws
     /// Expected rows are the root + peer (splits are nested). Stale snapshots are rejected before deletion.
@@ -19,6 +20,7 @@ import Foundation
 
 // Additive requirements retain source compatibility with screen/test adapters from earlier PRs.
 extension TransactionRepository {
+    func importExternalTransaction(_ input: KMExternalTransactionInput) async throws -> KMExternalTransactionResult { throw KMDataError.unsupported("外部取引の登録に対応していません。") }
     func deleteTransaction(id: String, expected: [KMTransaction]?, at timestamp: Date) async throws -> KMTransactionDeletion {
         throw KMDataError.unsupported("この保存先は削除の取り消しに対応していません。")
     }
@@ -34,6 +36,8 @@ extension ReceiptRepository {
 
 @MainActor protocol AccountRepository {
     func accounts(includeClosed: Bool) async throws -> [KMAccount]
+    func accounts(asOf date: KMDate, includeClosed: Bool) async throws -> [KMAccount]
+    func createAccount(_ account: KMAccount, startingBalanceYen: Int, startingDate: KMDate) async throws
     func saveAccount(_ account: KMAccount) async throws
     func deleteAccount(id: String) async throws
 }
@@ -43,6 +47,10 @@ extension ReceiptRepository {
     func categoryGroups() async throws -> [KMCategoryGroup]
     func saveCategory(_ category: KMCategory) async throws
     func deleteCategory(id: String) async throws
+    func saveCategoryGroup(_ group: KMCategoryGroup) async throws
+    func deleteCategoryGroup(id: String) async throws
+    func reorderCategoryGroups(ids: [String]) async throws
+    func reorderCategories(groupId: String, ids: [String]) async throws
 }
 
 @MainActor protocol PayeeRepository {
@@ -63,6 +71,12 @@ extension ReceiptRepository {
 @MainActor protocol StatementRepository {
     func statementImports() async throws -> [KMLocalRecord<KMStatementImport>]
     func statementTransactions() async throws -> [KMStatementTransaction]
+    func importStatement(data: Data, provider: KMStatementProvider, at timestamp: Date) async throws -> KMStatementImportResult
+    func previewMoneyForward(rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], at timestamp: Date) async throws -> [KMMoneyForwardPreview]
+    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], at timestamp: Date) async throws -> KMMoneyForwardBatch
+    func moneyForwardHistory() async throws -> [KMMoneyForwardBatch]
+    func moneyForwardRules() async throws -> KMMoneyForwardMappings
+    func undoMoneyForward(id: String, at timestamp: Date) async throws
 }
 
 @MainActor protocol ReconciliationRepository {
@@ -93,7 +107,11 @@ extension ReceiptRepository {
     /// Native catch-up commits generated transactions and consumed dates together.
     func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws
     func saveRecurring(_ value: KMRecurringTransaction) async throws
+    func saveRecurring(_ value: KMRecurringTransaction, at timestamp: Date) async throws
     func deleteRecurring(id: String) async throws
+    func recurringGenerations(scheduleId: String) async throws -> [KMRecurringGeneration]
+    func undoRecurringGeneration(id: String, dates: [KMDate]?, at timestamp: Date) async throws
+    func runRecurring(through: KMDate, at timestamp: Date) async throws
 }
 
 @MainActor protocol PayrollRepository {

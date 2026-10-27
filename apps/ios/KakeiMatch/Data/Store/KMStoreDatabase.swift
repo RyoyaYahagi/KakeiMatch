@@ -1,6 +1,6 @@
 import Foundation
 
-/// Native schema v3. Collection rows are domain snapshots, not Actual's CRDT tables.
+/// Native schema v4. Collection rows are domain snapshots, not Actual's CRDT tables.
 /// Original portable records and artifacts are retained losslessly, independently of projections.
 @MainActor final class KMStoreDatabase {
     let sql: KMSQLite
@@ -8,7 +8,7 @@ import Foundation
     init(url: URL) throws {
         sql = try KMSQLite(url: url)
         let version = try sql.rows("PRAGMA user_version").first?.int("user_version") ?? -1
-        guard (0...3).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
+        guard (0...4).contains(version) else { throw KMDataError.unsupported("このアプリより新しい端末DBです。データを削除せずアプリを更新してください。") }
         // Only configure writable journaling after the future-version guard has passed.
         try sql.execute("PRAGMA journal_mode=DELETE"); try sql.execute("PRAGMA synchronous=FULL")
         if version == 0 {
@@ -19,7 +19,7 @@ import Foundation
                 try sql.execute("CREATE TABLE provenance (id TEXT PRIMARY KEY NOT NULL, payload BLOB NOT NULL)")
                 try sql.execute("CREATE TABLE control (id INTEGER PRIMARY KEY CHECK(id=1), revision INTEGER NOT NULL)")
                 try sql.execute("INSERT INTO control VALUES(1,0)")
-                try sql.execute("PRAGMA user_version=3")
+                try sql.execute("PRAGMA user_version=4")
             }
             try save(KMInMemoryStore(budgetId: UUID().uuidString))
         }
@@ -28,30 +28,39 @@ import Foundation
         _ = try sql.rows("SELECT id,metadata,payload FROM artifacts LIMIT 0")
         _ = try sql.rows("SELECT id,payload FROM provenance LIMIT 0")
         _ = try revision()
-        if version == 1 {
+        if (1...3).contains(version) {
             try sql.transaction {
-                // v1 already persisted runs/decisions, but not service inputs. Recover lossless
-                // imported histories from provenance; do not invent a valid prepared run snapshot.
-                var state = KMServiceState()
-                if let manifest = try provenance("manifest.json"), let local = try provenance("local-data.json") {
-                    let records = try KMBackupSchema.validate(manifest: manifest, local: local).1
-                    state = try KMActualImport.serviceState(records: records)
+                if version == 1 {
+                    // Recover imported history, never invent a valid prepared run snapshot.
+                    var state = KMServiceState()
+                    if let manifest = try provenance("manifest.json"), let local = try provenance("local-data.json") {
+                        state = try KMActualImport.serviceState(records: KMBackupSchema.validate(manifest: manifest, local: local).1)
+                    }
+                    try put("service-state", [state])
                 }
-                try put("service-state", [state])
-                try put("ledger-writes", [KMLedgerWriteState()])
+                if version <= 2 { try put("ledger-writes", [KMLedgerWriteState()]) }
+                var state = try values("master-writes", KMMasterWriteState.self).first ?? KMMasterWriteState()
+                // v3 projected opening/error rows into an undated base. Recover dates from retained
+                // read-only Actual provenance without replacing any subsequently edited ledger rows.
+                if state.balanceEntries.isEmpty, let zip = try provenance("actual-budget.zip") {
+                    let imported = try KMActualImport.legacyBalanceEntries(actualZIP: zip)
+                    var accounts = try values("accounts", KMAccount.self)
+                    for i in accounts.indices {
+                        let entries = imported.filter { $0.accountId == accounts[i].id }
+                        guard !entries.isEmpty else { continue }
+                        let total = try entries.reduce(0) { try KMYen.add($0, $1.amountYen) }
+                        guard accounts[i].balanceYen == total else { throw KMDataError.invalidData("開始残高の移行を確認できません。元のDBを保持してください。") }
+                        accounts[i].balanceYen = 0; state.balanceEntries += entries
+                    }
+                    try sql.execute("DELETE FROM objects WHERE collection='accounts'")
+                    try put("accounts", accounts)
+                }
+                try sql.execute("DELETE FROM objects WHERE collection='master-writes'")
+                try put("master-writes", [state])
                 let current = try revision()
                 guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
                 try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(current + 1)])
-                try sql.execute("PRAGMA user_version=3")
-            }
-        }
-        if version == 2 {
-            try sql.transaction {
-                try put("ledger-writes", [KMLedgerWriteState()])
-                let current = try revision()
-                guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
-                try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(current + 1)])
-                try sql.execute("PRAGMA user_version=3")
+                try sql.execute("PRAGMA user_version=4")
             }
         }
     }
@@ -88,6 +97,7 @@ import Foundation
         store.ruleOverrides = try values("rule-overrides", KMCategoryRuleOverride.self)
         store.serviceState = try singleton("service-state", KMServiceState.self)
         store.ledgerWriteState = try singleton("ledger-writes", KMLedgerWriteState.self)
+        store.masterWriteState = try singleton("master-writes", KMMasterWriteState.self)
         store.settingsValue = try singleton("settings", KMAppSettings.self)
         store.monthlySettings = settings
         store.nativeBudgets = try singleton("native-budgets", [String: [String: Int]].self)
@@ -120,6 +130,11 @@ import Foundation
             try put("rules", store.ruleValues); try put("rule-overrides", store.ruleOverrides)
             try put("service-state", [store.serviceState])
             try put("ledger-writes", [store.ledgerWriteState])
+            try put("master-writes", [store.masterWriteState])
+            for artifact in store.pendingArtifacts {
+                try sql.execute("INSERT OR REPLACE INTO artifacts(id,metadata,payload) VALUES(?,?,?)", [.text(artifact.metadata.id),
+                    .blob(try KMJSON.encoder().encode(artifact.metadata)), .blob(artifact.data)])
+            }
             try put("settings", [store.settingsValue]); try put("monthly-settings", [store.monthlySettings]); try put("native-budgets", [store.nativeBudgets])
             // Draft deletion also removes its image in the same transaction; imported CSVs remain intact.
             for row in try sql.rows("SELECT id FROM artifacts") {
