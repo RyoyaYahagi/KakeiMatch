@@ -37,7 +37,7 @@ struct ParityTests {
             #expect(importDifferences.isEmpty, "\(id) import: \(importDifferences.joined(separator: "; "))")
             var operationDifferences: [String] = []
             let gap = scenario["iosGap"] as? String
-            if let gap {
+            if let gap, id != "statement-import-duplicate" {
                 withKnownIssue("\(id): \(gap)") { Issue.record("Operation unavailable: \(gap)") }
             } else {
                 do {
@@ -128,11 +128,17 @@ struct ParityTests {
                     }
                     try await compare()
                 } catch { operationDifferences.append("replay failed: \(error)") }
-                #expect(operationDifferences.isEmpty, "\(id) replay: \(operationDifferences.joined(separator: "; "))")
+                if let gap {
+                    withKnownIssue("\(id): \(gap)") {
+                        #expect(operationDifferences.isEmpty, "\(id) replay: \(operationDifferences.joined(separator: "; "))")
+                    }
+                } else {
+                    #expect(operationDifferences.isEmpty, "\(id) replay: \(operationDifferences.joined(separator: "; "))")
+                }
             }
             results.append(["id": id,
                 "import": ["match": importDifferences.isEmpty, "differences": importDifferences],
-                "replay": ["status": gap != nil ? "unimplemented" : operationDifferences.isEmpty ? "match" : "different", "differences": operationDifferences, "reason": gap as Any? ?? NSNull()]])
+                "replay": ["status": gap != nil && id != "statement-import-duplicate" ? "unimplemented" : operationDifferences.isEmpty ? "match" : "different", "differences": operationDifferences, "reason": gap as Any? ?? NSNull()]])
         }
         let report: [String: Any] = ["format": "kakeimatch-parity-report", "version": 1, "scenarios": results]
         let reportURL = temporary.appendingPathComponent("parity-report.json")
