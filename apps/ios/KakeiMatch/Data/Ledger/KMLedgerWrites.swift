@@ -43,6 +43,31 @@ import Foundation
     private func validateManualMasters(_ input: KMManualTransactionInput) throws {
         try openAccount(input.accountId); try validCategory(input.categoryId, income: input.kind == .income)
     }
+    /// Unlike manual import matching, external IDs are global and existing payloads always win.
+    func importExternalTransaction(_ input: KMExternalTransactionInput) async throws -> KMExternalTransactionResult {
+        guard input.kind != .transfer else { throw conflict() }
+        try validAmount(input.amountYen)
+        let importedId = KMJSString.trim(input.importedId)
+        try validateText(name: input.payeeName, memo: input.memo, importedId: importedId)
+        if let existing = transactionValues.first(where: { $0.importedId == importedId }) {
+            return .init(transaction: existing, alreadyExisted: true)
+        }
+        try openAccount(input.accountId)
+        if let category = input.categoryId, !categoryValues.contains(where: { $0.id == category }) { throw KMDataError.invalidData("カテゴリを選び直してください。") }
+        let resolved = try payee(input.payeeName, lookup: .exact)
+        let row = KMTransaction(id: UUID().uuidString, date: input.date, amountYen: input.kind == .expense ? -input.amountYen : input.amountYen,
+            kind: input.kind, payeeName: resolved.name, categoryName: categoryValues.first { $0.id == input.categoryId }?.name,
+            accountId: input.accountId, cleared: false, categoryId: input.categoryId, memo: input.memo ?? "", importedId: importedId, payeeId: resolved.id)
+        commitPayee(resolved); replace([row])
+        return .init(transaction: row, alreadyExisted: false)
+    }
+    func applyReconciliationUpdate(id: String, amountYen: Int?, cleared: Bool, at timestamp: Date) throws {
+        guard let index = transactionValues.firstIndex(where: { $0.id == id }) else { throw KMReconciliationError("record_unavailable") }
+        let old = transactionValues[index]
+        let updated = try KMLedgerReconciliation.updated(old, amountYen: amountYen, cleared: cleared)
+        transactionValues[index] = updated
+        if old != updated { ledgerWriteState.edits.append(.init(id: UUID().uuidString, before: [old], after: [updated], appliedAt: timestamp)) }
+    }
     func saveManual(_ input: KMManualTransactionInput, id: String? = nil) async throws -> KMTransaction {
         guard input.kind != .transfer else { throw KMDataError.invalidData("振替専用の入力を使ってください。") }
         try validAmount(input.amountYen)

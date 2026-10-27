@@ -205,6 +205,7 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
         if let account = named.first {
             accounts[accounts.firstIndex { $0.id == account.id }!].statementProvider = provider; return account.id
         }
+        guard !newAccountId.isEmpty, !accounts.contains(where: { $0.id == newAccountId }) else { throw KMReconciliationError("account_mapping_ambiguous") }
         accounts.append(.init(id: newAccountId, name: names[provider]!, accountType: .creditCard, statementProvider: provider))
         return newAccountId
     }
@@ -274,8 +275,7 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
                 guard Self.matchesFields(row, snapshot), row.amountYen == snapshot.amountYen || alreadyApplied,
                       value.source != .automatic || row.amountYen == target else { throw KMReconciliationError("actual_readback_mismatch") }
                 guard row.isSplit != true || row.amountYen == target else { throw KMReconciliationError("split_amount_adjustment_unsupported") }
-                if value.source == .user { transactions[rowIndex].amountYen = target }
-                transactions[rowIndex].cleared = true
+                transactions[rowIndex] = try KMLedgerReconciliation.updated(row, amountYen: value.source == .user ? target : nil, cleared: true)
                 if value.source == .user, let merchant = value.statementSnapshot?.merchant, let payee = snapshot.payeeName, merchant != payee {
                     let key = KMReconciliationEngine.aliasKey(merchant, payee)
                     if !aliases.contains(where: { KMReconciliationEngine.aliasKey($0.merchant, $0.aliasMerchant) == key }) {
@@ -341,7 +341,7 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
         let applied = Self.matchesFields(row, snapshot) && row.amountYen == -value.statementAmountYen && row.cleared
         guard applied || value.undoRequestedAt != nil && restored else { throw KMReconciliationError("undo_record_changed") }
         manualStatementIds.insert(value.statementId)
-        transactions[rowIndex].amountYen = snapshot.amountYen; transactions[rowIndex].cleared = cleared
+        transactions[rowIndex] = try KMLedgerReconciliation.updated(row, amountYen: snapshot.amountYen, cleared: cleared)
         if let merchant = value.statementSnapshot?.merchant, let payee = snapshot.payeeName {
             let key = KMReconciliationEngine.aliasKey(merchant, payee)
             let supported = resolutions.contains { other in

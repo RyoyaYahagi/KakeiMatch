@@ -88,7 +88,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
 - `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
 - `Data/Aggregation/`: PWAの月次集計・日別グループ。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。
-- `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md) を参照してください。
+- `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo・口座/カテゴリ/グループの管理・照合更新。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md) を参照してください。
 - `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/`: TSの決定的サービス。照合採点・判断適用/取消、分類履歴の導出・適用根拠、定期日付/補完計画、予算要約を計算します。両Repository実装で同じ処理を使い、SQLiteでは取引とサービス状態を同じtransactionで保存します。採点のbinary64演算だけは `KMJSNumber` でTSの丸めを再現し、金額は整数円のままです。
 - `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動では使わず、明示的なfixture/Previewだけに使います。
 - `Data/Store/`: SQLite直接利用の永続化adapter。`Data/Backup/`: manifest/record strict検証、SHA-256、Actual ZIPのreadonly取り込み、staging/切替。設計・対応記録・書き出しを保留する理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
@@ -113,21 +113,29 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `CategoryRepository` | 使用順/件数込みの一覧、グループ、追加/変更/非表示、未使用カテゴリの削除 |
 | `PayeeRepository` | 支払先候補の一覧 |
 | `ReceiptRepository` | レシートsnapshot/原本の参照、下書き保存、未登録下書きの削除、確認値からの台帳登録/既存取引編集 |
-| `StatementRepository` | 明細取込履歴と明細行の参照 |
+| `StatementRepository` | 明細CSVの原本/履歴/行の一括保存、MoneyForwardの確認・取り込み・対応ルール・履歴と取消 |
 | `ReconciliationRepository` | run計算・自動一致、手動一致・取消、候補却下、登録しない、支出/振替登録、失敗の再試行、判断参照、不正利用疑い |
 | `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
-| `RecurringRepository` | 定期設定CRUD、選択した過去日分のnative取引生成、処理済み日の参照。生成と処理済み記録を一括保存 |
+| `RecurringRepository` | 定期設定CRUD、自動到来分/選択した過去日分の取引生成、処理済み日/生成snapshotの履歴、未編集分の取消（編集行は保持） |
 | `PayrollRepository` | 確認済み給与内訳snapshotの保存/参照（収入への反映はしない） |
 | `CategoryLearningRepository` | `saveCategoryObservation` / `categoryObservations` で確認履歴を保存/参照。レシートID単位で置換し古い確認を無視。ルールは履歴から導出し、上書き・resetも保存 |
 | `SettingsRepository` | テーマ/最終バックアップ時刻のsnapshot |
 
-手入力・振替の登録は `id: nil`、編集は既存IDを渡します。同じimportedIdの同値再送は同じ取引を返し、異値は既存を上書きせずthrowします。手入力編集はinputのimportedIdで既存識別子を置き換えません。cleared/reconciledを保ち、振替編集は入金側IDを渡しても両側を更新します。支払先は操作ごとのPWA/Actual規則で照合しmasterへ保存します。口座残高は読み取り用です。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
+手入力・振替の登録は `id: nil`、編集は既存IDを渡します。同じimportedIdの同値再送は同じ取引を返し、異値は既存を上書きせずthrowします。手入力編集はinputのimportedIdで既存識別子を置き換えません。cleared/reconciledを保ち、振替編集は入金側IDを渡しても両側を更新します。支払先は操作ごとのPWA/Actual規則で照合しmasterへ保存します。口座残高は読み取り用で、日本時間の今日までを合計します。`accounts(asOf:includeClosed:)` では固定日を渡せます。`createAccount(_:startingBalanceYen:startingDate:)` は日付付き開始残高を残高だけへ計上します。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。残高のある利用終了と、有効な取引行のある完全削除を拒否し、空口座も利用終了→再開できます。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
 
 ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・選択月内の最近3件をまとめます。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
 `saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。分類学習の確認時呼出しはまだ未接続です。Viewで代替エンジンを作らないでください。
 
 削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理は画面側です。
+
+### 明細・移行・マスタ・定期の保存
+
+- 明細は `statements.importStatement(data:provider:at:)`。#281パーサで検証して原本/履歴/行を一括保存します。再取り込みは同じimport IDを使い、既存明細や判断を増やしません。支払元0件でも利用でき、取引は照合判断後に作ります。
+- MoneyForwardは `previewMoneyForward(rows:mappings:choices:at:)` → `importMoneyForward(id:rows:mappings:choices:at:)`。同じ金額/カテゴリで±3日の候補には `.keep(transactionId:)` / `.separate` の判断が必要です。`moneyForwardHistory` / `moneyForwardRules` で保存結果を取得し、`undoMoneyForward` は今回登録した取引だけを削除します。原CSVは保存しません。SQLiteでは途中成功がないため、失敗時は同じbatch IDで全体を再送します。
+- カテゴリは `saveCategory` / `deleteCategory`、グループは `saveCategoryGroup` / `deleteCategoryGroup` / `reorderCategoryGroups` / `reorderCategories`。使用中は削除拒否して非表示を案内します。グループの非表示も選択肢へ反映します。グループ編集の画面はPWAにないため追加しません。
+- 定期は `saveRecurring(_:at:)` が保存時点の自動到来分も処理します。家計簿を開いた時/復元後は `runRecurring(through:at:)` を呼びます。`catchUpRecurring` は自動登録OFFでも使えます。`recurringGenerations` の生成履歴IDで `undoRecurringGeneration(id:dates:at:)` を呼ぶと、dates:nilは未編集分だけの一括取消、日付配列は選択削除です。独立した同内容の手入力と編集済み生成行を保持します。削除済み日は再生成しません。
+- v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。有効schedule付き `.kmb` と、旧PWAのMoneyForward履歴のnative投影は未対応です。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
 
 ### UI test / Previewのfixture
 
@@ -168,9 +176,9 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 - 永続化: 通常起動は `KMSQLiteStore`。全Repositoryは同じprofileを共有し、変更はSQLite transaction内で確定します。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。複数scene/processのprofile排他は後続です。世代番号で古いsnapshotによる上書きを拒否します。
 - `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は後続projection用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
-- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。PWAの定期生成取消・編集行保持付き監査、Actual Schedule/Rule接続・自動タイマー実行、レシート確認からの学習呼出し、重複検出の取込経路接続は後続です。v1/v2 DBはv3へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
+- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。Actual Schedule/Rule互換取り込み、レシート確認からの学習呼出しは後続です。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
 - API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
-- 同期・MoneyForward・バックアップ・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
+- 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
 ## PWAとの差分・検証範囲
 

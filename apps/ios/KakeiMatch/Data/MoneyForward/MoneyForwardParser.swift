@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-struct KMMoneyForwardRow: Equatable, Sendable {
+struct KMMoneyForwardRow: Codable, Equatable, Sendable {
     var rowNumber: Int
     var date: KMDate
     var description: String
@@ -16,7 +16,7 @@ struct KMMoneyForwardRow: Equatable, Sendable {
     var isTransfer: Bool
     var isIncludedInCalculation: Bool
     var categoryNeedsReviewReason: String?
-    enum Kind: String, Equatable, Sendable { case expense, income }
+    enum Kind: String, Codable, Equatable, Sendable { case expense, income }
 }
 struct KMMoneyForwardRowIssue: Equatable, Sendable { var rowNumber: Int; var reason: String }
 struct KMMoneyForwardParseError: Equatable, Sendable { var rowNumber: Int?; var code: String }
@@ -35,7 +35,7 @@ struct KMMoneyForwardParseResult: Equatable, Sendable {
 }
 struct KMMoneyForwardCategory: Equatable, Sendable { var id: String; var name: String; var isIncome: Bool; var hidden: Bool }
 struct KMMoneyForwardCategoryResolution: Equatable, Sendable { var categoryId: String?; var suggestedName: String?; var reason: String }
-enum KMMoneyForwardCategoryChoice: Equatable, Sendable { case existing(id: String), new(name: String), unclassified, exclude, unresolved }
+enum KMMoneyForwardCategoryChoice: Codable, Equatable, Sendable { case existing(id: String), new(name: String), unclassified, exclude, unresolved }
 
 enum KMMoneyForwardParser {
     static let maxBytes = 5 * 1024 * 1024
