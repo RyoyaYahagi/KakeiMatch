@@ -70,6 +70,14 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 参照元は `src/lib/actual-browser-ledger.ts` のmapping/集計、`local-backup-format.ts` のrecord schema、導入済みActual APIのSQL/view定義。closed口座も残高計算に残す。[PWA (2026/10), Actual adapter] [Actual API (26.9.0), schema / migrate / cloud-storage]
 
+## 明細取り込みと照合の呼び出し順
+
+`StatementRepository.importStatement` は原本・取り込み履歴・明細行を保存するAPIであり、照合runを更新しない。PWAも `LocalStatementService.importFile` では保存だけを行い、`apps/pwa/src/local-ui.ts` の送信処理がその後に `reconciliation.run()` を呼ぶ。iOSで「取り込んで照合」を再現する呼び出し側は、`importStatement` の成功後に `ReconciliationRepository.runReconciliation(id:at:)` を明示的に呼ぶ。再取り込みで追加0件でも照合を実行する。
+
+比較テスト #294（`f0c9de5`）のCSVシナリオはiOS側でこの後半を呼んでいない。追加された `Parity CSV`（2026-10-15、4,321円）は保存されるが、比較用 `ParitySnapshot.read` は最新runの結果も有効な判断もない明細を除外する。そのため比較上は明細7件・記録なし2件のままとなる。PWAと同じ操作列にすれば保存済み明細8件・記録なし3件になる。mainへの追従だけではこの呼び出し不足は直らない。#294の再現手順に照合呼び出しを追加する必要がある。
+
+`LocalStoreTests.statementReimportAndExplicitReconciliationPreserveAllRows` は既存の合成 `.kmb` と同じCSV入力で、保存直後の8件・旧run維持、照合後の記録なし3件、再取り込みの重複判定・再照合・SQLite再open後の保持を検査する。CSV取り込みは台帳取引の `imported_id` を生成せず、明細IDは下表のprovider由来の規則を使う。
+
 ## 書き込みの意味論（Issue #240、監査 #2〜#10・#14〜#17）
 
 一致の基準は **KakeiMatchの画面で同じ操作をしたとき同じ結果が見えること**。ActualのDB形式・CRDT・sync自体を再実装しない。正本は `src/lib/actual-browser-ledger.ts` のcreate/updateTransaction、import/editReceipt、create/updateTransfer、delete/restoreTransactionTree、PWA側の `local-transaction-ui.ts`、`local-receipts.ts`、`local-transaction-deletions.ts`。Actual API 26.9.0の `accounts/{payees,sync}.ts`、`transactions/transfer.ts`、`db/index.ts` も確認した。以下のPWA側の操作契約はこれらの実装を根拠とし、右欄がiOS側の実装である。[PWA (2026/10), Actual adapter / local-receipts / local-transaction-deletions] [Actual API (26.9.0), accounts / transactions / db]
