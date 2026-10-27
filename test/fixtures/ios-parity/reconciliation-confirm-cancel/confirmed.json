@@ -433,7 +433,7 @@
   ],
   "reconciliation": {
     "counts": {
-      "matched": 0,
+      "matched": 5,
       "needs-review": 0,
       "unmatched": 2,
       "ignored": 0,
@@ -447,10 +447,40 @@
         "status": "unmatched"
       },
       {
+        "merchant": "カフェこもれび",
+        "date": "2026-10-10",
+        "amountYen": 1080,
+        "status": "matched"
+      },
+      {
         "merchant": "シネマひだまり",
         "date": "2026-10-09",
         "amountYen": 1800,
         "status": "unmatched"
+      },
+      {
+        "merchant": "スーパーみどり",
+        "date": "2026-10-07",
+        "amountYen": 3284,
+        "status": "matched"
+      },
+      {
+        "merchant": "ドラッグひまわり",
+        "date": "2026-10-03",
+        "amountYen": 1650,
+        "status": "matched"
+      },
+      {
+        "merchant": "本屋あおば",
+        "date": "2026-10-08",
+        "amountYen": 1980,
+        "status": "matched"
+      },
+      {
+        "merchant": "青空食堂",
+        "date": "2026-10-01",
+        "amountYen": 880,
+        "status": "matched"
       }
     ],
     "items": [

@@ -31,6 +31,13 @@ try {
     async function readSnapshot() { return page.evaluate(async id => (await import('/scripts/parity-snapshot.mjs')).snapshot(id), scenario.id); }
     async function checkpoint(name = 'ledger-snapshot') {
       const snapshot = await readSnapshot();
+      if (scenario.id === 'reconciliation-confirm-cancel') {
+        // Guard the normalization against treating only the latest incremental run
+        // as the screen's full state (matched history spans earlier runs).
+        for (const [label, state] of [['一致', 'matched'], ['要確認', 'needs-review'], ['記録なし', 'unmatched']]) {
+          await page.getByRole('button', { name: `${label} ${snapshot.reconciliation.counts[state]}件`, exact: true }).waitFor();
+        }
+      }
       await writeFile(new URL(`${name}.json`, dir), `${JSON.stringify(snapshot, null, 2)}\n`);
       await settings('バックアップと復元');
       const downloadPromise = page.waitForEvent('download');

@@ -50,6 +50,7 @@ struct ParityTests {
                     let categories = try await store.categories(includeHidden: true)
                     func account(_ name: String) throws -> String { try #require(accounts.first { $0.name == name }?.id) }
                     func category(_ name: String) throws -> String { try #require(categories.first { $0.name == name }?.id) }
+                    let now = try #require(ISO8601DateFormatter().date(from: "2026-10-15T03:00:00Z"))
                     switch id {
                     case "baseline": break
                     case "manual-expense-income-retry":
@@ -62,6 +63,27 @@ struct ParityTests {
                             _ = try await store.saveManual(input, id: nil)
                             _ = try await store.saveManual(input, id: nil)
                         }
+                    case "receipt-single-and-split":
+                        for split in [false, true] {
+                            let value = try KMConfirmedReceipt(merchant: split ? "Parity Split" : "Parity Receipt",
+                                purchasedDate: KMDate("2026-10-15"), totalAmountYen: 1400,
+                                categoryId: category("食費"), accountId: account("現金"), items: split ? [
+                                    .init(id: "apple", name: "Parity Apple", amountYen: 900, categoryId: category("食費")),
+                                    .init(id: "soap", name: "Parity Soap", amountYen: 500, categoryId: category("日用品"))
+                                ] : nil)
+                            let receipt = KMReceipt(id: "receipt:parity-\(split)", createdAt: now, updatedAt: now,
+                                image: .init(blobId: "parity-photo", contentType: "image/png", sizeBytes: 1),
+                                extraction: nil, aiFlowId: nil, itemCategories: nil, reviewedWarnings: nil, classificationAttempt: nil,
+                                aiSuggestion: .init(categoryId: nil, source: .unclassified), confirmedValue: value,
+                                registration: .init(status: .pending, actualTransactionId: nil, lastError: nil))
+                            try await store.saveReceipt(receipt)
+                            _ = try await store.registerReceipt(id: receipt.id, at: now)
+                        }
+                    case "transaction-delete-undo":
+                        let transaction = try #require(try await store.transactions(matching: .init(limit: nil)).first { $0.payeeName == "青空食堂" })
+                        let deletion = try await store.deleteTransaction(id: transaction.id, expected: [transaction], at: now)
+                        try await compare("deleted")
+                        try await store.undoTransactionDeletion(id: deletion.id, at: now.addingTimeInterval(1))
                     case "transfer-edit-delete":
                         var input = try KMTransferInput(amountYen: 10000, date: KMDate("2026-10-15"), sourceAccountId: account("メイン口座"), destinationAccountId: account("現金"), memo: nil, importedId: "parity-transfer")
                         let transfer = try await store.saveTransfer(input, id: nil)
@@ -86,7 +108,6 @@ struct ParityTests {
                         let settings = try await store.budgetSettings()
                         try await store.saveBudgetSettings(settings.applyingDefaultPlan(totalYen: 90000, breakdownEnabled: false, allocations: [:]))
                     case "reconciliation-confirm-cancel":
-                        let now = try #require(ISO8601DateFormatter().date(from: "2026-10-15T03:00:00Z"))
                         let run = try await store.runReconciliation(id: "parity-run", at: now)
                         let statement = try #require(try await store.statementTransactions().first { $0.merchant == "青空食堂" })
                         let candidate = try #require(run.candidates.first { $0.statementTransactionId == statement.id })

@@ -15,7 +15,10 @@ enum ParitySnapshot {
         String(data: try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys, .fragmentsAllowed]), encoding: .utf8)!
     }
     static func sorted(_ rows: [[String: Any]], by field: String) -> [[String: Any]] {
-        rows.sorted { ($0[field] as? String ?? "") < ($1[field] as? String ?? "") }
+        rows.sorted { left, right in
+            let lhs = left[field] as? String ?? "", rhs = right[field] as? String ?? ""
+            return lhs == rhs ? key(left) < key(right) : lhs < rhs
+        }
     }
     static func read(_ store: KMSQLiteStore, scenario: String) async throws -> [String: Any] {
         let accounts = try await store.accounts(includeClosed: true)
@@ -55,13 +58,18 @@ enum ParitySnapshot {
         let statements = try await store.statementTransactions()
         let resolutions = try await store.resolutions()
         let run = try await store.latestRun()
-        let statusItems: [[String: Any]] = (run?.statementResults ?? []).map { result in
-            let statement = statements.first { $0.id == result.statementTransactionId }
-            let resolution = resolutions.first { $0.runId == run?.runId && $0.statementId == result.statementTransactionId && $0.undoRequestedAt == nil }
-            var status = result.status == .needsReview ? "needs-review" : result.status == .matched ? "matched" : "unmatched"
+        // UI history is not restricted to the latest run: resolved rows may be absent
+        // from that run after PWA refreshes. Merge persisted decisions with pending rows.
+        let statusItems: [[String: Any]] = statements.compactMap { statement in
+            let result = run?.statementResults.first { $0.statementTransactionId == statement.id }
+            let resolution = resolutions.first { $0.statementId == statement.id && $0.undoRequestedAt == nil }
+            guard result != nil || resolution != nil else { return nil }
+            var status = result?.status == .needsReview ? "needs-review" : result?.status == .matched ? "matched" : "unmatched"
             if resolution?.status == .failed { status = "failed" }
-            else if resolution?.status == .applied { status = resolution?.resolution == .ignored ? "ignored" : "matched" }
-            return ["merchant": text(statement?.merchant), "date": statement?.usedDate.rawValue as Any? ?? null, "amountYen": statement?.amountYen as Any? ?? null, "status": status]
+            else if resolution?.status == .applied {
+                status = resolution?.resolution == .ignored ? "ignored" : resolution?.resolution == .sameExpense ? "matched" : "registered"
+            }
+            return ["merchant": text(statement.merchant), "date": statement.usedDate.rawValue, "amountYen": statement.amountYen, "status": status]
         }
         let counts = Dictionary(uniqueKeysWithValues: ["matched", "needs-review", "unmatched", "ignored", "failed"].map { status in
             (status, statusItems.filter { $0["status"] as? String == status }.count)

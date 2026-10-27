@@ -20,6 +20,7 @@
     "screenshots:readme": "node scripts/readme-screenshots.mjs",
     "screenshots:migration": "node scripts/migration-screenshots.mjs",
     "parity:export": "node scripts/parity-scenarios.mjs",
+    "parity:check": "node scripts/parity-check.mjs",
     "test:e2e": "node test/browser-flow.mjs",
     "test:security-e2e": "node test/browser-security.mjs",
     "test:contact-e2e": "node test/browser-contact.mjs",

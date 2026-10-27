@@ -7,7 +7,12 @@ import { categoryRank } from '../src/category-tone';
 
 const text = value => value == null || !String(value).trim() ? null : String(value).normalize('NFC').trim();
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-const sorted = rows => rows.sort((a, b) => compare(JSON.stringify(a), JSON.stringify(b)));
+const canonical = value => JSON.stringify(value && typeof value === 'object' && !Array.isArray(value)
+  ? Object.fromEntries(Object.keys(value).sort().map(key => [key, value[key]])) : value);
+const sorted = rows => rows.sort((a, b) => {
+  const field = Object.keys(a)[0];
+  return compare(a[field] ?? '', b[field] ?? '') || compare(canonical(a), canonical(b));
+});
 
 export async function snapshot(scenario) {
   const repository = await LocalDataRepository.open();
@@ -37,11 +42,16 @@ export async function snapshot(scenario) {
   const resolutions = records.filter(r => r.kind === 'reconciliation-resolution');
   const pointer = await repository.get('reconciliation:latest-run');
   const run = records.find(r => r.kind === 'reconciliation-run' && r.value.runId === pointer?.value.runId)?.value;
-  const statusItems = sorted((run?.statementResults ?? []).map(result => {
-    const statement = statements.find(s => s.id === result.statementTransactionId)?.value;
-    const resolution = resolutions.find(r => r.value.runId === run.runId && r.value.statementId === result.statementTransactionId && !r.value.undoRequestedAt)?.value;
-    const status = resolution?.status === 'failed' ? 'failed' : resolution?.status === 'applied' ? (resolution.resolution === 'ignored' ? 'ignored' : 'matched') : ({ needs_review: 'needs-review', unmatched_statement: 'unmatched', matched: 'matched' })[result.status];
-    return { merchant: text(statement?.merchant), date: statement?.usedDate ?? null, amountYen: statement?.amountYen ?? null, status };
+  // The screen combines pending rows from the latest run with resolutions from ALL
+  // runs. A post-confirmation run intentionally omits already resolved statements.
+  const statusItems = sorted(statements.flatMap(({ value: statement }) => {
+    const result = run?.statementResults.find(r => r.statementTransactionId === statement.id);
+    const resolution = resolutions.find(r => r.value.statementId === statement.id && !r.value.undoRequestedAt)?.value;
+    if (!resolution && !result) return [];
+    const status = resolution?.status === 'failed' ? 'failed' : resolution?.status === 'applied'
+      ? ({ ignored: 'ignored', same_expense: 'matched', no_receipt: 'registered', transfer: 'registered' })[resolution.resolution]
+      : ({ needs_review: 'needs-review', unmatched_statement: 'unmatched', matched: 'matched' })[result?.status] ?? 'failed';
+    return [{ merchant: text(statement.merchant), date: statement.usedDate, amountYen: statement.amountYen, status }];
   }));
   const counts = Object.fromEntries(['matched', 'needs-review', 'unmatched', 'ignored', 'failed'].map(status => [status, statusItems.filter(i => i.status === status).length]));
   const usage = new Map();
@@ -59,7 +69,7 @@ export async function snapshot(scenario) {
     accounts: sorted(accounts.map(a => ({ name: text(a.name), type: a.accountType, closed: !!a.closed, balanceYen: a.balanceYen }))),
     // Preserve PWA's category display order, including hidden masters.
     categories: orderedCategories.map(c => ({ name: text(c.name), group: text(c.groupName), isIncome: c.isIncome, hidden: c.hidden })),
-    transactions: normalizedTransactions.sort((a,b) => compare(b.date,a.date) || compare(a.payee ?? '',b.payee ?? '') || a.amountYen-b.amountYen || compare(a.account ?? '',b.account ?? '') || compare(a.memo ?? '',b.memo ?? '') || compare(JSON.stringify(a),JSON.stringify(b))),
+    transactions: normalizedTransactions.sort((a,b) => compare(b.date,a.date) || compare(a.payee ?? '',b.payee ?? '') || a.amountYen-b.amountYen || compare(a.account ?? '',b.account ?? '') || compare(a.memo ?? '',b.memo ?? '') || compare(canonical(a),canonical(b))),
     monthly: [{ month, incomeYen: summary.incomeYen, expenseYen: summary.expenseYen, balanceYen: summary.balanceYen,
       categories: sorted(summary.categories.filter(c => c.amountYen !== 0).map(c => ({ category: text(c.categoryName), amountYen: c.amountYen }))) }],
     budgets: [{ month, budgetYen: budget.budgetYen, spentYen: budget.spentYen, remainingYen: budget.remainingYen,
