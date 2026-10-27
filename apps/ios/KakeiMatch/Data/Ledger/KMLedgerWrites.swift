@@ -52,7 +52,7 @@ import Foundation
         if id == nil && input.importedId.hasPrefix("kakeimatch:schedule:") && input.importedId.range(of: "^kakeimatch:schedule:[A-Za-z0-9_-]{1,128}:[0-9]{4}-[0-9]{2}-[0-9]{2}$", options: .regularExpression) == nil { throw conflict() }
         let old = id.flatMap { key in transactionValues.first { $0.id == key } }
         if id != nil {
-            guard let old, old.kind == input.kind, old.isSplit != true, old.splits?.isEmpty != false, old.transferId == nil,
+            guard let old, old.kind == input.kind, old.amountYen != 0, old.isSplit != true, old.splits?.isEmpty != false, old.transferId == nil,
                   old.importedId?.hasPrefix("kakeimatch:receipt:") != true,
                   !receiptValues.contains(where: { $0.registration.actualTransactionId == id }) else {
                 throw KMDataError.unsupported("この取引は専用の編集サービスで変更してください。")
@@ -73,7 +73,7 @@ import Foundation
         try validateManualMasters(input)
         let explicit = input.importedId.hasPrefix("kakeimatch:payroll:") || input.importedId.hasPrefix("kakeimatch:schedule:")
         let resolved = try payee(input.payeeName, lookup: id != nil ? .manualEdit : explicit ? .exact : .imported)
-        guard resolved.transferAccountId == nil else { throw KMDataError.invalidData("振替専用の入力を使ってください。") }
+        guard id != nil || explicit || resolved.transferAccountId == nil else { throw KMDataError.invalidData("振替専用の入力を使ってください。") }
         result.payeeName = resolved.name; result.payeeId = resolved.id
         guard KMPayeeNormalization.merchantKey(result.payeeName ?? "") == KMPayeeNormalization.merchantKey(input.payeeName) else { throw conflict() }
         if id == nil && !explicit { result = try importMatch(result) }
@@ -111,7 +111,9 @@ import Foundation
         guard selected.kind == .transfer, selected.isSplit != true, selected.splits?.isEmpty != false,
               let peer = transactionValues.first(where: { $0.id == selected.transferId }), peer.kind == .transfer,
               peer.transferId == selected.id, peer.accountId != selected.accountId, peer.amountYen == -selected.amountYen,
-              peer.date == selected.date, peer.isSplit != true, peer.splits?.isEmpty != false else {
+              peer.date == selected.date, peer.isSplit != true, peer.splits?.isEmpty != false,
+              selected.transferAccountId == nil || selected.transferAccountId == peer.accountId,
+              peer.transferAccountId == nil || peer.transferAccountId == selected.accountId else {
             throw KMDataError.invalidData("振替の両取引を確認できませんでした。")
         }
         return (selected, peer)
@@ -185,12 +187,13 @@ import Foundation
         }
         guard let first = allocations.first else { throw conflict() }
         let resolved = try payee(value.merchant, lookup: previous == nil ? .imported : .exact)
-        guard resolved.transferAccountId == nil,
+        guard previous != nil || resolved.transferAccountId == nil,
               KMPayeeNormalization.merchantKey(resolved.name) == KMPayeeNormalization.merchantKey(value.merchant) else { throw conflict() }
         let split = allocations.count > 1
         let children: [KMTransactionSplit]? = split ? allocations.enumerated().map { index, allocation in
-            KMTransactionSplit(id: previous?.splits?.indices.contains(index) == true ? previous!.splits![index].id : UUID().uuidString,
-                categoryId: allocation.categoryId, amountYen: -allocation.amountYen, payeeName: resolved.name,
+            let old = previous?.splits?.indices.contains(index) == true ? previous!.splits![index] : nil
+            return KMTransactionSplit(id: old?.id ?? UUID().uuidString,
+                categoryId: allocation.categoryId, amountYen: -allocation.amountYen, memo: old?.memo, payeeName: resolved.name,
                 cleared: previous?.cleared ?? false, reconciled: previous?.reconciled, payeeId: resolved.id)
         } : nil
         let row = KMTransaction(id: previous?.id ?? UUID().uuidString, date: value.purchasedDate, amountYen: -value.totalAmountYen,
@@ -239,7 +242,7 @@ import Foundation
         guard row.transferId == nil else { throw conflict() }
         if row.isSplit == true {
             let children = row.splits ?? []
-            guard !children.isEmpty, children.count <= 101, Set(children.map(\.id)).count == children.count,
+            guard !children.isEmpty, children.count <= 101, Set([row.id] + children.map(\.id)).count == children.count + 1,
                   try children.reduce(0, { try KMYen.add($0, $1.amountYen) }) == row.amountYen else { throw conflict() }
         } else if row.splits?.isEmpty == false { throw conflict() }
         return [row]
@@ -272,8 +275,10 @@ import Foundation
         }
         let audit = ledgerWriteState.deletions[index]
         guard timestamp < audit.undoUntil else { throw KMDataError.invalidData("取り消し時間を過ぎています。") }
+        let activeIds = Set(transactionValues.flatMap { [$0.id] + ($0.splits ?? []).map(\.id) })
         for row in audit.transactions {
-            guard !transactionValues.contains(where: { $0.id == row.id || row.importedId != nil && $0.importedId == row.importedId }),
+            guard activeIds.isDisjoint(with: Set([row.id] + (row.splits ?? []).map(\.id))),
+                  !transactionValues.contains(where: { row.importedId != nil && $0.importedId == row.importedId }),
                   ledgerWriteState.tombstones.contains(where: { $0.tombstone && $0.transaction == row }),
                   accountValues.contains(where: { $0.id == row.accountId }) else { throw conflict() }
             for payeeId in ([row.payeeId] + (row.splits ?? []).map(\.payeeId)).compactMap({ $0 }) {

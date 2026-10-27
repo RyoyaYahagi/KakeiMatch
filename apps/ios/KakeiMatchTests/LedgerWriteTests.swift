@@ -71,6 +71,19 @@ import Testing
         #expect(try await repo.transactions.transaction(id: created.id) == updated)
     }
 
+    @Test(arguments: [false, true]) func pwaOrdinaryExpenseEditGolden(durable: Bool) async throws {
+        let dir = try directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let memory = seed(); memory.categoryValues.append(.init(id: "home", name: "日用品"))
+        memory.transactionValues = [.init(id: "expense", date: KMDate(rawValue: "2026-09-29"), amountYen: -3284, kind: .expense,
+            payeeName: "Synthetic Store", accountId: "cash", cleared: true, categoryId: "food", importedId: "receipt:1")]
+        let repo = try repositories(memory, durable: durable, directory: dir)
+        let result = try await repo.transactions.saveManual(.init(kind: .expense, amountYen: 2000, date: KMDate("2099-06-07"),
+            payeeName: "Synthetic Books", categoryId: "home", accountId: "bank", memo: "moved entry", importedId: "ignored-on-edit"), id: "expense")
+        #expect(result.id == "expense" && result.kind == .expense && result.amountYen == -2000 && result.date.rawValue == "2099-06-07")
+        #expect(result.accountId == "bank" && result.payeeName == "Synthetic Books" && result.categoryId == "home" && result.memo == "moved entry" && result.cleared)
+        #expect(result.importedId == "receipt:1")
+    }
+
     @Test(arguments: [false, true]) func payeesFollowActualImportAndPWAEditNormalization(durable: Bool) async throws {
         let dir = try directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let memory = seed()
@@ -118,7 +131,8 @@ import Testing
         var repo = try repositories(seed(), durable: durable, directory: dir)
         var input = KMTransferInput(amountYen: 12500, date: try KMDate("2026-09-30"), sourceAccountId: "cash", destinationAccountId: "outside", memo: "移動", importedId: "kakeimatch:transfer:one")
         let created = try await repo.transactions.saveTransfer(input, id: nil)
-        let peer = try #require(try await repo.transactions.transaction(id: #require(created.transferId)))
+        let peerId = try #require(created.transferId)
+        let peer = try #require(try await repo.transactions.transaction(id: peerId))
         #expect(peer.transferId == created.id && peer.importedId == nil && peer.amountYen == 12500)
         #expect(created.categoryId == nil && peer.categoryId == nil)
         repo = try reopen(repo, durable: durable, directory: dir)
@@ -167,13 +181,45 @@ import Testing
         await #expect(throws: (any Error).self) { try await repo.receipts.registerReceipt(id: noPhoto.id, at: timestamp) }
     }
 
+    @Test(arguments: [false, true]) func splitEditRetainsChildrenMemoAndClearedReconciled(durable: Bool) async throws {
+        let dir = try directory(); defer { try? FileManager.default.removeItem(at: dir) }
+        let memory = seed(); memory.receiptValues = [receipt(try confirmed())]
+        let repo = try repositories(memory, durable: durable, directory: dir)
+        let posted = try await repo.receipts.registerReceipt(id: "receipt:synthetic", at: timestamp)
+        let id = try #require(posted.registration.actualTransactionId)
+        let working = durable ? try database(try #require(repo.localStore)).load() : memory
+        working.transactionValues[0].cleared = true; working.transactionValues[0].reconciled = true
+        working.transactionValues[0].splits![0].memo = "子のメモ"
+        let childIds = working.transactionValues[0].splits!.map(\.id)
+        if let store = repo.localStore { try database(store).save(working) }
+        var input = try confirmed(); input.totalAmountYen = 1540; input.taxAmountYen = 140
+        _ = try await repo.receipts.editReceipt(id: posted.id, value: input, expectedUpdatedAt: posted.updatedAt, at: timestamp.addingTimeInterval(1))
+        let updated = try #require(try await repo.transactions.transaction(id: id))
+        #expect(updated.cleared && updated.reconciled == true && updated.splits?.map(\.id) == childIds)
+        #expect(updated.splits?.map(\.amountYen) == [-990, -550])
+        #expect(updated.splits?.allSatisfy { $0.cleared == true && $0.reconciled == true } == true)
+        #expect(try await repo.transactions.transactions(matching: .init(keyword: "子のメモ", limit: nil)).map(\.id) == [id])
+    }
+    @Test func brokenTransferAndMissingChildMasterDoNotPartiallyMutate() async throws {
+        let memory = seed()
+        let row = try await memory.saveTransfer(.init(amountYen: 100, date: KMDate("2026-09-30"), sourceAccountId: "cash", destinationAccountId: "bank", memo: nil, importedId: "broken-pair"))
+        memory.transactionValues.removeAll { $0.id == row.transferId }
+        await #expect(throws: (any Error).self) { try await memory.deleteTransaction(id: row.id, expected: nil, at: timestamp) }
+        #expect(memory.transactionValues.count == 1 && memory.ledgerWriteState.tombstones.isEmpty)
+        let original = receipt(try confirmed()); memory.receiptValues = [original]
+        memory.categoryValues.removeAll { $0.id == "household" }
+        await #expect(throws: (any Error).self) { try await memory.registerReceipt(id: original.id, at: timestamp) }
+        #expect(memory.receiptValues == [original] && memory.transactionValues.count == 1)
+    }
+
     @Test(arguments: [false, true]) func scalarSplitAndTransferDeleteUndoPersistSameIDs(durable: Bool) async throws {
         let dir = try directory(); defer { try? FileManager.default.removeItem(at: dir) }
         let memory = seed(); let original = receipt(try confirmed()); memory.receiptValues = [original]
         var repo = try repositories(memory, durable: durable, directory: dir)
         let manual = try await repo.transactions.saveManual(manual(), id: nil)
         let posted = try await repo.receipts.registerReceipt(id: original.id, at: timestamp)
-        let parent = try #require(try await repo.transactions.transaction(id: #require(posted.registration.actualTransactionId)))
+        let parentId = try #require(posted.registration.actualTransactionId)
+        let parent = try #require(try await repo.transactions.transaction(id: parentId))
         let transfer = try await repo.transactions.saveTransfer(.init(amountYen: 100, date: KMDate("2026-09-30"), sourceAccountId: "cash", destinationAccountId: "bank", memo: "Synthetic", importedId: "synthetic-delete-transfer"), id: nil)
         for row in [manual, parent, transfer] {
             let before = try await repo.accounts.accounts(includeClosed: true)
@@ -219,7 +265,8 @@ import Testing
         try db.sql.execute("DROP TRIGGER fail_write")
         let posted = try await repo.receipts.registerReceipt(id: "receipt:synthetic", at: timestamp)
         try db.sql.execute("CREATE TRIGGER fail_write BEFORE INSERT ON objects WHEN NEW.collection='ledger-writes' BEGIN SELECT RAISE(ABORT,'synthetic failure'); END")
-        await #expect(throws: (any Error).self) { try await repo.transactions.deleteTransaction(id: #require(posted.registration.actualTransactionId), expected: nil, at: timestamp) }
+        let postedTransactionId = try #require(posted.registration.actualTransactionId)
+        await #expect(throws: (any Error).self) { try await repo.transactions.deleteTransaction(id: postedTransactionId, expected: nil, at: timestamp) }
         #expect(try await repo.transactions.transactionDeletions().isEmpty)
         #expect(try await repo.receipts.receipt(id: posted.id)?.registration.status == .applied)
         #expect(try database(store).load().ledgerWriteState.tombstones.isEmpty)

@@ -1,6 +1,6 @@
 # KakeiMatch iOS の土台
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。各画面は **placeholder** です。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています（UIは未接続）。iOSからPWAへの書き出しは提供しません。カメラ・APIは未実装です。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。各画面は **placeholder** です。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています（UIは未接続）。iOSからPWAへの書き出しは提供しません。カメラと画面からのAPI接続は未実装です。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -40,7 +40,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 - `Features/{Home,Records,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は不要です。
 - `Features/{Receipt,ManualEntry,Income,Transfer}`: 追加から進むplaceholder。カメラや写真選択は未実装です。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
-- `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` reader。使い方と未実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。`API` は `.gitkeep` のみです。
+- `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` reader。使い方と未実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
 - `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIconはPWAの `public/icon.svg` から角のマスクを外して1024pxで生成しています。再生成はworkspace依存をインストール後に `node apps/ios/scripts/render-app-icon.mjs`（必要なら `PWA_BROWSER_PATH` を指定）。PWAファイルは変更しません。
 
 ### 共通部品のAPI
@@ -88,7 +88,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
 - `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
 - `Data/Aggregation/`: PWAの月次集計・日別グループ。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。
-- `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md#書き込みの意味論issue-240監査-24578910) を参照してください。
+- `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md) を参照してください。
 - `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/`: TSの決定的サービス。照合採点・判断適用/取消、分類履歴の導出・適用根拠、定期日付/補完計画、予算要約を計算します。両Repository実装で同じ処理を使い、SQLiteでは取引とサービス状態を同じtransactionで保存します。採点のbinary64演算だけは `KMJSNumber` でTSの丸めを再現し、金額は整数円のままです。
 - `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動では使わず、明示的なfixture/Previewだけに使います。
 - `Data/Store/`: SQLite直接利用の永続化adapter。`Data/Backup/`: manifest/record strict検証、SHA-256、Actual ZIPのreadonly取り込み、staging/切替。設計・対応記録・書き出しを保留する理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。

@@ -71,7 +71,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 ## 書き込みの意味論（Issue #240、監査 #2・#4・#5・#7・#8・#9・#10）
 
-一致の基準は **KakeiMatchの画面で同じ操作をしたとき同じ結果が見えること**。ActualのDB形式・CRDT・sync自体を再実装しない。正本は `src/lib/actual-browser-ledger.ts` のcreate/updateTransaction、import/editReceipt、create/updateTransfer、delete/restoreTransactionTree、PWA側の `local-transaction-ui.ts`、`local-receipts.ts`、`local-transaction-deletions.ts`。Actual API 26.9.0の `accounts/{payees,sync}.ts`、`transactions/transfer.ts`、`db/index.ts` も確認した。
+一致の基準は **KakeiMatchの画面で同じ操作をしたとき同じ結果が見えること**。ActualのDB形式・CRDT・sync自体を再実装しない。正本は `src/lib/actual-browser-ledger.ts` のcreate/updateTransaction、import/editReceipt、create/updateTransfer、delete/restoreTransactionTree、PWA側の `local-transaction-ui.ts`、`local-receipts.ts`、`local-transaction-deletions.ts`。Actual API 26.9.0の `accounts/{payees,sync}.ts`、`transactions/transfer.ts`、`db/index.ts` も確認した。以下のPWA側の操作契約はこれらの実装を根拠とし、右欄がiOS側の実装である。[PWA (2026/10), Actual adapter / local-receipts / local-transaction-deletions] [Actual API (26.9.0), accounts / transactions / db]
 
 | 操作 | PWAから見える結果とiOSの契約 | API / 対応 |
 | --- | --- | --- |
@@ -89,7 +89,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 ### 意図的に対象外としたActual内部挙動
 
-- Actual画面でしか作成できないtransaction/payee rule、categoryの自動学習rule、schedule ruleの実行は対象外。KakeiMatchの分類学習とは別物で、通常画面から設定できないため。本PRはこれらが存在するActual家計簿での書き込み結果一致を保証しない。元のruleは取り込みprovenanceに残す。
+- Actual画面でしか作成できないtransaction/payee rule、categoryの自動学習rule、schedule ruleの実行は対象外。[Actual API (26.9.0), accounts/sync / transactions/transaction-rules] KakeiMatchの分類学習とは別物で、通常画面から設定できないため。本PRはこれらが存在するActual家計簿での書き込み結果一致を保証しない。元のruleは取り込みprovenanceに残す。
 - CRDT、同期メッセージ、Actualのsort_order・APIイベント・内部table配置は画面結果に不要なため再現しない。削除済み取引は独自の `ledger-writes` に保存し、active projectionから除く。Actual DBを再生成できるという意味ではない。
 - PWAはActual/IndexedDBの別保存先を更新するのでprocessing/failed intentと再起動回復が必要。iOSは1つのSQLite transactionで成功かrollbackになるため、中間intentの再実行を追加しない。読み戻し不一致・SQL失敗は全体をrollbackする（Actual側だけ更新されたPWAの内部的な途中状態は再現しない）。
 - 明細取り込み/照合の書き込み副作用、口座/categoryのライフサイクル、現在残高の未来日付cutoff、定期登録のActual連携は後続PR。比較テスト担当の `test/ios-pwa-parity` / `KakeiMatchTests/Parity` は変更しない。本PRの単体テストは画面接続やPWA実行との総合比較完了を意味しない。
