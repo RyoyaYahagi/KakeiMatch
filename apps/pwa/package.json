@@ -70,17 +70,20 @@
   "dependencies": {
     "@actual-app/api": "26.9.0",
     "@better-auth/passkey": "1.7.6",
+    "@peculiar/x509": "1.14.3",
     "better-auth": "1.7.6",
+    "cbor-x": "1.6.8",
+    "reflect-metadata": "0.2.2",
     "csv-parse": "7.0.3",
     "jsqr": "1.4.0",
     "qrcode-generator": "2.0.4",
-    "zod": "4.6.5"
+    "zod": "4.6.6"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.62.0",
     "cf": "1.0.0-beta.5",
     "playwright-core": "1.58.2",
     "typescript": "5.9.2",
-    "vite": "8.3.1"
+    "vite": "8.3.3"
   }
 }

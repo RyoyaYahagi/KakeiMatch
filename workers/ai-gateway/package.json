@@ -17,17 +17,21 @@
     "cf": "1.0.0-beta.5",
     "miniflare": "4.20260730.0",
     "typescript": "5.9.2",
-    "vite": "8.3.1",
+    "vite": "8.3.3",
     "vitest": "4.1.11"
   },
   "dependencies": {
     "@better-auth/passkey": "1.7.6",
+    "@peculiar/x509": "1.14.3",
     "better-auth": "1.7.6",
-    "zod": "4.6.5"
+    "cbor-x": "1.6.8",
+    "reflect-metadata": "0.2.2",
+    "zod": "4.6.6"
   },
   "overrides": {
     "sharp": "0.35.5",
-    "undici": "7.29.1",
+    "undici": "7.30.1",
+    "zod": "4.6.6",
     "source-map-js": "1.2.2"
   }
 }

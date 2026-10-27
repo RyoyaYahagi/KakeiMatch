@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ImageIO
 import Security
@@ -23,10 +24,31 @@ private final class APIStub: URLProtocol, @unchecked Sendable {
     }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    static func materializedRequest(_ request: URLRequest) throws -> URLRequest {
+        // URLSession on Apple platforms may move a Data body into a stream before
+        // delivering it to URLProtocol. Capture those bytes once for payload assertions.
+        guard request.httpBody == nil, let stream = request.httpBodyStream else { return request }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        let capacity = 8192
+        var buffer = [UInt8](repeating: 0, count: capacity)
+        while true {
+            let count = stream.read(&buffer, maxLength: capacity)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        var result = request
+        result.httpBodyStream = nil
+        result.httpBody = data
+        return result
+    }
     override func startLoading() {
         do {
-            let handler = Self.state.withLock { state in state.requests.append(request); return state.handler }
-            let reply = try handler(request)
+            let captured = try Self.materializedRequest(request)
+            let handler = Self.state.withLock { state in state.requests.append(captured); return state.handler }
+            let reply = try handler(captured)
             let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1",
                                            headerFields: reply.headers.merging(["Content-Type": reply.contentType], uniquingKeysWith: { _, new in new }))!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -41,6 +63,106 @@ private final class APITestCredentials: KMCloudCredentialStore, Sendable {
     let values = Mutex<[String: Data]>([:])
     func read(_ key: String) -> Data? { values.withLock { $0[key] } }
     func write(_ data: Data?, key: String) { values.withLock { $0[key] = data } }
+}
+
+private final class FakeAppAttest: KMAppAttesting {
+    let isSupported: Bool
+    init(isSupported: Bool) { self.isSupported = isSupported }
+    static let syntheticKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
+    let generatedKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
+    let hashes = Mutex<[Data]>([])
+    func generateKey() async throws -> String { generatedKeyID }
+    func attest(keyID: String, clientDataHash: Data) async throws -> Data {
+        hashes.withLock { $0.append(clientDataHash) }; return Data("synthetic-attestation".utf8)
+    }
+    func assertion(keyID: String, clientDataHash: Data) async throws -> Data {
+        hashes.withLock { $0.append(clientDataHash) }; return Data("synthetic-assertion".utf8)
+    }
+}
+
+@MainActor
+private final class StubPasskeyAuthorizer: KMPasskeyAuthorizing {
+    let received = Mutex<(KMPasskeyKind, String, Data, Data?, String?, [Data]?)?>(nil)
+    func perform(kind: KMPasskeyKind, relyingPartyID: String, challenge: Data, userID: Data?, username: String?, allowedCredentialIDs: [Data]?) async throws -> Data {
+        received.withLock { $0 = (kind, relyingPartyID, challenge, userID, username, allowedCredentialIDs) }
+        let response: [String: Any] = kind == .authenticate
+            ? ["clientDataJSON": "Y2xpZW50", "authenticatorData": "YXV0aC", "signature": "c2ln", "userHandle": NSNull()]
+            : ["clientDataJSON": "Y2xpZW50", "attestationObject": "YXR0ZXN0", "transports": ["internal"]]
+        return try JSONSerialization.data(withJSONObject: ["id": "Y3JlZGVudGlhbA", "rawId": "Y3JlZGVudGlhbA", "type": "public-key",
+            "response": response, "clientExtensionResults": [:]])
+    }
+}
+
+private actor AsyncTestGate {
+    private var entered = false
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    func suspend() async {
+        entered = true
+        entryWaiters.forEach { $0.resume() }
+        entryWaiters.removeAll()
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func waitForEntry() async {
+        if entered { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private struct AttestCallCounts: Sendable {
+    var generated = 0
+    var attestations = 0
+    var assertions = 0
+}
+
+private final class ControlledAppAttest: KMAppAttesting {
+    let isSupported = true
+    let generateGate: AsyncTestGate?
+    let assertionGate: AsyncTestGate?
+    init(generateGate: AsyncTestGate?, assertionGate: AsyncTestGate?) {
+        self.generateGate = generateGate
+        self.assertionGate = assertionGate
+    }
+    let counts = Mutex(AttestCallCounts())
+    let hashes = Mutex<[Data]>([])
+    let generatedKeyID = FakeAppAttest.syntheticKeyID
+
+    func generateKey() async throws -> String {
+        counts.withLock { $0.generated += 1 }
+        if let generateGate { await generateGate.suspend() }
+        return generatedKeyID
+    }
+
+    func attest(keyID: String, clientDataHash: Data) async throws -> Data {
+        counts.withLock { $0.attestations += 1 }
+        hashes.withLock { $0.append(clientDataHash) }
+        return Data("synthetic-attestation".utf8)
+    }
+
+    func assertion(keyID: String, clientDataHash: Data) async throws -> Data {
+        counts.withLock { $0.assertions += 1 }
+        hashes.withLock { $0.append(clientDataHash) }
+        if let assertionGate { await assertionGate.suspend() }
+        return Data("synthetic-assertion".utf8)
+    }
+}
+
+@MainActor
+private final class DelayedPasskeyAuthorizer: KMPasskeyAuthorizing {
+    let gate: AsyncTestGate
+    init(gate: AsyncTestGate) { self.gate = gate }
+
+    func perform(kind: KMPasskeyKind, relyingPartyID: String, challenge: Data, userID: Data?, username: String?, allowedCredentialIDs: [Data]?) async throws -> Data {
+        await gate.suspend()
+        return Data(#"{"id":"Y3JlZGVudGlhbA","rawId":"Y3JlZGVudGlhbA","type":"public-key","response":{"clientDataJSON":"Y2xpZW50","authenticatorData":"YXV0aC","signature":"c2ln","userHandle":null},"clientExtensionResults":{}}"#.utf8)
+    }
 }
 
 @Suite(.serialized)
@@ -99,11 +221,13 @@ struct APIClientTests {
     }
 
     private func client(credentials: APITestCredentials = APITestCredentials(), native: Bool = false,
+                        appAttest: (any KMAppAttesting)? = nil,
+                        passkeyAuthorizer: (any KMPasskeyAuthorizing)? = nil,
                         clock: @escaping @Sendable () -> Date = { APIClientTests.now }) throws -> KMWorkerAPI {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [APIStub.self]; config.httpCookieStorage = nil; config.urlCache = nil
         return KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!, originPolicy: native ? .native : .existingWorkerCompatibility),
-                           session: URLSession(configuration: config), credentials: credentials, now: clock)
+                           session: URLSession(configuration: config), credentials: credentials, appAttest: appAttest, passkeyAuthorizer: passkeyAuthorizer, now: clock)
     }
 
     @MainActor
@@ -194,13 +318,519 @@ struct APIClientTests {
     }
 
     @Test
-    func nativeDoesNotPretendToHaveAWebOrigin() async throws {
+    func stubMaterializesStreamBackedBodiesWithoutChangingHeaders() throws {
+        var request = URLRequest(url: URL(string: "https://synthetic.example.test/api/native/challenge")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bytes = Data(#"{"purpose":"token"}"#.utf8)
+        request.httpBodyStream = InputStream(data: bytes)
+        let captured = try APIStub.materializedRequest(request)
+        #expect(captured.httpBody == bytes)
+        #expect(captured.httpBodyStream == nil)
+        #expect(captured.value(forHTTPHeaderField: "Content-Type") == "application/json")
+    }
+
+    @Test
+    func nativeConfigurationSendsNeitherOriginNorCookies() async throws {
         APIStub.reset { request in
+            #expect(request.url?.path == "/api/native/config")
             #expect(request.value(forHTTPHeaderField: "Origin") == nil)
-            return .init(status: 403, body: #"{"error":"forbidden_origin"}"#)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         }
         let api = try client(native: true)
-        await #expect(throws: KMAPIError.forbiddenOrigin) { _ = try await api.accessToken() }
+        let configuration = try await api.nativeConfiguration()
+        #expect(configuration.available)
+        #expect(configuration.rpId == "synthetic.example.test")
+    }
+
+    @Test
+    func nativeNeverFallsBackToTurnstileOrFakeCredentials() async throws {
+        APIStub.reset { _ in throw URLError(.badServerResponse) }
+        let api = try client(native: true)
+        await #expect(throws: KMAPIError.nativeUnsupported) { _ = try await api.guestConfiguration() }
+        await #expect(throws: KMAPIError.nativeUnsupported) { try await api.createGuest(turnstileToken: "fake") }
+        #expect(APIStub.state.withLock { $0.requests.isEmpty })
+    }
+
+    @Test
+    func nativeSignOutAndAccountDeletionClearAccountButPreserveGuestCredential() async throws {
+        let store = APITestCredentials()
+        let session = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
+        let guest = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(session.utf8), key: "session")
+        store.write(Data(guest.utf8), key: "guest")
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            if request.url?.path == "/api/native/auth/sign-out" { return .init(body: #"{"success":true}"#) }
+            if request.url?.path == "/api/native/account/delete" { return .init(body: #"{"deleted":true,"localHouseholdDataPreserved":true}"#) }
+            throw URLError(.badServerResponse)
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        try await api.signOut()
+        #expect(store.read("session") == nil)
+        #expect(store.read("guest") == Data(guest.utf8))
+        store.write(Data(session.utf8), key: "session")
+        let deletion = try await api.deleteAccount()
+        #expect(deletion.localHouseholdDataPreserved)
+        #expect(store.read("session") == nil)
+        #expect(store.read("guest") == Data(guest.utf8))
+    }
+
+    @Test
+    func nativeContactRequiresAccountSessionAndKeepsOpaqueTokenBearer() async throws {
+        let store = APITestCredentials()
+        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(accountSession.utf8), key: "session")
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 3, count: 32))
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/challenge":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
+                #expect(try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any] != nil)
+                return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000005","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
+            case "/api/native/ai/token":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
+                return .init(body: #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000500}"#)
+            case "/api/native/contact":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "T", count: 43))
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                #expect(body["message"] as? String == "synthetic contact")
+                return .init(body: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        let result = try await api.submitContact(kind: .bug, message: "synthetic contact", flowID: Self.flow)
+        #expect(result.kind == .bug)
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
+            "/api/native/config", "/api/native/challenge", "/api/native/ai/token", "/api/native/contact"
+        ])
+    }
+
+    @Test
+    func guestSessionCannotUseAccountOnlyContactAPI() async throws {
+        let store = APITestCredentials()
+        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(guestSession.utf8), key: "guest")
+        APIStub.reset { _ in throw URLError(.badServerResponse) }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        await #expect(throws: KMAPIError.nativeAuthenticationRequired) {
+            _ = try await api.submitContact(kind: .question, message: "synthetic", flowID: Self.flow)
+        }
+        #expect(APIStub.state.withLock { $0.requests.isEmpty })
+    }
+
+    @Test
+    func nativeAccountChallenge401UsesOnlyExplicitSavedGuestFallback() async throws {
+        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
+        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 4, count: 32))
+
+        for allowGuest in [true, false] {
+            let store = APITestCredentials()
+            store.write(Data(accountSession.utf8), key: "session")
+            store.write(Data(guestSession.utf8), key: "guest")
+            store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+            store.write(Data([1]), key: "app-attest-registered")
+            APIStub.reset { request in
+                switch request.url?.path {
+                case "/api/native/config":
+                    return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+                case "/api/native/challenge":
+                    if request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43) {
+                        return .init(status: 401, body: #"{"error":"unauthorized"}"#)
+                    }
+                    #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "G", count: 43))
+                    return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000006","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
+                case "/api/native/ai/token":
+                    #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "G", count: 43))
+                    return .init(body: #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000500}"#)
+                default: throw URLError(.badServerResponse)
+                }
+            }
+            let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+            if allowGuest {
+                #expect(try await api.accessToken(allowGuest: true) == String(repeating: "T", count: 43))
+                #expect(store.read("guest") == Data(guestSession.utf8))
+                #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/challenge" }.count } == 2)
+            } else {
+                await #expect(throws: KMAPIError.nativeAuthenticationRequired) {
+                    _ = try await api.accessToken(allowGuest: false)
+                }
+                #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/challenge" }.count } == 1)
+            }
+            #expect(store.read("session") == nil)
+        }
+    }
+
+    @Test
+    func nativeGuestUsageReadsOnlyOpaqueNativeSessionFormat() async throws {
+        let store = APITestCredentials()
+        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(guestSession.utf8), key: "guest")
+        APIStub.reset { request in
+            #expect(request.url?.path == "/api/native/ai/usage")
+            #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "G", count: 43))
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            return .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":1,"limit":5,"remaining":4}"#)
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        #expect(try await api.usage(as: .guest).remaining == 4)
+
+        store.write(Data(String(repeating: "R", count: 43).utf8), key: "guest")
+        APIStub.reset { _ in Issue.record("Legacy raw guest secret must not reach a native endpoint"); throw URLError(.badServerResponse) }
+        await #expect(throws: KMAPIError.credentialStorage) { _ = try await api.usage(as: .guest) }
+        #expect(APIStub.state.withLock { $0.requests.isEmpty })
+    }
+
+    @Test
+    func nativeConfigurationRejectsUnknownFieldsAndInconsistentUnavailableState() async throws {
+        let api = try client(native: true)
+        for response in [
+            #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development","unexpected":true}"#,
+            #"{"available":false,"rpId":"synthetic.example.test","appAttestEnvironment":null}"#
+        ] {
+            APIStub.reset { _ in .init(body: response) }
+            await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.nativeConfiguration() }
+        }
+    }
+
+    @Test
+    func expiredNativeChallengeStopsBeforeAttestation() async throws {
+        let appAttest = FakeAppAttest(isSupported: true)
+        APIStub.reset { request in
+            if request.url?.path == "/api/native/config" {
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            }
+            return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000004","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 1, count: 32)) + #"","expiresAt":1799999999}"#)
+        }
+        let api = try client(native: true, appAttest: appAttest)
+        await #expect(throws: KMAPIError.invalidResponse) { try await api.createNativeGuest() }
+        #expect(appAttest.hashes.withLock { $0.isEmpty })
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config", "/api/native/challenge"])
+    }
+
+    @Test
+    func unsupportedAppAttestStopsBeforeCreatingGuestCredentials() async throws {
+        APIStub.reset { request in
+            #expect(request.url?.path == "/api/native/config")
+            return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+        }
+        let store = APITestCredentials()
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: false))
+        await #expect(throws: KMAPIError.nativeUnsupported) { try await api.createNativeGuest() }
+        #expect(APIStub.state.withLock { $0.requests.count } == 1)
+        #expect(store.read("guest") == nil)
+        #expect(store.read("app-attest-key-id") == nil)
+    }
+
+    @Test
+    func invalidPersistedAppAttestKeyIDIsRejectedAsCredentialCorruption() async throws {
+        let store = APITestCredentials()
+        store.write(Data("AQID".utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        APIStub.reset { request in
+            #expect(request.url?.path == "/api/native/config")
+            return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        await #expect(throws: KMAPIError.credentialStorage) { _ = try await api.ensureNativeAttested() }
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config"])
+    }
+
+    @Test
+    func concurrentNativeAttestationEnsuresShareOneEnrollment() async throws {
+        let gate = AsyncTestGate()
+        let appAttest = ControlledAppAttest(generateGate: gate, assertionGate: nil)
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 2, count: 32))
+        APIStub.reset { request in
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/challenge":
+                return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000008","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
+            case "/api/native/attest":
+                return .init(body: #"{"registered":true}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(native: true, appAttest: appAttest)
+        let first = Task { try await api.ensureNativeAttested() }
+        await gate.waitForEntry()
+        let second = Task { try await api.ensureNativeAttested() }
+        for _ in 0..<10 { await Task.yield() }
+        await gate.release()
+        #expect(try await first.value == FakeAppAttest.syntheticKeyID)
+        #expect(try await second.value == FakeAppAttest.syntheticKeyID)
+        #expect(appAttest.counts.withLock { $0.generated } == 1)
+        #expect(appAttest.counts.withLock { $0.attestations } == 1)
+        #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/config" }.count } == 1)
+    }
+
+    @Test
+    func logoutRevisionPreventsLateAppAttestKeyPersistence() async throws {
+        let gate = AsyncTestGate()
+        let appAttest = ControlledAppAttest(generateGate: gate, assertionGate: nil)
+        APIStub.reset { _ in
+            .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+        }
+        let store = APITestCredentials()
+        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        let enrollment = Task { try await api.ensureNativeAttested() }
+        await gate.waitForEntry()
+        try await api.clearAccessToken()
+        await gate.release()
+        await #expect(throws: CancellationError.self) { _ = try await enrollment.value }
+        #expect(store.read("app-attest-key-id") == nil)
+        #expect(store.read("app-attest-registered") == nil)
+        #expect(appAttest.counts.withLock { $0.attestations } == 0)
+    }
+
+    @Test
+    func logoutRevisionPreventsLateNativeGuestCreation() async throws {
+        let gate = AsyncTestGate()
+        let appAttest = ControlledAppAttest(generateGate: nil, assertionGate: gate)
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 6, count: 32))
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        APIStub.reset { request in
+            if request.url?.path == "/api/native/config" {
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            }
+            #expect(request.url?.path == "/api/native/challenge")
+            return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000009","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
+        }
+        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        let creation = Task { try await api.createNativeGuest() }
+        await gate.waitForEntry()
+        try await api.clearAccessToken()
+        await gate.release()
+        await #expect(throws: CancellationError.self) { try await creation.value }
+        #expect(store.read("guest") == nil)
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config", "/api/native/challenge"])
+    }
+
+    @Test
+    @MainActor
+    func logoutRevisionPreventsLatePasskeySessionPersistence() async throws {
+        let gate = AsyncTestGate()
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 10, count: 32))
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let passkey = DelayedPasskeyAuthorizer(gate: gate)
+        APIStub.reset { request in
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/passkey/options":
+                return .init(body: #"{"ceremonyId":"00000000-0000-4000-8000-000000000010","options":{"challenge":""# + challenge + #"","rpId":"synthetic.example.test"}}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        let authentication = Task { try await api.performNativePasskey(kind: .authenticate) }
+        await gate.waitForEntry()
+        try await api.clearAccessToken()
+        await gate.release()
+        await #expect(throws: CancellationError.self) { try await authentication.value }
+        #expect(store.read("session") == nil)
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config", "/api/native/passkey/options"])
+    }
+
+    @Test
+    @MainActor
+    func nativePasskeyAuthenticationUsesDecodedChallengeAndStoresOnlyNativeSession() async throws {
+        let challenge = Data(repeating: 9, count: 32)
+        let challengeText = KMNativeCrypto.base64URL(challenge)
+        let attest = FakeAppAttest(isSupported: true)
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let passkey = StubPasskeyAuthorizer()
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/passkey/options":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                return .init(body: #"{"ceremonyId":"00000000-0000-4000-8000-000000000002","options":{"challenge":""# + challengeText + #"","rpId":"synthetic.example.test","allowCredentials":[{"id":"AQID","type":"public-key"}]}}"#)
+            case "/api/native/passkey/verify":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                #expect(body["ceremonyId"] as? String == "00000000-0000-4000-8000-000000000002")
+                #expect(body["assertion"] as? String == Data("synthetic-assertion".utf8).base64EncodedString())
+                return .init(body: #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: attest, passkeyAuthorizer: passkey)
+        try await api.performNativePasskey(kind: .authenticate)
+        let captured = try #require(passkey.received.withLock { $0 })
+        #expect(captured.0 == .authenticate)
+        #expect(captured.1 == "synthetic.example.test")
+        #expect(captured.2 == challenge)
+        #expect(captured.3 == nil)
+        #expect(captured.4 == nil)
+        #expect(captured.5 == [Data([1, 2, 3])])
+        #expect(try store.read("session") != nil)
+        #expect(try store.read("guest") == nil)
+        #expect(attest.hashes.withLock { $0 } == [Data(SHA256.hash(data: challenge))])
+    }
+
+    @Test
+    @MainActor
+    func nativePasskeyAuthenticationPreservesAnExplicitEmptyAllowList() async throws {
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 11, count: 32))
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let passkey = StubPasskeyAuthorizer()
+        APIStub.reset { request in
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/passkey/options":
+                return .init(body: #"{"ceremonyId":"00000000-0000-4000-8000-000000000011","options":{"challenge":""# + challenge + #"","rpId":"synthetic.example.test","allowCredentials":[]}}"#)
+            case "/api/native/passkey/verify":
+                return .init(body: #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        try await api.performNativePasskey(kind: .authenticate)
+        let captured = try #require(passkey.received.withLock { $0 })
+        #expect(captured.5 == [])
+    }
+
+    @Test
+    @MainActor
+    func nativePasskeyOptionsRequireCanonical32ByteChallengeAndExplicitRelyingParty() async throws {
+        let validChallenge = KMNativeCrypto.base64URL(Data(repeating: 8, count: 32))
+        let shortChallenge = KMNativeCrypto.base64URL(Data(repeating: 8, count: 31))
+        let invalidOptions = [
+            #"{"challenge":""# + validChallenge + #""}"#,
+            #"{"challenge":""# + shortChallenge + #"","rpId":"synthetic.example.test"}"#,
+            #"{"challenge":"AB","rpId":"synthetic.example.test"}"#,
+            #"{"challenge":""# + validChallenge + #"","rp":{}}"#,
+            #"{"challenge":""# + validChallenge + #"","rpId":"synthetic.example.test","rp":{"id":"other.example.test"}}"#
+        ]
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let passkey = StubPasskeyAuthorizer()
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        for options in invalidOptions {
+            let response = #"{"ceremonyId":"00000000-0000-4000-8000-000000000007","options":"# + options + "}"
+            APIStub.reset { request in
+                request.url?.path == "/api/native/config"
+                    ? .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+                    : .init(body: response)
+            }
+            await #expect(throws: KMAPIError.invalidResponse) {
+                try await api.performNativePasskey(kind: .authenticate)
+            }
+        }
+        #expect(passkey.received.withLock { $0 } == nil)
+    }
+
+    @Test
+    @MainActor
+    func nativeInvitationPasskeyRegistrationUsesDecodedUserIDAndNoCookieJar() async throws {
+        let challenge = KMNativeCrypto.base64URL(Data(repeating: 5, count: 32))
+        let attest = FakeAppAttest(isSupported: true)
+        let store = APITestCredentials()
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        let passkey = StubPasskeyAuthorizer()
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/passkey/options":
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                #expect(body["kind"] as? String == "register")
+                #expect(body["context"] as? String == "synthetic-invite")
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                return .init(body: #"{"ceremonyId":"00000000-0000-4000-8000-000000000003","options":{"challenge":""# + challenge + #"","rp":{"id":"synthetic.example.test","name":"KakeiMatch"},"user":{"id":"AQID","name":"synthetic-user","displayName":"合成利用者"},"pubKeyCredParams":[]}}"#)
+            case "/api/native/passkey/verify":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                return .init(body: #"{"sessionToken":""# + String(repeating: "R", count: 43) + #"","expiresAt":1800001000}"#)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: attest, passkeyAuthorizer: passkey)
+        try await api.performNativePasskey(kind: .register, context: "synthetic-invite", name: "合成Passkey")
+        let captured = try #require(passkey.received.withLock { $0 })
+        #expect(captured.0 == .register)
+        #expect(captured.2 == Data(repeating: 5, count: 32))
+        #expect(captured.3 == Data([1, 2, 3]))
+        #expect(captured.4 == "synthetic-user")
+        #expect(captured.5 == nil)
+        #expect(try store.read("session") != nil)
+        #expect(attest.hashes.withLock { $0 } == [Data(SHA256.hash(data: Data(repeating: 5, count: 32)))])
+    }
+
+    @Test
+    @MainActor
+    func nativeGuestAndAITokenUseAppAttestAndKeepCredentialsBoundToHost() async throws {
+        let store = APITestCredentials()
+        let appAttest = FakeAppAttest(isSupported: true)
+        let challengeText = KMNativeCrypto.base64URL(Data(repeating: 7, count: 32))
+        APIStub.reset { request in
+            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
+            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
+            switch request.url?.path {
+            case "/api/native/config":
+                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+            case "/api/native/challenge":
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                let purpose = body["purpose"] as! String
+                if purpose == "token" { #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "S", count: 43)) }
+                else { #expect(request.value(forHTTPHeaderField: "Authorization") == nil) }
+                return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000001","challenge":""# + challengeText + #"","expiresAt":1800000060}"#)
+            case "/api/native/attest":
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                #expect(body["keyId"] as? String == appAttest.generatedKeyID)
+                return .init(body: #"{"registered":true}"#)
+            case "/api/native/guest":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+                return .init(status: 201, body: #"{"sessionToken":""# + String(repeating: "S", count: 43) + #"","expiresAt":1800001000}"#)
+            case "/api/native/ai/token":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "S", count: 43))
+                return .init(body: #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000500}"#)
+            case "/api/native/ai/gemini":
+                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "T", count: 43))
+                return .init(body: Self.receipt)
+            default: throw URLError(.badServerResponse)
+            }
+        }
+        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        try await api.createNativeGuest()
+        #expect(try await api.accessToken() == String(repeating: "T", count: 43))
+        #expect(store.read("ai-token") == nil)
+        _ = try await api.readReceipt(image: KMUploadImage(data: Data([0xff, 0xd8, 0xff]), contentType: "image/jpeg"), flowID: Self.flow)
+        #expect(appAttest.hashes.withLock { $0.count } == 3)
+        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
+            "/api/native/config", "/api/native/challenge", "/api/native/attest",
+            "/api/native/challenge", "/api/native/guest", "/api/native/config", "/api/native/challenge",
+            "/api/native/ai/token", "/api/native/ai/gemini"
+        ])
     }
 
     @Test
@@ -259,7 +889,7 @@ struct APIClientTests {
         _ = try await api.deleteAccount()
         #expect(store.read("session") == nil)
         #expect(store.read("guest") != nil)
-        #expect(try KMAPIConfiguration().credentialService != KMAPIConfiguration(baseURL: URL(string: "https://preview.example.test")!).credentialService)
+        #expect(try KMAPIConfiguration(baseURL: KMAPIConfiguration.productionURL).credentialService != KMAPIConfiguration(baseURL: URL(string: "https://preview.example.test")!).credentialService)
     }
 
     @Test

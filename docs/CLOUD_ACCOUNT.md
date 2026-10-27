@@ -23,6 +23,10 @@ Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。
 
 ログイン中の本人は `DELETE /api/account/delete` でアカウントを削除できます。サーバーは同一originと有効なHttpOnly sessionを確認し、要求からuser IDを受け取りません。D1の1つのbatchで削除済みIDの再利用を防ぐtombstoneを記録し、user行を削除します。外部キーによりPasskey、session、招待、利用権限、AI利用量・料金、問い合わせ処理状態も削除されます。途中失敗はbatch全体がrollbackされ、503を返すため、画面は完了扱いにせず再試行を案内します。削除したランダムIDだけは、遅れて完了したPasskey登録が同じuser IDを再作成しないようtombstoneに保持します。email、氏名、認証情報、家計データはtombstoneへ保存しません。削除後のAI要求はuser行の存在確認で拒否します。
 
+## iOS ネイティブからの利用
+
+既存のWeb Cookieをアプリへコピーせず、専用 `/api/native/*` でApp AttestとPasskeyを検証します。登録済みWeb Passkeyは同じRPでの利用を目標にします。ネイティブセッションは固定14日以内、AI用tokenは専用audienceの不透明な値で最大10分です。Webのsession更新・CSRF・trustedOriginsは変更しません。ゲストのApp Attest経路も既存の1日5回・address制限・全体費用停止を維持します。設定不足やApp Attest非対応端末では無検証へ切り替えません。要求・応答、D1 migration、Team/App IDと環境の設定、実機確認の残件は[ネイティブ認証境界](NATIVE_APP_AUTH.md)を参照してください。
+
 ## AI entitlementと利用量
 
 planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。

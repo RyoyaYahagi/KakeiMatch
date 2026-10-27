@@ -149,11 +149,12 @@ function authSecret(env: AccountEnv): string {
   return env.BETTER_AUTH_SECRET;
 }
 
-function createAuth(env: AccountEnv, originUrl: URL) {
+function createAuth(env: AccountEnv, originUrl: URL, native = false) {
   const origin = originUrl.origin;
   const rpID = originUrl.hostname;
   return betterAuth({
     appName: "KakeiMatch",
+    ...(native ? { logger: { disabled: true } } : {}),
     baseURL: origin,
     secret: authSecret(env),
     database: env.ACCOUNT_DB as never,
@@ -174,6 +175,12 @@ function createAuth(env: AccountEnv, originUrl: URL) {
       rpID,
       rpName: "KakeiMatch",
       origin,
+      ...(native ? {
+        authenticatorSelection: { userVerification: "required" as const },
+        authentication: { afterVerification: async ({ verification }) => {
+          if (!verification.authenticationInfo.userVerified) throw new Error("user_verification_required");
+        } },
+      } : {}),
       registration: {
         requireSession: false,
         resolveUser: async ({ context }) => {
@@ -191,11 +198,17 @@ function createAuth(env: AccountEnv, originUrl: URL) {
           if (deleted) throw new Error("deleted_account_id");
           return { id: invite.user_id, name: invite.name, email: invite.email };
         },
-        afterVerification: async ({ context }) => {
+        afterVerification: async ({ context, verification, user }) => {
+          if (native && !verification.registrationInfo?.userVerified) throw new Error("user_verification_required");
           // This callback also runs when an authenticated user adds a passkey.
           // Such a registration has no invite context and must follow Better Auth's normal flow.
           if (typeof context !== "string" || context.length > 100) return;
           const tokenHash = await digest(context);
+          if (native) {
+            const target = await env.ACCOUNT_DB.prepare(`SELECT user_id FROM account_invite
+              WHERE token_hash=? AND used_at IS NULL AND expires_at>?`).bind(tokenHash, Date.now()).first<{ user_id: string }>();
+            if (!target || target.user_id !== user.id) throw new Error("account_invite_user_mismatch");
+          }
           const result = await env.ACCOUNT_DB.prepare(`
             UPDATE account_invite SET used_at = ?
             WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?
@@ -223,6 +236,16 @@ export async function handleAuthRequest(request: Request, env: AccountEnv): Prom
   } catch {
     return json(503, { error: "account_auth_unavailable" });
   }
+}
+
+/** Server-internal adapter for already verified native requests. Never routed directly. */
+export async function handleVerifiedNativePasskeyRequest(request: Request, env: AccountEnv): Promise<Response> {
+  const originUrl = configuredOrigin(env, request);
+  if (!originUrl || originUrl.protocol !== "https:" || request.headers.get("origin") !== originUrl.origin) {
+    return json(403, { error: "untrusted_origin" });
+  }
+  try { return await createAuth(env, originUrl, true).handler(request); }
+  catch { return json(503, { error: "account_auth_unavailable" }); }
 }
 
 /** Resolves a live Better Auth session from its HttpOnly cookie. */

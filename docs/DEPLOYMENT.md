@@ -134,6 +134,14 @@ cf builds triggers list --external-script-id "$build_worker_tag"
 
 読み戻しでmain専用トリガーだけが残り、ブランチ条件・build/deployコマンドが維持されていることを確認します。続いてPRブランチへのpushで不要なCloudflare buildが起動しないことを確認します。既存の失敗チェックは過去のcommitの記録として残します。
 
+## iOS ネイティブ認証の公開前準備（Issue #240）
+
+Workerを更新する前に `0018_native_app_auth.sql` を適用してください。新しい定期清掃もこの表を参照するため、ネイティブ機能を無効にして公開する場合も必要です。本PRの担当エージェントは本番migration・deploy・秘密値の登録を行いません。WorkerとPWA配信に影響するため、利用者が準備とCI結果を確認してからマージします。
+
+`NATIVE_APP_TEAM_ID`、`NATIVE_APP_ID`、`NATIVE_APP_ORIGIN`、`NATIVE_APP_RP_ID`、`NATIVE_APP_ATTEST_ENVIRONMENT` は明示的なbuild変数からWorkerのtext bindingへ渡します。未設定ならnative APIは無効、AASAは404です。Team IDやApp ID prefixを推測しません。preview buildは `PREVIEW_NATIVE_APP_*` だけを読み、本番の値を継承しません。新しいprovider秘密鍵は不要です。
+
+署名Team、App Attest / Associated Domains capability、AASAの直接200応答、環境分離と実機の確認手順は[ネイティブ認証境界](NATIVE_APP_AUTH.md#8-利用者による準備実機確認)を参照してください。既存Webの認証・PWAの配信header・利用枠・費用停止は維持します。
+
 ## 手動の本番更新・復旧手順
 
 以下は人間による初回準備と復旧用です。通常の更新は上記Workers Buildsを使います。

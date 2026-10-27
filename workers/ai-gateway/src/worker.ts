@@ -66,7 +66,8 @@ function readPlan(value: unknown): Plan {
   if (value === "free" || value === "pro" || value === "family") return value;
   throw new Error("invalid_entitlement");
 }
-async function issueAiToken(userId: string, secret: string, now: number): Promise<string> {
+/** Server-only token minting; callers must resolve identity from verified credentials. */
+export async function issueAiToken(userId: string, secret: string, now: number): Promise<string> {
   const encode = (value: unknown) => btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(value)))).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   const head = encode({ alg: "HS256", typ: "JWT" });
   const payload = encode({ aud: "kakeimatch-ai", sub: userId, iat: now, exp: now + TOKEN_LIFETIME_SECONDS });

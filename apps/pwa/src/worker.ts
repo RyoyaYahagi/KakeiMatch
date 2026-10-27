@@ -4,8 +4,9 @@ import { requireAdmin, type AdminEnv } from '../../../workers/ai-gateway/src/adm
 import { handleAdminGatewayRequest } from '../../../workers/ai-gateway/src/worker';
 import { purgeExpiredFeedback } from '../../../workers/ai-gateway/src/feedback';
 import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
+import { appleAppSiteAssociation, handleNativeRequest, purgeNativeCredentials, type NativeEnv } from '../../../workers/ai-gateway/src/native-auth';
 
-type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1] & AdminEnv & {
+type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1] & AdminEnv & NativeEnv & {
   ASSETS: { fetch(request: Request): Promise<Response> };
 };
 
@@ -22,9 +23,12 @@ function secureApiResponse(response: Response): Response {
 const appWorker = {
   async scheduled(event: { scheduledTime: number }, env: AppEnv): Promise<void> {
     await purgeExpiredFeedback(env.ACCOUNT_DB, Math.floor(event.scheduledTime / 1000));
+    await purgeNativeCredentials(env.ACCOUNT_DB, Math.floor(event.scheduledTime / 1000));
   },
   async fetch(request: Request, env: AppEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (path === '/.well-known/apple-app-site-association') return secureApiResponse(appleAppSiteAssociation(request, env));
+    if (path.startsWith('/api/native/')) return secureApiResponse(await handleNativeRequest(request, env));
     if (path === '/admin' || path.startsWith('/admin/') || path === '/admin.html') {
       const auth = await requireAdmin(request, env);
       if ('response' in auth) return secureApiResponse(auth.response);
