@@ -46,6 +46,7 @@ struct HomeView: View {
     @State private var hasImportedStatements = false
     @State private var accounts: [String: String] = [:]
     @State private var selectedMonth: KMYearMonth?
+    @State private var budgetExpanded = false
     @State private var errorMessage: String?
     var onNavigate: (KMTab) -> Void = { _ in }
 
@@ -79,7 +80,7 @@ struct HomeView: View {
             Button { selectMonth(month.shifted(by: -1)) } label: { KMIcon(name: "chevronLeft").frame(width: 44, height: 44) }
                 .accessibilityLabel("前月へ").accessibilityIdentifier("home.month.previous")
             Spacer()
-            Text("\(month.year)年\(month.month)月").font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
+            Text(String(format: "%d年%d月", month.year, month.month)).font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
                 .accessibilityIdentifier("home.month.label")
             Spacer()
             Button { selectMonth(month.shifted(by: 1)) } label: { KMIcon(name: "chevronRight").frame(width: 44, height: 44) }
@@ -109,8 +110,8 @@ struct HomeView: View {
                     .accessibilityIdentifier("home.monthly.expense")
             }
             HStack(spacing: 0) {
-                totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income)
-                totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text)
+                totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
+                totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
                     .padding(.leading, KMSpacing.space3)
                     .overlay(alignment: .leading) { Rectangle().fill(KMColor.border).frame(width: 1) }
             }
@@ -119,10 +120,10 @@ struct HomeView: View {
         }
     }
 
-    private func totalCell(title: String, amount: Int, color: Color) -> some View {
+    private func totalCell(title: String, amount: Int, color: Color, showsPositiveSign: Bool) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space1) {
             Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted)
-            Text("\(amount > 0 ? "+" : amount < 0 ? "−" : "")\(KMAmountFormatter.yen(amount))")
+            Text("\(amount > 0 && showsPositiveSign ? "+" : amount < 0 ? "−" : "")\(KMAmountFormatter.yen(amount))")
                 .font(KMTypography.number(17, weight: .semibold)).foregroundStyle(color)
                 .lineLimit(1).minimumScaleFactor(0.75)
         }
@@ -134,71 +135,52 @@ struct HomeView: View {
         Group {
             if summary.budgetConfigured {
                 let scale = KMHomeBudgetScale.make(summary: summary, today: today)
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                        Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMAmountFormatter.yen(summary.spentYen)) / \(KMAmountFormatter.yen(summary.budgetYen))")
-                            .font(KMTypography.note).foregroundStyle(KMColor.muted)
-                        if summary.breakdownEnabled {
-                            ForEach(summary.categories.filter { $0.budgetYen != nil }) { category in
-                                HStack {
-                                    Text(category.categoryName).lineLimit(1)
-                                    Spacer()
-                                    Text("\(KMAmountFormatter.yen(category.spentYen)) / \(KMAmountFormatter.yen(category.budgetYen ?? 0))")
-                                        .font(KMTypography.number(12)).foregroundStyle(KMColor.muted)
-                                }.font(KMTypography.note)
+                VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                    Button { budgetExpanded.toggle() } label: {
+                        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                            HStack {
+                                Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))")
+                                Spacer()
+                                Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
+                                    .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
+                                KMIcon(name: "chevronRight").rotationEffect(.degrees(budgetExpanded ? 90 : 0))
+                                    .foregroundStyle(KMColor.muted)
                             }
-                        } else {
-                            Text("カテゴリ別の内訳は設定していません。")
-                                .font(KMTypography.note).foregroundStyle(KMColor.muted)
-                        }
-                        Button("この月の予算を変更") { onNavigate(.settings) }
-                            .font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
-                            .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
-                    }
-                    .padding(.top, KMSpacing.space2)
-                } label: {
-                    VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                        HStack {
-                            Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))")
-                            Spacer()
-                            Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
-                                .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
-                            Text("›")
-                        }
-                        .font(KMTypography.number(14, weight: .medium))
-                        .accessibilityLabel("\(summary.yearMonth.month)月の予算 \(KMAmountFormatter.yen(summary.budgetYen))、使用額 \(KMAmountFormatter.yen(summary.spentYen))、\(summary.remainingYen < 0 ? "超過" : "残り") \(KMAmountFormatter.yen(abs(summary.remainingYen)))")
-                        if summary.budgetYen > 0 {
-                            GeometryReader { geometry in
-                                ZStack(alignment: .leading) {
-                                    HStack(spacing: 2) {
-                                        ForEach(1...scale.dayCount, id: \.self) { day in
-                                            RoundedRectangle(cornerRadius: 2)
-                                                .fill(tickColor(day: day, scale: scale))
-                                                .frame(width: tickWidth(in: geometry.size.width, days: scale.dayCount), height: 26)
+                            .font(KMTypography.number(14, weight: .medium))
+                            .accessibilityLabel("\(summary.yearMonth.month)月の予算 \(KMAmountFormatter.yen(summary.budgetYen))、使用額 \(KMAmountFormatter.yen(summary.spentYen))、\(summary.remainingYen < 0 ? "超過" : "残り") \(KMAmountFormatter.yen(abs(summary.remainingYen)))")
+                            if summary.budgetYen > 0 {
+                                GeometryReader { geometry in
+                                    ZStack(alignment: .leading) {
+                                        HStack(spacing: 2) {
+                                            ForEach(1...scale.dayCount, id: \.self) { day in
+                                                RoundedRectangle(cornerRadius: 2)
+                                                    .fill(tickColor(day: day, scale: scale))
+                                                    .frame(width: tickWidth(in: geometry.size.width, days: scale.dayCount), height: 26)
+                                            }
+                                        }
+                                        if scale.elapsedDayCount > 0 && scale.elapsedDayCount < scale.dayCount {
+                                            Rectangle().fill(KMColor.text).frame(width: 2, height: 36)
+                                                .offset(x: geometry.size.width * CGFloat(scale.elapsedDayCount) / CGFloat(scale.dayCount) - 1)
                                         }
                                     }
-                                    if scale.elapsedDayCount > 0 && scale.elapsedDayCount < scale.dayCount {
-                                        Rectangle().fill(KMColor.text).frame(width: 2, height: 36)
-                                            .offset(x: geometry.size.width * CGFloat(scale.elapsedDayCount) / CGFloat(scale.dayCount) - 1)
-                                    }
                                 }
-                            }
-                            .frame(height: 36)
-                            .accessibilityHidden(true)
-                            if let gap = scale.paceDifferenceYen {
-                                HStack(spacing: 4) {
-                                    Text("1日")
-                                    Spacer(minLength: 0)
-                                    Text("今日\(scale.elapsedDayCount)日 · \(paceText(gap))").lineLimit(1).minimumScaleFactor(0.75)
-                                    Spacer(minLength: 0)
-                                    Text("\(scale.dayCount)日")
-                                }.font(KMTypography.body(12)).foregroundStyle(KMColor.muted)
+                                .frame(height: 36)
+                                .accessibilityHidden(true)
+                                if let gap = scale.paceDifferenceYen {
+                                    HStack(spacing: 4) {
+                                        Text("1日")
+                                        Spacer(minLength: 0)
+                                        Text("今日\(scale.elapsedDayCount)日 · \(paceText(gap))").lineLimit(1).minimumScaleFactor(0.75)
+                                        Spacer(minLength: 0)
+                                        Text("\(scale.dayCount)日")
+                                    }.font(KMTypography.body(12)).foregroundStyle(KMColor.muted)
+                                }
                             }
                         }
                     }
-                }
-                .tint(KMColor.muted)
-                .accessibilityIdentifier("home.budget")
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("home.budget")
+                    if budgetExpanded { budgetDetails(summary) }
             } else {
                 HStack {
                     Text("予算").foregroundStyle(KMColor.muted)
@@ -213,6 +195,30 @@ struct HomeView: View {
         }
         .padding(.vertical, KMSpacing.space2)
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    private func budgetDetails(_ summary: KMMonthlyBudgetSummary) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+            Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMAmountFormatter.yen(summary.spentYen)) / \(KMAmountFormatter.yen(summary.budgetYen))")
+                .font(KMTypography.note).foregroundStyle(KMColor.muted)
+            if summary.breakdownEnabled {
+                ForEach(summary.categories.filter { $0.budgetYen != nil }) { category in
+                    HStack {
+                        Text(category.categoryName).lineLimit(1)
+                        Spacer()
+                        Text("\(KMAmountFormatter.yen(category.spentYen)) / \(KMAmountFormatter.yen(category.budgetYen ?? 0))")
+                            .font(KMTypography.number(12)).foregroundStyle(KMColor.muted)
+                    }.font(KMTypography.note)
+                }
+            } else {
+                Text("カテゴリ別の内訳は設定していません。")
+                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
+            }
+            Button("この月の予算を変更") { onNavigate(.settings) }
+                .font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
+                .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+        }
+        .padding(.top, KMSpacing.space2)
     }
 
     private func tickColor(day: Int, scale: KMHomeBudgetScale) -> Color {
