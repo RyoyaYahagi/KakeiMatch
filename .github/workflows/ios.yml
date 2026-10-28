@@ -27,6 +27,8 @@ jobs:
   build:
     runs-on: macos-15
     timeout-minutes: 15
+    outputs:
+      shards: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
       # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
@@ -34,9 +36,12 @@ jobs:
       - name: Select Xcode and start simulator in background
         run: bash scripts/ci-simulator.sh start
       - name: Validate UI shard coverage
+        id: shards
         run: |
           node --test scripts/shard-ui-tests.test.mjs
-          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT"
+          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" > ui-shards.json
+          cat ui-shards.json
+          node -e 'const fs = require("node:fs"); const shards = JSON.parse(fs.readFileSync("ui-shards.json", "utf8")); console.log("matrix=" + JSON.stringify(shards.map((_, index) => index)))' >> "$GITHUB_OUTPUT"
       - name: Generate Xcode project
         run: |
           # Official universal binary; pin both the version and release asset digest.
@@ -125,7 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: ${{ fromJSON(needs.build.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode and start simulator in background
@@ -198,3 +203,32 @@ jobs:
         run: |
           echo "$NEEDS_JSON"
           jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ios-reference-screenshots-shard-*
+          path: screenshot-shards
+      - name: Combine screenshots for existing download commands
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil
+          shards = sorted(pathlib.Path('screenshot-shards').iterdir())
+          assert len(shards) == int(os.environ['UI_SHARD_COUNT']), 'Missing screenshot shard'
+          output = pathlib.Path('screenshots')
+          output.mkdir()
+          manifest = []
+          for shard in shards:
+              entries = json.loads((shard / 'manifest.json').read_text())
+              assert isinstance(entries, list), 'Expected an attachment manifest array'
+              manifest.extend(entries)
+              for source in shard.glob('*.png'):
+                  target = output / source.name
+                  assert not target.exists(), f'Duplicate screenshot: {source.name}'
+                  shutil.copyfile(source, target)
+          (output / 'manifest.json').write_text(json.dumps(manifest))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-reference-screenshots
+          path: screenshots
+          if-no-files-found: error
+          retention-days: 14

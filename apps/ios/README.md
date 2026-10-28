@@ -34,7 +34,7 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 [`ios.yml`](../../.github/workflows/ios.yml) は1回の `build-for-testing` の成果物を共有し、Swift Testingと3つのUIテストジョブを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
-UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスを自動検出し、過去の実測時間が長いクラスから見積時間の短いshard（分割先）へ割り当てます。未計測のクラスは60秒として扱います。各クラスがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいクラスを手作業で一覧に追加する必要はありません。
+UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスを自動検出し、過去の実測時間が長いクラスから見積時間の短いshard（分割先）へ割り当てます。未計測のクラスは60秒として扱います。各クラスがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいクラスを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
 
 artifact（CIの保存成果物）は次のとおりです。
 
@@ -44,10 +44,11 @@ artifact（CIの保存成果物）は次のとおりです。
 | `ios-build-results` | `Build.xcresult` | 14日 |
 | `ios-test-results` | Swift Testingの `UnitTests.xcresult`（従来の全結果から対象を変更） | 14日 |
 | `ios-test-results-shard-0`〜`2` | 各shardの `UITests.xcresult` とクラス割り当て `shard-tests.txt` | 14日 |
-| `ios-reference-screenshots-shard-0`〜`2` | 各shardのPNGと `manifest.json`（従来の `ios-reference-screenshots` を分割） | 14日 |
+| `ios-reference-screenshots-shard-0`〜`2` | 各shardのPNGと `manifest.json` | 14日 |
+| `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。全テスト成功時に作成 | 14日 |
 | `parity-report` | Swift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
 
-全スクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗時も各ジョブのxcresultと取得できた添付を保存します。
+成功した実行では、従来どおり `gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` で全PNGと統合manifestを取得できます。失敗した実行のスクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗時も各ジョブのxcresultと取得できた添付を保存します。
 
 DEBUGビルドだけ `KM_UI_TEST_APPEARANCE=light|dark` を受け付け、UIテストでOS設定を変えずに外観を固定します。通常起動とReleaseはシステム設定に従います。
 
