@@ -1,0 +1,83 @@
+import Foundation
+
+struct KMSettingsRow: Identifiable, Equatable {
+    enum Destination: Equatable {
+        case unimplemented
+        case theme
+        case screenLock
+    }
+
+    let id: String
+    let title: String
+    var value: String? = nil
+    var isDestructive = false
+    var destination: Destination = .unimplemented
+}
+
+struct KMSettingsSection: Identifiable, Equatable {
+    let title: String
+    let rows: [KMSettingsRow]
+    var id: String { title }
+}
+
+/// PWA settings labels, ordering, and display conditions without view or storage access.
+enum KMSettingsPresentation {
+    static let themePreferenceKey = "kakeimatch.theme.preference"
+    static let screenLockEnabledKey = "kakeimatch.screen-lock.enabled"
+    static let screenLockRequestNotificationName = "KakeiMatch.screen-lock.request"
+    static let backupReminderAge: TimeInterval = 30 * 24 * 60 * 60
+
+    static let backupReminder = "△ 復旧に備えてバックアップを書き出してください。目安は最終書き出しから30日です。"
+    static let settingsFooter = "家計簿と画像はこの端末に保存されます。ログアウトしても消えません。"
+
+    static func themeLabel(_ preference: KMThemePreference) -> String {
+        switch preference {
+        case .light: "ライト"
+        case .dark: "ダーク"
+        case .system: "システム"
+        }
+    }
+
+    static func screenLockLabel(isEnabled: Bool) -> String { isEnabled ? "オン" : "オフ" }
+
+    static func screenLockStatus(isEnabled: Bool) -> String {
+        isEnabled
+            ? "有効です。解除にはこの端末のFace IDまたはパスコードを使います。設定はこの端末だけに保存されています。"
+            : "無効です。設定や復旧で家計データは削除されません。"
+    }
+
+    /// Mirrors shouldRemindLocalExport: missing/invalid timestamps remind; future timestamps do not.
+    static func shouldRemindBackup(lastExportAt: Date?, now: Date) -> Bool {
+        guard let lastExportAt else { return true }
+        let exported = lastExportAt.timeIntervalSince1970
+        let current = now.timeIntervalSince1970
+        guard exported.isFinite, current.isFinite else { return true }
+        guard exported <= current else { return false }
+        return current - exported >= backupReminderAge
+    }
+
+    static func sections(theme: KMThemePreference, screenLockEnabled: Bool) -> [KMSettingsSection] {
+        [
+            KMSettingsSection(title: "家計簿", rows: [
+                .init(id: "settings.categoryRules", title: "分類ルール"),
+                .init(id: "settings.categories", title: "カテゴリ"),
+                .init(id: "settings.accounts", title: "支払元"),
+                .init(id: "settings.budget", title: "予算設定"),
+                .init(id: "settings.recurring", title: "定期登録"),
+            ]),
+            KMSettingsSection(title: "データ", rows: [
+                .init(id: "settings.backup", title: "バックアップと復元"),
+                .init(id: "settings.screenLock", title: "画面ロック", value: screenLockLabel(isEnabled: screenLockEnabled), destination: .screenLock),
+                .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
+            ]),
+            KMSettingsSection(title: "写真の読み取り", rows: [
+                .init(id: "settings.aiUsage", title: "ログイン・利用状況"),
+            ]),
+            KMSettingsSection(title: "アプリ", rows: [
+                .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),
+                .init(id: "settings.contact", title: "お問い合わせ", value: "声でも送れます"),
+                .init(id: "settings.appInfo", title: "アプリ情報", value: "診断・ライセンス"),
+            ]),
+        ]
+    }
+}
