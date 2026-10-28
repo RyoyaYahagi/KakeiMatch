@@ -53,7 +53,7 @@ struct KMBottomNavigation: View {
         // bar's glassEffect lets the bar's specular edge cross the FAB.
         .background(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         .background {
-            Color.clear.glassEffect(.regular, in: Rectangle()).accessibilityHidden(true)
+            Color.clear.glassEffect(.regular, in: Rectangle()).ignoresSafeArea(edges: .bottom).accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("アプリ")
