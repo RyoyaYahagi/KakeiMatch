@@ -6,6 +6,7 @@ private enum KMSettingsPage {
     case theme
     case screenLock
     case budget
+    case contact
 }
 
 struct SettingsView: View {
@@ -31,11 +32,10 @@ struct SettingsView: View {
             case .theme: themePage
             case .screenLock: screenLockPage
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
+            case .contact: ContactView(onBackToSettings: { page = .root })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("settings.screen")
         .task { if !model.loaded { await model.load(repositories) } }
     }
 
@@ -90,6 +90,8 @@ struct SettingsView: View {
                 .padding(.vertical, KMSpacing.space4)
                 .accessibilityIdentifier("settings.footer")
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("settings.screen")
     }
 
     private func settingsRow(_ row: KMSettingsRow) -> some View {
@@ -98,6 +100,7 @@ struct SettingsView: View {
             case .theme: page = .theme
             case .screenLock: page = .screenLock
             case .budget: page = .budget
+            case .contact: page = .contact
             case .unimplemented: break
             }
         } label: {
