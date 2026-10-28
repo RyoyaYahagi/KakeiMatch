@@ -30,6 +30,7 @@ final class KMReceiptModel {
     var error: String?
     var status: String?
     var startedReading = Date()
+    @ObservationIgnored private var requiresExistingReceipt = false
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
@@ -38,6 +39,7 @@ final class KMReceiptModel {
 
     init(api: KMWorkerAPI? = nil) { self.api = api }
 
+    var canSave: Bool { !loading && (!requiresExistingReceipt || receipt != nil) }
     var isReading: Bool { phase == .reading || phase == .categorizing }
     var warnings: [KMReceiptPresentation.Warning] { KMReceiptPresentation.warnings(receipt?.extraction, reviewed: reviewed) }
     var totalResult: Result<KMReceiptPresentation.TotalCheck?, Error> {
@@ -55,6 +57,7 @@ final class KMReceiptModel {
     func load(_ repositories: KMRepositories?, receiptID: String?) async {
         guard loading else { return }
         self.repositories = repositories
+        requiresExistingReceipt = receiptID != nil
         defer { loading = false }
         guard let repositories else { error = "家計簿を読み込めません。アプリを開き直してください。"; return }
         do {
@@ -212,9 +215,13 @@ final class KMReceiptModel {
                 phase = .idle
             } catch {
                 guard revision == token, !Task.isCancelled else { return }
-                let failure = error as? KMAPIError ?? .network
-                phase = .failed(failure)
-                self.error = KMReceiptPresentation.failureMessage(failure)
+                if let failure = error as? KMAPIError {
+                    phase = .failed(failure)
+                    self.error = KMReceiptPresentation.failureMessage(failure)
+                } else {
+                    phase = .idle
+                    self.error = error.localizedDescription
+                }
             }
         }
         return operation
@@ -237,7 +244,7 @@ final class KMReceiptModel {
     }
 
     func save() async {
-        guard !saving, !didSave, !isReading, let repositories else { return }
+        guard canSave, !saving, !didSave, !isReading, let repositories else { return }
         saving = true; error = nil
         defer { saving = false }
         await reviewTask?.value

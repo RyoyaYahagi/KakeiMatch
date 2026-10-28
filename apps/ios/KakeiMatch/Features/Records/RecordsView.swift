@@ -144,6 +144,7 @@ struct RecordsView: View {
                 HStack(spacing: 2) { KMIcon(name: "chevronLeft", size: 20); Text("記録一覧へ戻る") }
             }
                 .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.pendingBackButton")
+                .padding(.horizontal, KMSpacing.space4)
             if let receipt = model.selectedReceipt {
                 ReceiptView(receiptID: receipt.id, onSaved: { Task { await model.showList() } })
             }

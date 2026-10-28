@@ -65,7 +65,7 @@ struct ReceiptView: View {
                             .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
                     }
                     .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
-                    .disabled(model.saving || model.loading)
+                    .disabled(model.saving || !model.canSave)
                 }
             }
             .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
@@ -143,7 +143,7 @@ struct ReceiptView: View {
             if let data = model.imageData, let image = UIImage(data: data) {
                 GeometryReader { geometry in
                     let ratio = image.size.width / image.size.height
-                    let width = min(geometry.size.width, 280 * ratio)
+                    let width = max(0, min(geometry.size.width, 280 * ratio))
                     Button { showsImage = true } label: {
                         Image(uiImage: image).resizable().scaledToFit()
                             .frame(width: width, height: width / ratio)

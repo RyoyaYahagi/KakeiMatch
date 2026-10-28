@@ -56,6 +56,10 @@ final class ReceiptFlowTests: XCTestCase {
             if scenario == "failure" {
                 XCTAssertTrue(app.buttons["receipt.manualButton"].exists)
                 XCTAssertFalse(app.buttons["receipt.retryButton"].exists)
+                let scroll = app.scrollViews.firstMatch
+                scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)).press(forDuration: 0.01,
+                    thenDragTo: scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4)))
+                XCTAssertTrue(app.staticTexts["! 写真から読み取れませんでした"].isHittable)
             }
             capture(app, "receipt-\(scenario)-\(appearance)")
             if scenario == "result" {

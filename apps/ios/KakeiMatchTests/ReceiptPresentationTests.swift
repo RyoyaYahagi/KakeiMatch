@@ -231,3 +231,36 @@ extension ReceiptModelTests {
         #expect(try await repositories.receipts.receipt(id: id)?.registration.status == .applied)
     }
 }
+
+
+extension ReceiptModelTests {
+    @Test func changedReceiptIsNotOverwrittenOrReportedAsNetworkFailure() async throws {
+        let response = #"{"documentKind":"unknown","merchant":null,"purchasedDate":null,"purchasedTime":null,"totalAmountYen":null,"taxAmountYen":null,"items":[],"warnings":[]}"#
+        let (model, repositories) = try await readingModel(response: response)
+        var changed = try #require(model.receipt)
+        let extraction = changed.extraction
+        changed.updatedAt = changed.updatedAt.addingTimeInterval(1)
+        try await repositories.receipts.saveReceipt(changed)
+        await model.startReading()?.value
+        #expect(model.phase == .idle)
+        #expect(model.error?.contains("レシートが変更されています") == true)
+        #expect(try await repositories.receipts.receipt(id: changed.id)?.extraction == extraction)
+    }
+}
+
+
+extension ReceiptModelTests {
+    @Test func missingPendingReceiptCannotCreateAnUnrelatedNewReceipt() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        let before = try await repositories.receipts.receipts().count
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: "missing-synthetic-receipt")
+        model.merchant = "合成手入力"; model.amount = "123"
+        model.categoryId = try #require(model.categories.first?.id)
+        model.accountId = try #require(model.accounts.first?.id)
+        #expect(!model.canSave)
+        await model.save()
+        #expect(!model.didSave)
+        #expect(try await repositories.receipts.receipts().count == before)
+    }
+}
