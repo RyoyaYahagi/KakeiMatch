@@ -34,6 +34,8 @@ import Testing
         #expect(scale("2026-11").elapsedDayCount == 0)
         #expect(scale("2026-09").paceDifferenceYen == nil)
         #expect(scale("2028-02").dayCount == 29)
+        // PWA evaluates 31 / 58 * 29 just below 15.5 in binary64.
+        #expect(scale("2028-02", budget: 58, spent: 31).filledDayCount == 15)
         #expect(scale("2026-02").dayCount == 28)
         #expect(scale("2026-10", budget: 0, spent: 0).filledDayCount == 0)
         #expect(scale("2026-10", budget: 0, spent: 1).isOverBudget)
@@ -64,6 +66,10 @@ import Testing
         #expect(KMHomeCategoryBreakdown.percentage(1, total: 3) == "33.3%")
         #expect(KMHomeCategoryBreakdown.percentage(2, total: 3) == "66.7%")
         #expect(KMHomeCategoryBreakdown.percentage(1, total: 16) == "6.3%")
+        // Golden values from (amount / total * 100).toFixed(1), not rational rounding.
+        #expect(KMHomeCategoryBreakdown.percentage(3, total: 2000) == "0.1%")
+        #expect(KMHomeCategoryBreakdown.percentage(-3, total: 2000) == "-0.1%")
+        #expect(KMHomeCategoryBreakdown.percentage(9, total: 2000) == "0.4%")
         #expect(KMHomeCategoryBreakdown.percentage(0, total: 1) == "0.0%")
         #expect(KMHomeCategoryBreakdown.percentage(-1, total: 4) == "-25.0%")
         #expect(KMHomeCategoryBreakdown.percentage(-1, total: 100_000) == "-0.0%")

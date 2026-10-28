@@ -78,9 +78,9 @@ struct KMHomeBudgetScale: Equatable {
         else { elapsed = Int(today.rawValue.suffix(2)) ?? 0 }
         let over = summary.remainingYen < 0
         let filled = summary.budgetYen > 0
-            ? min(days, max(0, rounded(Decimal(summary.spentYen) * Decimal(days) / Decimal(summary.budgetYen)))) : 0
+            ? min(days, max(0, rounded((KMJSNumber(summary.spentYen) / KMJSNumber(summary.budgetYen) * KMJSNumber(days)).decimalApproximation))) : 0
         let gap: Int? = summary.yearMonth == today.yearMonth && !over && summary.budgetYen > 0
-            ? summary.spentYen - rounded(Decimal(summary.budgetYen) * Decimal(elapsed) / Decimal(days)) : nil
+            ? summary.spentYen - rounded((KMJSNumber(summary.budgetYen) * KMJSNumber(elapsed) / KMJSNumber(days)).decimalApproximation) : nil
         return Self(dayCount: days, filledDayCount: over ? days : filled, elapsedDayCount: elapsed,
                     paceDifferenceYen: gap, isOverBudget: over)
     }
@@ -130,7 +130,9 @@ enum KMHomeCategoryBreakdown {
 
     static func percentage(_ amount: Int, total: Int) -> String {
         guard total != 0 else { return "0.0%" }
-        var tenths = Decimal(amount) * 1000 / Decimal(total)
+        // Preserve JS's operation order and binary64 result before toFixed(1).
+        // KMJSNumber simulates that arithmetic with integers; yen never pass through Double.
+        var tenths = (KMJSNumber(amount) / KMJSNumber(total) * KMJSNumber(100)).decimalApproximation * 10
         var rounded = Decimal()
         NSDecimalRound(&rounded, &tenths, 0, .plain)
         let value = NSDecimalNumber(decimal: rounded).intValue
