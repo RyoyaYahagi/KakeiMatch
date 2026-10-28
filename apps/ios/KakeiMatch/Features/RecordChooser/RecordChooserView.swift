@@ -25,7 +25,7 @@ enum KMEntryDestination: String, CaseIterable {
     }
 }
 
-/// The entry destinations are placeholders in this foundation; no camera, storage or API yet.
+/// Entry destinations share the current household repositories.
 struct RecordChooserView: View {
     let choose: (KMEntryDestination) -> Void
     var body: some View {

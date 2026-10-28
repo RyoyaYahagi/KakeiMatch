@@ -25,15 +25,19 @@ struct RecordsView: View {
             case .list: list
             case .search: KMRecordsSearchView(model: model)
             case .detail: KMRecordDetailView(model: model)
-            case .pending: pendingDetail
+            case .pending: EmptyView()
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("records.screen")
         .task { await model.configure(repositories) }
+        .fullScreenCover(isPresented: Binding(get: { model.page == .pending }, set: { if !$0 { Task { await model.showList() } } })) {
+            pendingDetail.background(KMColor.bg)
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
             pendingToDelete = nil
+            if model.page == .pending { Task { await model.showList() } }
         }
         .confirmationDialog("「\(pendingToDelete.map(KMRecordsPresentation.pendingTitle) ?? "")」を削除しますか？このレシート画像と確認待ちの内容も削除されます。",
             isPresented: Binding(get: { pendingToDelete != nil }, set: { if !$0 { pendingToDelete = nil } }), titleVisibility: .visible) {
@@ -133,18 +137,16 @@ struct RecordsView: View {
         }.disabled(model.busy)
     }
 
-    // Receipt entry/AI/item editing belongs to the independent receipt-screen PR.
+    // Pending receipts reuse the same editor as the add menu.
     private var pendingDetail: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Button { Task { await model.showList() } } label: {
                 HStack(spacing: 2) { KMIcon(name: "chevronLeft", size: 20); Text("記録一覧へ戻る") }
             }
-                .buttonStyle(KMButtonStyle(role: .text))
-            Text("確認待ち").font(KMTypography.heading)
+                .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.pendingBackButton")
+                .padding(.horizontal, KMSpacing.space4)
             if let receipt = model.selectedReceipt {
-                Text(KMRecordsPresentation.pendingTitle(receipt))
-                Text("確認待ちの内容は保存されています。登録する入力画面は、今後の更新で利用できます。")
-                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                ReceiptView(receiptID: receipt.id, onSaved: { Task { await model.showList() } })
             }
         }
     }

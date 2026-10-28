@@ -36,6 +36,7 @@ targets:
         DEVELOPMENT_TEAM: $(KM_DEVELOPMENT_TEAM)
         INFOPLIST_KEY_KMNativeAPIHost: $(KM_NATIVE_HOST)
         INFOPLIST_KEY_CFBundleDisplayName: KakeiMatch
+        INFOPLIST_KEY_NSCameraUsageDescription: レシートを撮影して支出の入力に使います。
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
