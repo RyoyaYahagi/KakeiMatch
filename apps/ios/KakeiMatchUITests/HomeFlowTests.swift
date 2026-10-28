@@ -28,8 +28,38 @@ final class HomeFlowTests: XCTestCase {
                 attachment.name = "home-\(state.name)-\(appearance)"
                 attachment.lifetime = .keepAlways
                 add(attachment)
+                if state.fixture == "reconciliation" {
+                    app.swipeUp()
+                    let categories = app.buttons["home.categories.all"]
+                    XCTAssertTrue(categories.isHittable)
+                    XCTAssertLessThan(categories.frame.maxY, app.buttons["home-tab"].frame.minY)
+                    let scrolled = XCTAttachment(screenshot: app.screenshot())
+                    scrolled.name = "home-attention-scrolled-\(appearance)"
+                    scrolled.lifetime = .keepAlways
+                    add(scrolled)
+                }
             }
         }
+    }
+
+    @MainActor
+    func testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP", "-UITestFixture", "populated"]
+        app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = "light"
+        app.launch()
+        XCTAssertTrue(app.buttons["home.month.previous"].waitForExistence(timeout: 10))
+        app.buttons["home.month.previous"].tap()
+        XCTAssertTrue(app.buttons["home.month.current"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["この月の支出はありません。"].waitForExistence(timeout: 5))
+        app.buttons["home.month.current"].tap()
+        let categories = app.buttons["home.categories.all"]
+        XCTAssertTrue(categories.waitForExistence(timeout: 5))
+        app.swipeUp()
+        XCTAssertTrue(categories.isHittable)
+        XCTAssertLessThan(categories.frame.maxY, app.buttons["home-tab"].frame.minY)
+        categories.tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "·")).firstMatch.exists)
     }
 
     @MainActor

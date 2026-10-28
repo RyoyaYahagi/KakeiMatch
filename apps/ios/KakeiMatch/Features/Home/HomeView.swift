@@ -1,49 +1,12 @@
 import SwiftUI
 
-private struct KMHomeAttentionItem: Identifiable {
-    var id: String
-    var merchant: String
-    var amountYen: Int
-    var status: KMStatus
-    var reason: String
-}
-
-/// Presentation-only day scale from the budget summary; monetary totals come from repositories.
-struct KMHomeBudgetScale: Equatable {
-    var dayCount: Int
-    var filledDayCount: Int
-    var elapsedDayCount: Int
-    var paceDifferenceYen: Int?
-    var isOverBudget: Bool
-
-    static func make(summary: KMMonthlyBudgetSummary, today: KMDate) -> Self {
-        let days = summary.yearMonth.daysInMonth
-        let elapsed: Int
-        if summary.yearMonth < today.yearMonth { elapsed = days }
-        else if summary.yearMonth > today.yearMonth { elapsed = 0 }
-        else { elapsed = Int(today.rawValue.suffix(2)) ?? 0 }
-        let over = summary.remainingYen < 0
-        var filledRatio = (summary.usageRatio ?? 0) * Decimal(days)
-        var roundedFilled = Decimal()
-        NSDecimalRound(&roundedFilled, &filledRatio, 0, .plain)
-        let filled = over ? days : min(days, max(0, NSDecimalNumber(decimal: roundedFilled).intValue))
-        var paceTarget = Decimal(summary.budgetYen) * Decimal(elapsed) / Decimal(days)
-        var roundedPaceTarget = Decimal()
-        NSDecimalRound(&roundedPaceTarget, &paceTarget, 0, .plain)
-        let gap: Int? = summary.yearMonth == today.yearMonth && !over && summary.budgetYen > 0
-            ? summary.spentYen - NSDecimalNumber(decimal: roundedPaceTarget).intValue : nil
-        return Self(dayCount: days, filledDayCount: filled, elapsedDayCount: elapsed,
-                    paceDifferenceYen: gap, isOverBudget: over)
-    }
-}
-
 struct HomeView: View {
     @Environment(\.repositories) private var repositories
     @State private var snapshot: KMHomeSnapshot?
     @State private var attentionItems: [KMHomeAttentionItem] = []
     @State private var attentionCount = 0
     @State private var matchedCount = 0
-    @State private var hasImportedStatements = false
+    @State private var showsImportHint = true
     @State private var accounts: [String: String] = [:]
     @State private var selectedMonth: KMYearMonth?
     @State private var budgetExpanded = false
@@ -70,33 +33,37 @@ struct HomeView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, KMSpacing.space2)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.screen")
         .task(id: selectedMonth?.rawValue) { await load() }
     }
 
     private func monthSelector(_ month: KMYearMonth) -> some View {
-        HStack {
-            Button { selectMonth(month.shifted(by: -1)) } label: { KMIcon(name: "chevronLeft").frame(width: 44, height: 44) }
+        VStack(spacing: KMSpacing.space1) {
+            HStack {
+                Button { selectMonth(month.shifted(by: -1)) } label: {
+                    KMIcon(name: "chevronLeft", size: 20).frame(width: 44, height: 44).background(KMColor.surface, in: Circle())
+                }
                 .accessibilityLabel("前月へ").accessibilityIdentifier("home.month.previous")
-            Spacer()
-            Text(String(format: "%d年%d月", month.year, month.month)).font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
-                .accessibilityIdentifier("home.month.label")
-            Spacer()
-            Button { selectMonth(month.shifted(by: 1)) } label: { KMIcon(name: "chevronRight").frame(width: 44, height: 44) }
+                Spacer()
+                Text(String(format: "%d年%d月", month.year, month.month))
+                    .font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
+                    .accessibilityIdentifier("home.month.label")
+                Spacer()
+                Button { selectMonth(month.shifted(by: 1)) } label: {
+                    KMIcon(name: "chevronRight", size: 20).frame(width: 44, height: 44).background(KMColor.surface, in: Circle())
+                }
                 .accessibilityLabel("翌月へ").accessibilityIdentifier("home.month.next")
-        }
-        .buttonStyle(.plain).foregroundStyle(KMColor.text)
-        .frame(height: KMLayout.minimumHit)
-        .overlay(alignment: .bottom) {
+            }
+            .buttonStyle(.plain).foregroundStyle(KMColor.text)
+            .frame(height: KMLayout.minimumHit)
             if let repositories, month != KMDate(instant: repositories.referenceDate).yearMonth {
                 Button("当月へ戻る") { selectMonth(KMDate(instant: repositories.referenceDate).yearMonth) }
-                    .font(KMTypography.note).foregroundStyle(KMColor.primary).offset(y: 22)
+                    .font(KMTypography.note).foregroundStyle(KMColor.primary)
+                    .frame(minHeight: KMLayout.minimumHit)
                     .accessibilityIdentifier("home.month.current")
             }
         }
-        .padding(.bottom, 4)
     }
 
     private func selectMonth(_ month: KMYearMonth) { selectedMonth = month }
@@ -106,8 +73,9 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(summary.yearMonth == currentMonth ? "今月の支出" : "支出")
                     .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
-                KMAmount(yen: -summary.expenseYen, size: 40)
-                    .font(KMTypography.number(40, weight: .bold))
+                Text(KMAmountFormatter.yen(summary.expenseYen))
+                    .font(KMTypography.number(42, weight: .bold)).tracking(-1.68)
+                    .foregroundStyle(KMColor.text)
                     .accessibilityIdentifier("home.monthly.expense")
             }
             HStack(spacing: 0) {
@@ -140,14 +108,13 @@ struct HomeView: View {
                     Button { budgetExpanded.toggle() } label: {
                         VStack(alignment: .leading, spacing: KMSpacing.space2) {
                             HStack {
-                                Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))")
+                                Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))").foregroundStyle(KMColor.muted)
                                 Spacer()
                                 Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
                                     .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
-                                KMIcon(name: "chevronRight").rotationEffect(.degrees(budgetExpanded ? 90 : 0))
-                                    .foregroundStyle(KMColor.muted)
+                                Text("›").foregroundStyle(KMColor.muted)
                             }
-                            .font(KMTypography.number(14, weight: .medium))
+                            .font(KMTypography.number(14, weight: .regular))
                             .accessibilityLabel("\(summary.yearMonth.month)月の予算 \(KMAmountFormatter.yen(summary.budgetYen))、使用額 \(KMAmountFormatter.yen(summary.spentYen))、\(summary.remainingYen < 0 ? "超過" : "残り") \(KMAmountFormatter.yen(abs(summary.remainingYen)))")
                             if summary.budgetYen > 0 {
                                 GeometryReader { geometry in
@@ -161,11 +128,11 @@ struct HomeView: View {
                                         }
                                         if scale.elapsedDayCount > 0 && scale.elapsedDayCount < scale.dayCount {
                                             Rectangle().fill(KMColor.text).frame(width: 2, height: 36)
-                                                .offset(x: geometry.size.width * CGFloat(scale.elapsedDayCount) / CGFloat(scale.dayCount) - 1)
+                                                .offset(x: geometry.size.width * CGFloat(scale.elapsedDayCount) / CGFloat(scale.dayCount) - 1, y: -5)
                                         }
                                     }
                                 }
-                                .frame(height: 36)
+                                .frame(height: 26)
                                 .accessibilityHidden(true)
                                 if let gap = scale.paceDifferenceYen {
                                     HStack(spacing: 4) {
@@ -243,40 +210,53 @@ struct HomeView: View {
             if attentionCount > 0 {
                 VStack(spacing: 0) {
                     HStack {
-                        Text("確認すること").font(KMTypography.body(16, weight: .bold)).foregroundStyle(KMColor.text)
+                        Text("確認すること").font(KMTypography.body(15, weight: .black)).foregroundStyle(KMColor.text)
                             .accessibilityAddTraits(.isHeader)
                         Text("\(attentionCount)").font(KMTypography.number(13, weight: .bold))
                             .foregroundStyle(KMColor.warning).padding(.horizontal, 8).padding(.vertical, 4)
                             .background(KMColor.warningSoft, in: Capsule())
                             .accessibilityLabel("\(attentionCount)件")
                         Spacer()
-                        Button("照合へ") { onNavigate(.reconciliation) }
-                            .font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
-                            .accessibilityIdentifier("home.attention.open")
+                        Button { onNavigate(.reconciliation) } label: {
+                            Text("照合へ").font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
+                                .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit).contentShape(Rectangle())
+                        }
+                        .accessibilityIdentifier("home.attention.open")
                     }
-                    .padding(.bottom, KMSpacing.space2)
-                    ForEach(Array(attentionItems.prefix(3))) { item in
+                    .frame(minHeight: 48)
+                    .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+                    ForEach(attentionItems) { item in
                         Button { onNavigate(.reconciliation) } label: {
                             HStack(spacing: KMSpacing.space3) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.merchant).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
-                                    KMStatusLabel(status: item.status, message: item.reason)
+                                    HStack(spacing: KMSpacing.space1) {
+                                        Text(item.status.symbol).font(KMTypography.body(11, weight: .black))
+                                            .foregroundStyle(item.status.foreground).frame(width: 18, height: 18)
+                                            .background(item.status.background, in: Circle())
+                                        Text(item.reason).font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted).lineLimit(1)
+                                    }
                                 }
                                 Spacer(minLength: KMSpacing.space2)
                                 KMAmount(yen: item.amountYen, size: 15)
                             }
-                            .padding(.vertical, KMSpacing.space2)
+                            .frame(minHeight: 60)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+                        .overlay(alignment: .bottom) {
+                            if item.id != attentionItems.last?.id { Rectangle().fill(KMColor.border).frame(height: 1) }
+                        }
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(item.merchant) · \(item.reason) · \(KMAmountFormatter.yen(item.amountYen))")
                         .accessibilityIdentifier("home.attention.row.\(item.id)")
                     }
                 }
-                .padding(KMSpacing.space4)
+                .padding(.horizontal, KMSpacing.space4)
+                .padding(.vertical, KMSpacing.space1)
                 .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
                 .overlay(RoundedRectangle(cornerRadius: KMRadius.xl).stroke(KMColor.border, lineWidth: 1))
-            } else if !hasImportedStatements {
+            } else if showsImportHint {
                 Button { onNavigate(.reconciliation) } label: {
                     HStack {
                         Text("明細を取り込んで自動で照合する")
@@ -284,7 +264,7 @@ struct HomeView: View {
                         KMIcon(name: "chevronRight")
                     }
                     .font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.primary)
-                    .frame(minHeight: 56)
+                    .frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("home.statement-import-hint")
@@ -303,11 +283,12 @@ struct HomeView: View {
 
     private func categoryBreakdown(_ summary: KMMonthlySummary) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
-            Text("支出の内訳").font(KMTypography.heading).foregroundStyle(KMColor.text)
+            Text("支出の内訳").font(KMTypography.body(15, weight: .bold)).foregroundStyle(KMColor.text)
                 .accessibilityAddTraits(.isHeader)
             categoryContent(summary)
-            allCategories(summary)
+            if !KMHomeCategoryBreakdown.make(summary).isEmpty { allCategories(summary) }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, KMSpacing.space4)
         .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
@@ -318,50 +299,38 @@ struct HomeView: View {
             Text("この月の支出はありません。")
                 .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
         } else {
-            let positive = summary.categories.filter { $0.amountYen > 0 }
-            let top = Array(positive.prefix(3))
-            let remainder = positive.dropFirst(3).reduce(0) { $0 + $1.amountYen }
-            if top.isEmpty {
+            let slices = KMHomeCategoryBreakdown.make(summary)
+            if slices.isEmpty {
                 Text("この月は返金・調整だけです。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
             } else {
-                categoryChart(categories: top, remainder: remainder,
-                              positiveTotal: positive.reduce(0) { $0 + $1.amountYen }, expenseTotal: summary.expenseYen)
+                categoryChart(slices)
             }
         }
     }
 
-    private func categoryChart(categories: [KMMonthlyCategory], remainder: Int, positiveTotal: Int, expenseTotal: Int) -> some View {
+    private func categoryChart(_ slices: [KMHomeCategorySlice]) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             GeometryReader { geometry in
-                let sliceCount = categories.count + (remainder > 0 ? 1 : 0)
-                let availableWidth = max(0, geometry.size.width - CGFloat(max(0, sliceCount - 1) * 2))
+                let availableWidth = max(0, geometry.size.width - CGFloat(max(0, slices.count - 1) * 2))
                 HStack(spacing: 2) {
-                    ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
-                        let width = availableWidth * CGFloat(category.amountYen) / CGFloat(positiveTotal)
-                        Rectangle().fill(KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground)
-                            .frame(width: width)
-                    }
-                    if remainder > 0 {
-                        let width = availableWidth * CGFloat(remainder) / CGFloat(positiveTotal)
-                        Rectangle().fill(KMColor.cOther).frame(width: width)
+                    ForEach(Array(slices.enumerated()), id: \.offset) { _, slice in
+                        Rectangle().fill(slice.tone?.foreground ?? KMColor.cOtherSoft)
+                            .frame(width: availableWidth * CGFloat(NSDecimalNumber(decimal: slice.share).doubleValue))
                     }
                 }
             }
             .frame(height: 12).clipShape(Capsule())
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("支出の内訳：" + categories.map { "\($0.categoryName) \(percentage($0.amountYen, total: expenseTotal))" }.joined(separator: "、"))
-            categoryLegends(categories: categories, remainder: remainder, expenseTotal: expenseTotal)
-        }
-    }
-
-    private func categoryLegends(categories: [KMMonthlyCategory], remainder: Int, expenseTotal: Int) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: KMSpacing.space2) {
-            ForEach(Array(categories.enumerated()), id: \.offset) { _, category in
-                let tone = KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone.foreground
-                categoryLegend(name: category.categoryName, amount: category.amountYen, total: expenseTotal, tone: tone)
-            }
-            if remainder > 0 {
-                categoryLegend(name: "その他", amount: remainder, total: expenseTotal, tone: KMColor.cOther)
+            .accessibilityLabel("支出の内訳：" + slices.map { "\($0.name) \($0.percentage)" }.joined(separator: "、"))
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: KMSpacing.space1) {
+                ForEach(Array(slices.enumerated()), id: \.offset) { _, slice in
+                    HStack(spacing: KMSpacing.space2) {
+                        Circle().fill(slice.tone?.foreground ?? KMColor.cOtherSoft).frame(width: 10, height: 10)
+                        Text(slice.name).lineLimit(1).font(KMTypography.body(14))
+                        Spacer(minLength: 0)
+                        Text(slice.percentage).font(KMTypography.number(14, weight: .semibold))
+                    }.foregroundStyle(KMColor.text)
+                }
             }
         }
     }
@@ -382,51 +351,38 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("home.categories.all")
+            .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             if categoriesExpanded {
-                VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                    ForEach(Array(summary.categories.enumerated()), id: \.offset) { _, category in
-                        HStack {
-                            Text(category.categoryName).lineLimit(1)
-                            Spacer()
-                            let sign = category.amountYen < 0 ? "−" : ""
-                            let amount = KMAmountFormatter.yen(category.amountYen)
-                            Text("\(sign)\(amount) · \(percentage(category.amountYen, total: summary.expenseYen))")
-                                .font(KMTypography.number(12))
-                        }
-                        .font(KMTypography.note).foregroundStyle(KMColor.text)
+                if summary.categories.contains(where: { $0.amountYen < 0 }) {
+                    Text("帯グラフは支出が正のカテゴリの構成です。返金・調整は一覧に表示します。")
+                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(summary.categories.enumerated()), id: \.offset) { index, category in
+                        let sign = category.amountYen < 0 ? "−" : ""
+                        Text("\(category.categoryName) · \(sign)\(KMAmountFormatter.yen(category.amountYen)) · \(KMHomeCategoryBreakdown.percentage(category.amountYen, total: summary.expenseYen))")
+                            .font(KMTypography.body(15)).foregroundStyle(KMColor.text)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, KMSpacing.space3)
+                            .overlay(alignment: .bottom) {
+                                if index < summary.categories.count - 1 { Rectangle().fill(KMColor.border).frame(height: 1) }
+                            }
                     }
-                }.padding(.top, KMSpacing.space2)
+                }
             }
         }
-    }
-
-    private func categoryLegend(name: String, amount: Int, total: Int, tone: Color) -> some View {
-        HStack(spacing: KMSpacing.space2) {
-            Circle().fill(tone).frame(width: 10, height: 10)
-            Text(name).lineLimit(1).font(KMTypography.body(14))
-            Spacer(minLength: 0)
-            Text(percentage(amount, total: total)).font(KMTypography.number(13, weight: .semibold))
-        }
-        .foregroundStyle(KMColor.text)
-    }
-
-    private func percentage(_ amount: Int, total: Int) -> String {
-        guard total > 0 else { return "0.0%" }
-        var value = Decimal(amount) / Decimal(total) * 100
-        var rounded = Decimal()
-        NSDecimalRound(&rounded, &value, 1, .plain)
-        return "\(NSDecimalNumber(decimal: rounded).stringValue)%"
     }
 
     private func recentRecords(_ records: [KMTransaction]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("最近の記録").font(KMTypography.heading).foregroundStyle(KMColor.text)
+                Text("最近の記録").font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
-                Button("すべて ›") { onNavigate(.records) }
-                    .font(KMTypography.body(15)).foregroundStyle(KMColor.primary)
-                    .accessibilityIdentifier("home.recent.all")
+                Button { onNavigate(.records) } label: {
+                    Text("すべて ›").font(KMTypography.body(15)).foregroundStyle(KMColor.primary)
+                        .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit).contentShape(Rectangle())
+                }
+                .accessibilityIdentifier("home.recent.all")
             }
             .padding(.bottom, KMSpacing.space2)
             if records.isEmpty {
@@ -474,58 +430,21 @@ struct HomeView: View {
             let resolutions = try await repositories.reconciliation.resolutions()
             let suspected = try await repositories.reconciliation.suspectedStatements()
             let statements = try await repositories.statements.statementTransactions()
-            let imports = try await repositories.statements.statementImports()
+            guard month == selectedMonth else { return }
             snapshot = data
             accounts = Dictionary(uniqueKeysWithValues: accountRows.map { ($0.id, $0.name) })
-            hasImportedStatements = !imports.isEmpty || !statements.isEmpty
-            updateAttention(run: run, resolutions: resolutions, suspected: suspected, statements: statements)
+            let attention = KMHomeAttention.make(run: run, resolutions: resolutions, suspected: suspected, statements: statements)
+            attentionCount = attention.count
+            matchedCount = attention.matchedCount
+            attentionItems = attention.items
+            showsImportHint = attention.showsImportHint
             errorMessage = nil
         } catch {
+            guard !Task.isCancelled, month == selectedMonth else { return }
             errorMessage = (error as? LocalizedError)?.errorDescription ?? "ホームを読み込めませんでした。"
         }
     }
 
-    private func updateAttention(run: KMReconciliationRun?, resolutions: [KMReconciliationResolution],
-                                 suspected: [KMSuspectedStatement], statements: [KMStatementTransaction]) {
-        let byId = Dictionary(uniqueKeysWithValues: statements.map { ($0.id, $0) })
-        let decisionIds = Set(resolutions.map(\.statementId))
-        let suspectedIds = Set(suspected.map(\.statementId))
-        let pending = run?.statementResults.filter {
-            $0.status != .matched && !decisionIds.contains($0.statementTransactionId) && !suspectedIds.contains($0.statementTransactionId)
-        } ?? []
-        let needsReview = pending.filter { $0.status == .needsReview }.count
-        let unmatched = pending.filter { $0.status != .needsReview }.count
-        let failed = resolutions.filter { $0.status != .applied }.count
-        attentionCount = (run == nil ? 0 : needsReview + unmatched + failed + suspected.count)
-        matchedCount = resolutions.filter { $0.resolution == .sameExpense && $0.status == .applied && $0.undoRequestedAt == nil }.count
-        var items: [KMHomeAttentionItem] = []
-        for decision in resolutions.filter({ $0.status != .applied }) {
-            let row = byId[decision.statementId]
-            items.append(.init(id: decision.statementId, merchant: row?.merchant ?? "保存済みの照合",
-                               amountYen: row?.amountYen ?? decision.statementAmountYen,
-                               status: .danger, reason: "反映できませんでした"))
-        }
-        for flag in suspected {
-            guard let row = byId[flag.statementId] else { continue }
-            items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen,
-                               status: .warning, reason: "不正利用？として確認待ち"))
-        }
-        for result in pending where result.status == .needsReview {
-            guard let row = byId[result.statementTransactionId] else { continue }
-            let candidates = run?.candidates.filter { $0.statementTransactionId == result.statementTransactionId } ?? []
-            let candidate = candidates.first
-            let reason = candidates.count > 1 ? "候補が\(candidates.count)件あります"
-                : candidate.map { $0.amountDeltaYen != 0 ? "金額が\(KMAmountFormatter.yen(abs($0.amountDeltaYen)))違います" : $0.dateDistanceDays != 0 ? "日付が\($0.dateDistanceDays)日ずれています" : "内容を確認してください" }
-                    ?? "内容を確認してください"
-            items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen, status: .warning, reason: reason))
-        }
-        for result in pending where result.status != .needsReview {
-            guard let row = byId[result.statementTransactionId] else { continue }
-            items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen,
-                               status: .missing, reason: "記録が見つかりません"))
-        }
-        attentionItems = items
-    }
 }
 
 #if DEBUG
