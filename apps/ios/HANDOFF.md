@@ -35,7 +35,7 @@ cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 1. Xcode で `KakeiMatch` target の Signing & Capabilities を開き、Team に `2L6CD9CNHL` を選ぶ。署名は `project.yml` の `DEVELOPMENT_TEAM: $(KM_DEVELOPMENT_TEAM)` で外から渡す設計なので、Team ID を `project.yml` へ書かず、`xcodegen generate` 前に `export KM_DEVELOPMENT_TEAM=2L6CD9CNHL` するか Xcode の設定で選ぶ。
 2. App ID `jp.kakeimatch.ios` は 2026-10-28 に App Store Connect API で登録済み（名前 `KakeiMatch`、リソース ID `7LL94P2KDH`、platform `UNIVERSAL`）。Associated Domains の capability は有効化済み。Xcode で **Associated Domains**（`webcredentials:kakeimatch.yhgry.workers.dev`。`KM_NATIVE_HOST` から生成される）を確認する。App Attest は App Store Connect API の capability 種別にはなく、App ID 側での有効化は不要。署名時にプロファイルへ entitlement が入るが、KakeiMatch のプロファイルは未作成のため、初回の実機署名で entitlement を確認する。
 3. **App ID Prefix**（seedId）は `2L6CD9CNHL` と確認済み。
-4. 本番 Worker のビルド変数に `NATIVE_APP_ID=2L6CD9CNHL.jp.kakeimatch.ios` を登録する。未実施（この Mac の `cf` は未ログイン）。他の 4 つ（`NATIVE_APP_TEAM_ID`・`NATIVE_APP_ORIGIN`・`NATIVE_APP_RP_ID`・`NATIVE_APP_ATTEST_ENVIRONMENT`）は登録済み。本番の設定変更なので、実行前に利用者の承認を取る。Cloudflare の認証が無い Mac では、App ID Prefix を利用者経由で Linux 側へ伝えれば Linux 側で登録する。
+4. 本番 Worker のビルド変数に `NATIVE_APP_ID=2L6CD9CNHL.jp.kakeimatch.ios` を登録する。2026-10-28 に利用者の承認を得て、Mac から下のコマンドで登録済み。これで `NATIVE_APP_TEAM_ID`・`NATIVE_APP_ORIGIN`・`NATIVE_APP_RP_ID`・`NATIVE_APP_ATTEST_ENVIRONMENT` と合わせて 5 つがそろった。値を変えるときは本番の設定変更なので、実行前に利用者の承認を取る。
 
    ```sh
    # 本番 Worker `kakeimatch` のビルドトリガー: dd4b3c09-9880-47c0-850c-bc30ce881bc5
@@ -76,7 +76,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
 | iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | #284 | Linux | マージ済み。専用`.kmib`の書き出し・iOS間復元・原本同梱を追加。iOS→PWA書き出しは提供しない。詳細は `docs/DATA_LAYER.md` |
 | Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287 | Linux | マージ済み。typed通信・応答検証・Keychain・給与画像マスキング。native API adapter・App Attest / Passkey実装とstubテストを追加。Workerとの契約は `../../docs/NATIVE_APP_AUTH.md`。署名済み実機から実Workerへの通信は未確認。`docs/API_LAYER.md` |
-| Worker のネイティブ認証境界（専用 session・Passkey・AASA・App Attest） | `feature/ios-native-auth` | #292 | Linux | マージ済み・本番デプロイ済み。本番 D1 に migration 0018 適用済み。`NATIVE_APP_ID` が未登録のため本番ではまだ無効（`/api/native/config` が `available:false`）。1.1 節の手順で有効化する |
+| Worker のネイティブ認証境界（専用 session・Passkey・AASA・App Attest） | `feature/ios-native-auth` | #292 | Linux | マージ済み・本番デプロイ済み。本番 D1 に migration 0018 適用済み。`NATIVE_APP_ID` は 2026-10-28 に登録済み。次の本番ビルドで反映される。反映後に 1.1 節 6 番で確認する |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | Home | `feature/ios-home` | #295 | **Mac** | マージ済み（`be4a1df`） |
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
