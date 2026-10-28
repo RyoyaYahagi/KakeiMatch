@@ -1,6 +1,6 @@
 # KakeiMatch iOS の土台
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。各画面は **placeholder** です。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています（UIは未接続）。iOSからPWAへの書き出しは提供しません。カメラと画面からのAPI接続は未実装です。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。それ以外の画面は **placeholder** です。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています（UIは未接続）。iOSからPWAへの書き出しは提供しません。カメラと画面からのAPI接続は未実装です。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -37,7 +37,8 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 ## 配置と後続PR
 
 - `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、本文のScrollViewを管理。画面ViewはVStack等で本文を返します。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。
-- `Features/{Home,Records,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は不要です。
+- `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除/取り消しをRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。
+- `Features/{Home,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は別PRで行います。
 - `Features/{Receipt,ManualEntry,Income,Transfer}`: 追加から進むplaceholder。カメラや写真選択は未実装です。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
 - `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` reader。使い方と未実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
@@ -166,7 +167,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `reconciliation` | 明細7件からSwiftで計算。要確認1・記録なし2・一致4をTSの固定run/適用済み判断と全値比較 |
 | `payroll` | 同じ家計簿＋給与内訳の確認snapshot。収入への反映前、写真なし |
 
-`-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。正常fixtureの表示はまだplaceholderのままで、データが画面へ描画済みとは扱いません。
+`-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。記録一覧はfixtureの取引・日別収支・要確認表示を描画します。他の画面はplaceholderのままです。
 
 同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
 
@@ -180,9 +181,22 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
 - 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
+## 記録一覧の接続範囲
+
+`RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。
+
+未接続・未検証の範囲は次のとおりです。
+
+- 「口座・残高を見る」は口座画面への共通遷移がないため表示しません。shellと口座画面の別PRで接続します。
+- 確認待ちは一覧・内容の所在案内・未登録下書きの削除までです。登録用の入力画面はレシート画面PRで接続します。
+- 登録済みレシートは基本項目の編集・画像/品目/値引き/分類理由の閲覧を接続しています。品目別カテゴリの編集と給与内訳の表示は未接続です。画像の拡大操作も未接続です。
+- 日付入力は `YYYY-MM-DD` の文字入力です。カテゴリ・口座はOSの選択メニュー、削除確認はOSのダイアログです。支出集計の対象外はOSのスイッチを使います。
+- 削除の取り消し表示は記録画面が残っている間だけです。別タブでも残す共通の通知表示はshellの別PRが必要です。
+- 実機、Dynamic Type、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Repositoryの単体検証とは区別します。
+
 ## PWAとの差分・検証範囲
 
-- タブ内はplaceholderです。ホームの集計・記録一覧・照合・設定の本実装とデータ状態の比較は後続PRです。空データ状態を再現したとは扱いません。
+- 記録一覧以外のタブ内はplaceholderです。ホームの集計・照合・設定の本実装とデータ状態の比較は後続PRです。記録一覧は空状態と種類別の空状態も表示します。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。
