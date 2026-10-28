@@ -5,9 +5,12 @@ private enum KMSettingsPage {
     case root
     case theme
     case screenLock
+    case budget
 }
 
 struct SettingsView: View {
+    var initialBudgetMonth: KMYearMonth? = nil
+    var onBudgetBack: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMSettingsModel()
     @State private var page = KMSettingsPage.root
@@ -15,12 +18,19 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
 
+    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {}) {
+        self.initialBudgetMonth = initialBudgetMonth
+        self.onBudgetBack = onBudgetBack
+        _page = State(initialValue: initialBudgetMonth == nil ? .root : .budget)
+    }
+
     var body: some View {
         Group {
             switch page {
             case .root: settingsRoot
             case .theme: themePage
             case .screenLock: screenLockPage
+            case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -87,6 +97,7 @@ struct SettingsView: View {
             switch row.destination {
             case .theme: page = .theme
             case .screenLock: page = .screenLock
+            case .budget: page = .budget
             case .unimplemented: break
             }
         } label: {
