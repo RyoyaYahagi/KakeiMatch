@@ -38,13 +38,16 @@ jobs:
           node --test scripts/shard-ui-tests.test.mjs
           node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT"
       - name: Generate Xcode project
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_INSTALL_CLEANUP: 1
         run: |
-          if ! command -v xcodegen >/dev/null; then brew install xcodegen; fi
-          xcodegen --version
-          xcodegen generate
+          # Official universal binary; pin both the version and release asset digest.
+          # https://github.com/yonaskolb/XcodeGen/releases/tag/2.46.0
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
+            -o "$RUNNER_TEMP/xcodegen.zip"
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/xcodegen.zip" "$RUNNER_TEMP/xcodegen-release"
+          "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" --version
+          "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" generate
       - name: Build once for all test jobs
         run: |
           xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
