@@ -74,6 +74,9 @@ struct KMRecordDetailView: View {
         }
         .foregroundStyle(KMColor.text).disabled(model.busy)
         .accessibilityElement(children: .contain).accessibilityIdentifier("records.detailScreen")
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
+            confirmsDeletion = false
+        }
         .alert("この取引を削除しますか？レシート画像などの原本は残ります。", isPresented: $confirmsDeletion) {
             Button("削除する", role: .destructive) { Task { await model.remove() } }
             Button("キャンセル", role: .cancel) { }
