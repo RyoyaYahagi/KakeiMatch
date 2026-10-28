@@ -21,7 +21,7 @@ struct AppShell: View {
                         entryScreen(entry)
                     } else {
                         switch tab {
-                        case .home: HomeView()
+                        case .home: HomeView(onNavigate: { tab = $0 })
                         case .records: RecordsView()
                         case .reconciliation: ReconciliationView()
                         case .settings: SettingsView()
