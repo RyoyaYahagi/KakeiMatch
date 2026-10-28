@@ -6,6 +6,8 @@ Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseli
 
 macOS / Xcode 26以上 / XcodeGen 2.44.1以上を使います。CIと揃える場合はXcode 26.2、iPhone 17 / iOS 26.2を選びます。
 
+ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。全テストを実行するときは `--all` を指定してください。既定で除外するバックアップテストは `--all` で含められます。全体の成否はCIで判断します。
+
 ```sh
 brew install xcodegen
 sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
