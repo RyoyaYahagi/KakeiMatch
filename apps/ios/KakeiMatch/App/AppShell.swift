@@ -27,7 +27,7 @@ struct AppShell: View {
         ZStack {
             KMColor.bg.ignoresSafeArea()
             VStack(spacing: 0) {
-                if let entry, let kind = manualEntryKind(entry) {
+                if let entry {
                     VStack(spacing: 0) {
                         if let reviewCountError {
                             KMBanner(status: .danger, title: "照合の確認件数を読み込めませんでした", detail: reviewCountError)
@@ -41,7 +41,11 @@ struct AppShell: View {
                             Spacer()
                         }
                         .padding(.horizontal, KMSpacing.space4)
-                        KMEntryFormView(kind: kind)
+                        if let kind = manualEntryKind(entry) {
+                            KMEntryFormView(kind: kind)
+                        } else {
+                            ReceiptView(source: entry, onSaved: { self.entry = nil; tab = .records })
+                        }
                     }
                     .padding(.bottom, KMSpacing.space8)
                     .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
