@@ -332,16 +332,6 @@ struct KMEntryFormView: View {
                 .accessibilityValue(model.selectedDestinationAccount?.name ?? "選択してください")
                 .accessibilityIdentifier("manual-transaction-destination")
                 Spacer(minLength: 0)
-                Button("入替") {
-                    let source = model.accountId
-                    model.accountId = model.destinationAccountId
-                    model.destinationAccountId = source
-                }
-                .font(KMTypography.body(13, weight: .bold))
-                .foregroundStyle(KMColor.primary)
-                .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit)
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("entry.swapAccounts")
                 Button("＋ 追加") {
                     focusedField = nil
                     model.accountFieldForCreation = .destination

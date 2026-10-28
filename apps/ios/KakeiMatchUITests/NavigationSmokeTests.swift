@@ -50,7 +50,7 @@ final class NavigationSmokeTests: XCTestCase {
         app.buttons["entry.cancel"].tap()
         XCTAssertTrue(app.buttons["chooser.receipt"].waitForExistence(timeout: 5))
         app.buttons["record-sheet.close"].tap()
-        assertScreen("home.screen")
+        assertScreen("records.screen")
 
         app.terminate()
         app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = "dark"

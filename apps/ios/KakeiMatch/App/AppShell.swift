@@ -100,6 +100,7 @@ struct AppShell: View {
         .fullScreenCover(isPresented: $showsChooser) {
             KMBottomSheet(title: "何を記録しますか？", isPresented: $showsChooser) {
                 RecordChooserView { destination in
+                    tab = .records
                     entry = destination
                     showsChooser = false
                 }
@@ -108,7 +109,6 @@ struct AppShell: View {
         }
         .transaction { if reduceMotion { $0.disablesAnimations = true } }
         .onChange(of: tab) { _, _ in
-            entry = nil
             Task { await refreshReviewCount() }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockRequestNotificationName))) { _ in

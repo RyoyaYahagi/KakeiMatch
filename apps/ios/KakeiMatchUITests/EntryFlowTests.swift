@@ -12,6 +12,7 @@ final class EntryFlowTests: XCTestCase {
             XCTAssertTrue(app.buttons["add-record"].waitForExistence(timeout: 10))
             app.buttons["add-record"].tap()
             app.buttons["chooser.expense"].tap()
+            XCTAssertTrue(app.buttons["receipt-tab"].isSelected)
             XCTAssertTrue(app.buttons["entry.saveButton"].waitForExistence(timeout: 10))
             capture(app, "entry-expense-\(appearance)")
 
@@ -56,13 +57,38 @@ final class EntryFlowTests: XCTestCase {
             income.tap()
             XCTAssertTrue(app.buttons["entry.saveButton"].waitForExistence(timeout: 10))
             capture(app, "entry-income-\(appearance)")
+            if appearance == "light" {
+                app.textFields["manual-transaction-amount"].tap()
+                app.textFields["manual-transaction-amount"].typeText("45000")
+                app.textFields["manual-transaction-payee"].tap()
+                app.textFields["manual-transaction-payee"].typeText("UITestIncome")
+                app.buttons["manual-transaction-account"].tap()
+                app.buttons["entry.account.fixture-account-1"].tap()
+                app.buttons["entry.saveButton"].tap()
+                let status = app.staticTexts["entry.status"]
+                XCTAssertTrue(status.waitForExistence(timeout: 10))
+                XCTAssertEqual(status.label, "登録しました。")
+            }
 
             app.buttons["entry.cancel"].tap()
             let transfer = app.buttons["chooser.transfer"]
             XCTAssertTrue(transfer.waitForExistence(timeout: 5))
             transfer.tap()
             XCTAssertTrue(app.buttons["entry.saveButton"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["entry.swapAccounts"].exists)
             capture(app, "entry-transfer-\(appearance)")
+            if appearance == "light" {
+                app.textFields["manual-transaction-amount"].tap()
+                app.textFields["manual-transaction-amount"].typeText("500")
+                app.buttons["manual-transaction-account"].tap()
+                app.buttons["entry.account.fixture-account-1"].tap()
+                app.buttons["manual-transaction-destination"].tap()
+                app.buttons["entry.account.fixture-account-2"].tap()
+                app.buttons["entry.saveButton"].tap()
+                let status = app.staticTexts["entry.status"]
+                XCTAssertTrue(status.waitForExistence(timeout: 10))
+                XCTAssertEqual(status.label, "登録しました。")
+            }
             app.terminate()
         }
     }
