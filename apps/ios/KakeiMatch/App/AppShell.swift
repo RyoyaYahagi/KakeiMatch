@@ -26,35 +26,56 @@ struct AppShell: View {
         ZStack {
             KMColor.bg.ignoresSafeArea()
             VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                if let entry, let kind = manualEntryKind(entry) {
+                    VStack(spacing: 0) {
                         if let reviewCountError {
                             KMBanner(status: .danger, title: "照合の確認件数を読み込めませんでした", detail: reviewCountError)
                                 .accessibilityIdentifier("shell.reviewCountError")
+                                .padding(.horizontal, KMSpacing.space4)
                         }
-                        if let entry {
-                            HStack {
-                                Button("キャンセル") { self.entry = nil; showsChooser = true }
-                                    .buttonStyle(KMButtonStyle(role: .text))
-                                    .accessibilityIdentifier("entry.cancel")
-                                Spacer()
-                            }
-                            entryScreen(entry)
-                        } else {
-                            switch tab {
-                            case .home: HomeView(onNavigate: { tab = $0 })
-                            case .records: RecordsView()
-                            case .reconciliation: ReconciliationView()
-                            case .settings: SettingsView()
-                            }
+                        HStack {
+                            Button("キャンセル") { self.entry = nil; showsChooser = true }
+                                .buttonStyle(KMButtonStyle(role: .text))
+                                .accessibilityIdentifier("entry.cancel")
+                            Spacer()
                         }
+                        .padding(.horizontal, KMSpacing.space4)
+                        KMEntryFormView(kind: kind)
                     }
-                    // On portrait iPhones the OS top inset already exceeds 16pt:
-                    // PWA main uses max(16px, safe-area-inset-top), not their sum.
-                    .padding(.horizontal, KMSpacing.space4)
                     .padding(.bottom, KMSpacing.space8)
                     .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
                     .frame(maxWidth: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                            if let reviewCountError {
+                                KMBanner(status: .danger, title: "照合の確認件数を読み込めませんでした", detail: reviewCountError)
+                                    .accessibilityIdentifier("shell.reviewCountError")
+                            }
+                            if let entry {
+                                HStack {
+                                    Button("キャンセル") { self.entry = nil; showsChooser = true }
+                                        .buttonStyle(KMButtonStyle(role: .text))
+                                        .accessibilityIdentifier("entry.cancel")
+                                    Spacer()
+                                }
+                                entryScreen(entry)
+                            } else {
+                                switch tab {
+                                case .home: HomeView(onNavigate: { tab = $0 })
+                                case .records: RecordsView()
+                                case .reconciliation: ReconciliationView()
+                                case .settings: SettingsView()
+                                }
+                            }
+                        }
+                        // On portrait iPhones the OS top inset already exceeds 16pt:
+                        // PWA main uses max(16px, safe-area-inset-top), not their sum.
+                        .padding(.horizontal, KMSpacing.space4)
+                        .padding(.bottom, KMSpacing.space8)
+                        .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
+                        .frame(maxWidth: .infinity)
+                    }
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
                     tab = destination
@@ -79,6 +100,7 @@ struct AppShell: View {
         .fullScreenCover(isPresented: $showsChooser) {
             KMBottomSheet(title: "何を記録しますか？", isPresented: $showsChooser) {
                 RecordChooserView { destination in
+                    tab = .records
                     entry = destination
                     showsChooser = false
                 }
@@ -87,7 +109,6 @@ struct AppShell: View {
         }
         .transaction { if reduceMotion { $0.disablesAnimations = true } }
         .onChange(of: tab) { _, _ in
-            entry = nil
             Task { await refreshReviewCount() }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockRequestNotificationName))) { _ in
@@ -257,6 +278,15 @@ struct AppShell: View {
             reviewCountError = nil
         } catch {
             reviewCountError = "照合情報を再取得してください。\(error.localizedDescription)"
+        }
+    }
+
+    private func manualEntryKind(_ destination: KMEntryDestination) -> KMEntryKind? {
+        switch destination {
+        case .expense: .expense
+        case .income: .income
+        case .transfer: .transfer
+        case .receipt, .photo: nil
         }
     }
 
