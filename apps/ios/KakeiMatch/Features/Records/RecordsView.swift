@@ -32,6 +32,9 @@ struct RecordsView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("records.screen")
         .task { await model.configure(repositories) }
+        .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
+            pendingToDelete = nil
+        }
         .confirmationDialog("「\(pendingToDelete.map(KMRecordsPresentation.pendingTitle) ?? "")」を削除しますか？このレシート画像と確認待ちの内容も削除されます。",
             isPresented: Binding(get: { pendingToDelete != nil }, set: { if !$0 { pendingToDelete = nil } }), titleVisibility: .visible) {
                 if let receipt = pendingToDelete {

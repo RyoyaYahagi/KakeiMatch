@@ -22,9 +22,9 @@ struct KMSettingsSection: Identifiable, Equatable {
 
 /// PWA settings labels, ordering, and display conditions without view or storage access.
 enum KMSettingsPresentation {
-    static let themePreferenceKey = "kakeimatch.theme.preference"
-    static let screenLockEnabledKey = "kakeimatch.screen-lock.enabled"
-    static let screenLockRequestNotificationName = "KakeiMatch.screen-lock.request"
+    static let themePreferenceKey = KMAppSettingsPreferences.themePreferenceKey
+    static let screenLockEnabledKey = KMAppSettingsPreferences.screenLockEnabledKey
+    static let screenLockRequestNotificationName = KMAppSettingsPreferences.screenLockRequestNotificationName
     static let backupReminderAge: TimeInterval = 30 * 24 * 60 * 60
 
     static let backupReminder = "△ 復旧に備えてバックアップを書き出してください。目安は最終書き出しから30日です。"

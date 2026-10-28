@@ -10,23 +10,10 @@ struct KakeiMatchApp: App {
         WindowGroup {
             switch repositories {
             case .success(let value):
-                AppShell().environment(\.repositories, value).preferredColorScheme(testColorScheme)
+                AppShell().environment(\.repositories, value)
             case .failure(let error):
                 Text(error.localizedDescription).accessibilityIdentifier("data.fixtureError")
             }
         }
-    }
-
-    /// Deterministic screenshots without changing the user's system preference.
-    private var testColorScheme: ColorScheme? {
-        #if DEBUG
-        switch ProcessInfo.processInfo.environment["KM_UI_TEST_APPEARANCE"] {
-        case "light": return .light
-        case "dark": return .dark
-        default: return nil
-        }
-        #else
-        return nil
-        #endif
     }
 }
