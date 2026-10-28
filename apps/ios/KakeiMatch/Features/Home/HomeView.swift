@@ -13,6 +13,7 @@ struct HomeView: View {
     @State private var categoriesExpanded = false
     @State private var errorMessage: String?
     var onNavigate: (KMTab) -> Void = { _ in }
+    var onOpenBudget: (KMYearMonth) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space4) {
@@ -147,14 +148,15 @@ struct HomeView: View {
                         }
                     }
                     .buttonStyle(.plain)
-                    .accessibilityIdentifier("home.budget")
+                    .accessibilityIdentifier("home.budget.details")
                     if budgetExpanded { budgetDetails(summary) }
                 }
+                .accessibilityIdentifier("home.budget")
             } else {
                 HStack {
                     Text("予算").foregroundStyle(KMColor.muted)
                     Spacer()
-                    Button("予算を設定する") { onNavigate(.settings) }
+                    Button("予算を設定する") { onOpenBudget(selectedMonth ?? currentMonth ?? KMDate(instant: Date()).yearMonth) }
                         .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                         .frame(minHeight: KMLayout.minimumHit)
                         .accessibilityIdentifier("home.budget.setup")
@@ -168,22 +170,24 @@ struct HomeView: View {
 
     private func budgetDetails(_ summary: KMMonthlyBudgetSummary) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space2) {
-            Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMAmountFormatter.yen(summary.spentYen)) / \(KMAmountFormatter.yen(summary.budgetYen))")
+            Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMBudgetPresentation.amountLine(budget: summary.budgetYen, spent: summary.spentYen, remaining: summary.remainingYen, usageRatio: summary.usageRatio))")
                 .font(KMTypography.note).foregroundStyle(KMColor.muted)
             if summary.breakdownEnabled {
                 ForEach(summary.categories.filter { $0.budgetYen != nil }) { category in
-                    HStack {
-                        Text(category.categoryName).lineLimit(1)
-                        Spacer()
-                        Text("\(KMAmountFormatter.yen(category.spentYen)) / \(KMAmountFormatter.yen(category.budgetYen ?? 0))")
-                            .font(KMTypography.number(12)).foregroundStyle(KMColor.muted)
-                    }.font(KMTypography.note)
+                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                        Text("\(category.categoryName) · \(KMBudgetPresentation.amountLine(budget: category.budgetYen ?? 0, spent: category.spentYen, remaining: category.remainingYen, usageRatio: category.usageRatio))")
+                            .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                        if let budget = category.budgetYen, budget > 0 {
+                            ProgressView(value: Double(max(0, min(category.spentYen, budget))), total: Double(budget))
+                                .tint(KMColor.primary)
+                        }
+                    }
                 }
             } else {
                 Text("カテゴリ別の内訳は設定していません。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted)
             }
-            Button("この月の予算を変更") { onNavigate(.settings) }
+            Button("この月の予算を変更") { onOpenBudget(summary.yearMonth) }
                 .font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
                 .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
         }

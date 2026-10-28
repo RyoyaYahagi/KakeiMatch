@@ -5,6 +5,7 @@ struct AppShell: View {
     @State private var tab: KMTab = .home
     @State private var showsChooser = false
     @State private var entry: KMEntryDestination? = nil
+    @State private var budgetRouteMonth: KMYearMonth?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.repositories) private var repositories
@@ -62,10 +63,13 @@ struct AppShell: View {
                                 entryScreen(entry)
                             } else {
                                 switch tab {
-                                case .home: HomeView(onNavigate: { tab = $0 })
+                                case .home: HomeView(onNavigate: { tab = $0 }, onOpenBudget: { month in
+                                    budgetRouteMonth = month
+                                    tab = .settings
+                                })
                                 case .records: RecordsView()
                                 case .reconciliation: ReconciliationView()
-                                case .settings: SettingsView()
+                                case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil })
                                 }
                             }
                         }

@@ -5,6 +5,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case unimplemented
         case theme
         case screenLock
+        case budget
     }
 
     let id: String
@@ -62,7 +63,7 @@ enum KMSettingsPresentation {
                 .init(id: "settings.categoryRules", title: "分類ルール"),
                 .init(id: "settings.categories", title: "カテゴリ"),
                 .init(id: "settings.accounts", title: "支払元"),
-                .init(id: "settings.budget", title: "予算設定"),
+                .init(id: "settings.budget", title: "予算設定", destination: .budget),
                 .init(id: "settings.recurring", title: "定期登録"),
             ]),
             KMSettingsSection(title: "データ", rows: [
