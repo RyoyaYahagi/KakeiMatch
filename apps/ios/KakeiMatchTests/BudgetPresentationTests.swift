@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import KakeiMatch
 
@@ -23,5 +24,10 @@ struct BudgetPresentationTests {
     @Test func categorySumRejectsUnsafeOverflow() throws {
         #expect(try KMBudgetPresentation.checkedSum([20_000, 30_000]) == 50_000)
         #expect(throws: (any Error).self) { try KMBudgetPresentation.checkedSum([KMYen.maxSafe, 1]) }
+    }
+
+    @Test func budgetAmountLineShowsRemainingAndUsageRatio() {
+        #expect(KMBudgetPresentation.amountLine(budget: 10_000, spent: 12_500, remaining: -2_500, usageRatio: Decimal(1.25)) == "¥12,500 / ¥10,000 · 超過 ¥2,500 · 125.0%")
+        #expect(KMBudgetPresentation.amountLine(budget: 10_000, spent: -500, remaining: 10_500, usageRatio: Decimal(-0.05)) == "−¥500 / ¥10,000 · 残り ¥10,500 · −5.0%")
     }
 }

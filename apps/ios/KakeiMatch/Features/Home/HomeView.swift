@@ -170,16 +170,18 @@ struct HomeView: View {
 
     private func budgetDetails(_ summary: KMMonthlyBudgetSummary) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space2) {
-            Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMAmountFormatter.yen(summary.spentYen)) / \(KMAmountFormatter.yen(summary.budgetYen))")
+            Text("\(summary.overallBudgetConfigured ? "全体予算" : "予算対象カテゴリの合計")：\(KMBudgetPresentation.amountLine(budget: summary.budgetYen, spent: summary.spentYen, remaining: summary.remainingYen, usageRatio: summary.usageRatio))")
                 .font(KMTypography.note).foregroundStyle(KMColor.muted)
             if summary.breakdownEnabled {
                 ForEach(summary.categories.filter { $0.budgetYen != nil }) { category in
-                    HStack {
-                        Text(category.categoryName).lineLimit(1)
-                        Spacer()
-                        Text("\(KMAmountFormatter.yen(category.spentYen)) / \(KMAmountFormatter.yen(category.budgetYen ?? 0))")
-                            .font(KMTypography.number(12)).foregroundStyle(KMColor.muted)
-                    }.font(KMTypography.note)
+                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                        Text("\(category.categoryName) · \(KMBudgetPresentation.amountLine(budget: category.budgetYen ?? 0, spent: category.spentYen, remaining: category.remainingYen, usageRatio: category.usageRatio))")
+                            .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                        if let budget = category.budgetYen, budget > 0 {
+                            ProgressView(value: Double(max(0, min(category.spentYen, budget))), total: Double(budget))
+                                .tint(KMColor.primary)
+                        }
+                    }
                 }
             } else {
                 Text("カテゴリ別の内訳は設定していません。")
