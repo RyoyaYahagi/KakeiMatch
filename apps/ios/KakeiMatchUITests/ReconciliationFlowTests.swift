@@ -73,6 +73,23 @@ final class ReconciliationFlowTests: XCTestCase {
             empty.terminate()
         }
     }
+    @MainActor func testCountsNavigateToHistoryAndPending() {
+        continueAfterFailure = false
+        let app = launch("light")
+        XCTAssertTrue(app.buttons["reconciliation.count.一致"].waitForExistence(timeout: 10))
+        let history = app.buttons["reconciliation-matched"]
+        let initialHistoryY = history.frame.minY
+        app.buttons["reconciliation.count.一致"].tap()
+        XCTAssertEqual(history.value as? String, "展開中")
+        // Short pages stop at the maximum scroll offset, just like scrollIntoView in PWA.
+        XCTAssertLessThan(history.frame.minY, initialHistoryY - 100)
+        for _ in 0..<3 { app.swipeDown() }
+        let pending = app.buttons["review-statement-fixture-statement-0"]
+        let initialPendingY = pending.frame.minY
+        app.buttons["reconciliation.count.要確認"].tap()
+        XCTAssertLessThan(pending.frame.minY, initialPendingY - 100)
+        app.terminate()
+    }
     @MainActor func testSuspectedRequiresConfirmationAndCanBeCleared() {
         continueAfterFailure = false
         let app = launch("light")
