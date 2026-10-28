@@ -96,9 +96,8 @@ if [[ -z "$derived_data" ]]; then
   derived_data="/tmp/KakeiMatch-${worktree_key}-DerivedData"
 fi
 
-if [[ ! -d "$ios_dir/KakeiMatch.xcodeproj" || "$ios_dir/project.yml" -nt "$ios_dir/KakeiMatch.xcodeproj/project.pbxproj" ]]; then
-  (cd "$ios_dir" && xcodegen generate)
-fi
+# Branch switches can add Swift files without changing project.yml's timestamp.
+(cd "$ios_dir" && xcodegen generate)
 
 result_bundle="/tmp/KakeiMatch-$(date '+%Y%m%d-%H%M%S')-$$-$(uuidgen).xcresult"
 destination="platform=iOS Simulator,id=${device_id}"

@@ -17,8 +17,9 @@
 3. `Features/<Name>/<Name>View.swift` を1画面ずつ置き換える。UI移植とデータ/API移植は別PRで進める。共通部品は `Components`、値は `DesignSystem` を使う。
 4. ロジックにSwift Testing、導線にXCUITestを追加する。合成データだけで状態を固定する。
 5. `project.yml` から生成し、build・unit・UI testを実行する。LinuxではmacOS CIで実行結果を確認する。
+   - UIテストクラスのCI割り当ては自動です。クラスを追加・改名したら `node --test scripts/shard-ui-tests.test.mjs` で全クラスが1回ずつ割り当てられることを確認します。
    - ローカル検証では `scripts/test-local.sh --only <テスト識別子>` で対象を絞ります。全体の成否はCIで判断します。
-6. CIのスクリーンショットをダウンロードし、同じ状態のPWAと見比べる。ライト・ダーク、safe area、44pt以上のタップ領域、長い文字、横はみ出し、色以外の状態表示も点検する。
+6. CIのスクリーンショットを `README.md` の「生成・ビルド・テスト」にあるコマンドで全shardからダウンロードし、同じ状態のPWAと見比べる。ライト・ダーク、safe area、44pt以上のタップ領域、長い文字、横はみ出し、色以外の状態表示も点検する。
 7. PR本文にPWAとの差分をすべて列挙する。未実装、OS固有で再現できないもの、その代替、未検証のものを区別する。build成功の推測で完了としない。
 
 ## UI識別子
