@@ -17,6 +17,7 @@ let package = Package(
                 "App/KMFixturePreview.swift",
                 "App/KMRepositories.swift",
                 "App/KakeiMatchApp.swift",
+                "Assets.xcassets",
                 "Components",
                 "Data/Backup",
                 "Data/InMemory",
@@ -55,6 +56,7 @@ let package = Package(
                 "Features/Settings/SettingsModel.swift",
                 "Features/Settings/SettingsView.swift",
                 "Features/Transfer",
+                "Features/Recurring",
                 "KakeiMatch.entitlements",
             ],
             sources: [
