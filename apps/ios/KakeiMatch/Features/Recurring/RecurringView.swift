@@ -260,6 +260,7 @@ struct KMRecurringView: View {
         }
         .padding(.top, KMSpacing.space4)
         .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recurring.catchUp.history")
     }
 
@@ -319,6 +320,7 @@ struct KMRecurringView: View {
             }
         }
         .padding(.vertical, KMSpacing.space3)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("recurring.catchUp.entry.\(generation.id)")
     }
 

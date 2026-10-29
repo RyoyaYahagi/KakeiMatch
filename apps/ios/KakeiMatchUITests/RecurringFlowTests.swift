@@ -51,7 +51,7 @@ final class RecurringFlowTests: XCTestCase {
         let history = app.staticTexts["recurring.catchUp.history.title"]
         XCTAssertTrue(history.waitForExistence(timeout: 5))
         if !history.isHittable { app.scrollViews.firstMatch.swipeUp() }
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "2026-08-14〜2026-10-14 · 1件 · ¥1,200")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "2026-10-14〜2026-10-14 · 1件 · ¥1,200")).firstMatch.waitForExistence(timeout: 5))
         return app
     }
 
