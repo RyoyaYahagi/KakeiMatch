@@ -1,5 +1,5 @@
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct ContactPresentationTests {
     @Test func validatesRequiredKindAndNonBlankMessageLikePWA() {
