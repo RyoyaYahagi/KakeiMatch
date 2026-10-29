@@ -6,6 +6,7 @@ private enum KMSettingsPage {
     case theme
     case screenLock
     case budget
+    case recurring
     case contact
 }
 
@@ -32,6 +33,7 @@ struct SettingsView: View {
             case .theme: themePage
             case .screenLock: screenLockPage
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
+            case .recurring: KMRecurringView(onBack: { page = .root })
             case .contact: ContactView(onBackToSettings: { page = .root })
             }
         }
@@ -100,6 +102,7 @@ struct SettingsView: View {
             case .theme: page = .theme
             case .screenLock: page = .screenLock
             case .budget: page = .budget
+            case .recurring: page = .recurring
             case .contact: page = .contact
             case .unimplemented: break
             }
