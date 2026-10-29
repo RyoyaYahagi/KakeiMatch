@@ -49,43 +49,40 @@ struct ReceiptView: View {
                     if let field { scroll.scrollTo(field, anchor: .center) }
                 }
             }
-            VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                if let totalError = model.totalError {
-                    Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                }
-                if let error = model.error {
-                    Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                        .accessibilityIdentifier("receipt.error")
-                }
-                if let status = model.status {
-                    Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
-                        .accessibilityIdentifier("receipt-save-state")
-                }
-                if model.didSave {
-                    Button("記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
-                        .accessibilityIdentifier("receipt.recordsButton")
-                } else if model.isReading {
-                    Button(model.phase == .categorizing ? "分類を待っています…" : "読み取り中…") {}
-                        .buttonStyle(KMButtonStyle(role: .primary)).disabled(true)
-                    Button(model.phase == .categorizing ? "分類を待たずに自分で選ぶ" : "待たずに手で入力する") { model.stopWaiting() }
-                        .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.stopWaiting")
-                } else if case .failed(let failure) = model.phase, KMReceiptPresentation.retryable(failure) {
-                    Button("もう一度読み取る") { confirmsReread = model.receipt?.extraction != nil; if !confirmsReread { model.startReading() } }
-                        .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.retryButton")
-                    Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
-                        .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.manualButton")
-                } else {
-                    Button { focusedField = nil; Task { await model.save() } } label: {
-                        Text(model.saving ? "登録しています…" : "登録する")
-                            .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
+            if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || model.totalError != nil {
+                VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                    if let totalError = model.totalError {
+                        Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
                     }
-                    .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
-                    .disabled(model.saving || !model.canSave)
+                    if let error = model.error {
+                        Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
+                            .accessibilityIdentifier("receipt.error")
+                    }
+                    if let status = model.status {
+                        Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
+                            .accessibilityIdentifier("receipt-save-state")
+                    }
+                    if model.didSave {
+                        Button("記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
+                            .accessibilityIdentifier("receipt.recordsButton")
+                    } else if model.isReading {
+                        Button(model.phase == .categorizing ? "分類を待っています…" : "読み取り中…") {}
+                            .buttonStyle(KMButtonStyle(role: .primary)).disabled(true)
+                        Button(model.phase == .categorizing ? "分類を待たずに自分で選ぶ" : "待たずに手で入力する") { model.stopWaiting() }
+                            .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.stopWaiting")
+                    } else if case .failed(let failure) = model.phase, KMReceiptPresentation.retryable(failure) {
+                        Button("もう一度読み取る") { confirmsReread = model.receipt?.extraction != nil; if !confirmsReread { model.startReading() } }
+                            .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.retryButton")
+                        Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
+                            .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.manualButton")
+                    } else if model.pane == "overview" {
+                        saveButton
+                    }
                 }
+                .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
+                .frame(maxWidth: .infinity, alignment: .leading).background(KMColor.bg)
+                .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             }
-            .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
-            .frame(maxWidth: .infinity, alignment: .leading).background(KMColor.bg)
-            .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("receipt.screen")
         .task {
@@ -141,6 +138,15 @@ struct ReceiptView: View {
             }
             .presentationBackground(.clear)
         }
+    }
+
+    private var saveButton: some View {
+        Button { focusedField = nil; Task { await model.save() } } label: {
+            Text(model.saving ? "登録しています…" : "登録する")
+                .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
+        .disabled(model.saving || !model.canSave || model.isReading || model.didSave)
     }
 
     private var tabs: some View {
@@ -371,6 +377,9 @@ struct ReceiptView: View {
             if let check = model.totalCheck, !check.matches {
                 Text("購入内容との差額は\(check.difference < 0 ? "−" : "+")\(KMAmountFormatter.yen(check.difference))です。入力した合計金額を保ちます。値引きや税額を確認してください。")
                     .font(KMTypography.note).foregroundStyle(KMColor.warning).accessibilityIdentifier("receipt-difference")
+            }
+            if !model.isReading && !model.didSave {
+                saveButton.padding(.top, KMSpacing.space2)
             }
         }
     }
