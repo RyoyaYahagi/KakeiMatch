@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct AppLockPresentationTests {
     @Test func explicitEnableAndSixtySecondBackgroundThresholdControlRelock() {

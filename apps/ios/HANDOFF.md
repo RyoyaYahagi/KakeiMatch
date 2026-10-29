@@ -1,7 +1,7 @@
 # Issue #240 iOS移行: Mac への引き継ぎ書
 
-作成: 2026-10-25、更新: 2026-10-26（Linux 側オーケストレーター）。Mac 側で画面実装（Phase 3〜5）を進めるための指示書です。
-Linux 側の作業が進むたびに「2. 現在の状態」と「4. Linux 側との境界」を更新します。
+作成: 2026-10-25、更新: 2026-10-29（Mac 側）。Mac 側で画面実装（Phase 3〜5）を進めるための指示書です。
+担当や実装状態が変わったときは「2. 現在の状態」と「4. Linux 側の作業終了後の実装境界」を更新します。
 
 ## 0. 前提（必ず読む）
 
@@ -120,9 +120,9 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - XCUITest に、その画面の主要フローを 1 本以上
 - ios.yml の CI と既存の `ci` check が成功
 
-## 4. Linux 側との境界（衝突を防ぐ）
+## 4. Linux 側の作業終了後の実装境界
 
-- `apps/ios/KakeiMatch/Data/` と `API/` は Linux 側の担当。画面からは `@Environment(\.repositories)` の `KMRepositories` 経由で使い、画面 PR では Data/API を書き換えない。足りない操作があれば PR 本文か Issue #240 のコメントで要望を出す（Linux 側で追加する）。
+- 2026-10-29 の利用者確認では、Linux 側は PR #294 のマージ後に作業しておらず、今後の作業予定もない。以後は `Data/`・`API/` を含む iOS の実装・変更を Mac 側で進めてよい。画面からは `@Environment(\.repositories)` の `KMRepositories` 経由で使う。
 - 全 protocol は `@MainActor async throws`。返る値は snapshot なので、保存後に再取得する。通常起動は SQLite（`KMSQLiteStore`）、`-UITestFixture <name>` と Preview（`KMFixturePreview("migration") { HomeView() }`）は in-memory。fixture 名と内容は README の Data 節。
 - fixture の「今日/今月」は `repositories.referenceDate` を使い、端末の実時計を使わない。
 - 照合・重複検出・状態遷移・カテゴリ学習・定期・予算の計算は `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/` にある。View に計算を書かない。照合の全操作は SQLite に接続済みで、run 入力 snapshot・候補却下・別名・取消履歴も再起動後に残る。カテゴリ学習は `saveCategoryObservation` で確認履歴を保存し、`categoryRules` で導出結果を取得する（レシート確認からの自動呼出しは後続）。定期は `catchUpRecurring(id:dates:through:at:)` で選択日の取引と処理済み記録を一括保存する。予算設定も永続化済み。定期の生成snapshot/未編集分の取消/編集行の保持/自動到来分の処理も接続済み。`saveRecurring(_:at:)` にfixture時計を渡し、家計簿を開く時/復元後には `runRecurring(through:at:)` を呼ぶ。自動登録OFFでも追いつき登録可能。旧 v1/v2/v3 DB は v4 へ移行し、旧 run は表示を維持するが操作前に再照合する。

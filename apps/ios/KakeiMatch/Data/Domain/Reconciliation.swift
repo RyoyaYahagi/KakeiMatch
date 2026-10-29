@@ -138,3 +138,9 @@ struct KMReconciliationResolution: Codable, Equatable, Sendable, Identifiable {
     var createdAt: Date
     var updatedAt: Date
 }
+
+// TS: src/lib/local-backup-format.ts settings:reconciliation-suspected:*.
+struct KMSuspectedStatement: Codable, Equatable, Sendable {
+    var statementId: String
+    var markedAt: Date
+}

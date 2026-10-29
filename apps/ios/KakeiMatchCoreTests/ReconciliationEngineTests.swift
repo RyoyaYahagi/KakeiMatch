@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct ReconciliationEngineTests {
     private func statement(_ id: String, merchant: String = "架空ストア新宿", amount: Int = 1200, date: String = "2026-09-10", kind: KMStatementTransaction.Kind = .purchase) -> KMStatementTransaction {

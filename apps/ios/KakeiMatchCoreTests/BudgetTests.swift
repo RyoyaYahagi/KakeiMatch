@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct BudgetTests {
     private func month(_ value: String = "2026-10") -> KMYearMonth { KMYearMonth(rawValue: value) }

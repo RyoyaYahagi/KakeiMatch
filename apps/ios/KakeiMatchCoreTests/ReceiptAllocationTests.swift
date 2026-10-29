@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 /// Exact input/expected yen from src/lib/local-receipts.test.ts, "receipt category allocations".
 struct ReceiptAllocationTests {

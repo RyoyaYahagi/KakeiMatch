@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct EntryPresentationTests {
     @Test func acceptsOnlyPositiveSafeIntegerYen() throws {

@@ -46,6 +46,8 @@ jobs:
       # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
+      - name: Run macOS core tests without a simulator
+        run: swift test --package-path .
       - name: Validate UI shard coverage
         id: shards
         run: |

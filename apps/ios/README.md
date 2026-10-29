@@ -6,11 +6,14 @@ Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseli
 
 macOS / Xcode 26以上 / XcodeGen 2.44.1以上を使います。CIと揃える場合はXcode 26.2、iPhone 17 / iOS 26.2を選びます。
 
-ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。全テストを実行するときは `--all` を指定してください。既定で除外するバックアップテストは `--all` で含められます。全体の成否はCIで判断します。
+ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。Simulator上で `KakeiMatchTests` の全suiteを実行するときは `--all` を指定してください。既定で除外するバックアップテストは `--all` で含められます。全体の成否はCIで判断します。
+
+FoundationまたはCryptoKitだけで動く計算ロジックは、リポジトリrootで `swift test --package-path apps/ios` を実行します。iOS Simulatorの起動は不要です。Packageのdeployment targetはmacOS 15です。
 
 ```sh
 brew install xcodegen
 sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+swift test --package-path apps/ios
 cd apps/ios
 xcodegen generate
 open KakeiMatch.xcodeproj
@@ -32,7 +35,7 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) は1回の `build-for-testing` の成果物を共有し、Swift Testingと4つのUIテストジョブを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
+[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、残りのSwift Testingと4つのUIテストshardを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
 UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
 
@@ -44,7 +47,7 @@ artifact（CIの保存成果物）は次のとおりです。
 | --- | --- | --- |
 | `ios-test-products` | 実行権限・シンボリックリンクを維持した `DerivedData/Build/Products` のtar。`.xctestrun` とアプリ・テストバンドルを含む | 1日 |
 | `ios-build-results` | `Build.xcresult` | 14日 |
-| `ios-test-results` | Swift Testingの `UnitTests.xcresult`（従来の全結果から対象を変更） | 14日 |
+| `ios-test-results` | Simulatorで実行したSwift Testingの `UnitTests.xcresult` | 14日 |
 | `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
 | `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
 | `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |

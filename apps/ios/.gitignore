@@ -1,6 +1,7 @@
 # project.yml is authoritative; generate on macOS with XcodeGen.
 *.xcodeproj/
 DerivedData/
+.build/
 *.xcresult/
 .xcodegen-cache
 screenshots/
