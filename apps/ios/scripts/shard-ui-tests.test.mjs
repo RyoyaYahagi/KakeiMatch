@@ -4,39 +4,58 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { assignShards, discoverClasses, validateCoverage } from './shard-ui-tests.mjs';
+import { assignShards, discoverTests, screenshotOnly, selectTests, validateCoverage } from './shard-ui-tests.mjs';
 
-test('discovers new classes, multiple declarations and ignores comments/helpers', async () => {
+test('discovers methods per class and ignores comments, helpers and non-test functions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ios-shards-'));
   try {
     const url = pathToFileURL(`${directory}/`);
-    await writeFile(join(directory, 'Added.swift'), '// class Fake: XCTestCase {}\n/* class Nope: XCTestCase {} */\nfinal class NewTests:\n XCTestCase {}\nclass OtherTests: XCTestCase {}');
-    await writeFile(join(directory, 'Helper.swift'), 'struct Helper {}');
-    assert.deepEqual(await discoverClasses(url), ['NewTests', 'OtherTests']);
-    await writeFile(join(directory, 'Duplicate.swift'), 'class NewTests: XCTestCase {}');
-    await assert.rejects(discoverClasses(url), /uniquely named/);
+    await writeFile(join(directory, 'Added.swift'), [
+      '// class Fake: XCTestCase { func testFake() {} }',
+      '/* func testHidden() {} */',
+      'final class NewTests:\n XCTestCase {',
+      '  @MainActor func testOne() {}',
+      '  func helper() {}',
+      '  func testTwo() throws {}',
+      '}',
+      'class OtherTests: XCTestCase { func testThree() {} }',
+    ].join('\n'));
+    await writeFile(join(directory, 'Helper.swift'), 'struct Helper { func testNotATest() {} }');
+    assert.deepEqual(await discoverTests(url), ['NewTests/testOne', 'NewTests/testTwo', 'OtherTests/testThree']);
+    await writeFile(join(directory, 'Duplicate.swift'), 'class NewTests: XCTestCase { func testOne() {} }');
+    await assert.rejects(discoverTests(url), /uniquely named/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test('spreads expensive classes first, with stable ties and new-class defaults', () => {
-  const classes = ['Heavy', 'Medium', 'New', 'Small'];
+test('skips screenshot-only methods only when asked and rejects stale entries', () => {
+  const tests = ['A/testFlow', 'A/testShot'];
+  assert.deepEqual(selectTests(tests, { skipped: ['A/testShot'] }), tests);
+  assert.deepEqual(selectTests(tests, { skipScreenshots: true, skipped: ['A/testShot'] }), ['A/testFlow']);
+  assert.throws(() => selectTests(tests, { skipped: ['A/testRenamed'] }), /Unknown screenshot-only/);
+});
+
+test('spreads expensive methods first, with stable ties and new-method defaults', () => {
+  const tests = ['Heavy', 'Medium', 'New', 'Small'];
   const weights = { Heavy: 130, Medium: 100, Small: 10 };
-  const shards = assignShards(classes, 3, weights);
-  assert.deepEqual(shards.map(shard => shard.classes), [['Heavy'], ['Medium'], ['New', 'Small']]);
-  assert.deepEqual(assignShards([...classes].reverse(), 3, weights), shards);
+  const shards = assignShards(tests, 3, weights);
+  assert.deepEqual(shards.map(shard => shard.tests), [['Heavy'], ['Medium'], ['New', 'Small']]);
+  assert.deepEqual(assignShards([...tests].reverse(), 3, weights), shards);
 });
 
-test('rejects omissions, duplicates, unknown classes, empty shards and invalid counts', () => {
-  const classes = ['A', 'B'];
+test('rejects omissions, duplicates, unknown tests, empty shards and invalid counts', () => {
+  const tests = ['A', 'B'];
   for (const assigned of [[['A']], [['A'], ['A']], [['A'], ['C']], [['A', 'B'], []]]) {
-    assert.throws(() => validateCoverage(classes, assigned.map(names => ({ classes: names }))), /exactly one/);
+    assert.throws(() => validateCoverage(tests, assigned.map(names => ({ tests: names }))), /exactly one/);
   }
-  for (const count of [0, -1, 1.5, NaN, 3]) assert.throws(() => assignShards(classes, count), /Shard count/);
+  for (const count of [0, -1, 1.5, NaN, 3]) assert.throws(() => assignShards(tests, count), /Shard count/);
 });
 
-test('all repository classes belong to exactly one of three non-empty shards', async () => {
-  const classes = await discoverClasses(new URL('../KakeiMatchUITests/', import.meta.url));
-  const shards = assignShards(classes, 3);
-  validateCoverage(classes, shards);
-  assert.deepEqual(shards.flatMap(shard => shard.classes).sort(), classes);
+test('repository tests fill four shards with and without screenshot-only methods', async () => {
+  const discovered = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  for (const skipScreenshots of [false, true]) {
+    const tests = selectTests(discovered, { skipScreenshots });
+    const shards = assignShards(tests, 4);
+    assert.deepEqual(shards.flatMap(shard => shard.tests).sort(), tests);
+  }
+  assert.ok(screenshotOnly.every(name => discovered.includes(name)));
 });

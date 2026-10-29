@@ -6,6 +6,14 @@ on:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
       - '.github/workflows/ios.yml'
+  # Screenshot-only UI tests run here, not on every pull request.
+  # Run the workflow manually on a branch to get its reference screenshots.
+  push:
+    branches: [main]
+    paths:
+      - 'apps/ios/**'
+      - 'test/fixtures/ios-parity/**'
+      - '.github/workflows/ios.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,6 +25,7 @@ concurrency:
 
 env:
   UI_SHARD_COUNT: 4
+  UI_SHARD_FLAGS: ${{ github.event_name == 'pull_request' && '--skip-screenshots' || '' }}
 
 defaults:
   run:
@@ -41,7 +50,7 @@ jobs:
         id: shards
         run: |
           node --test scripts/shard-ui-tests.test.mjs
-          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" > ui-shards.json
+          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} > ui-shards.json
           cat ui-shards.json
           node -e 'const fs = require("node:fs"); const shards = JSON.parse(fs.readFileSync("ui-shards.json", "utf8")); console.log("matrix=" + JSON.stringify(shards.map((_, index) => index)))' >> "$GITHUB_OUTPUT"
       - name: Generate Xcode project
@@ -147,15 +156,15 @@ jobs:
         run: |
           mkdir -p DerivedData/Build
           tar -xzf test-products.tar.gz -C DerivedData/Build
-          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" "$SHARD_INDEX" > shard-tests.txt
+          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" "$SHARD_INDEX" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} > shard-tests.txt
           cat shard-tests.txt
       - name: Wait for simulator and set reference appearance
         run: bash scripts/ci-simulator.sh wait
       - name: XCUITest and screenshots
         run: |
           test_args=()
-          while IFS= read -r test_class; do
-            test_args+=("-only-testing:KakeiMatchUITests/$test_class")
+          while IFS= read -r test_name; do
+            test_args+=("-only-testing:KakeiMatchUITests/$test_name")
           done < shard-tests.txt
           test "${#test_args[@]}" -gt 0
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
@@ -205,11 +214,14 @@ jobs:
         run: |
           echo "$NEEDS_JSON"
           jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"
-      - uses: actions/download-artifact@v4
+      # Pull requests skip screenshot-only tests, so the combined set would be partial.
+      - if: github.event_name != 'pull_request'
+        uses: actions/download-artifact@v4
         with:
           pattern: ios-reference-screenshots-shard-*
           path: screenshot-shards
       - name: Combine screenshots for existing download commands
+        if: github.event_name != 'pull_request'
         run: |
           python3 - <<'PY'
           import json, os, pathlib, shutil
@@ -228,7 +240,8 @@ jobs:
                   shutil.copyfile(source, target)
           (output / 'manifest.json').write_text(json.dumps(manifest))
           PY
-      - uses: actions/upload-artifact@v4
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
         with:
           name: ios-reference-screenshots
           path: screenshots

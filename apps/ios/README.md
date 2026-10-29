@@ -32,9 +32,11 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) は1回の `build-for-testing` の成果物を共有し、Swift Testingと3つのUIテストジョブを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
+[`ios.yml`](../../.github/workflows/ios.yml) は1回の `build-for-testing` の成果物を共有し、Swift Testingと4つのUIテストジョブを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
-UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスを自動検出し、過去の実測時間が長いクラスから見積時間の短いshard（分割先）へ割り当てます。未計測のクラスは60秒として扱います。各クラスがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいクラスを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
+UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
+
+Pull Requestでは、画面を開いて参照スクリーンショットを撮るだけのテスト（`shard-ui-tests.mjs` の `screenshotOnly`）を飛ばします。mainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）では全テストを実行し、統合した `ios-reference-screenshots` を作ります。スクリーンショット専用のテストを追加・改名したら `screenshotOnly` も直してください。一覧に存在しないテスト名があるとビルドジョブが失敗します。
 
 artifact（CIの保存成果物）は次のとおりです。
 
@@ -43,9 +45,9 @@ artifact（CIの保存成果物）は次のとおりです。
 | `ios-test-products` | 実行権限・シンボリックリンクを維持した `DerivedData/Build/Products` のtar。`.xctestrun` とアプリ・テストバンドルを含む | 1日 |
 | `ios-build-results` | `Build.xcresult` | 14日 |
 | `ios-test-results` | Swift Testingの `UnitTests.xcresult`（従来の全結果から対象を変更） | 14日 |
-| `ios-test-results-shard-0`〜`2` | 各shardの `UITests.xcresult` とクラス割り当て `shard-tests.txt` | 14日 |
-| `ios-reference-screenshots-shard-0`〜`2` | 各shardのPNGと `manifest.json` | 14日 |
-| `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。全テスト成功時に作成 | 14日 |
+| `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
+| `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
+| `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |
 | `parity-report` | Swift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
 
 成功した実行では、従来どおり `gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` で全PNGと統合manifestを取得できます。失敗した実行のスクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗時も各ジョブのxcresultと取得できた添付を保存します。
