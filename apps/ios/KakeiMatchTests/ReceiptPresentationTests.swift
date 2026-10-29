@@ -35,6 +35,20 @@ struct ReceiptPresentationTests {
 }
 
 @Suite(.serialized) @MainActor struct ReceiptModelTests {
+    @Test func itemWarningStaysWithOriginalItemAfterDeletion() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        receipt.extraction?.warnings = [.init(field: .items, code: "uncertain", message: "品目を確認してください。", index: 0)]
+        try await repositories.receipts.saveReceipt(receipt)
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        let first = try #require(model.items.first)
+        let next = try #require(model.items.dropFirst().first)
+        #expect(model.hasUnreviewedItemWarning(first.id))
+        model.removeItem(first.id)
+        #expect(!model.hasUnreviewedItemWarning(next.id))
+    }
+
     @Test func reviewedWarningAndCorrectedReceiptArePersistedAndRegisteredOnce() async throws {
         let repositories = try KMFixtureLoader.load(named: "receipt")
         var value = try #require(try await repositories.receipts.receipts().first)

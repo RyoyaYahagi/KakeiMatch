@@ -19,6 +19,7 @@ final class KMReceiptModel {
     var items: [KMReceiptItem] = []
     var adjustments: [KMReceiptAdjustment] = []
     var adjustmentIsAddition: [String: Bool] = [:]
+    var warningItemIDs: [Int: String] = [:]
     var reviewed: [Int] = []
     var categories: [KMCategory] = []
     var accounts: [KMAccount] = []
@@ -136,6 +137,16 @@ final class KMReceiptModel {
                 targetItemId: adjustment.targetItemIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil })
         }
         adjustmentIsAddition = Dictionary(uniqueKeysWithValues: adjustments.map { ($0.id, $0.amountYen > 0) })
+        warningItemIDs = (receipt.extraction?.warnings ?? []).reduce(into: [:]) { ids, warning in
+            guard warning.field == .items, let index = warning.index, items.indices.contains(index) else { return }
+            ids[index] = items[index].id
+        }
+    }
+
+    func hasUnreviewedItemWarning(_ itemId: String) -> Bool {
+        warnings.contains { warning in
+            warning.field == .items && warning.index.flatMap { warningItemIDs[$0] } == itemId
+        }
     }
 
     func setItemCategory(_ itemId: String, categoryId: String?) {

@@ -385,7 +385,7 @@ struct ReceiptView: View {
                 HStack(spacing: KMSpacing.space2) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.name.isEmpty ? "品目を入力" : item.name).lineLimit(1)
-                        if itemHasWarning(item) { Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning) }
+                        if model.hasUnreviewedItemWarning(item.id) { Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning) }
                     }
                     Spacer(minLength: KMSpacing.space1)
                     if let yen = item.amountYen { KMAmount(yen: yen) } else { Text("金額未入力").font(KMTypography.note) }
@@ -548,12 +548,6 @@ struct ReceiptView: View {
     private func itemCategoryName(_ id: String?) -> String {
         guard let id, !id.isEmpty else { return "カテゴリ未選択" }
         return model.categories.first(where: { $0.id == id })?.name ?? "カテゴリを選び直してください"
-    }
-
-    private func itemHasWarning(_ item: KMReceiptItem) -> Bool {
-        model.warnings.contains { warning in
-            warning.field == .items && warning.index.flatMap { model.items.indices.contains($0) ? model.items[$0].id : nil } == item.id
-        }
     }
 
     private func itemNameBinding(_ id: String) -> Binding<String> {
