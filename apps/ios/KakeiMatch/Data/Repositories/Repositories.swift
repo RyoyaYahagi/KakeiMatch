@@ -103,10 +103,13 @@ extension ReceiptRepository {
 @MainActor protocol RecurringRepository {
     func recurringTransactions() async throws -> [KMRecurringTransaction]
     func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence]
+    func previewRecurringCatchUp(_ value: KMRecurringTransaction, through: KMDate) async throws -> KMRecurringCatchUpPlan
     /// Native catch-up commits generated transactions and consumed dates together.
     func catchUpRecurring(id: String, dates: [KMDate], through: KMDate, at timestamp: Date) async throws
     func saveRecurring(_ value: KMRecurringTransaction) async throws
     func saveRecurring(_ value: KMRecurringTransaction, at timestamp: Date) async throws
+    /// Saves a schedule and updates its next date without automatically generating due rows.
+    func saveRecurringForCatchUp(_ value: KMRecurringTransaction, at timestamp: Date) async throws
     func deleteRecurring(id: String) async throws
     func recurringGenerations(scheduleId: String) async throws -> [KMRecurringGeneration]
     func undoRecurringGeneration(id: String, dates: [KMDate]?, at timestamp: Date) async throws

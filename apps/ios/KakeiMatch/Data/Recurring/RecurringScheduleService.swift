@@ -59,6 +59,16 @@ enum KMRecurringScheduleService {
         }
     }
 
+    static func currentMonthDates(in plan: KMRecurringCatchUpPlan, month: KMYearMonth) -> [KMDate] {
+        plan.dates.filter { $0.yearMonth == month }
+    }
+
+    static func nextOccurrence(input: KMRecurringScheduleInput, onOrAfter today: KMDate) -> KMDate? {
+        let year = min(today.yearMonth.year + 8, 9999)
+        guard let through = try? KMDate(String(format: "%04d-12-31", year)) else { return nil }
+        return occurrenceDates(input: input, through: through).first { $0 >= today }
+    }
+
     /// Dates already consumed by an audit, stable imported ID, or native schedule row are never recreated.
     static func missingOccurrences(input: KMRecurringScheduleInput, scheduleId: String, through: KMDate,
                                    auditedDates: Set<KMDate> = [], importedIds: Set<String> = [],

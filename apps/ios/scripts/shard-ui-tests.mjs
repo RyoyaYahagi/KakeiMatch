@@ -50,6 +50,10 @@ export const screenshotOnly = [
   'SettingsFlowTests/testDarkSettingsRootScreenshot',
   'RecurringFlowTests/testRecurringInitialDarkScreenshot',
   'RecurringFlowTests/testRecurringInitialLightScreenshot',
+  'RecurringFlowTests/testCatchUpDialogLightScreenshot',
+  'RecurringFlowTests/testCatchUpDialogDarkScreenshot',
+  'RecurringFlowTests/testCatchUpHistoryLightScreenshot',
+  'RecurringFlowTests/testCatchUpHistoryDarkScreenshot',
 ];
 
 export async function discoverTests(directory) {

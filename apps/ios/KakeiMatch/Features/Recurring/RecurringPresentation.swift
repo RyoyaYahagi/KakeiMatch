@@ -28,4 +28,52 @@ enum KMRecurringPresentation {
     static func amount(_ yen: Int, kind: KMRecurringTransaction.Kind) -> String {
         "\(kind == .income ? "+" : "−")\(KMAmountFormatter.yen(yen))"
     }
+
+    static func catchUpPrompt(_ plan: KMRecurringCatchUpPlan) -> String {
+        guard let first = plan.startDate, let last = plan.endDate else { return "" }
+        return "\(first.rawValue)〜\(last.rawValue)の未登録分があります。\n\(grouped(plan.dates.count))件 · 合計 \(yen(plan.totalAmountYen))"
+    }
+
+    static func historySummary(_ generation: KMRecurringGeneration) -> String {
+        guard let first = generation.occurrences.first?.date, let last = generation.occurrences.last?.date else { return "" }
+        let total = Decimal(generation.input.amountYen) * Decimal(generation.occurrences.count)
+        return "\(first.rawValue)〜\(last.rawValue) · \(grouped(generation.occurrences.count))件 · \(yen(total))"
+    }
+
+    static func activeOccurrences(_ generation: KMRecurringGeneration) -> [KMRecurringGeneration.Occurrence] {
+        generation.occurrences.filter { $0.status == .created }
+    }
+
+    static func undoLabel(_ generation: KMRecurringGeneration) -> String? {
+        let remaining = activeOccurrences(generation).count
+        guard remaining > 0 else { return nil }
+        return remaining == generation.occurrences.count ? "この回を一括で取り消す" : "残りを一括で取り消す"
+    }
+
+    static func occurrenceStatus(_ status: KMRecurringGeneration.Status) -> String? {
+        switch status {
+        case .created: nil
+        case .deleted: "削除済み"
+        case .retained: "編集済みのため残しました"
+        }
+    }
+
+    static func selectedDeletionMessage(dates: [KMDate], amountYen: Int) -> String {
+        guard let first = dates.first, let last = dates.last else { return "" }
+        return "\(first.rawValue)〜\(last.rawValue)の\(grouped(dates.count))件（\(yen(Decimal(amountYen) * Decimal(dates.count)))）を削除しますか？編集済みの取引は削除できません。"
+    }
+
+    private static func yen(_ amount: Decimal) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.numberStyle = .decimal
+        return "¥\(formatter.string(from: NSDecimalNumber(decimal: amount)) ?? NSDecimalNumber(decimal: amount).stringValue)"
+    }
+
+    private static func grouped(_ value: Int) -> String {
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "ja_JP")
+        formatter.numberStyle = .decimal
+        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    }
 }

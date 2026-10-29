@@ -143,7 +143,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `StatementRepository` | 明細CSVの原本/履歴/行の一括保存、MoneyForwardの確認・取り込み・対応ルール・履歴と取消 |
 | `ReconciliationRepository` | run計算・自動一致、手動一致・取消、候補却下、登録しない、支出/振替登録、失敗の再試行、判断参照、不正利用疑い |
 | `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
-| `RecurringRepository` | 定期設定CRUD、自動到来分/選択した過去日分の取引生成、処理済み日/生成snapshotの履歴、未編集分の取消（編集行は保持） |
+| `RecurringRepository` | 定期設定CRUD、過去分のプレビューと選択生成、自動到来分の処理、生成snapshotの履歴・選択削除・未編集分の一括取消（編集行は保持） |
 | `PayrollRepository` | 確認済み給与内訳snapshotの保存/参照（収入への反映はしない） |
 | `CategoryLearningRepository` | `saveCategoryObservation` / `categoryObservations` で確認履歴を保存/参照。レシートID単位で置換し古い確認を無視。ルールは履歴から導出し、上書き・resetも保存 |
 | `SettingsRepository` | テーマ/最終バックアップ時刻のsnapshot |
@@ -161,7 +161,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - 明細は `statements.importStatement(data:provider:at:)`。#281パーサで検証して原本/履歴/行を一括保存します。再取り込みは同じimport IDを使い、既存明細や判断を増やしません。支払元0件でも利用でき、取引は照合判断後に作ります。
 - MoneyForwardは `previewMoneyForward(rows:mappings:choices:at:)` → `importMoneyForward(id:rows:mappings:choices:at:)`。同じ金額/カテゴリで±3日の候補には `.keep(transactionId:)` / `.separate` の判断が必要です。`moneyForwardHistory` / `moneyForwardRules` で保存結果を取得し、`undoMoneyForward` は今回登録した取引だけを削除します。原CSVは保存しません。SQLiteでは途中成功がないため、失敗時は同じbatch IDで全体を再送します。
 - カテゴリは `saveCategory` / `deleteCategory`、グループは `saveCategoryGroup` / `deleteCategoryGroup` / `reorderCategoryGroups` / `reorderCategories`。使用中は削除拒否して非表示を案内します。グループの非表示も選択肢へ反映します。グループ編集の画面はPWAにないため追加しません。
-- 定期は `saveRecurring(_:at:)` が保存時点の自動到来分も処理します。家計簿を開いた時/復元後は `runRecurring(through:at:)` を呼びます。`catchUpRecurring` は自動登録OFFでも使えます。`recurringGenerations` の生成履歴IDで `undoRecurringGeneration(id:dates:at:)` を呼ぶと、dates:nilは未編集分だけの一括取消、日付配列は選択削除です。独立した同内容の手入力と編集済み生成行を保持します。削除済み日は再生成しません。
+- 定期画面は `previewRecurringCatchUp(_:through:)` で過去分を確認し、複数件なら全件/今月分/キャンセルを選びます。`saveRecurringForCatchUp(_:at:)` は設定と次回日を保存し、到来分を自動生成しません。選択日は `catchUpRecurring` で生成します。従来の `saveRecurring(_:at:)` は保存時に自動到来分を処理し、家計簿を開いた時/復元後の `runRecurring(through:at:)` も維持しています。`recurringGenerations` で履歴を表示し、`undoRecurringGeneration(id:dates:at:)` のdates:nilは未編集分だけの一括取消、日付配列は選択削除です。独立した同内容の手入力と編集済み生成行を保持します。削除済み日は再生成しません。
 - v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。有効schedule付き `.kmb` と、旧PWAのMoneyForward履歴のnative投影は未対応です。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
 
 ### UI test / Previewのfixture

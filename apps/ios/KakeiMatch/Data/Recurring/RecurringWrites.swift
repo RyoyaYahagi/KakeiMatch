@@ -3,6 +3,12 @@ import Foundation
 @MainActor extension KMInMemoryStore {
     func saveRecurring(_ value: KMRecurringTransaction) async throws { try await saveRecurring(value, at: Date()) }
     func saveRecurring(_ value: KMRecurringTransaction, at timestamp: Date) async throws {
+        try await saveRecurring(value, at: timestamp, runDueOccurrences: true)
+    }
+    func saveRecurringForCatchUp(_ value: KMRecurringTransaction, at timestamp: Date) async throws {
+        try await saveRecurring(value, at: timestamp, runDueOccurrences: false)
+    }
+    private func saveRecurring(_ value: KMRecurringTransaction, at timestamp: Date, runDueOccurrences: Bool) async throws {
         try await withLedgerCopy { working in
             let input = try KMRecurringScheduleService.validatedInput(working.recurringInput(value))
             try KMRecurringScheduleService.validateMastersAndUniqueness(input: input, editingId: value.id,
@@ -18,8 +24,26 @@ import Foundation
             else { working.recurringValues.append(saved) }
             working.masterWriteState.scheduleAudits.append(.init(targetType: .schedule, operationId: UUID().uuidString,
                 operation: editing ? .update : .create, scheduleId: value.id, input: input, status: .applied, createdAt: timestamp, appliedAt: timestamp))
-            try await working.runRecurring(through: KMDate(instant: timestamp), at: timestamp)
+            if runDueOccurrences {
+                try await working.runRecurring(through: KMDate(instant: timestamp), at: timestamp)
+            } else {
+                working.updateRecurringNextDate(scheduleId: value.id, through: KMDate(instant: timestamp))
+            }
         }
+    }
+
+    func previewRecurringCatchUp(_ value: KMRecurringTransaction, through: KMDate) async throws -> KMRecurringCatchUpPlan {
+        let input = try KMRecurringScheduleService.validatedInput(recurringInput(value))
+        try KMRecurringScheduleService.validateMastersAndUniqueness(input: input, editingId: value.id,
+            categories: categoryValues, accounts: accountValues, schedules: recurringValues)
+        try validCategory(input.categoryId, income: input.kind == .income)
+        guard !value.id.isEmpty, value.id.utf16.count <= 128,
+              recurringValues.first(where: { $0.id == value.id })?.editable != false else {
+            throw KMDataError.invalidData("この定期登録は編集できません。")
+        }
+        return try KMRecurringScheduleService.preview(input: input, scheduleId: value.id, through: through,
+            auditedDates: Set(serviceState.occurrences.filter { $0.scheduleId == value.id }.map(\.date)),
+            importedIds: Set(transactionValues.compactMap(\.importedId)))
     }
     func deleteRecurring(id: String) async throws {
         guard recurringValues.contains(where: { $0.id == id }) else { throw KMDataError.notFound("定期登録が見つかりません。") }
@@ -106,12 +130,15 @@ import Foundation
                         importedIds: Set(working.transactionValues.compactMap(\.importedId)))
                     if !missing.isEmpty { try await working.catchUpRecurring(id: schedule.id, dates: missing, through: today, at: timestamp) }
                 }
-                let index = working.recurringValues.firstIndex { $0.id == schedule.id }!
-                let end = KMDate(rawValue: String(format: "%04d-12-31", min(today.yearMonth.year + 8, 9999)))
-                let dates = KMRecurringScheduleService.occurrenceDates(input: input, through: end)
-                // Actual keeps today's already-posted occurrence as next_date until tomorrow.
-                working.recurringValues[index].nextDate = dates.first { $0 >= today }
+                working.updateRecurringNextDate(scheduleId: schedule.id, through: today)
             }
         }
+    }
+
+    private func updateRecurringNextDate(scheduleId: String, through today: KMDate) {
+        guard let index = recurringValues.firstIndex(where: { $0.id == scheduleId }) else { return }
+        let input = recurringInput(recurringValues[index])
+        // Actual keeps today's already-posted occurrence as next_date until tomorrow.
+        recurringValues[index].nextDate = KMRecurringScheduleService.nextOccurrence(input: input, onOrAfter: today)
     }
 }

@@ -16,6 +16,11 @@ struct KMRecurringView: View {
     @State private var startDate = ""
     @State private var postsTransaction = true
     @State private var confirmsDelete = false
+    @State private var confirmsCatchUpDelete = false
+    @State private var selectingCatchUp = false
+    @State private var catchUpSelections: [String: Set<KMDate>] = [:]
+    @State private var pendingDeleteGeneration: KMRecurringGeneration?
+    @State private var pendingDeleteDates: [KMDate] = []
     let onBack: () -> Void
 
     var body: some View {
@@ -33,7 +38,7 @@ struct KMRecurringView: View {
                 } else {
                     VStack(spacing: 0) {
                         ForEach(model.schedules) { schedule in
-                            Button { selected = schedule; page = .detail } label: { scheduleRow(schedule) }
+                            Button { openDetail(schedule) } label: { scheduleRow(schedule) }
                                 .buttonStyle(.plain).accessibilityIdentifier("recurring.row.\(schedule.id)")
                             Rectangle().fill(KMColor.border).frame(height: 1)
                         }
@@ -47,7 +52,9 @@ struct KMRecurringView: View {
                 title(selected.name, id: "recurring.detail.title")
                 Text("\(selected.kind == .expense ? "支出" : "収入")の定期登録 · \(selected.completed ? "終了済み" : "継続中")")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                status
                 detailRows(selected)
+                catchUpHistory(selected)
                 Spacer(minLength: 0)
                 if selected.editable {
                     primaryButton("編集する") { prepareEditor(selected) }.accessibilityIdentifier("recurring.edit")
@@ -71,6 +78,48 @@ struct KMRecurringView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("すでに作成された取引は残ります。") }
+        .confirmationDialog("過去分の記録", isPresented: Binding(
+            get: { model.catchUpPrompt != nil },
+            set: { isPresented in
+                if !isPresented && !selectingCatchUp { model.cancelCatchUpPrompt() }
+            }
+        ), titleVisibility: .visible) {
+            Button("全件を記録") {
+                selectingCatchUp = true
+                Task {
+                    await model.chooseCatchUp(currentMonthOnly: false, repositories: repositories)
+                    selectingCatchUp = false
+                    if model.saved { page = .list }
+                }
+            }.accessibilityIdentifier("recurring.catchUp.all")
+            Button("今月分から記録") {
+                selectingCatchUp = true
+                Task {
+                    await model.chooseCatchUp(currentMonthOnly: true, repositories: repositories)
+                    selectingCatchUp = false
+                    if model.saved { page = .list }
+                }
+            }.accessibilityIdentifier("recurring.catchUp.currentMonth")
+            Button("キャンセル", role: .cancel) { model.cancelCatchUpPrompt() }
+                .accessibilityIdentifier("recurring.catchUp.cancel")
+        } message: {
+            if let plan = model.catchUpPrompt { Text(KMRecurringPresentation.catchUpPrompt(plan)) }
+        }
+        .confirmationDialog("過去分を削除しますか？", isPresented: $confirmsCatchUpDelete, titleVisibility: .visible) {
+            Button("削除する", role: .destructive) {
+                guard let selected, let generation = pendingDeleteGeneration else { return }
+                let dates = pendingDeleteDates
+                Task {
+                    await model.deleteOccurrences(id: generation.id, dates: dates, scheduleId: selected.id, repositories: repositories)
+                    catchUpSelections[generation.id] = []
+                }
+            }.accessibilityIdentifier("recurring.catchUp.confirmDelete")
+            Button("キャンセル", role: .cancel) {}
+        } message: {
+            if let generation = pendingDeleteGeneration {
+                Text(KMRecurringPresentation.selectedDeletionMessage(dates: pendingDeleteDates, amountYen: generation.input.amountYen))
+            }
+        }
         .onChange(of: kind) { _, newKind in
             if let chosen = model.categories.first(where: { $0.id == categoryId }), chosen.isIncome != (newKind == .income) { categoryId = "" }
         }
@@ -130,11 +179,27 @@ struct KMRecurringView: View {
     }
 
     @ViewBuilder private var status: some View {
-        if let error = model.error {
-            Text(error).font(KMTypography.note).foregroundStyle(KMColor.danger).fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("recurring.status")
-        } else if model.saved {
-            Text("定期登録を保存しました。").font(KMTypography.note).foregroundStyle(KMColor.primary).accessibilityIdentifier("recurring.status")
+        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+            if let error = model.error {
+                Text(error).font(KMTypography.note).foregroundStyle(KMColor.danger).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recurring.status")
+            } else if let message = model.message {
+                Text(message).font(KMTypography.note).foregroundStyle(KMColor.primary).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("recurring.status")
+            } else if model.saved {
+                Text("定期登録を保存しました。").font(KMTypography.note).foregroundStyle(KMColor.primary)
+                    .accessibilityIdentifier("recurring.status")
+            }
+            if model.canRetryCatchUp {
+                Button("過去分の記録を再試行する") {
+                    Task {
+                        await model.retryCatchUp(repositories: repositories)
+                        if model.saved { page = .list }
+                    }
+                }
+                .font(KMTypography.note).foregroundStyle(KMColor.primary)
+                .disabled(model.isSaving).accessibilityIdentifier("recurring.catchUp.retry")
+            }
         }
     }
 
@@ -175,6 +240,93 @@ struct KMRecurringView: View {
             detailRow("次回", schedule.nextDate?.rawValue ?? "未定")
             detailRow("自動登録", schedule.postsTransaction ? "オン" : "オフ")
         }.overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    private func catchUpHistory(_ schedule: KMRecurringTransaction) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+            Text("過去分の生成履歴").font(KMTypography.body(16, weight: .bold)).foregroundStyle(KMColor.text)
+                .accessibilityAddTraits(.isHeader).accessibilityIdentifier("recurring.catchUp.history.title")
+            if model.isLoadingHistory {
+                ProgressView().tint(KMColor.primary).frame(maxWidth: .infinity).padding(.vertical, KMSpacing.space2)
+            } else if model.generations.isEmpty {
+                Text("過去分の生成履歴はありません。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
+                    .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("recurring.catchUp.history.empty")
+            } else {
+                ForEach(model.generations) { generation in
+                    catchUpGeneration(generation, schedule: schedule)
+                    Rectangle().fill(KMColor.border).frame(height: 1)
+                }
+            }
+        }
+        .padding(.top, KMSpacing.space4)
+        .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+        .accessibilityIdentifier("recurring.catchUp.history")
+    }
+
+    private func catchUpGeneration(_ generation: KMRecurringGeneration, schedule: KMRecurringTransaction) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+            Text(KMRecurringPresentation.historySummary(generation))
+                .font(KMTypography.note).foregroundStyle(KMColor.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("recurring.catchUp.summary.\(generation.id)")
+            if generation.undoneAt != nil {
+                Text("一括取り消し済みです。").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                    .accessibilityIdentifier("recurring.catchUp.undone.\(generation.id)")
+            }
+            ForEach(generation.occurrences, id: \.date) { occurrence in
+                if let status = KMRecurringPresentation.occurrenceStatus(occurrence.status) {
+                    Text("\(occurrence.date.rawValue) · \(KMAmountFormatter.yen(generation.input.amountYen)) · \(status)")
+                        .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("recurring.catchUp.date.\(generation.id).\(occurrence.date.rawValue)")
+                } else {
+                    let isSelected = catchUpSelections[generation.id, default: []].contains(occurrence.date)
+                    Button {
+                        var dates = catchUpSelections[generation.id, default: []]
+                        if isSelected { dates.remove(occurrence.date) } else { dates.insert(occurrence.date) }
+                        catchUpSelections[generation.id] = dates
+                    } label: {
+                        HStack(spacing: KMSpacing.space3) {
+                            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                                .font(.system(size: 22)).foregroundStyle(isSelected ? KMColor.primary : KMColor.muted)
+                            Text("\(occurrence.date.rawValue) · \(KMAmountFormatter.yen(generation.input.amountYen))")
+                                .font(KMTypography.body(14)).foregroundStyle(KMColor.text)
+                            Spacer(minLength: 0)
+                        }
+                        .frame(minHeight: KMLayout.minimumHit, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("\(occurrence.date.rawValue) · \(KMAmountFormatter.yen(generation.input.amountYen))")
+                    .accessibilityValue(isSelected ? "選択中" : "未選択")
+                    .accessibilityIdentifier("recurring.catchUp.date.\(generation.id).\(occurrence.date.rawValue)")
+                }
+            }
+            if let undoLabel = KMRecurringPresentation.undoLabel(generation) {
+                Button(undoLabel) {
+                    Task { await model.undoGeneration(id: generation.id, scheduleId: schedule.id, repositories: repositories) }
+                }
+                .buttonStyle(KMButtonStyle(role: .secondary)).frame(maxWidth: .infinity, minHeight: 44)
+                .disabled(model.isSaving).accessibilityIdentifier("recurring.catchUp.undo.\(generation.id)")
+                Button("選択した記録を削除") {
+                    let dates = (catchUpSelections[generation.id] ?? []).sorted()
+                    guard !dates.isEmpty else { model.message = "削除する日を選んでください。"; return }
+                    pendingDeleteGeneration = generation
+                    pendingDeleteDates = dates
+                    confirmsCatchUpDelete = true
+                }
+                .font(KMTypography.note).foregroundStyle(KMColor.danger).frame(minHeight: 44, alignment: .leading)
+                .disabled(model.isSaving).accessibilityIdentifier("recurring.catchUp.deleteSelected.\(generation.id)")
+            }
+        }
+        .padding(.vertical, KMSpacing.space3)
+        .accessibilityIdentifier("recurring.catchUp.entry.\(generation.id)")
+    }
+
+    private func openDetail(_ schedule: KMRecurringTransaction) {
+        selected = schedule
+        catchUpSelections = [:]
+        page = .detail
+        Task { await model.loadGenerations(scheduleId: schedule.id, repositories: repositories) }
     }
 
     private func detailRow(_ label: String, _ value: String) -> some View {
