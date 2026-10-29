@@ -47,7 +47,7 @@ cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 6. 反映後に `curl https://kakeimatch.yhgry.workers.dev/api/native/config` が `available:true`、`/.well-known/apple-app-site-association` が 200 で `webcredentials.apps` に `<App ID Prefix>.jp.kakeimatch.ios` を含むことを確認する。
 7. 署名済みの実機で、PWA で登録済みの Passkey によるログイン、App Attest によるゲスト利用、ログアウト・失効を確認する（Simulator は App Attest 非対応なので、クラウド機能が拒否され端末内機能は動くことを確認する）。結果は Issue #240 にコメントする。
 
-コマンドで確認する場合（ios.yml と同じ形。simulator 名は `xcrun simctl list devices available` で実在するものを使う）:
+ローカルで生成済みのprojectから確認する場合（CIはビルド成果物を共有してテストを分割する。詳細とartifactの取得方法は `README.md` の「生成・ビルド・テスト」を参照。simulator 名は `xcrun simctl list devices available` で実在するものを使う）:
 
 ```sh
 xcodebuild -project apps/ios/KakeiMatch.xcodeproj -scheme KakeiMatch \
