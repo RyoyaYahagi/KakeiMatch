@@ -32,6 +32,9 @@ const durations = {
   'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 41,
   'SettingsFlowTests/testDarkSettingsRootScreenshot': 11,
   'SettingsFlowTests/testThemeSelectionAndScreenLockSettingsNavigation': 20,
+  'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
+  'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
+  'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 35,
 };
 
 // Methods that only open a screen and attach reference screenshots. Pull requests
@@ -45,6 +48,8 @@ export const screenshotOnly = [
   'ReceiptFlowTests/testScreensDark',
   'ReceiptFlowTests/testScreensLight',
   'SettingsFlowTests/testDarkSettingsRootScreenshot',
+  'RecurringFlowTests/testRecurringInitialDarkScreenshot',
+  'RecurringFlowTests/testRecurringInitialLightScreenshot',
 ];
 
 export async function discoverTests(directory) {
