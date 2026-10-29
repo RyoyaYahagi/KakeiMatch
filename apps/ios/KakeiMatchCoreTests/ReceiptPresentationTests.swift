@@ -64,6 +64,30 @@ struct ReceiptPresentationTests {
         let ordered = KMReceiptPresentation.categoryChoices(categories: categories, transactions: [split, transfer, frequent])
         #expect(ordered.map(\.id) == ["daily", "food"])
     }
+    @Test func learnedItemRulesOverrideMerchantRulesAndLeaveOtherItemsForClassification() {
+        let categories = [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")]
+        let rules = [
+            KMCategoryLearningRule(targetType: .merchant, normalizedName: "synthetic market", categoryId: "food",
+                receipts: 3, matchingReceipts: 3, agreementPercent: 100, enabled: true, deleted: false),
+            KMCategoryLearningRule(targetType: .item, normalizedName: "soap", categoryId: "daily",
+                receipts: 4, matchingReceipts: 4, agreementPercent: 100, enabled: true, deleted: false),
+            KMCategoryLearningRule(targetType: .item, normalizedName: "disabled", categoryId: "daily",
+                receipts: 3, matchingReceipts: 3, agreementPercent: 100, enabled: false, deleted: false),
+            KMCategoryLearningRule(targetType: .item, normalizedName: "unavailable", categoryId: "removed",
+                receipts: 3, matchingReceipts: 3, agreementPercent: 100, enabled: true, deleted: false),
+        ]
+
+        let suggestion = KMReceiptPresentation.categoryLearning(merchant: " Synthetic Market ",
+            itemNames: ["Soap", "Milk", "Disabled", "Unavailable"], rules: rules, categories: categories)
+        #expect(suggestion.itemCategoryIds == ["daily", "food", "food", "food"])
+        #expect(suggestion.itemIndexesToClassify.isEmpty)
+        #expect(suggestion.appliedRules.map(\.targetType) == [.item, .merchant])
+
+        let withoutMerchant = KMReceiptPresentation.categoryLearning(merchant: nil,
+            itemNames: ["Soap", "Milk", "Disabled", "Unavailable"], rules: rules, categories: categories)
+        #expect(withoutMerchant.itemCategoryIds == ["daily", nil, nil, nil])
+        #expect(withoutMerchant.itemIndexesToClassify == [1, 2, 3])
+    }
     @Test func warningLabelsTargetsFallbackAndReviewFiltering() {
         var value = extraction()
         value.adjustments = [.init(label: "合成値引き", amountYen: -10)]

@@ -58,6 +58,46 @@ enum KMReceiptPresentation {
         var id: String { categoryId ?? "unselected" }
     }
 
+    struct CategoryLearning: Equatable {
+        let categoryId: String?
+        let itemCategoryIds: [String?]
+        let appliedRules: [KMReceipt.CategoryRuleApplication]
+
+        var itemIndexesToClassify: [Int] {
+            itemCategoryIds.indices.filter { itemCategoryIds[$0] == nil }
+        }
+    }
+
+    /// Apply saved merchant/item rules before asking Jev, matching the PWA receipt flow.
+    static func categoryLearning(merchant: String?, itemNames: [String], rules: [KMCategoryLearningRule],
+                                 categories: [KMCategory]) -> CategoryLearning {
+        let available = Dictionary(uniqueKeysWithValues: categories.map { ($0.id, $0) })
+        func activeRule(_ type: KMCategoryRuleStats.TargetType, name: String) -> KMCategoryLearningRule? {
+            let normalized = KMCategoryLearningService.normalizeName(name)
+            guard !normalized.isEmpty else { return nil }
+            return rules.first { $0.targetType == type && $0.normalizedName == normalized && $0.enabled && !$0.deleted && available[$0.categoryId] != nil }
+        }
+        func application(_ rule: KMCategoryLearningRule) -> KMReceipt.CategoryRuleApplication {
+            .init(targetType: rule.targetType == .item ? .item : .merchant, normalizedName: rule.normalizedName,
+                  categoryId: rule.categoryId, categoryName: available[rule.categoryId]?.name ?? "",
+                  receipts: rule.receipts, matchingReceipts: rule.matchingReceipts, agreementPercent: rule.agreementPercent)
+        }
+
+        let merchantRule = activeRule(.merchant, name: merchant ?? "")
+        let itemRules = itemNames.map { activeRule(.item, name: $0) }
+        let itemCategoryIds = itemRules.map { $0?.categoryId ?? merchantRule?.categoryId }
+        var applied: [KMReceipt.CategoryRuleApplication] = []
+        var seen = Set<String>()
+        for rule in itemNames.isEmpty ? [merchantRule] : itemRules.indices.map({ itemRules[$0] ?? merchantRule }) {
+            guard let rule else { continue }
+            let value = application(rule)
+            let key = "\(value.targetType.rawValue):\(value.normalizedName)"
+            if seen.insert(key).inserted { applied.append(value) }
+        }
+        let categoryId = itemCategoryIds.first ?? merchantRule?.categoryId
+        return CategoryLearning(categoryId: categoryId, itemCategoryIds: itemCategoryIds, appliedRules: applied)
+    }
+
     /// Matches the PWA receipt summary: item amounts are grouped by the selected
     /// category (or the receipt's default) and sorted from largest to smallest.
     static func categoryTotals(items: [KMReceiptItem], defaultCategoryId: String,

@@ -324,15 +324,49 @@ final class KMReceiptModel {
                 }
                 applyValues(saved)
                 phase = .categorizing
+                let learning = KMReceiptPresentation.categoryLearning(
+                    merchant: extraction.merchant, itemNames: extraction.items.map(\.name),
+                    rules: try await repositories.categoryLearning.categoryRules(), categories: categories
+                )
+                guard revision == token, !Task.isCancelled, var learnedReceipt = self.receipt else { return }
+                learnedReceipt.itemCategories = learning.itemCategoryIds
+                learnedReceipt.aiSuggestion = .init(categoryId: learning.categoryId,
+                    source: learning.appliedRules.isEmpty ? .unclassified : .learnedRule,
+                    flowId: flow.uuidString, categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
+                learnedReceipt.updatedAt = now
+                try await repositories.receipts.saveReceipt(learnedReceipt)
+                guard revision == token, !Task.isCancelled else { return }
+                guard let savedWithLearning = try await repositories.receipts.receipt(id: learnedReceipt.id) else {
+                    throw KMDataError.notFound("レシートを再取得できませんでした。")
+                }
+                self.receipt = savedWithLearning
+                applyValues(savedWithLearning)
+                if !learning.appliedRules.isEmpty { status = "いつもの分類を適用しました。" }
+
+                let itemIndexes = learning.itemIndexesToClassify
+                let needsClassification = extraction.items.isEmpty
+                    ? extraction.merchant != nil && learning.categoryId == nil
+                    : !itemIndexes.isEmpty
+                guard needsClassification else { phase = .idle; return }
                 do {
                     let answers = try await client.classify(extraction: extraction, flowID: flow,
-                        categories: categories.map { .init(id: $0.id, name: $0.name) })
+                        categories: categories.map { .init(id: $0.id, name: $0.name) },
+                        itemIndexes: extraction.items.isEmpty ? nil : itemIndexes)
                     guard revision == token, !Task.isCancelled, var updated = self.receipt else { return }
                     try await ensureCurrent(updated)
                     guard revision == token, !Task.isCancelled else { return }
-                    updated.itemCategories = extraction.items.indices.map { answers.answers["item_\($0)"]?.suggestedCategoryID }
-                    updated.aiSuggestion = .init(categoryId: answers.answers["category"]?.suggestedCategoryID,
-                        source: .jev, model: answers.model, attemptedAt: now, flowId: flow.uuidString)
+                    if extraction.items.isEmpty {
+                        updated.aiSuggestion = .init(categoryId: answers.answers["category"]?.suggestedCategoryID,
+                            source: .jev, model: answers.model, attemptedAt: now, flowId: flow.uuidString)
+                    } else {
+                        let categoriesByItem = extraction.items.indices.map { index in
+                            learning.itemCategoryIds[index] ?? answers.answers["item_\(index)"]?.suggestedCategoryID
+                        }
+                        updated.itemCategories = categoriesByItem
+                        updated.aiSuggestion = .init(categoryId: categoriesByItem.first ?? nil,
+                            source: .jev, model: answers.model, attemptedAt: now, flowId: flow.uuidString,
+                            categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
+                    }
                     updated.updatedAt = now
                     try await repositories.receipts.saveReceipt(updated)
                     guard revision == token else { return }
