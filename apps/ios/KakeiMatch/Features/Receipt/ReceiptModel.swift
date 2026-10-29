@@ -18,6 +18,7 @@ final class KMReceiptModel {
     var accountId = ""
     var items: [KMReceiptItem] = []
     var adjustments: [KMReceiptAdjustment] = []
+    var adjustmentIsAddition: [String: Bool] = [:]
     var reviewed: [Int] = []
     var categories: [KMCategory] = []
     var accounts: [KMAccount] = []
@@ -51,6 +52,17 @@ final class KMReceiptModel {
     var totalError: String? {
         if case .failure(let error) = totalResult { return error.localizedDescription }; return nil
     }
+    var categorySummary: Result<[KMReceiptPresentation.CategoryTotal], Error> {
+        Result { try KMReceiptPresentation.categoryTotals(items: items, defaultCategoryId: categoryId, categories: categories) }
+    }
+    var categoryCount: Int {
+        if case .success(let totals) = categorySummary { return totals.count }
+        return 0
+    }
+    var categorySummaryText: String {
+        guard case .success(let totals) = categorySummary else { return "カテゴリ別の金額を確認できません" }
+        return totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
+    }
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
 
@@ -61,7 +73,9 @@ final class KMReceiptModel {
         defer { loading = false }
         guard let repositories else { error = "家計簿を読み込めません。アプリを開き直してください。"; return }
         do {
-            categories = try await repositories.categories.categories(includeHidden: false).filter { !$0.isIncome }
+            let visibleCategories = try await repositories.categories.categories(includeHidden: false).filter { !$0.isIncome }
+            let history = try await repositories.transactions.transactions(matching: KMTransactionQuery(limit: nil))
+            categories = KMReceiptPresentation.categoryChoices(categories: visibleCategories, transactions: history)
             accounts = try await repositories.accounts.accounts(includeClosed: false)
             date = today.rawValue
             if let receiptID {
@@ -121,6 +135,112 @@ final class KMReceiptModel {
             KMReceiptAdjustment(id: "receipt-adjustment:\(receipt.id):\(i)", label: adjustment.label, amountYen: adjustment.amountYen,
                 targetItemId: adjustment.targetItemIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil })
         }
+        adjustmentIsAddition = Dictionary(uniqueKeysWithValues: adjustments.map { ($0.id, $0.amountYen > 0) })
+    }
+
+    func setItemCategory(_ itemId: String, categoryId: String?) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        items[index].categoryId = categoryId
+    }
+
+    func setAllItemCategories(_ categoryId: String?) {
+        items = items.map { item in
+            var updated = item
+            updated.categoryId = categoryId
+            return updated
+        }
+    }
+
+    func setItemName(_ itemId: String, value: String) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        items[index].name = String(value.prefix(200))
+    }
+
+    func setItemAmount(_ itemId: String, value: String) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        if value.isEmpty { items[index].amountYen = nil }
+        else if let amount = Int(value), amount >= 0, amount <= KMYen.maxSafe { items[index].amountYen = amount }
+    }
+
+    func setItemQuantity(_ itemId: String, value: String) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        if value.isEmpty { items[index].quantity = nil }
+        else if let quantity = Decimal(string: value, locale: Locale(identifier: "en_US_POSIX")), quantity >= 0 {
+            items[index].quantity = quantity
+        }
+    }
+
+    func setItemUnitPrice(_ itemId: String, value: String) {
+        guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
+        if value.isEmpty { items[index].unitPriceYen = nil }
+        else if let amount = Int(value), amount >= 0, amount <= KMYen.maxSafe { items[index].unitPriceYen = amount }
+    }
+
+    func addItem() -> String {
+        let id = "receipt-item:\(UUID().uuidString)"
+        items.append(.init(id: id, name: "", amountYen: nil))
+        return id
+    }
+
+    func removeItem(_ itemId: String) {
+        items.removeAll { $0.id == itemId }
+        adjustments = adjustments.map { adjustment in
+            guard adjustment.targetItemId == itemId else { return adjustment }
+            var updated = adjustment
+            updated.targetItemId = nil
+            return updated
+        }
+    }
+
+    func adjustmentIsAddition(for adjustmentId: String) -> Bool {
+        adjustmentIsAddition[adjustmentId] ?? adjustments.first(where: { $0.id == adjustmentId }).map { $0.amountYen > 0 } ?? false
+    }
+
+    func adjustmentAmountText(for adjustmentId: String) -> String {
+        guard let adjustment = adjustments.first(where: { $0.id == adjustmentId }) else { return "" }
+        return String(adjustment.amountYen.magnitude)
+    }
+
+    func adjustmentDisplayAmount(for adjustmentId: String) -> String {
+        guard let adjustment = adjustments.first(where: { $0.id == adjustmentId }),
+              let amount = Int(exactly: adjustment.amountYen.magnitude) else { return "" }
+        return (adjustment.amountYen < 0 ? "−" : "+") + KMAmountFormatter.yen(amount)
+    }
+
+    func setAdjustmentLabel(_ adjustmentId: String, value: String) {
+        guard let index = adjustments.firstIndex(where: { $0.id == adjustmentId }) else { return }
+        adjustments[index].label = String(value.prefix(100))
+    }
+
+    func setAdjustmentKind(_ adjustmentId: String, isAddition: Bool) {
+        guard let index = adjustments.firstIndex(where: { $0.id == adjustmentId }) else { return }
+        adjustmentIsAddition[adjustmentId] = isAddition
+        let amount = Int(adjustments[index].amountYen.magnitude)
+        adjustments[index].amountYen = isAddition ? amount : -amount
+    }
+
+    func setAdjustmentAmount(_ adjustmentId: String, value: String) {
+        guard let index = adjustments.firstIndex(where: { $0.id == adjustmentId }) else { return }
+        let amount = value.isEmpty ? 0 : Int(value)
+        guard let amount, amount >= 0, amount <= KMYen.maxSafe else { return }
+        adjustments[index].amountYen = adjustmentIsAddition(for: adjustmentId) ? amount : -amount
+    }
+
+    func setAdjustmentTarget(_ adjustmentId: String, itemId: String?) {
+        guard let index = adjustments.firstIndex(where: { $0.id == adjustmentId }) else { return }
+        adjustments[index].targetItemId = itemId
+    }
+
+    func addAdjustment() -> String {
+        let id = "receipt-adjustment:\(UUID().uuidString)"
+        adjustments.append(.init(id: id, label: "値引き", amountYen: 0))
+        adjustmentIsAddition[id] = false
+        return id
+    }
+
+    func removeAdjustment(_ adjustmentId: String) {
+        adjustments.removeAll { $0.id == adjustmentId }
+        adjustmentIsAddition.removeValue(forKey: adjustmentId)
     }
 
     func selectImage(_ data: Data, contentType: String) {
@@ -280,6 +400,14 @@ final class KMReceiptModel {
                 throw KMDataError.invalidData("登録結果を確認できませんでした。記録一覧を確認してください。")
             }
             receipt = saved; didSave = true; status = "登録しました。"
+            if let observation = KMCategoryLearningService.observation(
+                receiptId: saved.id, merchant: merchant, defaultCategoryId: fallback,
+                items: items.map { (name: $0.name, categoryId: $0.categoryId) },
+                availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
+            ) {
+                do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
+                catch { self.error = "レシートは登録しましたが、カテゴリの学習を保存できませんでした。\(error.localizedDescription)" }
+            }
         } catch { self.error = error.localizedDescription }
     }
 }

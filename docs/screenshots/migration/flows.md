@@ -17,13 +17,14 @@ fixture 正本: [`test/fixtures/ios-migration/fixture.json`](../../../test/fixtu
 | 5 | 合計・店名・日付を確認 | `receipt.totalField` / `receipt.merchantField` / `receipt.dateField` | `#receipt-amount` / `#receipt-merchant` / `#receipt-date` |
 | 6 | 支払元を選ぶ | `receipt.accountPicker` | `#receipt-account` にカードのラベルで `selectOption` |
 | 7 | 品目一覧へ | `receipt.itemsTab` | `button("品目一覧")` |
-| 8 | 対象品目を開く | `receipt.item.<index>.open` | `[data-receipt-item]` を品名で絞り、その `summary` をクリック |
-| 9 | カテゴリを修正 | `receipt.item.<index>.category` | 開いた `[data-receipt-item]` 内の `[data-item-category]` に `selectOption({ label: '日用品' })` 等 |
-| 10 | 登録する | `receipt.saveButton` | `button("登録する")`。`#message` の「登録しました。」を待つ |
-| 11 | 記録一覧へ | `records.tab` | `#receipt-tab` |
-| 12 | 登録結果を開く | `records.row.<fixtureKey>` | `#local-view` 内の button を「スーパーみどり · …」の accessible name で絞る |
+| 8 | 対象品目を開く | `receipt.row.<stableID>` | `[data-receipt-item]` を品名で絞り、その `summary` をクリック |
+| 9 | 品目のカテゴリを修正 | `receipt.item.category.<stableID>` | 開いた `[data-receipt-item]` 内の `[data-item-category]` に `selectOption({ label: '日用品' })` 等 |
+| 10 | 全品目のカテゴリをそろえる（任意） | `receipt.applyCategoryToAll` / `receipt.categoryChoice.<categoryID>` | `button("全品目を同じカテゴリにする")` → カテゴリを選ぶ |
+| 11 | 登録する | `receipt.saveButton` | `button("登録する")`。`#message` の「登録しました。」を待つ |
+| 12 | 記録一覧へ | `records.tab` | `#receipt-tab` |
+| 13 | 登録結果を開く | `records.row.<fixtureKey>` | `#local-view` 内の button を「スーパーみどり · …」の accessible name で絞る |
 
-`<index>` は fixture の品目順（0始まり）。PWA の生成UUIDを iOS identifier に埋め込まない。PWA は品目を `details.receipt-item[data-receipt-item]` で表示し、カテゴリは `[data-item-category]` の select で編集する。カテゴリの札を架空のシート selector に読み替えない。
+`<stableID>` は `KMReceiptItem.id`。表示順や金額を identifier に使わない。PWA の生成UUIDを iOS identifier に埋め込まない。PWA は品目を `details.receipt-item[data-receipt-item]` で表示し、カテゴリは `[data-item-category]` の select で編集する。
 
 根拠: `apps/pwa/src/main.ts`（`#add-record`）、`apps/pwa/src/local-ui.ts`（`receiptEditor`、`drawItems`、`readItems`）、`apps/pwa/test/browser-receipt-items.mjs`（品目編集の操作）。
 

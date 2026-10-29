@@ -51,6 +51,59 @@ enum KMReceiptPresentation {
         return value.utf16.count > max ? String(decoding: Array(value.utf16.prefix(max - 1)), as: UTF16.self) + "…" : value
     }
 
+    struct CategoryTotal: Identifiable, Equatable {
+        let categoryId: String?
+        let name: String
+        let amountYen: Int
+        var id: String { categoryId ?? "unselected" }
+    }
+
+    /// Matches the PWA receipt summary: item amounts are grouped by the selected
+    /// category (or the receipt's default) and sorted from largest to smallest.
+    static func categoryTotals(items: [KMReceiptItem], defaultCategoryId: String,
+                               categories: [KMCategory]) throws -> [CategoryTotal] {
+        var order: [String] = []
+        var totals: [String: Int] = [:]
+        for item in items {
+            let itemCategory = item.categoryId.flatMap { $0.isEmpty ? nil : $0 }
+            let fallback = defaultCategoryId.isEmpty ? nil : defaultCategoryId
+            let key = itemCategory ?? fallback ?? ""
+            if totals[key] == nil { order.append(key) }
+            totals[key] = try KMYen.add(totals[key] ?? 0, item.amountYen ?? 0)
+        }
+        let indexedTotals: [(index: Int, total: CategoryTotal)] = order.enumerated().map { index, key in
+            let category = categories.first(where: { $0.id == key })
+            let name = key.isEmpty ? "未選択" : category?.name ?? "カテゴリを選び直してください"
+            let total = CategoryTotal(categoryId: key.isEmpty ? nil : key, name: name, amountYen: totals[key] ?? 0)
+            return (index: index, total: total)
+        }
+        let sorted = indexedTotals.sorted { lhs, rhs in
+            lhs.total.amountYen == rhs.total.amountYen ? lhs.index < rhs.index : lhs.total.amountYen > rhs.total.amountYen
+        }
+        return sorted.map(\.total)
+    }
+
+    /// PWA category-picker.ts counts a category once per expense/income record,
+    /// including split children, and excludes transfers.
+    static func categoryChoices(categories: [KMCategory], transactions: [KMTransaction]) -> [KMCategory] {
+        var usage: [String: Int] = [:]
+        for transaction in transactions where transaction.kind != .transfer {
+            var categoryIds = Set(transaction.splits?.compactMap(\.categoryId) ?? [])
+            if let categoryId = transaction.categoryId { categoryIds.insert(categoryId) }
+            for categoryId in categoryIds { usage[categoryId, default: 0] += 1 }
+        }
+        let indexed = categories.enumerated().map { (index: $0.offset, category: $0.element) }
+        let sorted = indexed.sorted { lhs, rhs in
+            let leftUsage = usage[lhs.category.id, default: 0]
+            let rightUsage = usage[rhs.category.id, default: 0]
+            if leftUsage != rightUsage { return leftUsage > rightUsage }
+            let leftRank = KMCategoryOrdering.rank(lhs.category.name)
+            let rightRank = KMCategoryOrdering.rank(rhs.category.name)
+            return leftRank == rightRank ? lhs.index < rhs.index : leftRank < rightRank
+        }
+        return sorted.map(\.category)
+    }
+
     static func readingNote(elapsed: TimeInterval) -> String {
         elapsed >= 10 ? "品目が多いレシートは時間がかかります" : "数秒かかります"
     }
