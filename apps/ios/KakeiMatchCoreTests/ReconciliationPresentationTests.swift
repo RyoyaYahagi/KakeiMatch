@@ -87,4 +87,3 @@ struct ReconciliationPresentationTests {
         #expect(KMReconciliationPresentation.categoryChoices(rows, groups: [.init(id: "hidden", name: "非表示", hidden: true)]).map(\.id) == ["custom", "food", "fun"])
     }
 }
-
