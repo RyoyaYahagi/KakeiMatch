@@ -101,10 +101,14 @@ struct RecordsPresentationTests {
         let saved = try #require(try await repo.transactions.transaction(id: row.id))
         #expect(saved.memo == "合成の編集メモ" && saved.amountYen == -1200 && saved.id == row.id)
         await model.remove()
-        #expect(model.error == nil && model.page == .list && model.deletion != nil)
+        #expect(model.error == nil && model.page == .list)
         #expect(try await repo.transactions.transaction(id: row.id) == nil)
-        await model.undo()
-        #expect(model.error == nil && model.deletion == nil)
+        let notice = KMDeletionNoticeModel()
+        await notice.configure(repo)
+        #expect(notice.deletion != nil)
+        #expect(await notice.undo())
+        #expect(notice.deletion == nil)
+        #expect(notice.status == KMDeletionNoticeText.restored)
         #expect(try await repo.transactions.transaction(id: row.id)?.memo == "合成の編集メモ")
     }
 
@@ -127,8 +131,9 @@ struct RecordsPresentationTests {
         let model = KMRecordsModel(); await model.configure(repo); await model.open(transfer)
         model.draft?.amount = "2000"; await model.save()
         #expect(model.error == nil && model.selected?.amountYen == -2000)
-        await model.remove(); #expect(model.error == nil && model.deletion?.transactions.count == 2)
-        await model.undo(); #expect(model.error == nil)
+        let audit = await model.remove(); #expect(model.error == nil && audit?.transactions.count == 2)
+        let notice = KMDeletionNoticeModel(); await notice.configure(repo)
+        #expect(await notice.undo()); #expect(model.error == nil)
         #expect(try await repo.transactions.transaction(id: transfer.id)?.amountYen == -2000)
     }
 }

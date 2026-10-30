@@ -61,8 +61,8 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 
 ## 配置と後続PR
 
-- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、通常タブの本文ScrollViewを管理。通常タブの画面ViewはVStack等で本文を返します。手入力とレシートは各入力ViewがScrollView・左右16pt・固定の登録ボタンを持ちます。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。通常タブの左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。
-- `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除/取り消しをRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。
+- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、通常タブの本文ScrollViewを管理。通常タブの画面ViewはVStack等で本文を返します。手入力とレシートは各入力ViewがScrollView・左右16pt・固定の登録ボタンを持ちます。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。通常タブの左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。削除の取り消し通知はshellの `KMDeletionNoticeModel` が持ち、タブを移ってもPWAと同じ10秒の期限まで表示します。
+- `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除をRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。「口座・残高を見る」は設定の支払元・口座画面へ遷移します。
 - `Features/{Home,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は別PRで行います。
 - `Features/{ManualEntry,Income,Transfer}`: 実装済みの `KMEntryFormView` を共有します。入力画面がScrollView・左右余白・固定の登録ボタンを持ちます。
 - `Features/Receipt`: 撮影/写真選択、全体/品目表示、警告確認、既存画像のAI読み取りと台帳登録。画像新規保存・品目編集等の不足は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
@@ -82,7 +82,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 | `KMInputRow(label:value:identifier:hint:isAmount:error:)` | 入力Binding・検証結果。フォーカスの下線を部品が描く |
 | `KMSegmentedControl(options:selection:identifier:)` | 安定したoption IDと選択Binding |
 | `KMBottomSheet(title:isPresented:content:)` | 透明な `.fullScreenCover` 内に置く。OSがモーダルのフォーカスを隔離し、部品がPWA形状・scrim・内容に合った高さを描く。外側タップ、ヘッダ/つまみの80pt超の下スワイプで閉じる |
-| `KMToast(message:actionTitle:action:)` | Undoの期限（PWAでは10秒）・処理はfeature側。部品は表示のみ |
+| `KMToast(message:actionTitle:trailingMessage:isBusy:action:)` | Undoの期限（PWAでは10秒）・処理はshellの `KMDeletionNoticeModel` が持つ。部品は表示のみ |
 | `KMBanner(status:title:detail:actionTitle:action:)` | 失敗理由と再試行操作を渡す |
 
 ### Token対応
@@ -209,15 +209,15 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 ## 記録一覧の接続範囲
 
-`RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。
+`RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰、口座・残高への導線、別タブでも残る取り消し表示を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。`DeletionNoticeTests` は削除から10秒の期限、起動時の復元、二重タップ、失敗時の再試行です。
+
+記録一覧の「口座・残高を見る」は、PWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」へ遷移します。削除の取り消し表示は `KMDeletionNoticeModel` がshellで保持し、タブを移っても期限まで表示します。起動時は再起動前に削除した記録のうち、まだ取り消せる最新のものを表示します。
 
 未接続・未検証の範囲は次のとおりです。
 
-- 「口座・残高を見る」は口座画面への共通遷移がないため表示しません。shellと口座画面の別PRで接続します。
 - 確認待ちは一覧・未登録下書きの削除・「確認する」からレシート登録画面を開く導線を接続しています。
 - 登録済みレシートは基本項目の編集・画像/品目/値引き/分類理由の閲覧を接続しています。品目別カテゴリの編集と給与内訳の表示は未接続です。画像の拡大操作も未接続です。
 - 日付入力は `YYYY-MM-DD` の文字入力です。カテゴリ・口座はOSの選択メニュー、削除確認はOSのダイアログです。支出集計の対象外はOSのスイッチを使います。
-- 削除の取り消し表示は記録画面が残っている間だけです。別タブでも残す共通の通知表示はshellの別PRが必要です。
 - 実機、Dynamic Type、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Repositoryの単体検証とは区別します。
 
 ## PWAとの差分・検証範囲

@@ -25,10 +25,8 @@ final class KMRecordsModel {
     var loaded = false
     var error: String?
     var message: String?
-    var deletion: KMTransactionDeletion?
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var revision = 0
-    @ObservationIgnored private var undoTask: Task<Void, Never>?
     @ObservationIgnored private let started = ProcessInfo.processInfo.systemUptime
 
     var pending: [KMReceipt] { receipts.filter { $0.registration.status != .applied && $0.registration.status != .deleted } }
@@ -158,33 +156,19 @@ final class KMRecordsModel {
         busy = false
     }
 
-    func remove() async {
-        guard let repositories, let row = selected, !busy else { return }
+    /// The shell owns the undo toast so it stays visible after leaving this tab.
+    /// Returns the audit only when the deletion succeeded.
+    func remove() async -> KMTransactionDeletion? {
+        guard let repositories, let row = selected, !busy else { return nil }
         busy = true; error = nil
         do {
             var expected = [row]
             if let peerID = row.transferId, let peer = try await repositories.transactions.transaction(id: peerID) { expected.append(peer) }
             let audit = try await repositories.transactions.deleteTransaction(id: row.id, expected: expected, at: now)
-            undoTask?.cancel()
-            let remaining = audit.undoUntil.timeIntervalSince(now)
-            deletion = remaining > 0 ? audit : nil
-            undoTask = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(max(0, remaining))) } catch { return }
-                self?.deletion = nil
-            }
             busy = false
             await backFromDetail()
-        } catch { self.error = error.localizedDescription; busy = false }
-    }
-
-    func undo() async {
-        guard let repositories, let deletion, !busy else { return }
-        busy = true; error = nil
-        do {
-            try await repositories.transactions.undoTransactionDeletion(id: deletion.id, at: now)
-            undoTask?.cancel(); self.deletion = nil; message = "削除を取り消しました。"
-            busy = false; await reload()
-        } catch { self.error = error.localizedDescription; busy = false }
+            return audit
+        } catch { self.error = error.localizedDescription; busy = false; return nil }
     }
 
     func deletePending(_ receipt: KMReceipt) async {

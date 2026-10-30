@@ -2,6 +2,7 @@ import SwiftUI
 
 struct KMRecordDetailView: View {
     @Bindable var model: KMRecordsModel
+    var onDeleted: (KMTransactionDeletion) -> Void = { _ in }
     @Environment(\.repositories) private var repositories
     @State private var confirmsDeletion = false
     @State private var showsItems = false
@@ -78,7 +79,9 @@ struct KMRecordDetailView: View {
             confirmsDeletion = false
         }
         .alert("この取引を削除しますか？レシート画像などの原本は残ります。", isPresented: $confirmsDeletion) {
-            Button("削除する", role: .destructive) { Task { await model.remove() } }
+            Button("削除する", role: .destructive) {
+                Task { if let audit = await model.remove() { onDeleted(audit) } }
+            }
             Button("キャンセル", role: .cancel) { }
         }
     }

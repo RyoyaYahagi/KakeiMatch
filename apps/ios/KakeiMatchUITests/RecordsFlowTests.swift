@@ -71,6 +71,38 @@ final class RecordsFlowTests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor func testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts() {
+        continueAfterFailure = false
+        let app = launch("light")
+
+        app.buttons["records.accounts"].tap()
+        XCTAssertTrue(app.staticTexts["masters.title"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["masters.title"].label, "支払元・口座")
+        app.buttons["masters.back"].tap()
+        XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 5))
+
+        app.buttons["receipt-tab"].tap()
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-010"].waitForExistence(timeout: 5))
+        app.buttons["records.row.fixture-transaction-010"].tap()
+        XCTAssertTrue(app.buttons["records.detail.memo"].waitForExistence(timeout: 5))
+        app.swipeUp()
+        app.buttons["records.delete"].tap()
+        app.alerts.buttons["削除する"].tap()
+
+        let undo = app.buttons["元に戻す"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5))
+        app.buttons["home-tab"].tap()
+        XCTAssertTrue(app.buttons["home-tab"].isSelected)
+        // PWA keeps .deletion-toast outside the tab view, so it is still visible on Home.
+        XCTAssertTrue(undo.waitForExistence(timeout: 5))
+        undo.tap()
+
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-010"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["shell.deletionStatus"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.staticTexts["shell.deletionStatus"].label, "削除を取り消しました。")
+        app.terminate()
+    }
+
     @MainActor func testDarkReferenceStatesAndEmptyHousehold() {
         continueAfterFailure = false
         let app = launch("dark")
