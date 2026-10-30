@@ -26,8 +26,8 @@ final class ReceiptFlowTests: XCTestCase {
         amount.tap()
         amount.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 4) + "2138")
         XCTAssertFalse(warning.exists)
-        app.buttons["receipt.itemsTab"].tap() // dismiss keyboard and inspect read-only items
-        XCTAssertTrue(app.staticTexts["receipt.itemsHandoff"].exists)
+        app.buttons["receipt.itemsTab"].tap() // dismiss keyboard and inspect the editable item list
+        XCTAssertTrue(app.buttons["receipt.applyCategoryToAll"].exists)
         app.buttons["receipt.overviewTab"].tap()
         app.swipeUp()
         app.buttons["receipt-account"].tap()
@@ -64,7 +64,8 @@ final class ReceiptFlowTests: XCTestCase {
             capture(app, "receipt-\(scenario)-\(appearance)")
             if scenario == "result" {
                 app.buttons["receipt.itemsTab"].tap()
-                XCTAssertTrue(app.staticTexts["台所用洗剤"].exists)
+                XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "receipt.row.")).firstMatch.exists)
+                XCTAssertTrue(app.buttons["receipt.applyCategoryToAll"].exists)
                 capture(app, "receipt-items-tab-\(appearance)")
                 app.buttons["receipt.overviewTab"].tap()
             }
@@ -94,7 +95,7 @@ final class ReceiptFlowTests: XCTestCase {
 
 
 extension ReceiptFlowTests {
-    @MainActor func testPendingReceiptUsesEditorAndReturnsToRecords() {
+    @MainActor func testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["-UITestFixture", "receipt", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -105,8 +106,27 @@ extension ReceiptFlowTests {
         pending.tap()
         XCTAssertTrue(app.buttons["receipt.itemsTab"].waitForExistence(timeout: 5))
         app.buttons["receipt.itemsTab"].tap()
-        XCTAssertTrue(app.staticTexts["receipt.itemsHandoff"].exists)
-        app.buttons["records.pendingBackButton"].tap()
+        let firstItem = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "receipt.row.")).firstMatch
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5))
+        firstItem.tap()
+        let itemCategory = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "receipt.item.category.")).firstMatch
+        XCTAssertTrue(itemCategory.waitForExistence(timeout: 5))
+        let itemCategoryIdentifier = itemCategory.identifier
+        itemCategory.tap()
+        let dailyChoice = app.buttons["日用品"]
+        XCTAssertTrue(dailyChoice.waitForExistence(timeout: 5))
+        dailyChoice.tap()
+        XCTAssertTrue(app.buttons[itemCategoryIdentifier].label.contains("日用品"))
+        app.buttons["receipt.applyCategoryToAll"].tap()
+        let foodChoice = app.buttons["食費"]
+        XCTAssertTrue(foodChoice.waitForExistence(timeout: 5))
+        foodChoice.tap()
+        app.buttons["receipt.overviewTab"].tap()
+        app.buttons["receipt-account"].tap()
+        app.buttons["PayPayカード"].tap()
+        app.buttons["receipt.saveButton"].tap()
+        XCTAssertTrue(app.buttons["receipt.recordsButton"].waitForExistence(timeout: 10))
+        app.buttons["receipt.recordsButton"].tap()
         XCTAssertTrue(app.buttons["records.search"].waitForExistence(timeout: 5))
         app.terminate()
     }

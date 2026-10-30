@@ -2,6 +2,18 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum KMReceiptCategoryTarget: Identifiable {
+    case allItems
+    case item(String)
+
+    var id: String {
+        switch self {
+        case .allItems: "all-items"
+        case .item(let itemId): "item:\(itemId)"
+        }
+    }
+}
+
 struct ReceiptView: View {
     var source: KMEntryDestination? = nil
     var receiptID: String? = nil
@@ -14,6 +26,9 @@ struct ReceiptView: View {
     @State private var showsImage = false
     @State private var confirmsReread = false
     @State private var optionalExpanded = false
+    @State private var expandedItemID: String?
+    @State private var expandedAdjustmentID: String?
+    @State private var categoryTarget: KMReceiptCategoryTarget?
     @FocusState private var focusedField: String?
 
     var body: some View {
@@ -34,43 +49,40 @@ struct ReceiptView: View {
                     if let field { scroll.scrollTo(field, anchor: .center) }
                 }
             }
-            VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                if let totalError = model.totalError {
-                    Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                }
-                if let error = model.error {
-                    Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                        .accessibilityIdentifier("receipt.error")
-                }
-                if let status = model.status {
-                    Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
-                        .accessibilityIdentifier("receipt-save-state")
-                }
-                if model.didSave {
-                    Button("記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
-                        .accessibilityIdentifier("receipt.recordsButton")
-                } else if model.isReading {
-                    Button(model.phase == .categorizing ? "分類を待っています…" : "読み取り中…") {}
-                        .buttonStyle(KMButtonStyle(role: .primary)).disabled(true)
-                    Button(model.phase == .categorizing ? "分類を待たずに自分で選ぶ" : "待たずに手で入力する") { model.stopWaiting() }
-                        .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.stopWaiting")
-                } else if case .failed(let failure) = model.phase, KMReceiptPresentation.retryable(failure) {
-                    Button("もう一度読み取る") { confirmsReread = model.receipt?.extraction != nil; if !confirmsReread { model.startReading() } }
-                        .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.retryButton")
-                    Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
-                        .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.manualButton")
-                } else {
-                    Button { focusedField = nil; Task { await model.save() } } label: {
-                        Text(model.saving ? "登録しています…" : "登録する")
-                            .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
+            if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || model.totalError != nil {
+                VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                    if let totalError = model.totalError {
+                        Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
                     }
-                    .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
-                    .disabled(model.saving || !model.canSave)
+                    if let error = model.error {
+                        Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
+                            .accessibilityIdentifier("receipt.error")
+                    }
+                    if let status = model.status {
+                        Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
+                            .accessibilityIdentifier("receipt-save-state")
+                    }
+                    if model.didSave {
+                        Button("記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
+                            .accessibilityIdentifier("receipt.recordsButton")
+                    } else if model.isReading {
+                        Button(model.phase == .categorizing ? "分類を待っています…" : "読み取り中…") {}
+                            .buttonStyle(KMButtonStyle(role: .primary)).disabled(true)
+                        Button(model.phase == .categorizing ? "分類を待たずに自分で選ぶ" : "待たずに手で入力する") { model.stopWaiting() }
+                            .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.stopWaiting")
+                    } else if case .failed(let failure) = model.phase, KMReceiptPresentation.retryable(failure) {
+                        Button("もう一度読み取る") { confirmsReread = model.receipt?.extraction != nil; if !confirmsReread { model.startReading() } }
+                            .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.retryButton")
+                        Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
+                            .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.manualButton")
+                    } else if model.pane == "overview" {
+                        saveButton
+                    }
                 }
+                .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
+                .frame(maxWidth: .infinity, alignment: .leading).background(KMColor.bg)
+                .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             }
-            .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
-            .frame(maxWidth: .infinity, alignment: .leading).background(KMColor.bg)
-            .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("receipt.screen")
         .task {
@@ -117,6 +129,24 @@ struct ReceiptView: View {
         .fullScreenCover(isPresented: $showsImage) {
             if let data = model.imageData, let image = UIImage(data: data) { KMReceiptImageViewer(image: image) }
         }
+        .fullScreenCover(item: $categoryTarget) { target in
+            KMBottomSheet(title: "カテゴリを選ぶ", isPresented: Binding(
+                get: { categoryTarget != nil },
+                set: { if !$0 { categoryTarget = nil } }
+            )) {
+                categoryPicker(for: target)
+            }
+            .presentationBackground(.clear)
+        }
+    }
+
+    private var saveButton: some View {
+        Button { focusedField = nil; Task { await model.save() } } label: {
+            Text(model.saving ? "登録しています…" : "登録する")
+                .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
+        .disabled(model.saving || !model.canSave || model.isReading || model.didSave)
     }
 
     private var tabs: some View {
@@ -219,8 +249,20 @@ struct ReceiptView: View {
                 }
                 row("カテゴリ", id: "receipt-category") {
                     if !model.items.isEmpty {
-                        Button("品目ごと · \(Set(model.items.compactMap(\.categoryId)).count)カテゴリ ›") { model.pane = "items" }
-                            .accessibilityIdentifier("receipt.categoryItems")
+                        Button { model.pane = "items" } label: {
+                            VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                                HStack {
+                                    Text("品目ごと").font(KMTypography.body(14, weight: .semibold))
+                                    Spacer()
+                                    Text("\(model.categoryCount)カテゴリ ›").font(KMTypography.note).foregroundStyle(KMColor.primary)
+                                }
+                                Text(model.categorySummaryText).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("品目ごと。\(model.categorySummaryText)。品目一覧を開く")
+                        .accessibilityIdentifier("receipt.categoryItems")
                     } else {
                         Picker("カテゴリ", selection: $model.categoryId) {
                             Text("選択してください").tag("")
@@ -299,29 +341,35 @@ struct ReceiptView: View {
 
     private var itemList: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            Button("全品目を同じカテゴリにする") { categoryTarget = .allItems }
+                .font(KMTypography.body(14, weight: .semibold)).foregroundStyle(KMColor.primary)
+                .frame(minHeight: 44, alignment: .leading)
+                .accessibilityIdentifier("receipt.applyCategoryToAll")
+                .disabled(model.items.isEmpty || model.isReading || model.saving || model.didSave)
             Text("購入内容").font(KMTypography.body(17, weight: .bold)).padding(.top, KMSpacing.space4)
             VStack(spacing: 0) {
-            ForEach(model.items) { item in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(item.name)
-                        if model.warnings.contains(where: { $0.field == .items && $0.index.flatMap { model.items.indices.contains($0) ? model.items[$0].id : nil } == item.id }) {
-                            Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning)
-                        }
-                    }
-                    Spacer()
-                    if let yen = item.amountYen { KMAmount(yen: yen) } else { Text("未入力") }
-                    Text(model.categories.first { $0.id == item.categoryId }?.name ?? "未分類").font(KMTypography.note).foregroundStyle(KMColor.muted)
-                }
-                .font(KMTypography.body(14)).frame(minHeight: 44).overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
-                .accessibilityElement(children: .combine).accessibilityIdentifier("receipt.row.\(item.id)")
+                ForEach(model.items) { item in itemRow(item) }
             }
+            Button("＋ 品目を追加") {
+                expandedItemID = model.addItem()
+                expandedAdjustmentID = nil
             }
+            .font(KMTypography.body(15, weight: .semibold)).foregroundStyle(KMColor.primary)
+            .frame(minHeight: 44, alignment: .leading).accessibilityIdentifier("receipt.addItem")
+            .disabled(model.isReading || model.saving || model.didSave)
+
             Text("値引き・調整").font(KMTypography.body(17, weight: .bold))
             ForEach(model.adjustments) { adjustment in
-                HStack { Text(adjustment.label); Spacer(); Text((adjustment.amountYen < 0 ? "−" : "+") + KMAmountFormatter.yen(adjustment.amountYen)) }
-                    .frame(minHeight: 44)
+                adjustmentRow(adjustment)
             }
+            Button("＋ 値引き・調整を追加") {
+                expandedAdjustmentID = model.addAdjustment()
+                expandedItemID = nil
+            }
+            .font(KMTypography.body(15, weight: .semibold)).foregroundStyle(KMColor.primary)
+            .frame(minHeight: 44, alignment: .leading).accessibilityIdentifier("receipt.addAdjustment")
+            .disabled(model.isReading || model.saving || model.didSave)
+
             row("税額（任意）", field: .taxAmountYen, id: "receipt-tax") {
                 TextField("", text: field($model.tax, review: .taxAmountYen)).keyboardType(.numberPad)
                     .accessibilityLabel("税額（円・任意）").accessibilityIdentifier("receipt-tax").focused($focusedField, equals: "receipt-tax")
@@ -330,9 +378,210 @@ struct ReceiptView: View {
                 Text("購入内容との差額は\(check.difference < 0 ? "−" : "+")\(KMAmountFormatter.yen(check.difference))です。入力した合計金額を保ちます。値引きや税額を確認してください。")
                     .font(KMTypography.note).foregroundStyle(KMColor.warning).accessibilityIdentifier("receipt-difference")
             }
-            Text("品目・カテゴリの修正は、今後の更新で利用できます。")
-                .font(KMTypography.note).foregroundStyle(KMColor.muted).accessibilityIdentifier("receipt.itemsHandoff")
+            if !model.isReading && !model.didSave {
+                saveButton.padding(.top, KMSpacing.space2)
+            }
         }
+    }
+
+    private func itemRow(_ item: KMReceiptItem) -> some View {
+        VStack(spacing: 0) {
+            Button {
+                focusedField = nil
+                expandedAdjustmentID = nil
+                expandedItemID = expandedItemID == item.id ? nil : item.id
+            } label: {
+                HStack(spacing: KMSpacing.space2) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.name.isEmpty ? "品目を入力" : item.name).lineLimit(1)
+                        if model.hasUnreviewedItemWarning(item.id) { Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning) }
+                    }
+                    Spacer(minLength: KMSpacing.space1)
+                    if let yen = item.amountYen { KMAmount(yen: yen) } else { Text("金額未入力").font(KMTypography.note) }
+                    Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
+                    Image(systemName: expandedItemID == item.id ? "chevron.down" : "chevron.right")
+                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                }
+                .font(KMTypography.body(14)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("receipt.row.\(item.id)")
+
+            if expandedItemID == item.id {
+                VStack(spacing: 0) {
+                    row("品目名", id: "receipt-item-name-\(item.id)") {
+                        TextField("品目名", text: itemNameBinding(item.id))
+                            .accessibilityLabel("品目名").accessibilityIdentifier("receipt.item.name.\(item.id)")
+                    }
+                    row("金額（円）", id: "receipt-item-amount-\(item.id)") {
+                        TextField("金額", text: itemAmountBinding(item.id)).keyboardType(.numberPad)
+                            .accessibilityLabel("金額（円）").accessibilityIdentifier("receipt.item.amount.\(item.id)")
+                    }
+                    row("数量（任意）", id: "receipt-item-quantity-\(item.id)") {
+                        TextField("任意", text: itemQuantityBinding(item.id)).keyboardType(.decimalPad)
+                            .accessibilityLabel("数量（任意）").accessibilityIdentifier("receipt.item.quantity.\(item.id)")
+                    }
+                    row("単価（円・任意）", id: "receipt-item-unit-\(item.id)") {
+                        TextField("任意", text: itemUnitPriceBinding(item.id)).keyboardType(.numberPad)
+                            .accessibilityLabel("単価（円・任意）").accessibilityIdentifier("receipt.item.unitPrice.\(item.id)")
+                    }
+                    Button { categoryTarget = .item(item.id) } label: {
+                        HStack {
+                            Text("カテゴリ").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                            Spacer()
+                            Text(itemCategoryName(item.categoryId)).font(KMTypography.body(14)).foregroundStyle(KMColor.text)
+                            Image(systemName: "chevron.right").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                        }.frame(minHeight: 44)
+                            .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+                    }
+                    .buttonStyle(.plain).accessibilityLabel("カテゴリ、\(itemCategoryName(item.categoryId))")
+                    .accessibilityIdentifier("receipt.item.category.\(item.id)")
+                    Button("品目を削除") {
+                        model.removeItem(item.id)
+                        expandedItemID = nil
+                    }
+                    .font(KMTypography.body(14)).foregroundStyle(KMColor.danger).frame(minHeight: 44, alignment: .leading)
+                    .accessibilityIdentifier("receipt.item.delete.\(item.id)")
+                }
+                .padding(.leading, KMSpacing.space3)
+            }
+            Rectangle().fill(KMColor.border).frame(height: 1)
+        }
+        .disabled(model.isReading || model.saving || model.didSave)
+    }
+
+    private func adjustmentRow(_ adjustment: KMReceiptAdjustment) -> some View {
+        VStack(spacing: 0) {
+            Button {
+                focusedField = nil
+                expandedItemID = nil
+                expandedAdjustmentID = expandedAdjustmentID == adjustment.id ? nil : adjustment.id
+            } label: {
+                HStack(spacing: KMSpacing.space2) {
+                    Text(adjustment.label.isEmpty ? (model.adjustmentIsAddition(for: adjustment.id) ? "調整" : "値引き") : adjustment.label)
+                        .lineLimit(1)
+                    Spacer(minLength: KMSpacing.space1)
+                    Text(model.adjustmentDisplayAmount(for: adjustment.id)).font(KMTypography.number(14))
+                    Text(model.adjustmentIsAddition(for: adjustment.id) ? "その他の調整" : "値引き")
+                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                    Image(systemName: expandedAdjustmentID == adjustment.id ? "chevron.down" : "chevron.right")
+                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                }
+                .font(KMTypography.body(14)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).accessibilityElement(children: .combine)
+            .accessibilityIdentifier("receipt.adjustment.row.\(adjustment.id)")
+            if expandedAdjustmentID == adjustment.id {
+                VStack(spacing: 0) {
+                    row("内容", id: "receipt-adjustment-label-\(adjustment.id)") {
+                        TextField("内容", text: adjustmentLabelBinding(adjustment.id))
+                            .accessibilityLabel("値引き・調整の内容").accessibilityIdentifier("receipt.adjustment.label.\(adjustment.id)")
+                    }
+                    row("種類", id: "receipt-adjustment-kind-\(adjustment.id)") {
+                        Picker("種類", selection: adjustmentKindBinding(adjustment.id)) {
+                            Text("値引き").tag(false)
+                            Text("その他の調整（加算）").tag(true)
+                        }.accessibilityIdentifier("receipt.adjustment.kind.\(adjustment.id)")
+                    }
+                    row(model.adjustmentIsAddition(for: adjustment.id) ? "調整額（円）" : "値引き額（円）", id: "receipt-adjustment-amount-\(adjustment.id)") {
+                        TextField("金額", text: adjustmentAmountBinding(adjustment.id)).keyboardType(.numberPad)
+                            .accessibilityLabel("値引き・調整額（円）").accessibilityIdentifier("receipt.adjustment.amount.\(adjustment.id)")
+                    }
+                    row("対象の品目（任意）", id: "receipt-adjustment-target-\(adjustment.id)") {
+                        Picker("対象の品目（任意）", selection: adjustmentTargetBinding(adjustment.id)) {
+                            Text("指定しない").tag("")
+                            ForEach(model.items) { item in Text(item.name.isEmpty ? "品目を入力" : item.name).tag(item.id) }
+                        }.accessibilityIdentifier("receipt.adjustment.target.\(adjustment.id)")
+                    }
+                    Button("値引き・調整を削除") {
+                        model.removeAdjustment(adjustment.id)
+                        expandedAdjustmentID = nil
+                    }
+                    .font(KMTypography.body(14)).foregroundStyle(KMColor.danger).frame(minHeight: 44, alignment: .leading)
+                    .accessibilityIdentifier("receipt.adjustment.delete.\(adjustment.id)")
+                }
+                .padding(.leading, KMSpacing.space3)
+            }
+            Rectangle().fill(KMColor.border).frame(height: 1)
+        }
+        .disabled(model.isReading || model.saving || model.didSave)
+    }
+
+    @ViewBuilder private func categoryPicker(for target: KMReceiptCategoryTarget) -> some View {
+        ScrollView {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: KMSpacing.space2), count: 4), spacing: KMSpacing.space2) {
+                categoryChoice(nil, label: "未選択", target: target)
+                ForEach(model.categories) { category in categoryChoice(category, label: category.name, target: target) }
+            }
+            .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
+            .accessibilityElement(children: .contain).accessibilityIdentifier("receipt.categoryPicker")
+        }
+    }
+
+    private func categoryChoice(_ category: KMCategory?, label: String, target: KMReceiptCategoryTarget) -> some View {
+        let selected = isCategorySelected(category?.id, target: target)
+        let visual = KMCategoryTone.visual(name: category?.name ?? label, id: category?.id)
+        return Button {
+            switch target {
+            case .allItems: model.setAllItemCategories(category?.id)
+            case .item(let itemId): model.setItemCategory(itemId, categoryId: category?.id)
+            }
+            categoryTarget = nil
+        } label: {
+            VStack(spacing: KMSpacing.space1) {
+                KMIcon(name: visual.icon, size: 20).foregroundStyle(visual.tone.foreground)
+                    .frame(width: 30, height: 30).background(visual.tone.background, in: Circle())
+                Text(label).font(KMTypography.body(13, weight: selected ? .bold : .medium))
+                    .foregroundStyle(KMColor.text).lineLimit(2).minimumScaleFactor(0.8).multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 32)
+            }
+            .frame(maxWidth: .infinity, minHeight: 68).padding(.horizontal, KMSpacing.space1)
+            .background(selected ? KMColor.primarySoft : KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.lg))
+            .overlay(RoundedRectangle(cornerRadius: KMRadius.lg).stroke(selected ? KMColor.primary : KMColor.border, lineWidth: selected ? 2 : 1))
+        }
+        .buttonStyle(.plain).accessibilityLabel(label).accessibilityValue(selected ? "選択中" : "")
+        .accessibilityIdentifier("receipt.categoryChoice.\(category?.id ?? "unselected")")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private func isCategorySelected(_ categoryId: String?, target: KMReceiptCategoryTarget) -> Bool {
+        switch target {
+        case .allItems: return !model.items.isEmpty && model.items.allSatisfy { $0.categoryId == categoryId }
+        case .item(let itemId): return model.items.first(where: { $0.id == itemId })?.categoryId == categoryId
+        }
+    }
+
+    private func itemCategoryName(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return "カテゴリ未選択" }
+        return model.categories.first(where: { $0.id == id })?.name ?? "カテゴリを選び直してください"
+    }
+
+    private func itemNameBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.items.first(where: { $0.id == id })?.name ?? "" }, set: { model.setItemName(id, value: $0) })
+    }
+    private func itemAmountBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.items.first(where: { $0.id == id })?.amountYen.map(String.init) ?? "" }, set: { model.setItemAmount(id, value: $0) })
+    }
+    private func itemQuantityBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.items.first(where: { $0.id == id })?.quantity.map { NSDecimalNumber(decimal: $0).stringValue } ?? "" }, set: { model.setItemQuantity(id, value: $0) })
+    }
+    private func itemUnitPriceBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.items.first(where: { $0.id == id })?.unitPriceYen.map(String.init) ?? "" }, set: { model.setItemUnitPrice(id, value: $0) })
+    }
+    private func adjustmentLabelBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.adjustments.first(where: { $0.id == id })?.label ?? "" }, set: { model.setAdjustmentLabel(id, value: $0) })
+    }
+    private func adjustmentAmountBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.adjustmentAmountText(for: id) }, set: { model.setAdjustmentAmount(id, value: $0) })
+    }
+    private func adjustmentKindBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { model.adjustmentIsAddition(for: id) }, set: { model.setAdjustmentKind(id, isAddition: $0) })
+    }
+    private func adjustmentTargetBinding(_ id: String) -> Binding<String> {
+        Binding(get: { model.adjustments.first(where: { $0.id == id })?.targetItemId ?? "" }, set: { model.setAdjustmentTarget(id, itemId: $0.isEmpty ? nil : $0) })
     }
 
     private func row<Content: View>(_ title: String, field: KMReceiptExtraction.WarningField? = nil, id: String, @ViewBuilder content: () -> Content) -> some View {
