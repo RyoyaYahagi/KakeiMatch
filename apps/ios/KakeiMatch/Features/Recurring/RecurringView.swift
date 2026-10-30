@@ -113,7 +113,7 @@ struct KMRecurringView: View {
             set: { isPresented in
                 if !isPresented && !selectingCatchUp { model.cancelCatchUpPrompt() }
             }
-        ), titleVisibility: .visible) {
+        )) {
             Button("全件を記録") {
                 selectingCatchUp = true
                 Task {
