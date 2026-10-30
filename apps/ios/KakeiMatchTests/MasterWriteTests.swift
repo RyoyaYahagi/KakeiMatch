@@ -196,6 +196,7 @@ import Testing
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         var repo = try repository(seed(), durable: durable, directory: directory)
         try await repo.recurring.saveRecurring(schedule(posts: true), at: now)
+        try await repo.recurring.catchUpRecurring(id: "schedule", dates: [day], through: day, at: now)
         let audit = try #require(try await repo.recurring.recurringGenerations(scheduleId: "schedule").first)
         let row = audit.occurrences[0].transaction
         try await repo.categories.saveCategory(.init(id: "food", name: "食費の新しい名前"))
@@ -232,6 +233,10 @@ import Testing
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let repo = try repository(seed(), durable: durable, directory: directory)
         try await repo.recurring.saveRecurring(schedule(posts: true), at: now)
+        // Like Actual, a new schedule starts at the next occurrence on or after today;
+        // past dates are recorded only through the explicit catch-up choice.
+        #expect(try await repo.transactions.transactions(matching: .init(limit: nil)).isEmpty)
+        try await repo.recurring.catchUpRecurring(id: "schedule", dates: [day], through: day, at: now)
         #expect(try await repo.transactions.transactions(matching: .init(limit: nil)).count == 1)
         try await repo.recurring.runRecurring(through: KMDate("2026-10-14"), at: now)
         #expect(try await repo.transactions.transactions(matching: .init(limit: nil)).count == 1)
@@ -329,6 +334,7 @@ import Testing
         _ = try await reopened.importStatement(data: csv(), provider: .paypayCard, at: now)
         let batch = try await reopened.importMoneyForward(id: "saved", rows: rows, mappings: mappings(rows), at: now)
         try await reopened.saveRecurring(schedule(posts: true), at: now)
+        try await reopened.catchUpRecurring(id: "schedule", dates: [day], through: day, at: now)
         let generation = try #require(try await reopened.recurringGenerations(scheduleId: "schedule").first)
         let backup = try await reopened.exportNativeBackup(); defer { try? FileManager.default.removeItem(at: backup) }
         let targetDirectory = try temporary(); defer { try? FileManager.default.removeItem(at: targetDirectory) }
