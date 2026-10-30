@@ -6,6 +6,7 @@ struct AppShell: View {
     @State private var showsChooser = false
     @State private var entry: KMEntryDestination? = nil
     @State private var budgetRouteMonth: KMYearMonth?
+    @State private var moneyForwardRoute = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.repositories) private var repositories
@@ -51,43 +52,60 @@ struct AppShell: View {
                     .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
                     .frame(maxWidth: .infinity)
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: KMSpacing.space3) {
-                            if let reviewCountError {
-                                KMBanner(status: .danger, title: "照合の確認件数を読み込めませんでした", detail: reviewCountError)
-                                    .accessibilityIdentifier("shell.reviewCountError")
-                            }
-                            if let entry {
-                                HStack {
-                                    Button("キャンセル") { self.entry = nil; showsChooser = true }
-                                        .buttonStyle(KMButtonStyle(role: .text))
-                                        .accessibilityIdentifier("entry.cancel")
-                                    Spacer()
+                    // The import screen pins its actions with safeAreaInset, so it needs its own
+                    // scroll view instead of the shared ScrollView. Keep the settings page alive
+                    // underneath so going back returns to the backup page, as in PWA.
+                    ZStack(alignment: .top) {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                                if let reviewCountError {
+                                    KMBanner(status: .danger, title: "照合の確認件数を読み込めませんでした", detail: reviewCountError)
+                                        .accessibilityIdentifier("shell.reviewCountError")
                                 }
-                                entryScreen(entry)
-                            } else {
-                                switch tab {
-                                case .home: HomeView(onNavigate: { tab = $0 }, onOpenBudget: { month in
-                                    budgetRouteMonth = month
-                                    tab = .settings
-                                })
-                                case .records: RecordsView()
-                                case .reconciliation: ReconciliationView()
-                                case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil })
+                                if let entry {
+                                    HStack {
+                                        Button("キャンセル") { self.entry = nil; showsChooser = true }
+                                            .buttonStyle(KMButtonStyle(role: .text))
+                                            .accessibilityIdentifier("entry.cancel")
+                                        Spacer()
+                                    }
+                                    entryScreen(entry)
+                                } else {
+                                    switch tab {
+                                    case .home: HomeView(onNavigate: { tab = $0 }, onOpenBudget: { month in
+                                        budgetRouteMonth = month
+                                        tab = .settings
+                                    })
+                                    case .records: RecordsView()
+                                    case .reconciliation: ReconciliationView()
+                                    case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil }, onOpenMoneyForward: { moneyForwardRoute = true })
+                                    }
                                 }
                             }
+                            // On portrait iPhones the OS top inset already exceeds 16pt:
+                            // PWA main uses max(16px, safe-area-inset-top), not their sum.
+                            .padding(.horizontal, KMSpacing.space4)
+                            .padding(.bottom, KMSpacing.space8)
+                            .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
+                            .frame(maxWidth: .infinity)
                         }
-                        // On portrait iPhones the OS top inset already exceeds 16pt:
-                        // PWA main uses max(16px, safe-area-inset-top), not their sum.
-                        .padding(.horizontal, KMSpacing.space4)
-                        .padding(.bottom, KMSpacing.space8)
-                        .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
-                        .frame(maxWidth: .infinity)
+                        .opacity(moneyForwardRoute ? 0 : 1)
+                        .allowsHitTesting(!moneyForwardRoute)
+                        .accessibilityHidden(moneyForwardRoute)
+
+                        if moneyForwardRoute {
+                            KMMoneyForwardView(onBack: { moneyForwardRoute = false })
+                                .padding(.horizontal, KMSpacing.space4)
+                                .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
+                                .frame(maxWidth: .infinity)
+                                .background(KMColor.bg)
+                        }
                     }
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
                     tab = destination
                     entry = nil // Reselecting the current tab also leaves an entry, like PWA.
+                    moneyForwardRoute = false
                 }), reviewCount: reviewCount, add: { showsChooser = true })
                     .frame(maxWidth: KMLayout.contentMax)
             }

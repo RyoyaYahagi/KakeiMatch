@@ -72,10 +72,16 @@ extension ReceiptRepository {
     func statementTransactions() async throws -> [KMStatementTransaction]
     func importStatement(data: Data, provider: KMStatementProvider, at timestamp: Date) async throws -> KMStatementImportResult
     func previewMoneyForward(rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], at timestamp: Date) async throws -> [KMMoneyForwardPreview]
-    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], at timestamp: Date) async throws -> KMMoneyForwardBatch
+    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], rememberMappings: Bool, at timestamp: Date) async throws -> KMMoneyForwardBatch
     func moneyForwardHistory() async throws -> [KMMoneyForwardBatch]
     func moneyForwardRules() async throws -> KMMoneyForwardMappings
     func undoMoneyForward(id: String, at timestamp: Date) async throws
+}
+
+@MainActor extension StatementRepository {
+    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice], at timestamp: Date) async throws -> KMMoneyForwardBatch {
+        try await importMoneyForward(id: id, rows: rows, mappings: mappings, choices: choices, rememberMappings: true, at: timestamp)
+    }
 }
 
 @MainActor protocol ReconciliationRepository {

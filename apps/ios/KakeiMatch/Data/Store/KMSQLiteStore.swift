@@ -251,8 +251,8 @@ import Foundation
     func previewMoneyForward(rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], at timestamp: Date) async throws -> [KMMoneyForwardPreview] {
         try await access { try await $0.previewMoneyForward(rows: rows, mappings: mappings, choices: choices, at: timestamp) }
     }
-    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], at timestamp: Date) async throws -> KMMoneyForwardBatch {
-        try await access(true) { try await $0.importMoneyForward(id: id, rows: rows, mappings: mappings, choices: choices, at: timestamp) }
+    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], rememberMappings: Bool = true, at timestamp: Date) async throws -> KMMoneyForwardBatch {
+        try await access(true) { try await $0.importMoneyForward(id: id, rows: rows, mappings: mappings, choices: choices, rememberMappings: rememberMappings, at: timestamp) }
     }
     func moneyForwardHistory() async throws -> [KMMoneyForwardBatch] { try await access { try await $0.moneyForwardHistory() } }
     func moneyForwardRules() async throws -> KMMoneyForwardMappings { try await access { try await $0.moneyForwardRules() } }
