@@ -8,6 +8,13 @@ final class RecurringFlowTests: XCTestCase {
         add(attachment)
     }
 
+    /// Menus open asynchronously; tapping before the item exists fails on slow runners.
+    @MainActor private func tapMenuItem(_ app: XCUIApplication, _ label: String) {
+        let item = app.buttons[label]
+        XCTAssertTrue(item.waitForExistence(timeout: 5), label)
+        item.tap()
+    }
+
     @MainActor private func launchList(_ appearance: String) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestFixture", "migration", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
@@ -29,9 +36,9 @@ final class RecurringFlowTests: XCTestCase {
         let amount = app.textFields["recurring.amount"]
         amount.tap(); amount.typeText("1200")
         app.descendants(matching: .any)["recurring.category"].tap()
-        app.buttons["食費"].tap()
+        tapMenuItem(app, "食費")
         app.descendants(matching: .any)["recurring.account"].tap()
-        app.buttons["PayPayカード"].tap()
+        tapMenuItem(app, "PayPayカード")
         let startDate = app.textFields["recurring.startDate"]
         startDate.tap()
         let existingDate = startDate.value as? String ?? ""
@@ -97,9 +104,9 @@ final class RecurringFlowTests: XCTestCase {
         let amount = app.textFields["recurring.amount"]
         amount.tap(); amount.typeText("12000")
         app.descendants(matching: .any)["recurring.category"].tap()
-        app.buttons["食費"].tap()
+        tapMenuItem(app, "食費")
         app.descendants(matching: .any)["recurring.account"].tap()
-        app.buttons["PayPayカード"].tap()
+        tapMenuItem(app, "PayPayカード")
         app.buttons["recurring.save"].tap()
         XCTAssertTrue(app.staticTexts["recurring.status"].waitForExistence(timeout: 8))
         XCTAssertTrue(app.staticTexts["定期登録を保存しました。"].exists)
