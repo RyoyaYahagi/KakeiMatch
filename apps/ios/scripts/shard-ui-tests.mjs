@@ -59,6 +59,8 @@ export const screenshotOnly = [
   'RecurringFlowTests/testCatchUpDialogDarkScreenshot',
   'RecurringFlowTests/testCatchUpHistoryLightScreenshot',
   'RecurringFlowTests/testCatchUpHistoryDarkScreenshot',
+  'PayrollFlowTests/testPayrollInitialLightScreenshot',
+  'PayrollFlowTests/testPayrollInitialDarkScreenshot',
 ];
 
 export async function discoverTests(directory) {

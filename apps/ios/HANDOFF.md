@@ -67,7 +67,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 
 | 内容 | branch | PR | 担当 | 状態 |
 | --- | --- | --- | --- | --- |
-| 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | マージ済み（各画面は placeholder） |
+| 土台: XcodeGen・App shell・DesignSystem・共通部品・ios.yml | `feature/ios-foundation` | #278 | Linux | マージ済み |
 | Phase 0: PWA 参照スクショ・fixture.json・synthetic.kmb・flows.md | `test/pwa-migration-screenshots` | #279（main 起点） | Linux | マージ済み。27状態×light/dark 54枚 |
 | ドメインモデル・Repository protocol・fixture 注入 | `feature/ios-domain` | #280（#278 上） | Linux | マージ済み |
 | 明細 CSV・MoneyForward CSV 解析 | `feature/ios-statement-parsers` | #281（#280 上） | Linux | マージ済み・TS テスト対応表あり |
@@ -81,6 +81,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | Home | `feature/ios-home` | #295 | **Mac** | マージ済み（`be4a1df`） |
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
 | 記録一覧 | `feature/ios-records` | #301 | **Mac** | マージ済み（`a15b0c8`） |
+| 画面13: 給与明細 | `feature/ios-payroll` | 作成予定 | **Mac** | 実装中。収入入力導線、AI読取、確認、atomicな手取り登録 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
 

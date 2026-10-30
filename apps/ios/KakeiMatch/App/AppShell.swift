@@ -42,11 +42,7 @@ struct AppShell: View {
                             Spacer()
                         }
                         .padding(.horizontal, KMSpacing.space4)
-                        if let kind = manualEntryKind(entry) {
-                            KMEntryFormView(kind: kind)
-                        } else {
-                            ReceiptView(source: entry, onSaved: { self.entry = nil; tab = .records })
-                        }
+                        entryScreen(entry)
                     }
                     .padding(.bottom, KMSpacing.space8)
                     .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
@@ -312,7 +308,7 @@ struct AppShell: View {
         case .expense: .expense
         case .income: .income
         case .transfer: .transfer
-        case .receipt, .photo: nil
+        case .receipt, .photo, .payroll: nil
         }
     }
 
@@ -320,8 +316,9 @@ struct AppShell: View {
         switch destination {
         case .receipt, .photo: ReceiptView()
         case .expense: ManualEntryView()
-        case .income: IncomeView()
+        case .income: IncomeView(onPayroll: { entry = .payroll })
         case .transfer: TransferView()
+        case .payroll: PayrollView(onCancel: { entry = .income }, onSaved: { entry = nil; tab = .records })
         }
     }
 }

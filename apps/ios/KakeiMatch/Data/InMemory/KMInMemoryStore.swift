@@ -29,6 +29,7 @@ import Foundation
     var suspectedValues: [KMSuspectedStatement] = []
     var recurringValues: [KMRecurringTransaction] = []
     var payrollValues: [KMPayrollRecord] = []
+    var payrollWriteFailureForTesting: Error?
     var ruleValues: [KMCategoryLearningRule] = []
     var ruleOverrides: [KMCategoryRuleOverride] = []
     var settingsValue = KMAppSettings()
@@ -188,7 +189,38 @@ import Foundation
     }
     func recurringTransactions() async throws -> [KMRecurringTransaction] { recurringValues }
     func payrollRecords() async throws -> [KMPayrollRecord] { payrollValues }
-    func savePayrollRecord(_ record: KMPayrollRecord) async throws { payrollValues.removeAll { $0.id == record.id }; payrollValues.append(record) }
+    func savePayrollRecord(_ record: KMPayrollRecord) async throws {
+        if let payrollWriteFailureForTesting { throw payrollWriteFailureForTesting }
+        payrollValues.removeAll { $0.id == record.id }; payrollValues.append(record)
+    }
+    func registerPayrollRecord(_ record: KMPayrollRecord, income: KMManualTransactionInput) async throws -> KMPayrollRecord {
+        if let existing = payrollValues.first(where: { $0.id == record.id }), existing.status == .applied {
+            guard existing.confirmed == record.confirmed, existing.categoryId == record.categoryId,
+                  existing.accountId == record.accountId,
+                  existing.actualTransactionId == transactionValues.first(where: { $0.importedId == income.importedId })?.id else {
+                throw KMDataError.invalidData("給与の登録内容が一致しません。")
+            }
+            return existing
+        }
+        let oldTransactions = transactionValues, oldPayroll = payrollValues, oldPayees = payeeValues
+        let oldLedgerWrites = ledgerWriteState
+        do {
+            let transaction = try await saveManual(income, id: nil)
+            var applied = payrollValues.first(where: { $0.id == record.id }) ?? record
+            guard applied.confirmed == record.confirmed, applied.categoryId == record.categoryId,
+                  applied.accountId == record.accountId else {
+                throw KMDataError.invalidData("給与の登録内容が一致しません。")
+            }
+            applied.status = .applied
+            applied.actualTransactionId = transaction.id
+            try await savePayrollRecord(applied)
+            return applied
+        } catch {
+            transactionValues = oldTransactions; payrollValues = oldPayroll; payeeValues = oldPayees
+            ledgerWriteState = oldLedgerWrites
+            throw error
+        }
+    }
     func categoryRules() async throws -> [KMCategoryLearningRule] {
         let available = Set(categoryValues.filter { !$0.isIncome }.map(\.id))
         let stats = KMCategoryLearningService.deriveStats(observations: serviceState.observations, availableCategoryIds: available)
