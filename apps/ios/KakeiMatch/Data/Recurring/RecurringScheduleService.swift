@@ -79,6 +79,17 @@ enum KMRecurringScheduleService {
         }
     }
 
+    /// Actual starts a newly-created recurring schedule at the next occurrence on or after today.
+    /// An overdue existing nextDate is preserved so missed scheduled runs can still be posted.
+    static func automaticOccurrences(input: KMRecurringScheduleInput, scheduleId: String, through: KMDate,
+                                     nextDate: KMDate?, auditedDates: Set<KMDate> = [],
+                                     importedIds: Set<String> = [], nativeScheduleDates: Set<KMDate> = []) -> [KMDate] {
+        let firstDate = nextDate ?? nextOccurrence(input: input, onOrAfter: through) ?? input.startDate
+        return missingOccurrences(input: input, scheduleId: scheduleId, through: through,
+            auditedDates: auditedDates, importedIds: importedIds, nativeScheduleDates: nativeScheduleDates)
+            .filter { $0 >= firstDate }
+    }
+
     static func validatedInput(_ input: KMRecurringScheduleInput) throws -> KMRecurringScheduleInput {
         let name = KMJSString.trim(input.name)
         guard !name.isEmpty, name.utf16.count <= 200, input.amountYen > 0, KMMonthlyBudgetSettings.validAmount(input.amountYen),

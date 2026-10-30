@@ -58,4 +58,24 @@ import Testing
         #expect(undone.undoneAt == now)
         #expect(undone.occurrences.map(\.status) == [.deleted])
     }
+
+    @Test(arguments: [false, true]) func currentMonthCatchUpIsNotFollowedBySkippedAutomaticOccurrences(durable: Bool) async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repo = try repository(durable: durable, directory: directory)
+        let value = KMRecurringTransaction(id: "synthetic-schedule", name: "合成定期", kind: .expense, amountYen: 1_700,
+            categoryId: "food", accountId: "bank", frequency: .monthly, startDate: KMDate(rawValue: "2026-08-01"),
+            postsTransaction: true, nextDate: nil, completed: false, editable: true)
+        let today = KMDate(instant: now)
+        let preview = try await repo.recurring.previewRecurringCatchUp(value, through: today)
+        let selected = KMRecurringScheduleService.currentMonthDates(in: preview, month: today.yearMonth)
+
+        try await repo.recurring.saveRecurringForCatchUp(value, at: now)
+        try await repo.recurring.catchUpRecurring(id: value.id, dates: selected, through: today, at: now)
+        try await repo.recurring.runRecurring(through: today, at: now)
+
+        let rows = try await repo.transactions.transactions(matching: .init(limit: nil))
+        #expect(rows.map(\.date) == [KMDate(rawValue: "2026-10-01")])
+        #expect(try await repo.recurring.recurringTransactions().first?.nextDate == KMDate(rawValue: "2026-11-01"))
+    }
 }

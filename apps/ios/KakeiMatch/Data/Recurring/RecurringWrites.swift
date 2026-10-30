@@ -125,7 +125,8 @@ import Foundation
             for schedule in working.recurringValues where !schedule.completed && schedule.editable {
                 let input = working.recurringInput(schedule)
                 if schedule.postsTransaction {
-                    let missing = KMRecurringScheduleService.missingOccurrences(input: input, scheduleId: schedule.id, through: today,
+                    let missing = KMRecurringScheduleService.automaticOccurrences(input: input, scheduleId: schedule.id, through: today,
+                        nextDate: schedule.nextDate,
                         auditedDates: Set(working.serviceState.occurrences.filter { $0.scheduleId == schedule.id }.map(\.date)),
                         importedIds: Set(working.transactionValues.compactMap(\.importedId)))
                     if !missing.isEmpty { try await working.catchUpRecurring(id: schedule.id, dates: missing, through: today, at: timestamp) }
