@@ -46,8 +46,10 @@ enum KMNativeAuthPresentation {
     static let accountDeleteFailed = "削除を完了できませんでした。オンライン状態を確認して、もう一度お試しください。"
     static let accountDeletedUsage = "アカウントを削除しました。"
     static let guestStartTitle = "確認しています"
-    static let guestStartMessage = "登録なしでAIを使う前に、この端末が正規のアプリかを確かめます。多くの場合は数秒で自動的に終わります。サーバーに記録するのはAIの利用回数だけで、家計データは保存しません。写真は端末に残ります。"
-    static let guestStartContinue = "続ける"
+    /// PWA `guest-ai.ts` bot-check lead. Native replaces Turnstile with App Attest,
+    /// so only the reason for the check differs; the dialog shape stays the same.
+    static let guestStartMessage = "登録なしでAIを使う前に、この端末が正規のアプリかを確かめます。多くの場合は数秒で自動的に終わります。"
+    static let guestStartProgress = "確認しています…"
     static let guestStartCancel = "やめる"
     static let guestStartCancelled = "写真は残っています。手で入力するか、もう一度読み取れます。"
 
