@@ -154,7 +154,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 `saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。分類学習の確認時呼出しはまだ未接続です。Viewで代替エンジンを作らないでください。
 
-削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理は画面側です。
+削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理はshellの `KMDeletionNoticeModel` が持ちます。
 
 ### 明細・移行・マスタ・定期の保存
 
