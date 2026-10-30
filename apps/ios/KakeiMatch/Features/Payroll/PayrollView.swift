@@ -27,7 +27,7 @@ struct PayrollView: View {
                         photoControls
                         if let image = model.image {
                             maskingPreview(image)
-                            checkbox("不要な個人情報を隠しました。必要な部分をAIへ送信します", isOn: $model.reviewed, id: "payroll.maskingConsent")
+                            checkbox("不要な個人情報を隠しました。必要な部分をAIへ送信します", isOn: model.reviewed, toggle: { model.reviewed.toggle() }, id: "payroll.maskingConsent")
                             Button(model.reading ? "読み取り中…" : "AIで読み取る") { model.readImage() }
                                 .buttonStyle(KMButtonStyle(role: .secondary))
                                 .disabled(model.reading)
@@ -52,7 +52,7 @@ struct PayrollView: View {
             model.cancel()
         }
         .onChange(of: model.reviewFingerprint) { _, _ in
-            if !model.hasPendingRecord && !model.saved { model.reviewed = false }
+            if !model.hasPendingRecord && !model.saved && !model.isDraftPreview { model.reviewed = false }
         }
         .onChange(of: photo) { _, item in
             Task {
@@ -150,7 +150,7 @@ struct PayrollView: View {
                 .disabled(model.hasPendingRecord || model.saved)
             Text("手取りだけを収入に登録します。控除から支出は作りません。写真と照らし合わせて、違うところを直してください。")
                 .font(KMTypography.body(14)).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-            checkbox("勤務先・支給日・手取りと内訳を確認しました", isOn: $model.reviewed, id: "payroll.reviewed")
+            checkbox("勤務先・支給日・手取りと内訳を確認しました", isOn: model.reviewed, toggle: { model.reviewed.toggle() }, id: "payroll.reviewed")
                 .disabled(model.hasPendingRecord || model.saved)
             if let message = model.duplicateMessage {
                 Text(message).font(KMTypography.note).foregroundStyle(KMColor.warning)
@@ -238,12 +238,12 @@ struct PayrollView: View {
     }
 
     /// PWA uses a checkbox; the same square-check control as the other iOS entry rows.
-    private func checkbox(_ title: String, isOn: Binding<Bool>, id: String) -> some View {
-        Button { isOn.wrappedValue.toggle() } label: {
+    private func checkbox(_ title: String, isOn: Bool, toggle: @escaping () -> Void, id: String) -> some View {
+        Button(action: toggle) {
             HStack(spacing: KMSpacing.space2) {
-                Image(systemName: isOn.wrappedValue ? "checkmark.square.fill" : "square")
+                Image(systemName: isOn ? "checkmark.square.fill" : "square")
                     .font(.system(size: 22, weight: .regular))
-                    .foregroundStyle(isOn.wrappedValue ? KMColor.primary : KMColor.muted)
+                    .foregroundStyle(isOn ? KMColor.primary : KMColor.muted)
                 Text(title).font(KMTypography.body(14)).foregroundStyle(KMColor.text)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
@@ -252,8 +252,10 @@ struct PayrollView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        // Rebuild the square when the state flips; a cached label would keep the old symbol.
+        .id(isOn)
         .accessibilityLabel(title)
-        .accessibilityValue(isOn.wrappedValue ? "選択中" : "未選択")
+        .accessibilityValue(isOn ? "選択中" : "未選択")
         .accessibilityIdentifier(id)
     }
 

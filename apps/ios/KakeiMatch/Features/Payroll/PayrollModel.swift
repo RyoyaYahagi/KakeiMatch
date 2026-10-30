@@ -30,6 +30,12 @@ final class KMPayrollModel {
     var status: String?
     var extractionModel = "manual"
     var hasPendingRecord: Bool { pendingRecord != nil }
+    #if DEBUG
+    /// Screenshot fixture: render the read-but-not-confirmed form from the fixture's pending values.
+    var isDraftPreview: Bool { ProcessInfo.processInfo.arguments.contains("-PayrollDraft") }
+    #else
+    var isDraftPreview: Bool { false }
+    #endif
     /// PWA unchecks the confirmation box whenever a confirmed field changes.
     var reviewFingerprint: String {
         let deductionValues = KMPayrollPresentation.deductionFields.map { deductions[$0.key] ?? "" }.joined(separator: "\u{1F}")
@@ -73,8 +79,9 @@ final class KMPayrollModel {
                 #if DEBUG
                 // Screenshot fixture: show the read-but-not-confirmed form that the PWA reference
                 // screenshot captures instead of the retry state.
-                if ProcessInfo.processInfo.arguments.contains("-PayrollDraft") {
+                if isDraftPreview {
                     populate(pending.confirmed, model: pending.extractionModel)
+                    reviewed = true
                     status = "写真から読み取りました。内容を確認してください。"
                 } else {
                     populate(pending)

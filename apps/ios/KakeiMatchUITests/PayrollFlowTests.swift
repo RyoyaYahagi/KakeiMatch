@@ -41,10 +41,14 @@ final class PayrollFlowTests: XCTestCase {
         let review = app.buttons["payroll.reviewed"]
         XCTAssertTrue(review.exists)
         XCTAssertEqual(review.label, "勤務先・支給日・手取りと内訳を確認しました")
+        XCTAssertEqual(review.value as? String, "選択中")
         let save = app.buttons["payroll.saveButton"]
         XCTAssertTrue(save.exists)
         XCTAssertEqual(save.label, "登録する")
+        XCTAssertTrue(save.isEnabled)
+        review.tap()
         XCTAssertFalse(save.isEnabled)
+        XCTAssertEqual(review.value as? String, "未選択")
         review.tap()
         XCTAssertTrue(save.isEnabled)
         app.terminate()
@@ -58,10 +62,7 @@ final class PayrollFlowTests: XCTestCase {
     @MainActor private func capture(appearance: String, name: String, bottom: Bool = false) {
         continueAfterFailure = false
         let app = openPayroll(appearance: appearance, draft: true)
-        if bottom {
-            app.swipeUp()
-            app.buttons["payroll.reviewed"].tap()
-        }
+        if bottom { app.swipeUp() }
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
