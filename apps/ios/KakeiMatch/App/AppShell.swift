@@ -110,7 +110,7 @@ struct AppShell: View {
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
                     if destination != .settings { settingsAccountsRoute = false }
-                    deletionNotice.clearStatus()
+                    deletionNotice.clearTransientStatus()
                     tab = destination
                     entry = nil // Reselecting the current tab also leaves an entry, like PWA.
                     moneyForwardRoute = false

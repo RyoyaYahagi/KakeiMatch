@@ -45,6 +45,9 @@ import Testing
         #expect(notice.deletion == nil)
         #expect(notice.status == KMDeletionNoticeText.restored)
         #expect(try await repo.transactions.transaction(id: "synthetic-expense") != nil)
+        // PWA keeps the restored text in `.deletion-toast`, which a tab switch does not clear.
+        notice.clearTransientStatus()
+        #expect(notice.status == KMDeletionNoticeText.restored)
         // A second tap must not call the repository again or replace the restored status.
         #expect(!(await notice.undo()))
         #expect(notice.status == KMDeletionNoticeText.restored)
@@ -79,6 +82,10 @@ import Testing
         #expect(!(await notice.undo()))
         #expect(notice.deletion?.id == audit.id)
         #expect(notice.status?.hasPrefix("削除を取り消せませんでした。") == true)
+        // PWA's failure line lives in `#message`, so a tab switch hides it but keeps the undo toast.
+        notice.clearTransientStatus()
+        #expect(notice.status == nil)
+        #expect(notice.deletion?.id == audit.id)
     }
 
     @Test func toastDisappearsAtTheDeadline() async throws {

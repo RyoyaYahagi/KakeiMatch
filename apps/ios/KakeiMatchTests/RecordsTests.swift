@@ -100,7 +100,7 @@ struct RecordsPresentationTests {
         #expect(model.error == nil && !model.changed)
         let saved = try #require(try await repo.transactions.transaction(id: row.id))
         #expect(saved.memo == "合成の編集メモ" && saved.amountYen == -1200 && saved.id == row.id)
-        await model.remove()
+        _ = await model.remove()
         #expect(model.error == nil && model.page == .list)
         #expect(try await repo.transactions.transaction(id: row.id) == nil)
         let notice = KMDeletionNoticeModel()

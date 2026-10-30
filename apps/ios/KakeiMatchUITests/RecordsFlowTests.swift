@@ -78,6 +78,7 @@ final class RecordsFlowTests: XCTestCase {
         app.buttons["records.accounts"].tap()
         XCTAssertTrue(app.staticTexts["masters.title"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["masters.title"].label, "支払元・口座")
+        capture(app, "accounts-from-records-light")
         app.buttons["masters.back"].tap()
         XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 5))
 
@@ -95,11 +96,13 @@ final class RecordsFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["home-tab"].isSelected)
         // PWA keeps .deletion-toast outside the tab view, so it is still visible on Home.
         XCTAssertTrue(undo.waitForExistence(timeout: 5))
+        capture(app, "deletion-toast-home-light")
         undo.tap()
 
         XCTAssertTrue(app.buttons["records.row.fixture-transaction-010"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["shell.deletionStatus"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["shell.deletionStatus"].label, "削除を取り消しました。")
+        capture(app, "deletion-restored-light")
         app.terminate()
     }
 

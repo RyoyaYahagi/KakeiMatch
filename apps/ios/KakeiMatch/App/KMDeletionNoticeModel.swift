@@ -7,8 +7,14 @@ import Observation
 @MainActor @Observable
 final class KMDeletionNoticeModel {
     private(set) var deletion: KMTransactionDeletion?
-    private(set) var status: String?
+    /// PWA replaces the toast text with this after a successful undo. It has no timer,
+    /// so it stays across tabs until the next deletion like `.deletion-toast`.
+    private(set) var restored = false
+    /// PWA reports undo failures in `#message`, which a tab switch clears.
+    private(set) var failure: String?
     private(set) var busy = false
+
+    var status: String? { failure ?? (restored ? KMDeletionNoticeText.restored : nil) }
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
     @ObservationIgnored private var clock: () -> Date
@@ -37,26 +43,27 @@ final class KMDeletionNoticeModel {
             guard let latest else { return }
             show(latest)
         } catch {
-            status = "削除の取り消し情報を読み込めませんでした。\(error.localizedDescription)"
+            failure = "削除の取り消し情報を読み込めませんでした。\(error.localizedDescription)"
         }
     }
 
     func show(_ audit: KMTransactionDeletion) {
         expiryTask?.cancel()
         expiryTask = nil
+        restored = false
+        failure = nil
         let remaining = KMDeletionUndoPolicy.remaining(undoUntil: audit.undoUntil, now: clock())
         guard remaining > 0 else {
             deletion = nil
             return
         }
         deletion = audit
-        status = nil
         let id = audit.id
         expiryTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
             guard let self, self.deletion?.id == id else { return }
+            // PWA's timer only empties `.deletion-toast`; `#message` stays.
             self.deletion = nil
-            self.status = nil
             self.expiryTask = nil
         }
     }
@@ -65,24 +72,25 @@ final class KMDeletionNoticeModel {
     func undo() async -> Bool {
         guard let repositories, let deletion, !busy else { return false }
         busy = true
-        status = nil
+        failure = nil
         do {
             try await repositories.transactions.undoTransactionDeletion(id: deletion.id, at: clock())
             expiryTask?.cancel()
             expiryTask = nil
             self.deletion = nil
-            status = KMDeletionNoticeText.restored
+            restored = true
             busy = false
             return true
         } catch {
-            status = "削除を取り消せませんでした。\(error.localizedDescription)"
+            failure = "削除を取り消せませんでした。\(error.localizedDescription)"
             busy = false
             return false
         }
     }
 
-    func clearStatus() {
-        status = nil
+    /// A tab switch clears PWA's `#message` but leaves `.deletion-toast` alone.
+    func clearTransientStatus() {
+        failure = nil
     }
 
     private func makeFixtureClock(_ repositories: KMRepositories) -> (() -> Date)? {
