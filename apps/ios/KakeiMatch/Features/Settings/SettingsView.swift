@@ -17,6 +17,7 @@ private enum KMSettingsPage {
 struct SettingsView: View {
     var initialBudgetMonth: KMYearMonth? = nil
     var onBudgetBack: () -> Void = {}
+    var onOpenMoneyForward: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMSettingsModel()
     @State private var page = KMSettingsPage.root
@@ -24,9 +25,10 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
 
-    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {}) {
+    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {}, onOpenMoneyForward: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
         self.onBudgetBack = onBudgetBack
+        self.onOpenMoneyForward = onOpenMoneyForward
         _page = State(initialValue: initialBudgetMonth == nil ? .root : .budget)
     }
 
@@ -44,7 +46,7 @@ struct SettingsView: View {
             case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root })
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
-            })
+            }, onOpenMoneyForward: onOpenMoneyForward)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

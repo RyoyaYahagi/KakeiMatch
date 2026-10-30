@@ -13,6 +13,7 @@ private struct KMBackupPendingImport: Identifiable {
 struct KMBackupView: View {
     let onBack: () -> Void
     var onDataRestored: () -> Void = {}
+    var onOpenMoneyForward: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMBackupModel()
     @State private var showsAbout = false
@@ -70,6 +71,7 @@ struct KMBackupView: View {
                 }
 
             storageSection
+            moneyForwardEntry
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -246,6 +248,28 @@ struct KMBackupView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, KMSpacing.space4)
         .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    /// PWA appends the MoneyForward entry to the backup page, below the storage section.
+    private var moneyForwardEntry: some View {
+        Button(action: onOpenMoneyForward) {
+            HStack(spacing: KMSpacing.space2) {
+                Text("マネーフォワードから移行")
+                    .font(KMTypography.text)
+                    .foregroundStyle(KMColor.text)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                Text("›")
+                    .font(KMTypography.body(22, weight: .regular))
+                    .foregroundStyle(KMColor.muted)
+                    .accessibilityHidden(true)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+        .accessibilityIdentifier("settings.moneyforward")
     }
 
     private func disclosureText(_ value: String, id: String) -> some View {

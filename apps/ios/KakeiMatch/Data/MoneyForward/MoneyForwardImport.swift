@@ -55,7 +55,7 @@ import Foundation
             return .init(row: row, importedId: id, status: status, candidates: candidates, recordChoice: choice)
         }
     }
-    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], at timestamp: Date) async throws -> KMMoneyForwardBatch {
+    func importMoneyForward(id: String, rows: [KMMoneyForwardRow], mappings: KMMoneyForwardMappings, choices: [String: KMMoneyForwardRecordChoice] = [:], rememberMappings: Bool = true, at timestamp: Date) async throws -> KMMoneyForwardBatch {
         if let old = masterWriteState.moneyForward.first(where: { $0.id == id }) {
             guard old.rows.map(\.row) == rows, old.status != .undone else { throw KMDataError.invalidData("同じ移行IDの内容が異なるか、取り消し済みです。") }
             return old
@@ -105,7 +105,8 @@ import Foundation
                     recordChoice: item.recordChoice, transaction: result.alreadyExisted ? nil : result.transaction))
             }
             let batch = KMMoneyForwardBatch(id: id, createdAt: timestamp, updatedAt: timestamp, status: .completed, mappings: resolved, rows: imported)
-            working.masterWriteState.moneyForward.append(batch); working.masterWriteState.moneyForwardRules = resolved
+            working.masterWriteState.moneyForward.append(batch)
+            if rememberMappings { working.masterWriteState.moneyForwardRules = resolved }
             return batch
         }
     }
