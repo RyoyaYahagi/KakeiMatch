@@ -22,9 +22,11 @@ struct KMEntryFormView: View {
     @State private var model: KMEntryFormModel
     @State private var sheet: KMEntrySheet?
     @FocusState private var focusedField: String?
+    private let onPayroll: (() -> Void)?
 
-    init(kind: KMEntryKind) {
+    init(kind: KMEntryKind, onPayroll: (() -> Void)? = nil) {
         _model = State(initialValue: KMEntryFormModel(kind: kind))
+        self.onPayroll = onPayroll
     }
 
     var body: some View {
@@ -35,6 +37,16 @@ struct KMEntryFormView: View {
                         .font(KMTypography.body(22, weight: .bold))
                         .foregroundStyle(KMColor.text)
                         .accessibilityAddTraits(.isHeader)
+
+                    if model.kind == .income, let onPayroll {
+                        Button(action: onPayroll) {
+                            Label("AIで簡単入力", systemImage: "camera")
+                                .font(KMTypography.body(16, weight: .bold))
+                                .frame(minHeight: 44)
+                        }
+                        .buttonStyle(KMButtonStyle(role: .secondary))
+                        .accessibilityIdentifier("income.payrollButton")
+                    }
 
                     if model.loading {
                         ProgressView("カテゴリと口座を読み込んでいます。")

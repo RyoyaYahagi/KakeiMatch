@@ -283,6 +283,9 @@ import Foundation
     func deleteRecurring(id: String) async throws { try await access(true) { try await $0.deleteRecurring(id: id) } }
     func payrollRecords() async throws -> [KMPayrollRecord] { try await access { try await $0.payrollRecords() } }
     func savePayrollRecord(_ record: KMPayrollRecord) async throws { try await access(true) { try await $0.savePayrollRecord(record) } }
+    func registerPayrollRecord(_ record: KMPayrollRecord, income: KMManualTransactionInput) async throws -> KMPayrollRecord {
+        try await access(true) { try await $0.registerPayrollRecord(record, income: income) }
+    }
     func categoryObservations() async throws -> [KMCategoryLearningObservation] { try await access { try await $0.categoryObservations() } }
     func saveCategoryObservation(_ value: KMCategoryLearningObservation) async throws { try await access(true) { try await $0.saveCategoryObservation(value) } }
     func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence] { try await access { try await $0.recurringOccurrences(scheduleId: scheduleId) } }

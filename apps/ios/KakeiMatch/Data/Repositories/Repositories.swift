@@ -125,6 +125,8 @@ extension ReceiptRepository {
 @MainActor protocol PayrollRepository {
     func payrollRecords() async throws -> [KMPayrollRecord]
     func savePayrollRecord(_ record: KMPayrollRecord) async throws
+    /// Creates the income and its confirmed payroll snapshot as one local write.
+    func registerPayrollRecord(_ record: KMPayrollRecord, income: KMManualTransactionInput) async throws -> KMPayrollRecord
 }
 
 @MainActor protocol CategoryLearningRepository {

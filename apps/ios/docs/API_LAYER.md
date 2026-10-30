@@ -103,13 +103,13 @@ logout・account削除はAIキャッシュとsessionを破棄するが、ゲス�
 | bot_check_failed / guest_limit_reached | botCheckFailed / guestLimitReached | 確認失敗/ゲスト作成上限 |
 | URLSession通信失敗 | network | offline_or_unavailable。cancelはCancellationErrorのまま |
 
-PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact・給与は文脈別の既存文言をUI担当が `contact-ui.ts:errorMessage` / `payroll-ui.ts` に合わせる。APIは生のserver message・未知errorを画面へ出さない。[PWA (2026/10), gatewayError / contact-ui.ts / payroll-ui.ts]
+PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact画面は `contact-ui.ts:errorMessage`、給与明細画面は `payroll-ui.ts` の文脈別文言に合わせる。APIは生のserver message・未知errorを画面へ出さない。[PWA (2026/10), gatewayError / contact-ui.ts / payroll-ui.ts]
 
 ## 画像・音声の前処理
 
 **通常レシート**はPWAの送信前縮小・変換・自動マスキングが存在しない。保存時はJPEG/PNG/WebP・署名・10 MiB上限、送信時は元bytesをBase64化し6 MiB超を拒否する。iOSの `KMUploadImage` も送信前は署名・MIME一致・6 MiBを検証し、元bytesを変更しない。HEICは拒否する。写真選択UIでHEIC変換を追加する場合は、PWAとの差分として別途判断する。元画像のメタデータ除去を今回のレシートAPIの保証にしない。[PWA (2026/10), local-receipts.ts:analyze; Security, Cloud account and AI]
 
-**給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。マスキングを見せるUI・同意・送信後/失敗/画面移動時の画像破棄はUI担当の責任。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: KMUploadMedia.swift]
+**給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。`Features/Payroll/PayrollView` がマスキング画像・同意を表示し、送信後/失敗/画面移動時に画像を破棄する。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: KMUploadMedia.swift / Features/Payroll/PayrollView.swift]
 
 音声は2 MiB上限と形式署名を検証する。MP4は要求では`audio/mp4`、WorkerがGoogle向けに`audio/m4a`へ変換する。最大60秒の録音停止・同じ録音flowIdでの明示再試行・画面移動時停止はUI側で実装する。APIは録音しない。[Contact (2026/10), parseContactInput / transcriptionPayload; docs/CONTACT.md]
 

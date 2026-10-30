@@ -1,7 +1,7 @@
 import SwiftUI
 
 enum KMEntryDestination: String, CaseIterable {
-    case receipt, photo, expense, income, transfer
+    case receipt, photo, expense, income, transfer, payroll
     var title: String {
         switch self {
         case .receipt: "レシートを撮る"
@@ -9,6 +9,7 @@ enum KMEntryDestination: String, CaseIterable {
         case .expense: "支出を手入力"
         case .income: "収入"
         case .transfer: "口座間の振替"
+        case .payroll: "給与明細から入力"
         }
     }
     var hint: String {
@@ -18,10 +19,11 @@ enum KMEntryDestination: String, CaseIterable {
         case .expense: "レシートなし"
         case .income: "給与・臨時収入"
         case .transfer: "現金の引き出しなど"
+        case .payroll: "写真を読み取り、手取りを収入に登録します"
         }
     }
     var icon: String {
-        switch self { case .receipt: "camera"; case .photo: "image"; case .expense: "pencil"; case .income: "income"; case .transfer: "transfer" }
+        switch self { case .receipt, .payroll: "camera"; case .photo: "image"; case .expense: "pencil"; case .income: "income"; case .transfer: "transfer" }
     }
 }
 
@@ -53,7 +55,7 @@ struct RecordChooserView: View {
             .accessibilityLabel("レシートを撮る")
             .accessibilityIdentifier("chooser.receipt")
             LazyVGrid(columns: [GridItem(.flexible(), spacing: KMSpacing.space2), GridItem(.flexible())], spacing: KMSpacing.space2) {
-                ForEach(KMEntryDestination.allCases.filter { $0 != .receipt }, id: \.self) { destination in
+                ForEach(KMEntryDestination.allCases.filter { $0 != .receipt && $0 != .payroll }, id: \.self) { destination in
                     Button { choose(destination) } label: {
                         HStack(spacing: KMSpacing.space3) {
                             KMIcon(name: destination.icon, size: 22).foregroundStyle(KMColor.primary)
