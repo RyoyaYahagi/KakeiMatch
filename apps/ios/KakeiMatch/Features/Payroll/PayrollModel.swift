@@ -32,9 +32,9 @@ final class KMPayrollModel {
     var hasPendingRecord: Bool { pendingRecord != nil }
     /// PWA unchecks the confirmation box whenever a confirmed field changes.
     var reviewFingerprint: String {
-        let deductions = KMPayrollPresentation.deductionFields.map { deductions[$0.key] ?? "" }.joined(separator: "\u{1F}")
-        let allowances = allowances.map { "\($0.name)\u{1F}\($0.amount)" }.joined(separator: "\u{1E}")
-        return [employerName, paymentDate, netPay, categoryId, accountId, payType.rawValue, payPeriod, grossPay, deductions, allowances]
+        let deductionValues = KMPayrollPresentation.deductionFields.map { deductions[$0.key] ?? "" }.joined(separator: "\u{1F}")
+        let allowanceValues = allowances.map { "\($0.name)\u{1F}\($0.amount)" }.joined(separator: "\u{1E}")
+        return [employerName, paymentDate, netPay, categoryId, accountId, payType.rawValue, payPeriod, grossPay, deductionValues, allowanceValues]
             .joined(separator: "\u{1D}")
     }
 
