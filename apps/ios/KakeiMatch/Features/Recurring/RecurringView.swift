@@ -102,7 +102,7 @@ struct KMRecurringView: View {
                     if model.saved { page = .list }
                 }
             }.accessibilityIdentifier("recurring.catchUp.currentMonth")
-            Button("キャンセル", role: .cancel) { model.cancelCatchUpPrompt() }
+            Button("キャンセル") { model.cancelCatchUpPrompt() }
                 .accessibilityIdentifier("recurring.catchUp.cancel")
         } message: {
             if let plan = model.catchUpPrompt { Text(KMRecurringPresentation.catchUpPrompt(plan)) }
