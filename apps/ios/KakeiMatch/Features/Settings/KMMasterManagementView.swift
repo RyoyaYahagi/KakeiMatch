@@ -418,8 +418,8 @@ struct KMMasterManagementView: View {
         let account = selectedAccount
         let categoryFormValue = editingCategory
         let accountFormValue = editingAccount
-        if page == .categories, editingCategory != nil || page == .categories && isAddingCategory {
-            pinnedBar({
+        if page == .categories && (editingCategory != nil || isAddingCategory) {
+            pinnedBar(editingCategory == nil ? "追加する" : "変更を保存", id: "masters.category.save") {
                 let current = categoryFormValue
                 let value = KMCategory(id: current?.id ?? UUID().uuidString,
                     name: categoryName.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -429,20 +429,20 @@ struct KMMasterManagementView: View {
                     await model.saveCategory(value)
                     if model.error == nil { editingCategory = nil; isAddingCategory = false; selectedCategory = model.categories.first { $0.id == value.id } }
                 }
-            }) label: { Text(editingCategory == nil ? "追加する" : "変更を保存") } id: "masters.category.save"
+            }
         } else if page == .categories, let category {
             VStack(spacing: KMSpacing.space2) {
-                pinnedBar({ categoryName = category.name; editingCategory = category }) label: { Text("編集する") } id: "masters.category.edit"
+                pinnedBar("編集する", id: "masters.category.edit") { categoryName = category.name; editingCategory = category }
                 if category.usageCount == 0 {
                     secondaryButton("カテゴリを削除する", id: "masters.category.delete.pinned", role: .destructive) { confirmingCategoryDelete = true }
                 }
             }.padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space2).background(KMColor.surface)
                 .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
         } else if page == .categories {
-            pinnedBar({ categoryName = ""; categoryIncome = categoryKind; isAddingCategory = true }) label: { Text("カテゴリを追加") } id: "masters.category.add"
-        } else if page == .accounts, editingAccount != nil || page == .accounts && isAddingAccount {
+            pinnedBar("カテゴリを追加", id: "masters.category.add") { categoryName = ""; categoryIncome = categoryKind; isAddingCategory = true }
+        } else if page == .accounts && (editingAccount != nil || isAddingAccount) {
             let current = accountFormValue
-            pinnedBar({
+            pinnedBar(editingAccount == nil ? "追加する" : "変更を保存", id: "masters.account.save") {
                 let value = KMAccount(id: current?.id ?? UUID().uuidString,
                     name: accountName.trimmingCharacters(in: .whitespacesAndNewlines), closed: current?.closed ?? false,
                     accountType: accountType, balanceYen: current?.balanceYen ?? 0,
@@ -451,20 +451,20 @@ struct KMMasterManagementView: View {
                     await model.saveAccount(value, isNew: current == nil)
                     if model.error == nil { editingAccount = nil; isAddingAccount = false; selectedAccount = model.accounts.first { $0.id == value.id } }
                 }
-            }) label: { Text(editingAccount == nil ? "追加する" : "変更を保存") } id: "masters.account.save"
+            }
         } else if page == .accounts, let account {
-            pinnedBar({ accountName = account.name; accountType = account.accountType; statementProvider = account.statementProvider; editingAccount = account }) label: { Text("編集する") } id: "masters.account.edit"
+            pinnedBar("編集する", id: "masters.account.edit") { accountName = account.name; accountType = account.accountType; statementProvider = account.statementProvider; editingAccount = account }
         } else if page == .accounts {
-            pinnedBar({ accountName = ""; accountType = .other; statementProvider = nil; isAddingAccount = true }) label: { Text("支払元を追加する") } id: "masters.account.add"
+            pinnedBar("支払元を追加する", id: "masters.account.add") { accountName = ""; accountType = .other; statementProvider = nil; isAddingAccount = true }
         }
     }
 
-    private func pinnedBar<Action: View>(
-        _ action: @escaping () -> Void,
-        @ViewBuilder label: () -> Action,
-        id: String
+    private func pinnedBar(
+        _ title: String,
+        id: String,
+        action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) { label().font(KMTypography.text).frame(maxWidth: .infinity, minHeight: 52) }
+        Button(action: action) { Text(title).font(KMTypography.text).frame(maxWidth: .infinity, minHeight: 52) }
             .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier(id)
             .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space2)
             .background(KMColor.surface).overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
