@@ -36,7 +36,10 @@ struct KMRecurringView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("recurring.screen")
-        return catchUpDeleteDialog(catchUpPromptAlert(deleteScheduleDialog(content)))
+        return catchUpDeleteDialog(deleteScheduleDialog(content))
+            .fullScreenCover(isPresented: catchUpPromptPresentation) {
+                if let plan = model.catchUpPrompt { catchUpPromptDialog(plan) }
+            }
     }
 
     @ViewBuilder private var pageContent: some View {
@@ -107,33 +110,81 @@ struct KMRecurringView: View {
         } message: { Text("すでに作成された取引は残ります。") }
     }
 
-    private func catchUpPromptAlert<Content: View>(_ content: Content) -> some View {
-        content.alert("過去分の記録", isPresented: Binding(
+    private var catchUpPromptPresentation: Binding<Bool> {
+        Binding(
             get: { model.catchUpPrompt != nil },
             set: { isPresented in
                 if !isPresented && !selectingCatchUp { model.cancelCatchUpPrompt() }
             }
-        )) {
-            Button("全件を記録") {
-                selectingCatchUp = true
-                Task {
-                    await model.chooseCatchUp(currentMonthOnly: false, repositories: repositories)
-                    selectingCatchUp = false
-                    if model.saved { page = .list }
+        )
+    }
+
+    private func catchUpPromptDialog(_ plan: KMRecurringCatchUpPlan) -> some View {
+        GeometryReader { geometry in
+            ZStack {
+                KMColor.scrim.ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { model.cancelCatchUpPrompt() }
+                    .accessibilityHidden(true)
+                ScrollView {
+                    catchUpPromptCard(plan)
+                        .padding(.horizontal, KMSpacing.space4)
+                        .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
                 }
-            }.accessibilityIdentifier("recurring.catchUp.all")
-            Button("今月分から記録") {
-                selectingCatchUp = true
-                Task {
-                    await model.chooseCatchUp(currentMonthOnly: true, repositories: repositories)
-                    selectingCatchUp = false
-                    if model.saved { page = .list }
-                }
-            }.accessibilityIdentifier("recurring.catchUp.currentMonth")
-            Button("キャンセル", role: .cancel) { model.cancelCatchUpPrompt() }
-                .accessibilityIdentifier("recurring.catchUp.cancel")
-        } message: {
-            if let plan = model.catchUpPrompt { Text(KMRecurringPresentation.catchUpPrompt(plan)) }
+                .scrollBounceBehavior(.basedOnSize)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("recurring.catchUp.dialog")
+            .accessibilityAction(.escape) { model.cancelCatchUpPrompt() }
+        }
+        .ignoresSafeArea()
+        .presentationBackground(.clear)
+    }
+
+    private func catchUpPromptCard(_ plan: KMRecurringCatchUpPlan) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            Text("過去分の記録")
+                .font(KMTypography.body(20, weight: .bold)).foregroundStyle(KMColor.text)
+                .accessibilityAddTraits(.isHeader)
+            Text(KMRecurringPresentation.catchUpPrompt(plan))
+                .font(KMTypography.body(15)).foregroundStyle(KMColor.text)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: KMSpacing.space2) {
+                Button("全件を記録") { chooseCatchUp(currentMonthOnly: false) }
+                    .buttonStyle(KMButtonStyle(role: .primary))
+                    .accessibilityIdentifier("recurring.catchUp.all")
+                Button("今月分から記録") { chooseCatchUp(currentMonthOnly: true) }
+                    .font(KMTypography.body(16, weight: .bold)).foregroundStyle(KMColor.text)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                    .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.border, lineWidth: 1) }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("recurring.catchUp.currentMonth")
+                Button("キャンセル", role: .cancel) { model.cancelCatchUpPrompt() }
+                    .font(KMTypography.body(16, weight: .bold)).foregroundStyle(KMColor.text)
+                    .frame(maxWidth: .infinity, minHeight: 48)
+                    .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                    .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.border, lineWidth: 1) }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("recurring.catchUp.cancel")
+            }
+        }
+        .padding(KMSpacing.space5)
+        .frame(maxWidth: 440)
+        .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
+        .overlay { RoundedRectangle(cornerRadius: KMRadius.xl).stroke(KMColor.border, lineWidth: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("recurring.catchUp.dialog.card")
+    }
+
+    private func chooseCatchUp(currentMonthOnly: Bool) {
+        selectingCatchUp = true
+        Task {
+            await model.chooseCatchUp(currentMonthOnly: currentMonthOnly, repositories: repositories)
+            selectingCatchUp = false
+            if model.saved { page = .list }
         }
     }
 
