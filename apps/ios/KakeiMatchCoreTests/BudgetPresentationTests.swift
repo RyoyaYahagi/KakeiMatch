@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct BudgetPresentationTests {
     @Test func amountParsingMatchesPwaNumberIntegerBoundary() throws {

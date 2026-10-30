@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct DomainCodingTests {
     private func roundTrip<T: Codable & Equatable>(_ type: T.Type, from json: String) throws -> T {

@@ -110,6 +110,8 @@ common_args=(
   -enableCodeCoverage NO
   -parallel-testing-enabled NO
   -test-timeouts-enabled YES
+  # After a failure Xcode otherwise spends up to ten minutes collecting a sysdiagnose.
+  -collect-test-diagnostics never
   -default-test-execution-time-allowance 60
   -maximum-test-execution-time-allowance 300
 )

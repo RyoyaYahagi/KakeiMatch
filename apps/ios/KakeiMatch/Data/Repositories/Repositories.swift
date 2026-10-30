@@ -17,7 +17,6 @@ import Foundation
     func transactionDeletions() async throws -> [KMTransactionDeletion]
     func undoTransactionDeletion(id: String, at timestamp: Date) async throws
 }
-
 // Additive requirements retain source compatibility with screen/test adapters from earlier PRs.
 extension TransactionRepository {
     func importExternalTransaction(_ input: KMExternalTransactionInput) async throws -> KMExternalTransactionResult { throw KMDataError.unsupported("外部取引の登録に対応していません。") }
@@ -149,10 +148,4 @@ enum KMLocalDataKind: String, Codable, Sendable {
     case statementTransaction = "statement-transaction", reconciliationRun = "reconciliation-run"
     case reconciliationResult = "reconciliation-result", reconciliationResolution = "reconciliation-resolution"
     case correctionAudit = "correction-audit", accountMetadata = "account-metadata", appSettings = "app-settings"
-}
-
-// TS: src/lib/local-backup-format.ts settings:reconciliation-suspected:*.
-struct KMSuspectedStatement: Codable, Equatable, Sendable {
-    var statementId: String
-    var markedAt: Date
 }

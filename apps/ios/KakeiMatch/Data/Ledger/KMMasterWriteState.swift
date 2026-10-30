@@ -28,14 +28,6 @@ struct KMExternalTransactionResult: Equatable, Sendable {
     var transaction: KMTransaction
     var alreadyExisted: Bool
 }
-struct KMStatementImportResult: Equatable, Sendable {
-    var id: String
-    var added: Int
-    var duplicates: Int
-    var excluded: Int
-    var duplicateRowsInFile: Int
-    var needsReviewRows: [KMStatementImport.NeedsReviewRow]
-}
 struct KMRecurringGeneration: Codable, Equatable, Sendable, Identifiable {
     enum Status: String, Codable, Sendable { case created, deleted, retained }
     struct Occurrence: Codable, Equatable, Sendable {

@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct CategoryLearningServiceTests {
     private func observation(_ id: String, category: String? = "food-custom", at time: TimeInterval = 0,

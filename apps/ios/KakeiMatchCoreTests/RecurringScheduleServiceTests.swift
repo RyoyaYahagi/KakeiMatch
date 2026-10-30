@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct RecurringScheduleServiceTests {
     private func date(_ value: String) -> KMDate { KMDate(rawValue: value) }

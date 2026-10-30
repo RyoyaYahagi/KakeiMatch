@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct TransactionAggregationTests {
     private let month = KMYearMonth(rawValue: "2026-09")

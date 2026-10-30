@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct MoneyForwardParserTests {
     private let now = ISO8601DateFormatter().date(from: "2026-10-08T15:00:00Z")!

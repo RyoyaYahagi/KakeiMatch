@@ -46,6 +46,8 @@ jobs:
       # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
+      - name: Run macOS core tests without a simulator
+        run: swift test --package-path .
       - name: Validate UI shard coverage
         id: shards
         run: |
@@ -137,7 +139,7 @@ jobs:
   ui-tests:
     needs: build
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:

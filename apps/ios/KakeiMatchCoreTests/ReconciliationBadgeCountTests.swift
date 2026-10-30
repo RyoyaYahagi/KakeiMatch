@@ -1,6 +1,6 @@
 import Foundation
 import Testing
-@testable import KakeiMatch
+@testable import KakeiMatchCore
 
 struct ReconciliationBadgeCountTests {
     private let now = Date(timeIntervalSince1970: 1_792_000_000)
