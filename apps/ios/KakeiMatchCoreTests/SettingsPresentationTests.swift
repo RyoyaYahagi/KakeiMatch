@@ -17,6 +17,7 @@ struct SettingsPresentationTests {
         #expect(sections[3].rows[0].value == "システム")
         #expect(sections[1].rows[2].isDestructive)
         #expect(sections[3].rows[1].destination == .contact)
+        #expect(sections[3].rows[1].value == nil)
     }
 
     @Test func themeAndScreenLockLabelsMatchPWAStateMeaning() {
