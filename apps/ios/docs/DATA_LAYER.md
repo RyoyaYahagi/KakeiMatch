@@ -63,7 +63,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | `receipt-metadata` | `receipts`。画像のID・抽出・確認値・登録状態を保持。画像は `artifacts` |
 | `statement-import` / `statement-transaction` | `imports` / `statements`。CSVも `artifacts`。CSVを再解析して行を生成しない |
 | `reconciliation-run` / `reconciliation-resolution` | `runs` / `resolutions`。保存済み結果を表示する。取り込み時に照合や判断の再適用はしない |
-| `payroll-record` | `payroll`。確認済み内訳だけ。画像は持ち込まない |
+| `payroll-record` | `payroll`。確認済み内訳だけ。給与登録時は手取りの収入取引と同じSQLite transactionで保存し、画像は持ち込まない |
 | 月次予算/支出除外/口座metadata/不正利用疑い/ルール上書き/最終backup日時 | 対応するRepository snapshotへ反映 |
 | 学習観測 / 照合別名・候補却下・手動再確認・取消履歴 / 定期 create 監査の全予約日（取消済みも含む） | `service-state` へ投影。元JSONもprovenanceに保持。取り込み時に照合や生成を再実行しない |
 | `receipt-extraction` / `category-state` / 分類用merchant mapping / `reconciliation-result` / その他の監査・app-settings | schema検証し元JSONを `provenance` へ損失なく保存。専用サービス未接続の記録を実行済み機能と扱わない |
@@ -86,6 +86,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | --- | --- | --- |
 | 支払先 | 新規の通常手入力/レシートはtrim＋Actualのtitle-caseを通す。Unicode lowercase完全一致で同名masterを再利用し、元の表示名/IDを保つ。**NFKCによる統合ではない**。通常取引の編集だけPWAのNFKC・空白集約・ASCII A–Z小文字化で先に照合する。レシート編集は完全一致→Actualの同名照合 | `payee-normalization.json` はActual同梱sourceから固定生成。`KMPayeeNormalization`、`KMLedgerWrites`。新規masterは取引と一括保存 |
 | 手入力の作成・再送 | 符号は支出が負、収入が正。同じimportedId・同じ画面入力は同じIDを返し二重に残高へ加算しない。異なる日付/金額/内容/category/account/memoなら既存を保持してエラー。再送ではcleared/reconciled等の読取専用状態を比較しない。成功後にmasterが閉じられた/非表示になった再送も既存値を確認して返す | `transactions.saveManual(input,id:nil)` |
+| 給与明細の登録 | 勤務先・支給日・手取り・内訳を確認し、手取りだけを収入に登録する。控除から支出は作らない。安定した給与IDで再送し、収入取引と確認済み内訳snapshotを一つのSQLite transactionで保存する。失敗時は両方をrollback | `payroll.registerPayrollRecord(_:income:)`。既存Worker APIのtyped応答を検証し、画像は保存しない |
 | IDのない既存取引との照合 | ActualのstrictIdCheckingどおり、同じ口座・金額・±7日・importedIdなしを対象とし、同名支払先、次に日付の近さで照合する。既存の値を優先し、画面入力とのreadbackが一致する場合だけIDを引き継ぐ。別のimportedIdがある記録は統合しない | 手入力/レシートの新規登録経路。給与/定期の明示追加は既存どおり別扱い |
 | 通常取引の編集 | 種類を変えず日付・金額・支払先・category・口座・memoを更新。既存の取引ID/importedId/cleared/reconciledを保持する。分割・レシート・振替は専用経路に限定 | `saveManual(input,id:existingId)`。input.importedIdは編集では書き換えに使用しない |
 | レシート登録 | 確認値から単一取引、またはcategoryごとの親＋子を作る。子はsigned円で親合計と一致、親はcategoryなし、集計/残高で二重計上しない。基本category IDはPWAと同じ名称対応で解決し、同じ実categoryへ再集約する。画像のある0円支出は単一取引、画像なし手入力は1円以上 | `receipts.registerReceipt(id:at:)`。`saveReceipt`は下書きsnapshot保存だけ。appliedは同じ結果、deletedは再登録拒否 |
