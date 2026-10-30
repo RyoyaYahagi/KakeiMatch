@@ -26,61 +26,89 @@ struct KMRecurringView: View {
     let onBack: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: KMSpacing.space3) {
-            if page == .list {
-                backButton("設定", action: onBack)
-                title("定期登録", id: "recurring.title")
-                Text("決まった日に自動で記録します。")
-                    .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                status
-                if model.isLoading { ProgressView().tint(KMColor.primary).frame(maxWidth: .infinity).padding(.vertical, 24) }
-                else if model.schedules.isEmpty {
-                    Text("定期登録はありません。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted).padding(.top, KMSpacing.space2)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach(model.schedules) { schedule in
-                            Button { openDetail(schedule) } label: { scheduleRow(schedule) }
-                                .buttonStyle(.plain).accessibilityIdentifier("recurring.row.\(schedule.id)")
-                            Rectangle().fill(KMColor.border).frame(height: 1)
-                        }
-                    }.overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
-                }
-                Spacer(minLength: 0)
-                primaryButton("定期登録を追加") { prepareEditor(nil) }
-                    .accessibilityIdentifier("recurring.add")
-            } else if page == .detail, let selected {
-                backButton("定期登録") { page = .list }
-                title(selected.name, id: "recurring.detail.title")
-                Text("\(selected.kind == .expense ? "支出" : "収入")の定期登録 · \(selected.completed ? "終了済み" : "継続中")")
-                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
-                status
-                detailRows(selected)
-                catchUpHistory(selected)
-                Spacer(minLength: 0)
-                if selected.editable {
-                    primaryButton("編集する") { prepareEditor(selected) }.accessibilityIdentifier("recurring.edit")
-                } else {
-                    Text("この定期登録には画面で扱えない予定条件があります。金額や頻度などの条件は編集できません。削除して作り直してください。")
-                        .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-                }
-                Button("削除する") { confirmsDelete = true }
-                    .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity, minHeight: 44)
-                    .accessibilityIdentifier("recurring.delete")
-            } else {
-                editor
-            }
+        pageWithDialogs
+            .onChange(of: kind) { _, newKind in handleKindChange(newKind) }
+            .task { await model.load(repositories) }
+    }
+
+    private var pageWithDialogs: some View {
+        let content = pageContent
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("recurring.screen")
+        return catchUpDeleteDialog(catchUpPromptAlert(deleteScheduleDialog(content)))
+    }
+
+    @ViewBuilder private var pageContent: some View {
+        if page == .list {
+            listPage
+        } else if page == .detail, let selected {
+            detailPage(selected)
+        } else {
+            editor
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .contain).accessibilityIdentifier("recurring.screen")
-        .confirmationDialog("この定期登録を削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
+    }
+
+    private var listPage: some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            backButton("設定", action: onBack)
+            title("定期登録", id: "recurring.title")
+            Text("決まった日に自動で記録します。")
+                .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            status
+            if model.isLoading { ProgressView().tint(KMColor.primary).frame(maxWidth: .infinity).padding(.vertical, 24) }
+            else if model.schedules.isEmpty {
+                Text("定期登録はありません。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted).padding(.top, KMSpacing.space2)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(model.schedules) { schedule in
+                        Button { openDetail(schedule) } label: { scheduleRow(schedule) }
+                            .buttonStyle(.plain).accessibilityIdentifier("recurring.row.\(schedule.id)")
+                        Rectangle().fill(KMColor.border).frame(height: 1)
+                    }
+                }.overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+            }
+            Spacer(minLength: 0)
+            primaryButton("定期登録を追加") { prepareEditor(nil) }
+                .accessibilityIdentifier("recurring.add")
+        }
+    }
+
+    private func detailPage(_ schedule: KMRecurringTransaction) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            backButton("定期登録") { page = .list }
+            title(schedule.name, id: "recurring.detail.title")
+            Text("\(schedule.kind == .expense ? "支出" : "収入")の定期登録 · \(schedule.completed ? "終了済み" : "継続中")")
+                .font(KMTypography.note).foregroundStyle(KMColor.muted)
+            status
+            detailRows(schedule)
+            catchUpHistory(schedule)
+            Spacer(minLength: 0)
+            if schedule.editable {
+                primaryButton("編集する") { prepareEditor(schedule) }.accessibilityIdentifier("recurring.edit")
+            } else {
+                Text("この定期登録には画面で扱えない予定条件があります。金額や頻度などの条件は編集できません。削除して作り直してください。")
+                    .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
+            }
+            Button("削除する") { confirmsDelete = true }
+                .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity, minHeight: 44)
+                .accessibilityIdentifier("recurring.delete")
+        }
+    }
+
+    private func deleteScheduleDialog<Content: View>(_ content: Content) -> some View {
+        content.confirmationDialog("この定期登録を削除しますか？", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 guard let selected else { return }
                 Task { await model.delete(selected, repositories: repositories); page = .list }
             }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("すでに作成された取引は残ります。") }
-        .alert("過去分の記録", isPresented: Binding(
+    }
+
+    private func catchUpPromptAlert<Content: View>(_ content: Content) -> some View {
+        content.alert("過去分の記録", isPresented: Binding(
             get: { model.catchUpPrompt != nil },
             set: { isPresented in
                 if !isPresented && !selectingCatchUp { model.cancelCatchUpPrompt() }
@@ -107,7 +135,10 @@ struct KMRecurringView: View {
         } message: {
             if let plan = model.catchUpPrompt { Text(KMRecurringPresentation.catchUpPrompt(plan)) }
         }
-        .confirmationDialog("過去分を削除しますか？", isPresented: $confirmsCatchUpDelete, titleVisibility: .visible) {
+    }
+
+    private func catchUpDeleteDialog<Content: View>(_ content: Content) -> some View {
+        content.confirmationDialog("過去分を削除しますか？", isPresented: $confirmsCatchUpDelete, titleVisibility: .visible) {
             Button("削除する", role: .destructive) {
                 guard let selected, let generation = pendingDeleteGeneration else { return }
                 let dates = pendingDeleteDates
@@ -122,10 +153,12 @@ struct KMRecurringView: View {
                 Text(KMRecurringPresentation.selectedDeletionMessage(dates: pendingDeleteDates, amountYen: generation.input.amountYen))
             }
         }
-        .onChange(of: kind) { _, newKind in
-            if let chosen = model.categories.first(where: { $0.id == categoryId }), chosen.isIncome != (newKind == .income) { categoryId = "" }
+    }
+
+    private func handleKindChange(_ newKind: KMRecurringTransaction.Kind) {
+        if let chosen = model.categories.first(where: { $0.id == categoryId }), chosen.isIncome != (newKind == .income) {
+            categoryId = ""
         }
-        .task { await model.load(repositories) }
     }
 
     private var editor: some View {
