@@ -32,7 +32,7 @@ private final class KMMasterManagementModel {
     func saveCategory(_ value: KMCategory) async {
         guard let repositories else { return }
         do { try await repositories.categories.saveCategory(value); try await reload(); message = "カテゴリを保存しました。" }
-        catch { error = "カテゴリを保存できませんでした。\(error.localizedDescription)" }
+        catch let caught { error = "カテゴリを保存できませんでした。\(caught.localizedDescription)" }
     }
 
     func setHidden(_ value: KMCategory) async {
@@ -42,7 +42,7 @@ private final class KMMasterManagementModel {
     func deleteCategory(_ value: KMCategory) async {
         guard let repositories else { return }
         do { try await repositories.categories.deleteCategory(id: value.id); try await reload(); message = "カテゴリを削除しました。" }
-        catch { error = "カテゴリを削除できませんでした。\(error.localizedDescription)" }
+        catch let caught { error = "カテゴリを削除できませんでした。\(caught.localizedDescription)" }
     }
 
     func saveAccount(_ value: KMAccount, isNew: Bool) async {
@@ -51,13 +51,13 @@ private final class KMMasterManagementModel {
             if isNew { try await repositories.accounts.createAccount(value, startingBalanceYen: 0, startingDate: KMDate(instant: repositories.referenceDate)) }
             else { try await repositories.accounts.saveAccount(value) }
             try await reload(); message = "支払元を保存しました。"
-        } catch { error = "支払元を保存できませんでした。\(error.localizedDescription)" }
+        } catch let caught { error = "支払元を保存できませんでした。\(caught.localizedDescription)" }
     }
 
     func deleteAccount(_ value: KMAccount) async {
         guard let repositories else { return }
         do { try await repositories.accounts.deleteAccount(id: value.id); try await reload(); message = "支払元を削除しました。" }
-        catch { error = "支払元を削除できませんでした。\(error.localizedDescription)" }
+        catch let caught { error = "支払元を削除できませんでした。\(caught.localizedDescription)" }
     }
 
     func setRule(_ rule: KMCategoryLearningRule, enabled: Bool? = nil, categoryId: String? = nil, deleted: Bool? = nil) async {
@@ -67,13 +67,13 @@ private final class KMMasterManagementModel {
                 targetType: rule.targetType, normalizedName: rule.normalizedName,
                 disabled: enabled.map { !$0 }, deleted: deleted, categoryId: categoryId))
             try await reload(); message = "分類ルールを保存しました。"
-        } catch { error = "分類ルールを保存できませんでした。\(error.localizedDescription)" }
+        } catch let caught { error = "分類ルールを保存できませんでした。\(caught.localizedDescription)" }
     }
 
     func resetRules() async {
         guard let repositories else { return }
         do { try await repositories.categoryLearning.resetCategoryRuleOverrides(); try await reload(); message = "分類ルールへの変更をリセットしました。" }
-        catch { error = "分類ルールをリセットできませんでした。\(error.localizedDescription)" }
+        catch let caught { error = "分類ルールをリセットできませんでした。\(caught.localizedDescription)" }
     }
 }
 
@@ -107,7 +107,38 @@ struct KMMasterManagementView: View {
         _page = State(initialValue: initialPage)
     }
 
-    var body: some View {
+    var body: some View { alertScreen }
+
+    private var alertScreen: some View {
+        masterScreen
+        .task { await model.load(repositories) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { pinnedActions }
+        .onChange(of: page) { _, _ in model.message = nil }
+        .onChange(of: accountType) { _, value in if value == .cash { statementProvider = nil } }
+        .alert("カテゴリを削除しますか？", isPresented: $confirmingCategoryDelete) {
+            Button("削除する", role: .destructive) { if let selectedCategory { Task { await model.deleteCategory(selectedCategory); self.selectedCategory = nil } } }
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("「\(selectedCategory?.name ?? "")」を削除します。") }
+        .alert("支払元を完全に削除しますか？", isPresented: $confirmingAccountDelete) {
+            Button("削除する", role: .destructive) { if let selectedAccount { Task { await model.deleteAccount(selectedAccount); self.selectedAccount = nil } } }
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("「\(selectedAccount?.name ?? "")」を削除します。この操作は取り消せません。") }
+        .alert("分類ルールをリセットしますか？", isPresented: $confirmingRulesReset) {
+            Button("リセットする", role: .destructive) { Task { await model.resetRules() } }
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("分類ルールへの変更をすべてリセットします。学習履歴は残り、ルールは履歴から再計算されます。") }
+        .alert("分類ルールを削除しますか？", isPresented: Binding(
+            get: { ruleToDelete != nil }, set: { if !$0 { ruleToDelete = nil } }
+        )) {
+            Button("削除する", role: .destructive) {
+                if let rule = ruleToDelete { Task { await model.setRule(rule, deleted: true, enabled: false) } }
+                ruleToDelete = nil
+            }
+            Button("キャンセル", role: .cancel) { ruleToDelete = nil }
+        } message: { Text("学習履歴は残り、このルールは自動で適用されなくなります。") }
+    }
+
+    private var masterScreen: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: KMSpacing.space3) {
                 Button(action: back) {
@@ -136,31 +167,6 @@ struct KMMasterManagementView: View {
             .frame(maxWidth: 720, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .center)
         }
-        .task { await model.load(repositories) }
-        .safeAreaInset(edge: .bottom, spacing: 0) { pinnedActions }
-        .onChange(of: page) { _, _ in model.message = nil }
-        .onChange(of: accountType) { _, value in if value == .cash { statementProvider = nil } }
-        .alert("カテゴリを削除しますか？", isPresented: $confirmingCategoryDelete) {
-            Button("削除する", role: .destructive) { if let selectedCategory { Task { await model.deleteCategory(selectedCategory); self.selectedCategory = nil } } }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("「\(selectedCategory?.name ?? "")」を削除します。") }
-        .alert("支払元を完全に削除しますか？", isPresented: $confirmingAccountDelete) {
-            Button("削除する", role: .destructive) { if let selectedAccount { Task { await model.deleteAccount(selectedAccount); self.selectedAccount = nil } } }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("「\(selectedAccount?.name ?? "")」を削除します。この操作は取り消せません。") }
-        .alert("分類ルールをリセットしますか？", isPresented: $confirmingRulesReset) {
-            Button("リセットする", role: .destructive) { Task { await model.resetRules() } }
-            Button("キャンセル", role: .cancel) {}
-        } message: { Text("分類ルールへの変更をすべてリセットします。学習履歴は残り、ルールは履歴から再計算されます。") }
-        .alert("分類ルールを削除しますか？", isPresented: Binding(
-            get: { ruleToDelete != nil }, set: { if !$0 { ruleToDelete = nil } }
-        )) {
-            Button("削除する", role: .destructive) {
-                if let rule = ruleToDelete { Task { await model.setRule(rule, deleted: true, enabled: false) } }
-                ruleToDelete = nil
-            }
-            Button("キャンセル", role: .cancel) { ruleToDelete = nil }
-        } message: { Text("学習履歴は残り、このルールは自動で適用されなくなります。") }
     }
 
     private var title: String {
@@ -241,7 +247,7 @@ struct KMMasterManagementView: View {
             detailRow("状態", category.hidden ? "非表示" : "表示中")
             detailRow("使われている記録", "\(category.usageCount)件")
             secondaryButton(category.hidden ? "カテゴリを表示する" : "カテゴリを非表示にする", id: "masters.category.visibility") {
-                Task { await model.setHidden(category); await model.reload(); selectedCategory = model.categories.first { $0.id == category.id } }
+                Task { await model.setHidden(category); try? await model.reload(); selectedCategory = model.categories.first { $0.id == category.id } }
             }
             if category.usageCount > 0 {
                 Text("このカテゴリには記録があります。履歴を残すため削除できません。")
@@ -319,7 +325,7 @@ struct KMMasterManagementView: View {
             detailRow("状態", account.closed ? "利用終了" : "利用中")
             detailRow("記録", "\(model.accountUsageCounts[account.id, default: 0])件")
             secondaryButton(account.closed ? "利用を再開する" : "利用終了", id: "masters.account.close") {
-                var value = account; value.closed.toggle(); Task { await model.saveAccount(value, isNew: false); await model.reload(); selectedAccount = model.accounts.first { $0.id == account.id } }
+                var value = account; value.closed.toggle(); Task { await model.saveAccount(value, isNew: false); try? await model.reload(); selectedAccount = model.accounts.first { $0.id == account.id } }
             }
             if account.balanceYen == 0 && model.accountUsageCounts[account.id, default: 0] == 0 {
                 secondaryButton("完全に削除する", id: "masters.account.delete", role: .destructive) { confirmingAccountDelete = true }
@@ -382,7 +388,7 @@ struct KMMasterManagementView: View {
                 ForEach(model.categories.filter { !$0.isIncome }) { Text($0.name).tag($0.id) }
             }.pickerStyle(.menu).accessibilityIdentifier("masters.rule.category.\(rule.id)")
             secondaryButton("カテゴリを変更", id: "masters.rule.save.\(rule.id)") {
-                Task { await model.setRule(rule, categoryId: ruleCategoryIds[rule.id] ?? rule.categoryId, enabled: true, deleted: false) }
+                Task { await model.setRule(rule, enabled: true, categoryId: ruleCategoryIds[rule.id] ?? rule.categoryId, deleted: false) }
             }
             if rule.deleted {
                 secondaryButton("削除を取り消す", id: "masters.rule.undo.\(rule.id)") {
