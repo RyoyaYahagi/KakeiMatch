@@ -131,7 +131,7 @@ struct KMMasterManagementView: View {
             get: { ruleToDelete != nil }, set: { if !$0 { ruleToDelete = nil } }
         )) {
             Button("削除する", role: .destructive) {
-                if let rule = ruleToDelete { Task { await model.setRule(rule, deleted: true, enabled: false) } }
+                if let rule = ruleToDelete { Task { await model.setRule(rule, enabled: false, deleted: true) } }
                 ruleToDelete = nil
             }
             Button("キャンセル", role: .cancel) { ruleToDelete = nil }
