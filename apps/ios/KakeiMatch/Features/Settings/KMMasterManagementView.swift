@@ -207,8 +207,9 @@ struct KMMasterManagementView: View {
             ForEach(model.categories.filter { $0.isIncome == categoryKind }) { category in
                 Button { selectedCategory = category } label: {
                     HStack(spacing: KMSpacing.space3) {
-                        Circle().fill(KMColor.primarySoft).frame(width: 36, height: 36)
-                            .overlay(Text("●").foregroundStyle(KMColor.primary))
+                        let visual = KMCategoryTone.visual(name: category.name, id: category.id)
+                        Circle().fill(visual.tone.background).frame(width: 36, height: 36)
+                            .overlay(KMIcon(name: visual.icon, size: 20).foregroundStyle(visual.tone.foreground))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(category.name).font(KMTypography.text).foregroundStyle(KMColor.text)
                             Text("記録 \(category.usageCount)件 · \(category.hidden ? "非表示" : category.groupName)")
@@ -293,8 +294,11 @@ struct KMMasterManagementView: View {
             if open.isEmpty { Text("利用中の支払元がありません。").font(KMTypography.note).foregroundStyle(KMColor.muted) }
             let closed = model.accounts.filter(\.closed)
             if !closed.isEmpty {
-                Text("利用終了の口座 \(closed.count)件").font(KMTypography.body(13, weight: .bold)).foregroundStyle(KMColor.muted).padding(.top, KMSpacing.space2)
-                ForEach(closed) { accountRow($0) }
+                DisclosureGroup("利用終了の口座 \(closed.count)件") {
+                    ForEach(closed) { accountRow($0) }
+                }
+                .font(KMTypography.body(14, weight: .semibold)).foregroundStyle(KMColor.muted)
+                .padding(.vertical, KMSpacing.space2)
             }
             primaryButton("支払元を追加する", id: "masters.account.add") {
                 accountName = ""; accountType = .other; statementProvider = nil; isAddingAccount = true
@@ -352,7 +356,9 @@ struct KMMasterManagementView: View {
                 Text("明細サービス").font(KMTypography.note).foregroundStyle(KMColor.muted)
                 Picker("明細サービス", selection: $statementProvider) {
                     Text("設定しない").tag(KMStatementProvider?.none)
-                    ForEach(KMStatementProvider.allCases, id: \.self) { Text($0.label).tag(Optional($0)) }
+                    if statementProvider == .paypay { Text("PayPay取引履歴（旧形式・再取込不可）").tag(Optional(KMStatementProvider.paypay)).disabled(true) }
+                    if statementProvider == .aeonCard { Text(KMStatementProvider.aeonCard.label).tag(Optional(KMStatementProvider.aeonCard)).disabled(true) }
+                    ForEach([KMStatementProvider.smbcCard, .rakutenCard, .paypayCard], id: \.self) { Text($0.label).tag(Optional($0)) }
                 }
                 .pickerStyle(.menu).accessibilityIdentifier("masters.account.provider")
             }
