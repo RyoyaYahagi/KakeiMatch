@@ -40,7 +40,8 @@ final class RecurringFlowTests: XCTestCase {
         app.buttons["recurring.save"].tap()
         XCTAssertTrue(currentMonthChoice(app).waitForExistence(timeout: 8))
         XCTAssertFalse(app.keyboards.firstMatch.exists)
-        let cancel = app.buttons["recurring.catchUp.cancel"]
+        XCTAssertTrue(currentMonthChoice(app).isHittable)
+        let cancel = app.alerts.buttons["キャンセル"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 5))
         XCTAssertTrue(cancel.isHittable)
         return app
@@ -60,7 +61,7 @@ final class RecurringFlowTests: XCTestCase {
     }
 
     @MainActor private func currentMonthChoice(_ app: XCUIApplication) -> XCUIElement {
-        app.buttons.matching(identifier: "recurring.catchUp.currentMonth").firstMatch
+        app.alerts.buttons["今月分から記録"]
     }
 
     @MainActor func testRecurringInitialLightScreenshot() {
