@@ -52,7 +52,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 | POST `/api/ai/jev` | `{flowId,receipt:{merchant:String|null,totalAmountYen:Int|null,items:[{name,amountYen:Int|null}]},categories:[{id,name}],itemIndexes?:[Int]}` | `{model:String,answers:{categoryまたはitem_N:Choice}}` | B + O、実装済み |
 | POST `/api/ai/category-suggestion` | `{flowId,sourceCategoryName:String(1…200),categories:[{id,name}]}` | `{categoryId:候補内ID|null}` | B + O、実装済み |
 | POST `/api/contact` | `{flowId,kind:bug|improvement|question,message:String(1…4000),originalMessage?:String(1…4000),diagnostic?:Diagnostic}`、20 KiB以下 | `{feedbackId,kind,reply,issueUrl:null}` | B + O。PWA / iOS は account のみ。通信実装済み。診断情報は利用者が同意した時だけ添付 |
-| POST `/api/contact/transcribe` | `{flowId,audioBase64,contentType:audio/mp4|audio/webm|audio/ogg|audio/wav|audio/mpeg}` | `{text:String(1…4000)}` | B + O。PWA / iOS は account のみ。通信実装済み、録音UIなし |
+| POST `/api/contact/transcribe` | `{flowId,audioBase64,contentType:audio/mp4|audio/webm|audio/ogg|audio/wav|audio/mpeg}` | `{text:String(1…4000)}` | B + O。PWA は account のみ。iOS は音声入力を作らないため呼ばない |
 | POST `/api/contact/interview` | `{flowId,message,history:[{question,answer}]最大4,finish:Bool,diagnostic?:Diagnostic}` | `{status:ask|ready,kind,question,recommendation,summary}` | B + O。旧互換用、通常PWAから呼ばないため移植しない |
 | GET `/api/auth/get-session` | なし | `{user:User,session:Session}|null` | S、実装済み |
 | GET `/api/auth/passkey/list-user-passkeys` | なし | `[Passkey]` | S、実装済み |
