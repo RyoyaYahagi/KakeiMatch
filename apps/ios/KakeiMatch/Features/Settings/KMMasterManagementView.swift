@@ -137,7 +137,9 @@ struct KMMasterManagementView: View {
             .frame(maxWidth: .infinity, alignment: .center)
         }
         .task { await model.load(repositories) }
+        .safeAreaInset(edge: .bottom, spacing: 0) { pinnedActions }
         .onChange(of: page) { _, _ in model.message = nil }
+        .onChange(of: accountType) { _, value in if value == .cash { statementProvider = nil } }
         .alert("カテゴリを削除しますか？", isPresented: $confirmingCategoryDelete) {
             Button("削除する", role: .destructive) { if let selectedCategory { Task { await model.deleteCategory(selectedCategory); self.selectedCategory = nil } } }
             Button("キャンセル", role: .cancel) {}
@@ -228,9 +230,6 @@ struct KMMasterManagementView: View {
             if model.categories.filter({ $0.isIncome == categoryKind }).isEmpty { Text("カテゴリがありません。").font(KMTypography.note).foregroundStyle(KMColor.muted) }
             Text("記録が多い順に並びます。入力画面のボタンも同じ順です。")
                 .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-            primaryButton("カテゴリを追加", id: "masters.category.add") {
-                categoryName = ""; categoryIncome = categoryKind; isAddingCategory = true
-            }
         }
     }
 
@@ -244,10 +243,7 @@ struct KMMasterManagementView: View {
             secondaryButton(category.hidden ? "カテゴリを表示する" : "カテゴリを非表示にする", id: "masters.category.visibility") {
                 Task { await model.setHidden(category); await model.reload(); selectedCategory = model.categories.first { $0.id == category.id } }
             }
-            primaryButton("編集する", id: "masters.category.edit") { categoryName = category.name; editingCategory = category }
-            if category.usageCount == 0 {
-                secondaryButton("カテゴリを削除する", id: "masters.category.delete", role: .destructive) { confirmingCategoryDelete = true }
-            } else {
+            if category.usageCount > 0 {
                 Text("このカテゴリには記録があります。履歴を残すため削除できません。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
             }
@@ -257,12 +253,6 @@ struct KMMasterManagementView: View {
     private func categoryForm(_ current: KMCategory?) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             labeledField("カテゴリ名", text: $categoryName, id: "masters.category.name")
-            primaryButton(current == nil ? "追加する" : "変更を保存", id: "masters.category.save") {
-                let value = KMCategory(id: current?.id ?? UUID().uuidString, name: categoryName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    isIncome: current?.isIncome ?? categoryIncome, hidden: current?.hidden ?? false,
-                    groupName: current?.groupName ?? (categoryIncome ? "収入" : "支出"), groupId: current?.groupId, tone: current?.tone)
-                Task { await model.saveCategory(value); if model.error == nil { editingCategory = nil; isAddingCategory = false; selectedCategory = model.categories.first { $0.id == value.id } } }
-            }
         }
     }
 
@@ -300,9 +290,6 @@ struct KMMasterManagementView: View {
                 .font(KMTypography.body(14, weight: .semibold)).foregroundStyle(KMColor.muted)
                 .padding(.vertical, KMSpacing.space2)
             }
-            primaryButton("支払元を追加する", id: "masters.account.add") {
-                accountName = ""; accountType = .other; statementProvider = nil; isAddingAccount = true
-            }
         }
     }
 
@@ -331,9 +318,6 @@ struct KMMasterManagementView: View {
             detailRow("明細サービス", account.statementProvider?.label ?? "未設定")
             detailRow("状態", account.closed ? "利用終了" : "利用中")
             detailRow("記録", "\(model.accountUsageCounts[account.id, default: 0])件")
-            primaryButton("編集する", id: "masters.account.edit") {
-                accountName = account.name; accountType = account.accountType; statementProvider = account.statementProvider; editingAccount = account
-            }
             secondaryButton(account.closed ? "利用を再開する" : "利用終了", id: "masters.account.close") {
                 var value = account; value.closed.toggle(); Task { await model.saveAccount(value, isNew: false); await model.reload(); selectedAccount = model.accounts.first { $0.id == account.id } }
             }
@@ -361,12 +345,6 @@ struct KMMasterManagementView: View {
                     ForEach([KMStatementProvider.smbcCard, .rakutenCard, .paypayCard], id: \.self) { Text($0.label).tag(Optional($0)) }
                 }
                 .pickerStyle(.menu).accessibilityIdentifier("masters.account.provider")
-            }
-            primaryButton(current == nil ? "追加する" : "変更を保存", id: "masters.account.save") {
-                let value = KMAccount(id: current?.id ?? UUID().uuidString, name: accountName.trimmingCharacters(in: .whitespacesAndNewlines),
-                    closed: current?.closed ?? false, accountType: accountType, balanceYen: current?.balanceYen ?? 0,
-                    statementProvider: accountType == .cash ? nil : statementProvider, offbudget: current?.offbudget)
-                Task { await model.saveAccount(value, isNew: current == nil); if model.error == nil { editingAccount = nil; isAddingAccount = false; selectedAccount = model.accounts.first { $0.id == value.id } } }
             }
         }
     }
@@ -432,6 +410,64 @@ struct KMMasterManagementView: View {
     private func detailRow(_ title: String, _ value: String) -> some View {
         HStack { Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted); Spacer(); Text(value).font(KMTypography.text).foregroundStyle(KMColor.text) }
             .frame(minHeight: 40).overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    @ViewBuilder
+    private var pinnedActions: some View {
+        let category = selectedCategory
+        let account = selectedAccount
+        let categoryFormValue = editingCategory
+        let accountFormValue = editingAccount
+        if page == .categories, editingCategory != nil || page == .categories && isAddingCategory {
+            pinnedBar({
+                let current = categoryFormValue
+                let value = KMCategory(id: current?.id ?? UUID().uuidString,
+                    name: categoryName.trimmingCharacters(in: .whitespacesAndNewlines),
+                    isIncome: current?.isIncome ?? categoryIncome, hidden: current?.hidden ?? false,
+                    groupName: current?.groupName ?? (categoryIncome ? "収入" : "支出"), groupId: current?.groupId, tone: current?.tone)
+                Task {
+                    await model.saveCategory(value)
+                    if model.error == nil { editingCategory = nil; isAddingCategory = false; selectedCategory = model.categories.first { $0.id == value.id } }
+                }
+            }) label: { Text(editingCategory == nil ? "追加する" : "変更を保存") } id: "masters.category.save"
+        } else if page == .categories, let category {
+            VStack(spacing: KMSpacing.space2) {
+                pinnedBar({ categoryName = category.name; editingCategory = category }) label: { Text("編集する") } id: "masters.category.edit"
+                if category.usageCount == 0 {
+                    secondaryButton("カテゴリを削除する", id: "masters.category.delete.pinned", role: .destructive) { confirmingCategoryDelete = true }
+                }
+            }.padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space2).background(KMColor.surface)
+                .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+        } else if page == .categories {
+            pinnedBar({ categoryName = ""; categoryIncome = categoryKind; isAddingCategory = true }) label: { Text("カテゴリを追加") } id: "masters.category.add"
+        } else if page == .accounts, editingAccount != nil || page == .accounts && isAddingAccount {
+            let current = accountFormValue
+            pinnedBar({
+                let value = KMAccount(id: current?.id ?? UUID().uuidString,
+                    name: accountName.trimmingCharacters(in: .whitespacesAndNewlines), closed: current?.closed ?? false,
+                    accountType: accountType, balanceYen: current?.balanceYen ?? 0,
+                    statementProvider: accountType == .cash ? nil : statementProvider, offbudget: current?.offbudget)
+                Task {
+                    await model.saveAccount(value, isNew: current == nil)
+                    if model.error == nil { editingAccount = nil; isAddingAccount = false; selectedAccount = model.accounts.first { $0.id == value.id } }
+                }
+            }) label: { Text(editingAccount == nil ? "追加する" : "変更を保存") } id: "masters.account.save"
+        } else if page == .accounts, let account {
+            pinnedBar({ accountName = account.name; accountType = account.accountType; statementProvider = account.statementProvider; editingAccount = account }) label: { Text("編集する") } id: "masters.account.edit"
+        } else if page == .accounts {
+            pinnedBar({ accountName = ""; accountType = .other; statementProvider = nil; isAddingAccount = true }) label: { Text("支払元を追加する") } id: "masters.account.add"
+        }
+    }
+
+    private func pinnedBar<Action: View>(
+        _ action: @escaping () -> Void,
+        @ViewBuilder label: () -> Action,
+        id: String
+    ) -> some View {
+        Button(action: action) { label().font(KMTypography.text).frame(maxWidth: .infinity, minHeight: 52) }
+            .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier(id)
+            .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space2)
+            .background(KMColor.surface).overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
     private func labeledField(_ label: String, text: Binding<String>, id: String) -> some View {
