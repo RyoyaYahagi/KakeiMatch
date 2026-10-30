@@ -80,7 +80,7 @@ struct KMRecurringView: View {
             }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("すでに作成された取引は残ります。") }
-        .confirmationDialog("過去分の記録", isPresented: Binding(
+        .alert("過去分の記録", isPresented: Binding(
             get: { model.catchUpPrompt != nil },
             set: { isPresented in
                 if !isPresented && !selectingCatchUp { model.cancelCatchUpPrompt() }
@@ -102,7 +102,7 @@ struct KMRecurringView: View {
                     if model.saved { page = .list }
                 }
             }.accessibilityIdentifier("recurring.catchUp.currentMonth")
-            Button("キャンセル") { model.cancelCatchUpPrompt() }
+            Button("キャンセル", role: .cancel) { model.cancelCatchUpPrompt() }
                 .accessibilityIdentifier("recurring.catchUp.cancel")
         } message: {
             if let plan = model.catchUpPrompt { Text(KMRecurringPresentation.catchUpPrompt(plan)) }
