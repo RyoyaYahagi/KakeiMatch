@@ -87,3 +87,19 @@ enum KMSettingsPresentation {
         ]
     }
 }
+
+enum KMMasterPresentation {
+    static let accountTypeOrder: [KMAccountType] = [.creditCard, .bank, .cash, .other]
+
+    static func accountBalanceLabel(type: KMAccountType, balanceYen: Int) -> String {
+        let amount = "¥\(abs(balanceYen).formatted())"
+        if type == .creditCard { return balanceYen < 0 ? "差引未払額 \(amount)" : "差引預り額 \(amount)" }
+        return "\(balanceYen < 0 ? "−" : "")\(amount)"
+    }
+
+    static func accountDetailBalanceLabel(type: KMAccountType, balanceYen: Int) -> String {
+        if type == .creditCard { return accountBalanceLabel(type: type, balanceYen: balanceYen) }
+        if balanceYen == 0 { return "¥0" }
+        return "\(balanceYen < 0 ? "−" : "+")¥\(abs(balanceYen).formatted())"
+    }
+}

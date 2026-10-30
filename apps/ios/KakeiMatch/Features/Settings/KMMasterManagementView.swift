@@ -279,7 +279,7 @@ struct KMMasterManagementView: View {
                 Text("利用中の口座の合計").font(KMTypography.note).foregroundStyle(KMColor.muted)
                 Text("\(total < 0 ? "−" : "")¥\(abs(total).formatted())").font(KMTypography.body(18, weight: .bold)).foregroundStyle(KMColor.text)
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, KMSpacing.space3)
-            ForEach(KMAccountType.allCases, id: \.self) { type in
+            ForEach(KMMasterPresentation.accountTypeOrder, id: \.self) { type in
                 let rows = open.filter { $0.accountType == type }
                 if !rows.isEmpty {
                     Text(type.label).font(KMTypography.body(13, weight: .bold)).foregroundStyle(KMColor.muted).padding(.top, KMSpacing.space2)
@@ -308,7 +308,7 @@ struct KMMasterManagementView: View {
                         .font(KMTypography.note).foregroundStyle(KMColor.muted)
                 }
                 Spacer()
-                Text("\(account.balanceYen < 0 ? "−" : "")¥\(abs(account.balanceYen).formatted())")
+                Text(KMMasterPresentation.accountBalanceLabel(type: account.accountType, balanceYen: account.balanceYen))
                     .font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.text).monospacedDigit()
             }
             .frame(minHeight: 56).overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
@@ -319,7 +319,8 @@ struct KMMasterManagementView: View {
     private func accountDetail(_ account: KMAccount) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Text(account.name).font(KMTypography.body(20, weight: .bold)).foregroundStyle(KMColor.text)
-            detailRow(account.accountType == .creditCard ? "差引額" : "残高", "\(account.balanceYen < 0 ? "−" : "")¥\(abs(account.balanceYen).formatted())")
+            detailRow(account.accountType == .creditCard ? "差引額" : "残高",
+                KMMasterPresentation.accountDetailBalanceLabel(type: account.accountType, balanceYen: account.balanceYen))
             detailRow("種類", account.accountType.label)
             detailRow("明細サービス", account.statementProvider?.label ?? "未設定")
             detailRow("状態", account.closed ? "利用終了" : "利用中")
