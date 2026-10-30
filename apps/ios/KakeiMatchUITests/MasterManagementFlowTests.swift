@@ -2,6 +2,25 @@ import XCTest
 
 final class MasterManagementFlowTests: XCTestCase {
     @MainActor
+    func testMasterCategoriesInitialScreenshots() {
+        continueAfterFailure = false
+        for appearance in ["light", "dark"] {
+            let app = XCUIApplication()
+            app.launchArguments = ["-UITestFixture", "migration", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+            app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = appearance
+            app.launch()
+            app.buttons["settings-tab"].tap()
+            app.buttons["settings.categories"].tap()
+            XCTAssertTrue(app.staticTexts["masters.title"].waitForExistence(timeout: 5))
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "master-categories-initial-\(appearance)"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            app.terminate()
+        }
+    }
+
+    @MainActor
     func testCreateCategoryFromSettings() {
         continueAfterFailure = false
         let app = XCUIApplication()

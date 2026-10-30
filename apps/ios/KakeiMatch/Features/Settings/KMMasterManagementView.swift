@@ -5,6 +5,7 @@ import SwiftUI
 private final class KMMasterManagementModel {
     private(set) var categories: [KMCategory] = []
     private(set) var accounts: [KMAccount] = []
+    private(set) var accountUsageCounts: [String: Int] = [:]
     private(set) var rules: [KMCategoryLearningRule] = []
     var error: String?
     var message: String?
@@ -20,6 +21,10 @@ private final class KMMasterManagementModel {
         guard let repositories else { return }
         categories = try await repositories.categories.categories(includeHidden: true)
         accounts = try await repositories.accounts.accounts(asOf: KMDate(instant: repositories.referenceDate), includeClosed: true)
+        let transactions = try await repositories.transactions.transactions(matching: KMTransactionQuery(limit: nil))
+        accountUsageCounts = Dictionary(grouping: transactions.flatMap { transaction -> [String] in
+            [transaction.accountId, transaction.transferAccountId].compactMap { $0 }
+        }, by: { $0 }).mapValues(\.count)
         rules = try await repositories.categoryLearning.categoryRules()
         error = nil
     }
@@ -73,7 +78,7 @@ private final class KMMasterManagementModel {
 }
 
 struct KMMasterManagementView: View {
-    enum Page { case rules, categories, accounts }
+    enum Page: Equatable { case rules, categories, accounts }
     var initialPage: Page
     var onBack: () -> Void
     @Environment(\.repositories) private var repositories
@@ -88,6 +93,8 @@ struct KMMasterManagementView: View {
     @State private var isAddingAccount = false
     @State private var confirmingCategoryDelete = false
     @State private var confirmingAccountDelete = false
+    @State private var confirmingRulesReset = false
+    @State private var ruleToDelete: KMCategoryLearningRule?
     @State private var categoryName = ""
     @State private var categoryIncome = false
     @State private var accountName = ""
@@ -139,6 +146,19 @@ struct KMMasterManagementView: View {
             Button("削除する", role: .destructive) { if let selectedAccount { Task { await model.deleteAccount(selectedAccount); self.selectedAccount = nil } } }
             Button("キャンセル", role: .cancel) {}
         } message: { Text("「\(selectedAccount?.name ?? "")」を削除します。この操作は取り消せません。") }
+        .alert("分類ルールをリセットしますか？", isPresented: $confirmingRulesReset) {
+            Button("リセットする", role: .destructive) { Task { await model.resetRules() } }
+            Button("キャンセル", role: .cancel) {}
+        } message: { Text("分類ルールへの変更をすべてリセットします。学習履歴は残り、ルールは履歴から再計算されます。") }
+        .alert("分類ルールを削除しますか？", isPresented: Binding(
+            get: { ruleToDelete != nil }, set: { if !$0 { ruleToDelete = nil } }
+        )) {
+            Button("削除する", role: .destructive) {
+                if let rule = ruleToDelete { Task { await model.setRule(rule, deleted: true, enabled: false) } }
+                ruleToDelete = nil
+            }
+            Button("キャンセル", role: .cancel) { ruleToDelete = nil }
+        } message: { Text("学習履歴は残り、このルールは自動で適用されなくなります。") }
     }
 
     private var title: String {
@@ -306,13 +326,14 @@ struct KMMasterManagementView: View {
             detailRow("種類", account.accountType.label)
             detailRow("明細サービス", account.statementProvider?.label ?? "未設定")
             detailRow("状態", account.closed ? "利用終了" : "利用中")
+            detailRow("記録", "\(model.accountUsageCounts[account.id, default: 0])件")
             primaryButton("編集する", id: "masters.account.edit") {
                 accountName = account.name; accountType = account.accountType; statementProvider = account.statementProvider; editingAccount = account
             }
             secondaryButton(account.closed ? "利用を再開する" : "利用終了", id: "masters.account.close") {
                 var value = account; value.closed.toggle(); Task { await model.saveAccount(value, isNew: false); await model.reload(); selectedAccount = model.accounts.first { $0.id == account.id } }
             }
-            if account.balanceYen == 0 && account.closed {
+            if account.balanceYen == 0 && model.accountUsageCounts[account.id, default: 0] == 0 {
                 secondaryButton("完全に削除する", id: "masters.account.delete", role: .destructive) { confirmingAccountDelete = true }
             } else {
                 Text("記録または残高がある支払元は完全には削除できません。利用終了にすると、今後の支払元として選ばれなくなります。")
@@ -355,8 +376,7 @@ struct KMMasterManagementView: View {
             ForEach(model.rules) { rule in ruleRow(rule) }
             if !model.rules.isEmpty {
                 secondaryButton("すべての変更をリセット", id: "masters.rules.reset", role: .normal) {
-                    model.message = "学習履歴を残して、分類ルールへの変更をリセットします。"
-                    Task { await model.resetRules() }
+                    confirmingRulesReset = true
                 }
             }
         }
@@ -386,7 +406,7 @@ struct KMMasterManagementView: View {
                 }
             } else {
                 secondaryButton("削除する", id: "masters.rule.delete.\(rule.id)", role: .destructive) {
-                    Task { await model.setRule(rule, deleted: true, enabled: false) }
+                    ruleToDelete = rule
                 }
             }
             Rectangle().fill(KMColor.border).frame(height: 1)

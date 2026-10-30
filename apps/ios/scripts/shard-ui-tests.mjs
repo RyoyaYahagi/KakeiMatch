@@ -44,6 +44,7 @@ export const screenshotOnly = [
   'BudgetFlowTests/testBudgetInitialDarkScreenshot',
   'BudgetFlowTests/testBudgetInitialLightScreenshot',
   'ContactFlowTests/testContactInitialScreenshotsInLightAndDark',
+  'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots',
   'HomeFlowTests/testHomeReferenceStatesInLightAndDark',
   'ReceiptFlowTests/testScreensDark',
   'ReceiptFlowTests/testScreensLight',
