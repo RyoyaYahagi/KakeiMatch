@@ -98,6 +98,7 @@ let package = Package(
                 "Features/MoneyForward/MoneyForwardPresentation.swift",
                 "Features/Reconciliation/ReconciliationPresentation.swift",
                 "Features/Settings/SettingsPresentation.swift",
+                "Features/Settings/NativeAuthPresentation.swift",
                 "Data/Statements/StatementImportResult.swift",
             ]
         ),

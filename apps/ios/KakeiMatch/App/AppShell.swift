@@ -78,7 +78,7 @@ struct AppShell: View {
                                     })
                                     case .records: RecordsView()
                                     case .reconciliation: ReconciliationView()
-                                    case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil }, onOpenMoneyForward: { moneyForwardRoute = true })
+                                    case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil }, onOpenMoneyForward: { moneyForwardRoute = true }, onShowHome: { tab = .home })
                                     }
                                 }
                             }

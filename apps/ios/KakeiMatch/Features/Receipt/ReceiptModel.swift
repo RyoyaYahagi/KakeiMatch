@@ -31,6 +31,7 @@ final class KMReceiptModel {
     var didSave = false
     var error: String?
     var status: String?
+    var needsGuestStart = false
     var startedReading = Date()
     @ObservationIgnored private var requiresExistingReceipt = false
     @ObservationIgnored private var repositories: KMRepositories?
@@ -300,10 +301,7 @@ final class KMReceiptModel {
         phase = .reading; startedReading = Date(); error = nil; status = nil
         operation = Task {
             do {
-                let client: KMWorkerAPI
-                if let api { client = api } else {
-                    client = KMWorkerAPI(configuration: try KMAPIConfiguration()); api = client
-                }
+                let client = try workerClient()
                 let flow = UUID()
                 let extraction = try await client.readReceipt(image: KMUploadImage(data: imageData, contentType: image.contentType), flowID: flow)
                 try KMReceiptPresentation.validateExtraction(extraction)
@@ -381,6 +379,15 @@ final class KMReceiptModel {
             } catch {
                 guard revision == token, !Task.isCancelled else { return }
                 if let failure = error as? KMAPIError {
+                    if failure == .nativeAuthenticationRequired || failure == .authenticationRequired {
+                        // The PWA shows its bot check before the first guest AI
+                        // request. Native replaces that with an explicit App Attest
+                        // prompt; only create the guest after the user continues.
+                        phase = .idle
+                        error = nil
+                        needsGuestStart = true
+                        return
+                    }
                     phase = .failed(failure)
                     self.error = KMReceiptPresentation.failureMessage(failure)
                 } else {
@@ -390,6 +397,35 @@ final class KMReceiptModel {
             }
         }
         return operation
+    }
+
+    /// Confirms the native equivalent of the PWA guest bot-check, then retries
+    /// the same saved photo. A failure never deletes the receipt image.
+    func confirmGuestStart() async {
+        needsGuestStart = false
+        do {
+            let client = try workerClient()
+            try await client.createNativeGuest()
+            startReading()
+        } catch let failure as KMAPIError {
+            phase = .failed(failure)
+            error = KMReceiptPresentation.failureMessage(failure)
+        } catch {
+            phase = .idle
+            self.error = "AI機能を準備できませんでした。家計簿の利用は続けられます。"
+        }
+    }
+
+    func cancelGuestStart() {
+        needsGuestStart = false
+        status = KMNativeAuthPresentation.guestStartCancelled
+    }
+
+    private func workerClient() throws -> KMWorkerAPI {
+        if let api { return api }
+        let client = KMWorkerAPI(configuration: try KMAPIConfiguration())
+        api = client
+        return client
     }
 
     func stopWaiting() {

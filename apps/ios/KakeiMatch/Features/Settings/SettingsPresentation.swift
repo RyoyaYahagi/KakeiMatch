@@ -12,6 +12,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case categories
         case accounts
         case backup
+        case ai
     }
 
     let id: String
@@ -63,7 +64,7 @@ enum KMSettingsPresentation {
         return current - exported >= backupReminderAge
     }
 
-    static func sections(theme: KMThemePreference, screenLockEnabled: Bool) -> [KMSettingsSection] {
+    static func sections(theme: KMThemePreference, screenLockEnabled: Bool, aiUsageValue: String? = nil) -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
@@ -78,7 +79,7 @@ enum KMSettingsPresentation {
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [
-                .init(id: "settings.aiUsage", title: "ログイン・利用状況"),
+                .init(id: "settings.aiUsage", title: "ログイン・利用状況", value: aiUsageValue, destination: .ai),
             ]),
             KMSettingsSection(title: "アプリ", rows: [
                 .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),

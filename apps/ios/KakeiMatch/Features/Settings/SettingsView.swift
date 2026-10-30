@@ -12,23 +12,28 @@ private enum KMSettingsPage {
     case categories
     case accounts
     case backup
+    case ai
 }
 
 struct SettingsView: View {
     var initialBudgetMonth: KMYearMonth? = nil
     var onBudgetBack: () -> Void = {}
     var onOpenMoneyForward: () -> Void = {}
+    var onShowHome: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMSettingsModel()
+    @State private var auth = KMNativeAuthModel()
     @State private var page = KMSettingsPage.root
     @AppStorage(KMSettingsPresentation.screenLockEnabledKey) private var screenLockEnabled = false
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
 
-    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {}, onOpenMoneyForward: @escaping () -> Void = {}) {
+    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {},
+         onOpenMoneyForward: @escaping () -> Void = {}, onShowHome: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
         self.onBudgetBack = onBudgetBack
         self.onOpenMoneyForward = onOpenMoneyForward
+        self.onShowHome = onShowHome
         _page = State(initialValue: initialBudgetMonth == nil ? .root : .budget)
     }
 
@@ -47,10 +52,14 @@ struct SettingsView: View {
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
+            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root }, onShowHome: onShowHome)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task { if !model.loaded { await model.load(repositories) } }
+        .task {
+            if !model.loaded { await model.load(repositories) }
+            await auth.refresh()
+        }
     }
 
     private var settingsRoot: some View {
@@ -62,7 +71,11 @@ struct SettingsView: View {
                 .padding(.bottom, KMSpacing.space2)
                 .accessibilityAddTraits(.isHeader)
 
-            let sections = KMSettingsPresentation.sections(theme: model.settings.theme, screenLockEnabled: screenLockEnabled)
+            let sections = KMSettingsPresentation.sections(
+                theme: model.settings.theme,
+                screenLockEnabled: screenLockEnabled,
+                aiUsageValue: auth.settingsRowValue
+            )
             ForEach(sections) { section in
                 Text(section.title)
                     .font(KMTypography.body(13, weight: .bold))
@@ -120,6 +133,7 @@ struct SettingsView: View {
             case .categories: page = .categories
             case .accounts: page = .accounts
             case .backup: page = .backup
+            case .ai: page = .ai
             case .unimplemented: break
             }
         } label: {
