@@ -11,6 +11,7 @@ private enum KMSettingsPage {
     case categoryRules
     case categories
     case accounts
+    case backup
 }
 
 struct SettingsView: View {
@@ -41,6 +42,9 @@ struct SettingsView: View {
             case .categoryRules: KMMasterManagementView(initialPage: .rules, onBack: { page = .root })
             case .categories: KMMasterManagementView(initialPage: .categories, onBack: { page = .root })
             case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root })
+            case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
+                Task { await model.load(repositories) }
+            })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,6 +117,7 @@ struct SettingsView: View {
             case .categoryRules: page = .categoryRules
             case .categories: page = .categories
             case .accounts: page = .accounts
+            case .backup: page = .backup
             case .unimplemented: break
             }
         } label: {

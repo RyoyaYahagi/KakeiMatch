@@ -9,6 +9,8 @@ const durations = {
   'BudgetFlowTests/testBudgetInitialDarkScreenshot': 9,
   'BudgetFlowTests/testBudgetInitialLightScreenshot': 9,
   'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 19,
+  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 18,
+  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 20,
   'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 43,
   'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 27,
   'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 101,
@@ -41,6 +43,7 @@ const durations = {
 // skip them; pushes to main and manual runs keep them. Methods that also check
 // behaviour (navigation, empty states, saving) stay out of this list.
 export const screenshotOnly = [
+  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark',
   'BudgetFlowTests/testBudgetInitialDarkScreenshot',
   'BudgetFlowTests/testBudgetInitialLightScreenshot',
   'ContactFlowTests/testContactInitialScreenshotsInLightAndDark',

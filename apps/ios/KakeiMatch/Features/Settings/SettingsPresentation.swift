@@ -11,6 +11,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case categoryRules
         case categories
         case accounts
+        case backup
     }
 
     let id: String
@@ -72,7 +73,7 @@ enum KMSettingsPresentation {
                 .init(id: "settings.recurring", title: "定期登録", destination: .recurring),
             ]),
             KMSettingsSection(title: "データ", rows: [
-                .init(id: "settings.backup", title: "バックアップと復元"),
+                .init(id: "settings.backup", title: "バックアップと復元", destination: .backup),
                 .init(id: "settings.screenLock", title: "画面ロック", value: screenLockLabel(isEnabled: screenLockEnabled), destination: .screenLock),
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
