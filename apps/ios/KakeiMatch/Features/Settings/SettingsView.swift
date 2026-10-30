@@ -8,6 +8,9 @@ private enum KMSettingsPage {
     case budget
     case recurring
     case contact
+    case categoryRules
+    case categories
+    case accounts
 }
 
 struct SettingsView: View {
@@ -35,6 +38,9 @@ struct SettingsView: View {
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
             case .recurring: KMRecurringView(onBack: { page = .root })
             case .contact: ContactView(onBackToSettings: { page = .root })
+            case .categoryRules: KMMasterManagementView(initialPage: .rules, onBack: { page = .root })
+            case .categories: KMMasterManagementView(initialPage: .categories, onBack: { page = .root })
+            case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,6 +110,9 @@ struct SettingsView: View {
             case .budget: page = .budget
             case .recurring: page = .recurring
             case .contact: page = .contact
+            case .categoryRules: page = .categoryRules
+            case .categories: page = .categories
+            case .accounts: page = .accounts
             case .unimplemented: break
             }
         } label: {

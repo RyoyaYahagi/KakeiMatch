@@ -8,6 +8,9 @@ struct KMSettingsRow: Identifiable, Equatable {
         case budget
         case recurring
         case contact
+        case categoryRules
+        case categories
+        case accounts
     }
 
     let id: String
@@ -62,9 +65,9 @@ enum KMSettingsPresentation {
     static func sections(theme: KMThemePreference, screenLockEnabled: Bool) -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
-                .init(id: "settings.categoryRules", title: "分類ルール"),
-                .init(id: "settings.categories", title: "カテゴリ"),
-                .init(id: "settings.accounts", title: "支払元"),
+                .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
+                .init(id: "settings.categories", title: "カテゴリ", destination: .categories),
+                .init(id: "settings.accounts", title: "支払元", destination: .accounts),
                 .init(id: "settings.budget", title: "予算設定", destination: .budget),
                 .init(id: "settings.recurring", title: "定期登録", destination: .recurring),
             ]),
