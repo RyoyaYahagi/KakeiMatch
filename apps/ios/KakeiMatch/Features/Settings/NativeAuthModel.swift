@@ -193,6 +193,8 @@ final class KMNativeAuthModel {
             _ = try await service.deleteAccount()
             phase = .signedOut
             accountName = nil
+            passkeys = []
+            passkeysLoaded = false
             usage = nil
             usageRowValue = nil
             usageMessage = KMNativeAuthPresentation.accountDeletedUsage
@@ -222,6 +224,10 @@ final class KMNativeAuthModel {
     }
 
     private func loadSignedOut(_ service: any KMNativeAuthService) async {
+        // PWA hides the signed-in block; drop the previous account's list too so
+        // a later session never shows another account's Passkeys.
+        passkeys = []
+        passkeysLoaded = false
         do {
             let value = try await service.guestUsage()
             usage = value
