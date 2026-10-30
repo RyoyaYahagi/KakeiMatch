@@ -37,6 +37,12 @@ const durations = {
   'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
   'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
   'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 35,
+  'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 16,
+  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 18,
+  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 10,
+  'PayrollFlowTests/testPayrollInitialLightScreenshot': 10,
+  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 10,
+  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 10,
 };
 
 // Methods that only open a screen and attach reference screenshots. Pull requests
@@ -61,6 +67,8 @@ export const screenshotOnly = [
   'RecurringFlowTests/testCatchUpHistoryDarkScreenshot',
   'PayrollFlowTests/testPayrollInitialLightScreenshot',
   'PayrollFlowTests/testPayrollInitialDarkScreenshot',
+  'PayrollFlowTests/testPayrollConfirmLightScreenshot',
+  'PayrollFlowTests/testPayrollConfirmDarkScreenshot',
 ];
 
 export async function discoverTests(directory) {

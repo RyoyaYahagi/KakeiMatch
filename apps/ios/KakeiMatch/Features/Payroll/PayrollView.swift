@@ -27,17 +27,13 @@ struct PayrollView: View {
                         photoControls
                         if let image = model.image {
                             maskingPreview(image)
-                            Toggle("不要な個人情報を隠しました。必要な部分をAIへ送信します", isOn: $model.reviewed)
-                                .font(KMTypography.body(14)).tint(KMColor.primary)
-                                .accessibilityIdentifier("payroll.maskingConsent")
+                            checkbox("不要な個人情報を隠しました。必要な部分をAIへ送信します", isOn: $model.reviewed, id: "payroll.maskingConsent")
                             Button(model.reading ? "読み取り中…" : "AIで読み取る") { model.readImage() }
-                                .buttonStyle(KMButtonStyle(role: .secondary)).disabled(model.reading)
+                                .buttonStyle(KMButtonStyle(role: .secondary))
+                                .disabled(model.reading)
                                 .accessibilityIdentifier("payroll.aiButton")
                         }
-                        if let warning = model.warningText {
-                            Text(warning).font(KMTypography.note).foregroundStyle(KMColor.warning)
-                                .accessibilityIdentifier("payroll.warning")
-                        }
+                        feedback
                         if model.image == nil { form }
                     }
                 }
@@ -45,8 +41,6 @@ struct PayrollView: View {
                 .padding(.horizontal, KMSpacing.space4).padding(.bottom, KMSpacing.space3)
             }
             .scrollBounceBehavior(.basedOnSize)
-
-            footer
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
@@ -56,6 +50,9 @@ struct PayrollView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
             showsCamera = false
             model.cancel()
+        }
+        .onChange(of: model.reviewFingerprint) { _, _ in
+            if !model.hasPendingRecord && !model.saved { model.reviewed = false }
         }
         .onChange(of: photo) { _, item in
             Task {
@@ -98,6 +95,22 @@ struct PayrollView: View {
         }
     }
 
+    /// PWA shows every read/registration message in one muted status slot above the form.
+    @ViewBuilder private var feedback: some View {
+        if let warning = model.warningText {
+            Text(warning).font(KMTypography.note).foregroundStyle(KMColor.warning)
+                .accessibilityIdentifier("payroll.warning")
+        }
+        if let status = model.status {
+            Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
+                .accessibilityIdentifier("payroll.status")
+        }
+        if let error = model.error {
+            Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
+                .accessibilityIdentifier("payroll.error")
+        }
+    }
+
     private func maskingPreview(_ image: UIImage) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space2) {
             Text("隠す範囲の左上と右下を順にタップしてください。複数箇所を隠せます。")
@@ -130,14 +143,48 @@ struct PayrollView: View {
         }
     }
 
+    /// Rows, notice, required checkbox and the primary button stay in one column like the PWA form.
     private var form: some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            fields
+                .disabled(model.hasPendingRecord || model.saved)
+            Text("手取りだけを収入に登録します。控除から支出は作りません。写真と照らし合わせて、違うところを直してください。")
+                .font(KMTypography.body(14)).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
+            checkbox("勤務先・支給日・手取りと内訳を確認しました", isOn: $model.reviewed, id: "payroll.reviewed")
+                .disabled(model.hasPendingRecord || model.saved)
+            if let message = model.duplicateMessage {
+                Text(message).font(KMTypography.note).foregroundStyle(KMColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("payroll.duplicateWarning")
+            }
+            if model.saved {
+                Button("記録一覧へ", action: onSaved).buttonStyle(KMButtonStyle(role: .primary))
+                    .accessibilityIdentifier("payroll.recordsButton")
+            } else {
+                Button(model.saving ? "登録しています…" : model.hasPendingRecord ? "登録結果を確認する" : "登録する") {
+                    Task {
+                        await model.save()
+                        if model.duplicateMessage != nil { showsDuplicateConfirmation = true }
+                    }
+                }
+                .buttonStyle(KMButtonStyle(role: .primary))
+                .disabled(model.saving || model.loading || model.reading || model.image != nil || !model.reviewed)
+                .accessibilityIdentifier("payroll.saveButton")
+            }
+        }
+    }
+
+    private var fields: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             KMInputRow(label: "勤務先", value: $model.employerName, identifier: "payroll.employerName", hint: "入力してください")
             HStack(spacing: KMSpacing.space3) {
                 Text("支給日").font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted)
                     .frame(width: KMLayout.entryKeyWidth, alignment: .leading)
                 DatePicker("支給日", selection: dateSelection, displayedComponents: .date)
-                    .labelsHidden().environment(\.calendar, tokyoCalendar)
+                    .labelsHidden()
+                    .environment(\.calendar, KMDate.calendar)
+                    .environment(\.timeZone, KMDate.calendar.timeZone)
+                    .environment(\.locale, Locale(identifier: "ja_JP"))
                     .accessibilityLabel("支給日").accessibilityIdentifier("payroll.paymentDate")
                 Spacer(minLength: 0)
             }
@@ -168,13 +215,7 @@ struct PayrollView: View {
             }
             .font(KMTypography.body(15, weight: .bold))
             .accessibilityIdentifier("payroll.details")
-
-            Text("手取りだけを収入に登録します。控除から支出は作りません。写真と照らし合わせて、違うところを直してください。")
-                .font(KMTypography.body(14)).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-            Toggle("勤務先・支給日・手取りと内訳を確認しました", isOn: $model.reviewed)
-                .font(KMTypography.body(14)).tint(KMColor.primary).accessibilityIdentifier("payroll.reviewed")
         }
-        .disabled(model.hasPendingRecord || model.saved)
     }
 
     private func pickerRow(_ label: String, selection: Binding<String>, choices: [(String, String)], prompt: String, id: String) -> some View {
@@ -196,11 +237,27 @@ struct PayrollView: View {
         Binding(get: { model.deductions[key, default: ""] }, set: { model.deductions[key] = $0 })
     }
 
-    private var tokyoCalendar: Calendar {
-        var value = Calendar(identifier: .gregorian)
-        value.timeZone = TimeZone(identifier: "Asia/Tokyo")!
-        return value
+    /// PWA uses a checkbox; the same square-check control as the other iOS entry rows.
+    private func checkbox(_ title: String, isOn: Binding<Bool>, id: String) -> some View {
+        Button { isOn.wrappedValue.toggle() } label: {
+            HStack(spacing: KMSpacing.space2) {
+                Image(systemName: isOn.wrappedValue ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 22, weight: .regular))
+                    .foregroundStyle(isOn.wrappedValue ? KMColor.primary : KMColor.muted)
+                Text(title).font(KMTypography.body(14)).foregroundStyle(KMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityValue(isOn.wrappedValue ? "選択中" : "未選択")
+        .accessibilityIdentifier(id)
     }
+
+    private var tokyoCalendar: Calendar { KMDate.calendar }
 
     private var dateSelection: Binding<Date> {
         Binding(get: {
@@ -213,40 +270,5 @@ struct PayrollView: View {
                 model.paymentDate = String(format: "%04d-%02d-%02d", year, month, day)
             }
         })
-    }
-
-    private var footer: some View {
-        VStack(alignment: .leading, spacing: KMSpacing.space2) {
-            if let message = model.duplicateMessage {
-                Text(message).font(KMTypography.note).foregroundStyle(KMColor.warning)
-                    .accessibilityIdentifier("payroll.duplicateWarning")
-            }
-            if let error = model.error {
-                Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                    .accessibilityIdentifier("payroll.error")
-            }
-            if let status = model.status {
-                Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
-                    .accessibilityIdentifier("payroll.status")
-            }
-            if model.saved {
-                Button("記録一覧へ", action: onSaved).buttonStyle(KMButtonStyle(role: .primary))
-                    .accessibilityIdentifier("payroll.recordsButton")
-            } else {
-                Button(model.saving ? "登録しています…" : model.hasPendingRecord ? "登録結果を確認する" : "登録する") {
-                    Task {
-                        await model.save()
-                        if model.duplicateMessage != nil { showsDuplicateConfirmation = true }
-                    }
-                }
-                .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
-                .buttonStyle(KMButtonStyle(role: .primary))
-                .disabled(model.saving || model.loading || model.reading || model.image != nil)
-                .accessibilityIdentifier("payroll.saveButton")
-            }
-        }
-        .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
-        .frame(maxWidth: KMLayout.contentMax).frame(maxWidth: .infinity)
-        .background(KMColor.bg).overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 }

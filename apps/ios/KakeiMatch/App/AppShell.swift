@@ -314,7 +314,8 @@ struct AppShell: View {
 
     @ViewBuilder private func entryScreen(_ destination: KMEntryDestination) -> some View {
         switch destination {
-        case .receipt, .photo: ReceiptView()
+        case .receipt, .photo:
+            ReceiptView(source: destination, onSaved: { entry = nil; tab = .records })
         case .expense: ManualEntryView()
         case .income: IncomeView(onPayroll: { entry = .payroll })
         case .transfer: TransferView()

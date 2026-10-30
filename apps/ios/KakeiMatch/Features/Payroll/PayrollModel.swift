@@ -30,6 +30,13 @@ final class KMPayrollModel {
     var status: String?
     var extractionModel = "manual"
     var hasPendingRecord: Bool { pendingRecord != nil }
+    /// PWA unchecks the confirmation box whenever a confirmed field changes.
+    var reviewFingerprint: String {
+        let deductions = KMPayrollPresentation.deductionFields.map { deductions[$0.key] ?? "" }.joined(separator: "\u{1F}")
+        let allowances = allowances.map { "\($0.name)\u{1F}\($0.amount)" }.joined(separator: "\u{1E}")
+        return [employerName, paymentDate, netPay, categoryId, accountId, payType.rawValue, payPeriod, grossPay, deductions, allowances]
+            .joined(separator: "\u{1D}")
+    }
 
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var pendingRecord: KMPayrollRecord?
@@ -63,9 +70,18 @@ final class KMPayrollModel {
                 .filter { $0.accountType == .bank }
             let records = try await repositories.payroll.payrollRecords()
             if let pending = records.first(where: { $0.status == .pending }) {
-                pendingRecord = pending
+                #if DEBUG
+                // Screenshot fixture: show the read-but-not-confirmed form that the PWA reference
+                // screenshot captures instead of the retry state.
+                if ProcessInfo.processInfo.arguments.contains("-PayrollDraft") {
+                    populate(pending.confirmed, model: pending.extractionModel)
+                    status = "写真から読み取りました。内容を確認してください。"
+                } else {
+                    populate(pending)
+                }
+                #else
                 populate(pending)
-                status = "登録状態を確認してください。"
+                #endif
             }
             if categoryId.isEmpty { categoryId = categories.first(where: { $0.name == "給与" })?.id ?? "" }
             if accountId.isEmpty, accounts.count == 1 { accountId = accounts[0].id }
