@@ -93,6 +93,7 @@ let package = Package(
                 "Data/Recurring/RecurringScheduleService.swift",
                 "Data/Statements/StatementParser.swift",
                 "Features/Budget/BudgetPresentation.swift",
+                "Features/Contact/ContactDiagnosticRecorder.swift",
                 "Features/Contact/ContactPresentation.swift",
                 "Features/ManualEntry/EntryPresentation.swift",
                 "Features/MoneyForward/MoneyForwardPresentation.swift",
