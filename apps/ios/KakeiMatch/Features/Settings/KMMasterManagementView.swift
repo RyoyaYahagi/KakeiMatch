@@ -220,7 +220,7 @@ struct KMMasterManagementView: View {
                             .overlay(KMIcon(name: visual.icon, size: 20).foregroundStyle(visual.tone.foreground))
                         VStack(alignment: .leading, spacing: 2) {
                             Text(category.name).font(KMTypography.text).foregroundStyle(KMColor.text)
-                            Text("記録 \(category.usageCount)件 · \(category.hidden ? "非表示" : category.groupName)")
+                            Text("記録 \(category.usageCount)件\(category.hidden ? " · 非表示" : "")")
                                 .font(KMTypography.note).foregroundStyle(KMColor.muted)
                         }
                         Spacer()
