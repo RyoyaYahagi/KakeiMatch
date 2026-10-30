@@ -59,6 +59,16 @@ enum KMRecurringScheduleService {
         }
     }
 
+    static func currentMonthDates(in plan: KMRecurringCatchUpPlan, month: KMYearMonth) -> [KMDate] {
+        plan.dates.filter { $0.yearMonth == month }
+    }
+
+    static func nextOccurrence(input: KMRecurringScheduleInput, onOrAfter today: KMDate) -> KMDate? {
+        let year = min(today.yearMonth.year + 8, 9999)
+        guard let through = try? KMDate(String(format: "%04d-12-31", year)) else { return nil }
+        return occurrenceDates(input: input, through: through).first { $0 >= today }
+    }
+
     /// Dates already consumed by an audit, stable imported ID, or native schedule row are never recreated.
     static func missingOccurrences(input: KMRecurringScheduleInput, scheduleId: String, through: KMDate,
                                    auditedDates: Set<KMDate> = [], importedIds: Set<String> = [],
@@ -67,6 +77,17 @@ enum KMRecurringScheduleService {
             !auditedDates.contains(date) && !nativeScheduleDates.contains(date) &&
                 !importedIds.contains(importedId(scheduleId: scheduleId, date: date))
         }
+    }
+
+    /// Actual starts a newly-created recurring schedule at the next occurrence on or after today.
+    /// An overdue existing nextDate is preserved so missed scheduled runs can still be posted.
+    static func automaticOccurrences(input: KMRecurringScheduleInput, scheduleId: String, through: KMDate,
+                                     nextDate: KMDate?, auditedDates: Set<KMDate> = [],
+                                     importedIds: Set<String> = [], nativeScheduleDates: Set<KMDate> = []) -> [KMDate] {
+        let firstDate = nextDate ?? nextOccurrence(input: input, onOrAfter: through) ?? input.startDate
+        return missingOccurrences(input: input, scheduleId: scheduleId, through: through,
+            auditedDates: auditedDates, importedIds: importedIds, nativeScheduleDates: nativeScheduleDates)
+            .filter { $0 >= firstDate }
     }
 
     static func validatedInput(_ input: KMRecurringScheduleInput) throws -> KMRecurringScheduleInput {

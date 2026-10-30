@@ -84,4 +84,38 @@ struct RecurringScheduleServiceTests {
         #expect(plan.totalAmountYen == Decimal(KMYen.maxSafe) * Decimal(2))
         #expect(KMDate(instant: ISO8601DateFormatter().date(from: "2026-10-04T12:00:00+09:00")!).rawValue == "2026-10-04")
     }
+
+    @Test func currentMonthSelectionUsesTokyoCalendarDate() throws {
+        let schedule = input(.monthly, start: "2026-07-01", amount: 1_700)
+        let plan = try KMRecurringScheduleService.preview(input: schedule, scheduleId: "rent-id", through: date("2026-10-01"))
+        let referenceDate = ISO8601DateFormatter().date(from: "2026-09-30T15:00:00Z")!
+        let today = KMDate(instant: referenceDate)
+
+        #expect(today.rawValue == "2026-10-01")
+        #expect(KMRecurringScheduleService.currentMonthDates(in: plan, month: today.yearMonth).map(\.rawValue) == ["2026-10-01"])
+        #expect(KMRecurringScheduleService.nextOccurrence(input: schedule, onOrAfter: today) == date("2026-10-01"))
+    }
+
+    @Test func currentMonthCatchUpDoesNotLeaveSkippedDatesForAutomaticRun() throws {
+        let schedule = input(.monthly, start: "2026-07-01")
+        let today = date("2026-10-30")
+        let catchUpPlan = try KMRecurringScheduleService.preview(input: schedule, scheduleId: "rent-id", through: today)
+        let selectedForCatchUp = KMRecurringScheduleService.currentMonthDates(in: catchUpPlan, month: today.yearMonth)
+        let consumedByCatchUp = Set(selectedForCatchUp)
+        let savedNextDate = KMRecurringScheduleService.nextOccurrence(input: schedule, onOrAfter: today)
+
+        let nextAutomaticRun = KMRecurringScheduleService.automaticOccurrences(input: schedule, scheduleId: "rent-id", through: today,
+            nextDate: savedNextDate, auditedDates: consumedByCatchUp)
+
+        #expect(selectedForCatchUp.map(\.rawValue) == ["2026-10-01"])
+        #expect(savedNextDate == date("2026-11-01"))
+        #expect(nextAutomaticRun.isEmpty)
+    }
+
+    @Test func automaticRunStillPostsOccurrenceDueToday() {
+        let schedule = input(.monthly, start: "2026-10-30")
+        let today = date("2026-10-30")
+        #expect(KMRecurringScheduleService.automaticOccurrences(input: schedule, scheduleId: "rent-id", through: today,
+            nextDate: today) == [today])
+    }
 }

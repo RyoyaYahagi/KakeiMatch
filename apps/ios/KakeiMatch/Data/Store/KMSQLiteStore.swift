@@ -273,8 +273,10 @@ import Foundation
     func budgetSettings() async throws -> KMMonthlyBudgetSettings { try await access { try await $0.budgetSettings() } }
     func saveBudgetSettings(_ settings: KMMonthlyBudgetSettings) async throws { try await access(true) { try await $0.saveBudgetSettings(settings) } }
     func recurringTransactions() async throws -> [KMRecurringTransaction] { try await access { try await $0.recurringTransactions() } }
+    func previewRecurringCatchUp(_ value: KMRecurringTransaction, through: KMDate) async throws -> KMRecurringCatchUpPlan { try await access { try await $0.previewRecurringCatchUp(value, through: through) } }
     func saveRecurring(_ value: KMRecurringTransaction) async throws { try await access(true) { try await $0.saveRecurring(value) } }
     func saveRecurring(_ value: KMRecurringTransaction, at timestamp: Date) async throws { try await access(true) { try await $0.saveRecurring(value, at: timestamp) } }
+    func saveRecurringForCatchUp(_ value: KMRecurringTransaction, at timestamp: Date) async throws { try await access(true) { try await $0.saveRecurringForCatchUp(value, at: timestamp) } }
     func recurringGenerations(scheduleId: String) async throws -> [KMRecurringGeneration] { try await access { try await $0.recurringGenerations(scheduleId: scheduleId) } }
     func undoRecurringGeneration(id: String, dates: [KMDate]? = nil, at timestamp: Date) async throws { try await access(true) { try await $0.undoRecurringGeneration(id: id, dates: dates, at: timestamp) } }
     func runRecurring(through: KMDate, at timestamp: Date) async throws { try await access(true) { try await $0.runRecurring(through: through, at: timestamp) } }
