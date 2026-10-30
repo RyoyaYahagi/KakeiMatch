@@ -35,6 +35,7 @@ enum KMNativeAuthPresentation {
     static let passkeyEmpty = "登録済みのPasskeyはありません。"
     static let logoutDone = "ログアウトしました。端末の家計簿データは保持されています。"
     static let logoutFailed = "ログアウトできませんでした。"
+    static let backToHome = "家計簿に戻ります。"
     static let logoutNote = "ログアウトしても、この端末の家計簿はそのまま使えます。"
     static let accountDeleteNote = "Cloud accountを削除しても、家計簿・レシート・明細・照合記録はこの端末に残り、閲覧やバックアップを続けられます。端末内データの全削除は別の操作です。"
     static let accountDeleteConfirm = "Cloud accountを削除します。Passkey、ログイン状態、AI利用情報も削除され、元に戻せません。\n\nこの端末の家計簿・レシート・明細・照合記録は残ります。"

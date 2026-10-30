@@ -82,6 +82,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
 | 記録一覧 | `feature/ios-records` | #301 | **Mac** | マージ済み（`a15b0c8`） |
 | 画面13: 給与明細 | `feature/ios-payroll` | #319 | **Mac** | PR作成済み。収入入力導線、AI読取、確認、手取り収入と内訳snapshotの一括保存。レビュー指摘の確認UI・支給日表記・レシート導線の回帰を修正 |
+| 画面10: 設定（ログイン・利用状況） | `feature/ios-native-auth-ui` | #PRNUM | **Mac** | PR作成済み。初回Passkeyログイン・招待登録・Passkey追加/削除・ゲスト開始・AI利用回数・ログアウト・Cloud account削除。実機のPasskey/App Attestは未検証 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
 
@@ -137,7 +138,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - 定期取消は `recurringGenerations(scheduleId:)` → `undoRecurringGeneration(id:dates:at:)`。dates:nilなら未編集生成行だけ取消、編集行と独立した手入力は保持。日付配列なら選択行のsnapshotを再検査。取消済み日を再生成しない。
 - 対象はKakeiMatch画面の操作結果。Actual専用rule/CRDTは再実装しない。有効schedule付き`.kmb`の取り込みと旧PWAのMoneyForward履歴のnative投影は未対応（元記録はprovenanceに保持）。詳細/テスト対応は `docs/DATA_LAYER.md`「書き込みの意味論」を参照する。
 - `.kmb` 取り込みは `repositories.localStore` の `importBackup(from:)` / `returnToPreviousProfile()`。画面は利用者確認、security-scoped URL、エラー表示、成功後の再取得を担当する。
-- APIは `KMWorkerAPI` actorのasync/awaitを使う。native modeはOrigin/Cookieを送らず `/api/native/*` 専用境界を使う。`.existingWorkerCompatibility` は旧Web API向けの明示オプションで、アプリ真正性の証明ではない。既存WebのOrigin/CSRF条件は変更しない。`KM_NATIVE_HOST` はbundleのAPI hostと `webcredentials:` entitlementの両方に使い、previewでは同じbuild settingをpreview hostへ上書きする。App Attest非対応時はクラウド機能を拒否し、端末内機能は継続する。初回Passkey/ゲスト作成UI、診断recorder、録音UI、Repository連携は未実装。契約と未検証範囲は `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
+- APIは `KMWorkerAPI` actorのasync/awaitを使う。native modeはOrigin/Cookieを送らず `/api/native/*` 専用境界を使う。`.existingWorkerCompatibility` は旧Web API向けの明示オプションで、アプリ真正性の証明ではない。既存WebのOrigin/CSRF条件は変更しない。`KM_NATIVE_HOST` はbundleのAPI hostと `webcredentials:` entitlementの両方に使い、previewでは同じbuild settingをpreview hostへ上書きする。App Attest非対応時はクラウド機能を拒否し、端末内機能は継続する。初回Passkeyログイン・招待登録・Passkey管理・ゲスト開始・ログアウトは設定の「ログイン・利用状況」とレシート読み取り前の確認へ接続済み。実Worker・実Passkey・App Attestは署名済み実機で未検証。診断recorderと録音UIは未実装。契約と未検証範囲は `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
 - `readReceipt`は元画像を保持する責任を持たない。画面/Repository側で保存してから呼ぶ。給与は `KMMaskedPayrollImage.prepare` に利用者指定マスクと確認を渡し、同じ画像を見せて同意を取る。送信失敗・画面移動時の給与画像破棄も画面側で行う。contactのflowIdは結果不明時に勝手に再発行しない。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数を使い、画面ごとに作らない。
 
@@ -159,7 +160,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - iOS → PWA の書き出しは提供しない（利用者決定 2026-10-26）。PWA の `.kmb` は iOS へ一方向に取り込める。iOS のバックアップは iOS 同士でのみ復元できる
 - 端末間同期は iOS 版では作らない（利用者決定 2026-10-26）
 - 認証: iOS native APIはWebのOrigin/Cookieを送らず、専用session/token境界を使う。旧WebのOrigin/CSRF検査を緩めない。Worker側のendpoint契約と未確認項目は `../../docs/NATIVE_APP_AUTH.md` に記載する。
-- Cloud Passkey: `ASAuthorizationPlatformPublicKeyCredentialProvider`、App Attest、`webcredentials:` entitlementを使うstub差し替え可能なAPI層を追加。previewは `KM_NATIVE_HOST` でAPI URLとAssociated Domainsを同時に切り替える。実端末のPasskey、Associated Domains、署名済みentitlementとWorker統合は未検証。初回登録・ログイン・追加の画面導線、session参照・一覧/削除UIは未実装。
+- Cloud Passkey: `ASAuthorizationPlatformPublicKeyCredentialProvider`、App Attest、`webcredentials:` entitlementを使うstub差し替え可能なAPI層を追加。previewは `KM_NATIVE_HOST` でAPI URLとAssociated Domainsを同時に切り替える。実端末のPasskey、Associated Domains、署名済みentitlementとWorker統合は未検証。初回登録・ログイン・Passkey追加/一覧/削除・ログアウトの画面導線は設定の「ログイン・利用状況」に実装し、stubとXCUITestで確認した。
 - ゲスト: Turnstileへのnative fallbackはせず、App Attest assertionから専用guest sessionを作る契約。端末合言葉はKeychain、native AI tokenはopaqueな短期値をメモリだけに保持し、30秒の期限余裕で更新する。App Attest非対応時も端末内利用は継続する。詳細・endpoint schemaは `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
 - 送信前画像: 通常レシートはPWAどおり元JPEG/PNG/WebPを送るため、HEIC変換や自動メタデータ除去を保証しない。給与だけは1800px以下への縮小・黒塗り・JPEG再描画を提供する。マスキング操作と送信後破棄のUIは別担当。
 

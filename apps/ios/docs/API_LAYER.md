@@ -30,6 +30,10 @@ let api = KMWorkerAPI(configuration: config)
 | Passkey | `POST /api/native/passkey/options` のBetter Auth optionsからcanonicalな32-byte challengeを復号し、明示された `rpId` または `rp.id` が接続hostと一致する場合だけ `ASAuthorizationPlatformPublicKeyCredentialProvider` へ渡す。RP IDをhostへ補完しない。招待登録はcontextを渡し、Passkey追加（contextなし）はNative account sessionで認証する。登録では `user.id`、認証では存在する `allowCredentials` も復号して渡す。platform requestはuser verificationをrequiredにする。verify時のApp Attest hashはoptions.challenge bytesのSHA-256。Workerだけがchallenge状態を保持し、端末Cookie jarは使わない |
 | その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。signout・account deleteではaccount sessionとAI tokenを消し、guest session・家計データは保持 |
 
+画面との接続は `Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` です。`KMNativeAuthService` は `KMWorkerAPI` の必要最小限の操作だけをprotocolにし、テストはstubを注入します。設定の「ログイン・利用状況」は `nativeConfiguration` → `accountSession` → usage/passkey の順に読み、未ログインならguest usage、ログイン中ならaccount usageとPasskey一覧を表示します。`signInWithPasskey`・`registerPasskey(context:)`・`addPasskey`・`signOut`・`deleteAccount` は成功後にsnapshotを取り直します。ログアウトと本人削除はaccount sessionとAI tokenだけを消し、guest sessionと家計データを消しません。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続けます。
+
+未ログインでAIを使う最初のレシート読み取りは、token取得が `nativeAuthenticationRequired` で止まった時に確認ダイアログを出し、`createNativeGuest()` の後に同じ写真の読み取りを再開します。これはPWAのTurnstile確認に相当するゲートで、キャンセル・失敗でも画像と手入力は保持します。ゲスト作成の日次上限はWorkerが決め、端末は結果だけを表示します。
+
 SimulatorまたはApp Attest非対応端末はnativeクラウド認証・AI利用を行いません。ローカル家計機能は別境界なので継続します。Fake adapterでのテスト成功はAppleサービス・実端末・実Workerの成功を意味しません。`project.yml`はTeam IDを含まず、`KM_DEVELOPMENT_TEAM` は署名環境から指定します。`KM_APP_ATTEST_ENVIRONMENT` はbuild configurationごとの既定値を持ち、Debugは `development`、Releaseは `production` です。`KM_NATIVE_HOST` は `kakeimatch.yhgry.workers.dev` が既定値で、アプリの `KMNativeAPIHost` と `webcredentials:` entitlementの両方へ同じbuild settingを渡します。preview buildではこの値をpreview hostへ上書きし、previewのAPI URLとAssociated Domainsを一緒に切り替えます。本番entitlementのままpreview URLだけを指定してはいけません。`KMAPIConfiguration` はアプリbundleの `KMNativeAPIHost` を既定接続URLに使い、値が欠損・不正なら初期化を失敗させます。テスト等の明示URL注入以外にhost discoveryやproduction hostへのfallbackを行いません。Workerのconfig応答で `rpId == 接続host` を検査し、不一致は拒否します。previewは本番と異なるRP ID / Keychain serviceを使います。
 
 Apple公式資料では、Passkey用platform providerの役割とRP ID指定、App Attestの端末側鍵生成・attestation/assertion、Associated Domainsのwebcredentials entitlementが定義されています。実装は公式APIの責務に留め、server-side検証を端末で代替しません。[Apple Passkeys: `ASAuthorizationPlatformPublicKeyCredentialProvider` / “Supporting passkeys”; Apple DeviceCheck: `DCAppAttestService` / “Establishing your app’s integrity”; Apple Xcode: “Supporting associated domains”]
@@ -134,7 +138,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 
-未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのPasskeyおよびApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音/カメラUI、APIとRepositoryの接続。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
+未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのPasskeyおよびApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。ログイン・利用状況とレシートのゲスト確認はstubとXCUITestで検証し、実端末のPasskey・AASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
 
 ## 参照資料
 

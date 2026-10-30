@@ -171,10 +171,14 @@ struct KMNativeAuthView: View {
                     inviteButton
                 }
             }
-            Button("家計簿に戻る") { onShowHome() }
+            Button("家計簿に戻る") {
+                model.message = KMNativeAuthPresentation.backToHome
+                onShowHome()
+            }
                 .buttonStyle(KMButtonStyle(role: .secondary, width: .intrinsic))
                 .accessibilityIdentifier("manual-entry")
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("signed-out-actions")
     }
 
@@ -258,6 +262,7 @@ struct KMNativeAuthView: View {
             .overlay(alignment: .top) { rule }
             .padding(.top, KMSpacing.space4)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("signed-in-actions")
     }
 
@@ -267,7 +272,8 @@ struct KMNativeAuthView: View {
                 .font(KMTypography.text)
                 .foregroundStyle(KMColor.text)
                 .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                .accessibilityIdentifier("passkey-list")
+                .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("passkey-list")
         } else if !model.passkeys.isEmpty {
             VStack(spacing: 0) {
                 ForEach(model.passkeys, id: \.id) { passkey in
@@ -284,6 +290,7 @@ struct KMNativeAuthView: View {
                     .frame(minHeight: 48)
                 }
             }
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier("passkey-list")
         } else {
             Text(KMNativeAuthPresentation.passkeyListFailed)

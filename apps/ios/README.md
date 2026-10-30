@@ -1,6 +1,6 @@
 # KakeiMatch iOS
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。レシートのカメラ・AI画面接続は未実装です。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。設定の「ログイン・利用状況」はPasskeyログイン・招待コード登録・Passkey管理・ログアウト・Cloud account削除を接続しています。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -207,6 +207,15 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
 - 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
+## ログイン・利用状況の接続範囲
+
+`Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` が、設定の「ログイン・利用状況」をPWAの `settings-page-ai` とnative APIへ接続します。Passkeyログイン、招待コードからの登録、Passkeyの追加・一覧・削除、AI利用回数、AI tokenの確認、ログアウト、Cloud account削除を扱います。画面は `KMRepositories` を読まず、ログイン状態は端末内の家計データの利用可否へ影響しません。
+
+- App Attest非対応（Simulatorなど）とWorker未設定では、ログインとAIの操作を出さず、端末内の家計簿を続けられる説明だけを表示します。要求を送ってから失敗させません。
+- 未ログインでAIを使う最初のレシート読み取りでは、PWAのTurnstileダイアログに相当する確認を出し、App Attestでゲストセッションを作って同じ写真の読み取りを続けます。失敗・キャンセルでも写真と手入力は残ります。
+- ログアウトとCloud account削除は端末の家計データを消しません。削除の確認文言と入力する語はPWAと同じです。
+- 画面の検証は `KMNativeAuthModel` のstubとXCUITestのDebug専用状態で行います。実Worker・実Passkey・実App Attest・署名済みentitlementは未検証です。契約は [API_LAYER.md](docs/API_LAYER.md) と [NATIVE_APP_AUTH.md](../../docs/NATIVE_APP_AUTH.md) を参照してください。
+
 ## 記録一覧の接続範囲
 
 `RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。
@@ -223,6 +232,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 ## PWAとの差分・検証範囲
 
 - 記録一覧以外のタブ内はplaceholderです。ホームの集計・照合・設定の本実装とデータ状態の比較は後続PRです。記録一覧は空状態と種類別の空状態も表示します。
+- 認証: PWAのTurnstileウィジェットの代わりにApp Attestで端末を確認します。確認ダイアログの説明は「ロボットでないこと」ではなく「この端末が正規のアプリか」に置き換え、それ以外の文言・順序・操作はPWAに合わせます。招待コードは `window.prompt` ではなくOSのアラート入力欄です。SimulatorとApp Attest非対応端末では、PWAの汎用エラーではなく理由と端末内機能の継続を表示します。ログアウト後はゲストの当日利用回数を再取得します（PWAは直前の値を残します）。実機のPasskey・App Attest・Associated Domainsは未検証です。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。
