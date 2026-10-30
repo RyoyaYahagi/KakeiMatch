@@ -39,6 +39,10 @@ final class RecurringFlowTests: XCTestCase {
         startDate.typeText("2026-08-14")
         app.buttons["recurring.save"].tap()
         XCTAssertTrue(currentMonthChoice(app).waitForExistence(timeout: 8))
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        let cancel = app.buttons["recurring.catchUp.cancel"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancel.isHittable)
         return app
     }
 

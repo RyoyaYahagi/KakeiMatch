@@ -1,6 +1,7 @@
 import SwiftUI
 
 private enum KMRecurringPage { case list, detail, editor }
+private enum KMRecurringEditorField: Hashable { case name, amount, startDate }
 
 struct KMRecurringView: View {
     @Environment(\.repositories) private var repositories
@@ -14,6 +15,7 @@ struct KMRecurringView: View {
     @State private var accountId = ""
     @State private var frequency: KMRecurringTransaction.Frequency = .monthly
     @State private var startDate = ""
+    @FocusState private var focusedEditorField: KMRecurringEditorField?
     @State private var postsTransaction = true
     @State private var confirmsDelete = false
     @State private var confirmsCatchUpDelete = false
@@ -132,7 +134,9 @@ struct KMRecurringView: View {
             title(selected == nil ? "定期登録を追加" : "定期登録を編集", id: "recurring.editor.title")
             status
             formRow("名前") {
-                TextField("例：家賃", text: $name).textInputAutocapitalization(.never).accessibilityLabel("名前").accessibilityIdentifier("recurring.name")
+                TextField("例：家賃", text: $name).textInputAutocapitalization(.never)
+                    .focused($focusedEditorField, equals: .name)
+                    .accessibilityLabel("名前").accessibilityIdentifier("recurring.name")
             }
             formRow("種類") {
                 Picker("種類", selection: $kind) { Text("支出").tag(KMRecurringTransaction.Kind.expense); Text("収入").tag(KMRecurringTransaction.Kind.income) }
@@ -140,6 +144,7 @@ struct KMRecurringView: View {
             }
             formRow("金額（円）") {
                 TextField("金額", text: $amount).keyboardType(.numberPad).multilineTextAlignment(.trailing)
+                    .focused($focusedEditorField, equals: .amount)
                     .accessibilityLabel("金額（円）").accessibilityIdentifier("recurring.amount")
             }
             formRow("カテゴリ") {
@@ -163,13 +168,16 @@ struct KMRecurringView: View {
             }
             formRow("開始日") {
                 TextField("YYYY-MM-DD", text: $startDate).textInputAutocapitalization(.never)
+                    .focused($focusedEditorField, equals: .startDate)
                     .accessibilityLabel("開始日").accessibilityIdentifier("recurring.startDate")
             }
             Toggle("予定日に自動登録する", isOn: $postsTransaction).tint(KMColor.primary)
                 .frame(minHeight: KMLayout.minimumHit).accessibilityIdentifier("recurring.autoPost")
             Spacer(minLength: 0)
             primaryButton("保存する") {
+                focusedEditorField = nil
                 Task {
+                    await Task.yield()
                     await model.save(name: name, kind: kind, amount: amount, categoryId: categoryId, accountId: accountId,
                         frequency: frequency, startDate: startDate, postsTransaction: postsTransaction, editing: selected, repositories: repositories)
                     if model.saved { page = .list }
