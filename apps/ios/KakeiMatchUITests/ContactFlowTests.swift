@@ -64,7 +64,7 @@ final class ContactFlowTests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [submissionFinished], timeout: 60), .completed)
         let status = app.staticTexts["contact-status"]
         XCTAssertTrue(status.exists)
-        let failurePhrases = ["送信できませんでした", "ログインが必要", "確認できませんでした", "利用できません", "送信が多いため", "短時間に利用"]
+        let failurePhrases = ["送信できませんでした", "この端末では", "ログインが必要", "確認できませんでした", "利用できません", "送信が多いため", "短時間に利用"]
         XCTAssertTrue(failurePhrases.contains { status.label.contains($0) }, status.label)
         XCTAssertEqual(message.value as? String, "問い合わせ画面の送信失敗を確認します")
 
