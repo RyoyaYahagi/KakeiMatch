@@ -100,8 +100,7 @@ final class RecordsFlowTests: XCTestCase {
         undo.tap()
 
         XCTAssertTrue(app.buttons["records.row.fixture-transaction-010"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["shell.deletionStatus"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["shell.deletionStatus"].label, "削除を取り消しました。")
+        XCTAssertTrue(app.staticTexts["削除を取り消しました。"].waitForExistence(timeout: 5))
         capture(app, "deletion-restored-light")
         app.terminate()
     }

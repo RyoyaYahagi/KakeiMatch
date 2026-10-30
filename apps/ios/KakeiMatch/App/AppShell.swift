@@ -176,7 +176,7 @@ struct AppShell: View {
 
     /// PWA keeps the deletion notice above the tab content, so it remains while tabs change.
     @ViewBuilder private var deletionFeedback: some View {
-        if deletionNotice.deletion != nil || deletionNotice.status != nil {
+        if deletionNotice.deletion != nil || deletionNotice.restored || deletionNotice.failure != nil {
             VStack(alignment: .leading, spacing: KMSpacing.space1) {
                 if deletionNotice.deletion != nil {
                     KMToast(message: KMDeletionNoticeText.deleted,
@@ -186,9 +186,13 @@ struct AppShell: View {
                         Task { await undoDeletion() }
                     }
                     .accessibilityIdentifier("shell.deletionToast")
+                } else if deletionNotice.restored {
+                    // PWA replaces the toast text with this, and it has no timer.
+                    KMToast(message: KMDeletionNoticeText.restored)
+                        .accessibilityIdentifier("shell.deletionRestored")
                 }
-                if let status = deletionNotice.status {
-                    Text(status).font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
+                if let failure = deletionNotice.failure {
+                    Text(failure).font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("shell.deletionStatus")
                 }
