@@ -78,6 +78,8 @@ final class KMRecurringModel {
     }
 
     func cancelCatchUpPrompt() {
+        // The cover's binding can report a dismissal after a choice already closed it.
+        guard catchUpPrompt != nil else { return }
         catchUpPrompt = nil
         pendingSchedule = nil
         message = "保存をキャンセルしました。"

@@ -124,6 +124,8 @@ final class RecurringFlowTests: XCTestCase {
 
         let schedule = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
         XCTAssertTrue(schedule.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["定期登録を保存しました。"].exists)
+        XCTAssertFalse(app.staticTexts["保存をキャンセルしました。"].exists)
         app.buttons["receipt-tab"].tap()
         let recordsScreen = app.descendants(matching: .any).matching(identifier: "records.screen").firstMatch
         XCTAssertTrue(recordsScreen.waitForExistence(timeout: 8))
