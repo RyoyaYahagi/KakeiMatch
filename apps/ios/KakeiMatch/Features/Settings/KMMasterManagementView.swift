@@ -176,7 +176,7 @@ struct KMMasterManagementView: View {
         if isAddingAccount { return "支払元を追加" }
         if selectedCategory != nil { return selectedCategory!.isIncome ? "収入カテゴリの詳細" : "支出カテゴリの詳細" }
         if selectedAccount != nil { return "支払元の詳細" }
-        switch page { case .rules: "分類ルール"; case .categories: "カテゴリ"; case .accounts: "支払元・口座" }
+        return switch page { case .rules: "分類ルール"; case .categories: "カテゴリ"; case .accounts: "支払元・口座" }
     }
 
     private var backTitle: String {
