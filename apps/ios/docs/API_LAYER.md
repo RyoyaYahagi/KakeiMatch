@@ -79,6 +79,23 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 
 すべての応答はJSON Content-Type・1 MiB上限・形の検証を経てCodableへdecodeする。未知キー、未知enum、欠けたnullable必須キー、整数円の小数・負値・JS安全整数超過、実在しない日付、範囲外indexを正常値として返さない。Receiptの日付はWorkerの簡易正規表現より厳しく暦日を検証する。欠損を空値に置換しない。[実装: KMAPIValidation.swift / KMAPIShapes.swift]
 
+### AI応答のschema照合（2026/10 監査）
+
+Geminiのレシート、Jevの分類、Geminiの給与明細について、PWA/Worker側のschema（`src/lib/receipt-extraction.ts`、`workers/ai-gateway/src/worker.ts`、`workers/ai-gateway/src/payroll-schema.ts`）とiOSの `KMAPIShapes` を項目ごとに突き合わせた。**追加が必要な検証は見つからなかった。** 下表の項目はすべてAPI境界で拒否し、`KMAPIError.invalidResponse` として呼び出し側の保存・表示処理へ渡さない。合成した不正fixtureは `KakeiMatchTests/APIClientTests.swift` の `aiResponsesRejectNestedUnknownKeysMissingRequiredNullsAndReferenceViolations`、`jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory`、`rejectsRangesMissingNullsAndUnknownEnums` で固定する。
+
+| 観点 | レシート (`/api/ai/gemini`) | Jev分類 (`/api/ai/jev`・`category-suggestion`) | 給与明細 (`/api/ai/payroll`) |
+| --- | --- | --- | --- |
+| 未知キー | 全objectで拒否（`KMAPIShapes.receipt`） | answerは`type`/`choice`/`confidence`/`probabilities`の4キー完全一致。responseは`model`/`answers`のみ | 全objectで拒否（`KMAPIShapes.payroll`） |
+| nullと欠落 | nullableでもキー必須。省略可は`adjustments`と要素の`quantity`/`unitPriceYen`/`targetItemIndex`/`index`のみ | `type`/`choice`/`confidence`/`probabilities`の欠落と、要求外・欠けた回答キーを拒否 | nullableでもキー必須。`deductions`の7キー、`allowances[].amountYen`、`warnings[].field`の欠落を拒否 |
+| 型 | object/array/string/number/boolとenum。日付・時刻は文字列 | `type=choice`、`model`は非空string、確率・confidenceはnumber | enumは`documentKind`/`payType`/warningのfield・code。日付は文字列 |
+| 範囲 | 金額は0…JS安全整数、`quantity>0`、`HH:MM`、実在する暦日 | confidence・確率は0…1、確率和は1±0.02、`choice`は最大確率 | 金額は0…JS安全整数、`payrollText`は1…120、実在する暦日、NFKC後の個人識別情報を拒否 |
+| 整数円 | `Decimal`で整数判定し、±9,007,199,254,740,991に制限 | 該当なし | 同左 |
+| ID参照 | `targetItemIndex`はitems内、warningの`index`は対象のitems/adjustments内 | 回答キーは要求キーと一致、`choice`と確率キーは候補IDのみ。`category-suggestion`の`categoryId`はnullか候補内 | 該当なし |
+| 件数上限 | items・adjustments・warningsは各100 | answers・probabilitiesは100、候補は1…100 | allowances・warningsは各30 |
+| PWA/Workerとの差 | Workerが行う日付・時刻・quantity 0の正規化は行わず、不正として拒否する（厳しい側） | 同等。提案値の0.75以上・2位との差0.15以上も同じ | 同等 |
+
+`classify` は上表に加えて、`answers` のキー集合が要求した`category`/`item_N`と一致すること、各確率キーが要求候補のID集合と一致することを検証する。`ReceiptModel` の `invalidAndNonReceiptResponsesDoNotReplaceManualInput` は、不正応答で手入力や保存済み抽出が置き換わらないことを合成fixtureで確認する。
+
 ## 認証・有効期限・エラー
 
 以下のJWT / Cookieの説明は従来Worker互換モードのものです。native modeは前節の固定期限session・opaque AI tokenを使い、Set-Cookieを保存しません。
@@ -132,7 +149,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 ## 検証と未実装
 
-`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。実Worker、Apple App Attest、実Passkey、Gemini/Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
+`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。AI応答はレシート・Jev・給与明細それぞれの未知キー、nullable必須キーの欠落、型・範囲、整数円、ID参照、件数上限を合成fixtureで拒否することを確認する。実Worker、Apple App Attest、実Passkey、Gemini/Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
 
 CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 
