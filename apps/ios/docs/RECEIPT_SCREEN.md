@@ -18,14 +18,17 @@
 
 `KMReceiptModel` が入力と非同期操作を管理する。`KMReceiptPresentation` は警告表示、合計照合、抽出値検証、待機文言、再試行可否の純関数。金額は整数円、日付は既存の `KMDate`（Asia/Tokyo）。警告確認の書き込みは直列化する。
 
-既存画像は `ReceiptRepository.receiptImage` で読み出す。AIは `KMWorkerAPI.readReceipt` / `classify` のみ。既定のnativeモードが `/api/native/ai/*` を使用する。秘密鍵・独自HTTP通信・PWA認証への切り替えは追加しない。新規は `saveReceipt` → `registerReceipt`、登録済みは `editReceipt`（読み込み時の `updatedAt` を渡す）。保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡す。金額配分・親子取引の生成はRepositoryに任せる。
+撮影/写真選択の直後、AI送信前に `ReceiptRepository.saveReceiptImage` が原本を検証し、pendingレシートとartifactを同じtransactionで保存する。レシートIDとblob IDはPWAと同じ `receipt-image:<id>` 形式。撮り直しは置換前のpendingレシートと下書きを同じtransactionで消して新しいIDへ移る。既存画像は `ReceiptRepository.receiptImage` で読み出す。入力中の値は `saveReceiptDraft` が350 msのdebounceで確認値と別に保存し、再open時に `receiptDraft` から復元する。登録・登録済み編集・未登録削除で下書きも同じtransaction内に消える。AIは `KMWorkerAPI.readReceipt` / `classify` のみ。既定のnativeモードが `/api/native/ai/*` を使用する。秘密鍵・独自HTTP通信・PWA認証への切り替えは追加しない。新規は `saveReceipt` → `registerReceipt`、登録済みは `editReceipt`（読み込み時の `updatedAt` を渡す）。保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡す。金額配分・親子取引の生成はRepositoryに任せる。
 
 ## PWAとの差分と不足操作
 
-### 未実装
+### 実装済み: 画像保存と下書き
 
-- Repositoryに画像新規保存の操作がない。撮影/写真選択した画像は画面メモリだけに保持し、未保存と明示する。AI送信を禁止する。画像なしの手入力登録は可能。画像を保存したと偽るblob IDは作らない。選択画像は登録した記録へ添付されない。保存済み画像の撮り直しでは、以前の画像と入力を保持して不足操作を案内する。
-- 任意の未完成入力を保存する専用draft操作がない。画面内の入力は保持するが、画面離脱/再起動後の未登録入力復元は未対応。明示登録時の確認値と、既存レシートの確認済み警告は保存する。
+- 画像はPWA `saveImage` と同じく、選んだ直後に元bytesを端末へ保存する。10 MiB以下・JPEG/PNG/WebP・宣言形式と先頭bytesの一致を検証し、条件を満たさない画像はレシートもartifactも作らない。画像付きのpendingレシートは再起動後も `receiptImage` で開ける。登録済みレシートの削除では画像を残す（PWAの削除意味論と同じ）。
+- 未完成入力は店名・日付・時刻・金額文字列・カテゴリ・支払元・品目・値引き/調整・税額・メモ・集計除外を、確認値と別recordに350 msで保存する。空文字や不正な金額文字列も保持する。`merchant`・正の金額・品目のいずれかがある場合だけ復元し、確認待ち一覧から開き直すと続きを編集できる。登録・登録済み編集の成功時は下書きを残さない。
+- 再起動後の復元はSQLite、UIテストはin-memory（`-UITestFixture`）で確認する。UIテストのfixtureも実Repository経由で合成画像を保存する。
+
+### 未実装
 - 学習ルールの適用と、登録・登録済み編集時の分類学習保存は接続済み。分類失敗時のカテゴリ修正も品目一覧で行える。
 - 品目・カテゴリ・値引きの編集/追加/削除、全品目へのカテゴリ一括設定は品目一覧で接続済み。カテゴリ/支払元の新規追加は未対応。未分類品目を登録できない場合はRepositoryの検証エラーを示す。登録済みレシートは記録詳細の行から同じ編集画面を開く（カテゴリ行は品目一覧を先に開く）。
 - PWAの読み取り走査線、入力欄の仮の帯、今日/昨日のショートカット、カテゴリ別小計の帯は未実装。
@@ -45,8 +48,8 @@
 
 ### Repository/APIへの要望
 
-1. 画像を検証し、元bytesとmetadataと未登録レシートを同じ永続化境界で保存する操作。成功時は保存済みsnapshotを返す。失敗後の再送を冪等にする。
-2. 未完成の入力（空文字/不正な金額文字列も含む）を登録用確認値と区別して保存/復元する操作。
+1. 画像保存は `saveReceiptImage(data:contentType:replacingReceiptId:at:)` で接続済み。同じpendingレシートへの再送は新しい画像を保存し直し、置換前の画像を残さない。
+2. 未完成入力は `saveReceiptDraft` / `receiptDraft` で接続済み。
 3. 抽出・分類・警告確認を古さ検査付きで更新する操作。現状は画面でsnapshotを再取得して確認するが、`saveReceipt`との間を原子的に保証できない。登録済みレシートの警告確認は専用操作がないため、編集画面では警告帯を表示しない。
 4. PWA相当の学習ルール適用→未分類だけAI分類→確認履歴保存をまとめるサービス。画面で学習エンジンを代替しない。
 

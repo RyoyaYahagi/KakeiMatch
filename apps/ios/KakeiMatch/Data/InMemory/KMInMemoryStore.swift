@@ -13,6 +13,8 @@ import Foundation
     /// Native IDs are preserved on import; fixture-only names are synthesized below.
     var payeeValues: [KMPayee] = []
     var imageValues: [String: Data] = [:]
+    /// Unfinished editor input keyed by receipt ID; never part of the confirmed snapshot.
+    var receiptDraftValues: [String: KMLocalRecord<KMReceiptDraft>] = [:]
     var importValues: [KMLocalRecord<KMStatementImport>] = []
     var statementValues: [KMStatementTransaction] = []
     var runValues: [KMReconciliationRun] = []
@@ -151,11 +153,58 @@ import Foundation
         receiptValues.removeAll { $0.id == receipt.id }; receiptValues.append(receipt)
     }
     func receiptImage(blobId: String) async throws -> Data? { imageValues[blobId] }
+    /// Validation happens before any mutation. The caller commits receipt, bytes and metadata together.
+    func saveReceiptImage(data: Data, contentType: String, replacingReceiptId: String?, at timestamp: Date) async throws -> KMReceipt {
+        var validated = try KMReceiptImageValidation.validate(data, declaredContentType: contentType)
+        var replaceBlobId: String?
+        if let replacingReceiptId {
+            guard let old = receiptValues.first(where: { $0.id == replacingReceiptId }) else {
+                throw KMDataError.notFound("レシートがありません。")
+            }
+            guard old.registration.status == .pending, old.registration.actualTransactionId == nil else {
+                throw KMDataError.invalidData("登録処理中、登録済み、または結果の確認が必要なレシートの画像は置き換えられません。")
+            }
+            replaceBlobId = old.image?.blobId
+        }
+        let id = "receipt:\(UUID().uuidString)"
+        validated.blobId = "receipt-image:\(id.dropFirst("receipt:".count))"
+        let receipt = KMReceipt(id: id, createdAt: timestamp, updatedAt: timestamp, image: validated,
+            extraction: nil, aiSuggestion: .init(source: .unclassified),
+            confirmedValue: nil, registration: .init(status: .pending, actualTransactionId: nil, lastError: nil))
+        if let oldId = replacingReceiptId {
+            receiptValues.removeAll { $0.id == oldId }
+            receiptDraftValues.removeValue(forKey: oldId)
+            if let blobId = replaceBlobId {
+                imageValues.removeValue(forKey: blobId)
+                pendingArtifacts.removeAll { $0.metadata.id == blobId }
+            }
+        }
+        receiptValues.removeAll { $0.id == id }; receiptValues.append(receipt)
+        imageValues[validated.blobId] = data
+        pendingArtifacts.removeAll { $0.metadata.id == validated.blobId }
+        pendingArtifacts.append(.init(metadata: .init(id: validated.blobId, ownerKind: "receipt", ownerId: id,
+            contentType: validated.contentType, createdAt: timestamp, present: true, entry: nil,
+            size: data.count, sha256: Self.sha256(data)), data: data))
+        return receipt
+    }
+    func receiptDraft(receiptId: String) async throws -> KMReceiptDraft? { receiptDraftValues[receiptId]?.value }
+    func saveReceiptDraft(_ draft: KMReceiptDraft, receiptId: String, at timestamp: Date) async throws {
+        // PWA local-ui.ts uses putIfRecordExists: a deleted pending receipt is not recreated.
+        guard receiptValues.contains(where: { $0.id == receiptId }) else {
+            throw KMDataError.notFound("この確認待ちレシートは削除されています。画面を開き直してください。")
+        }
+        receiptDraftValues[receiptId] = .init(id: receiptId, kind: .categoryState, value: draft, updatedAt: timestamp)
+    }
+    func deleteReceiptDraft(receiptId: String) async throws { receiptDraftValues.removeValue(forKey: receiptId) }
     func deleteReceipt(id: String) async throws {
         guard let receipt = receiptValues.first(where: { $0.id == id }) else { throw KMDataError.notFound("レシートがありません。") }
         guard receipt.registration.status != .applied else { throw KMDataError.unsupported("登録済みレシートの削除サービスは後続PRで提供します。") }
         receiptValues.removeAll { $0.id == id }
-        if let blobId = receipt.image?.blobId, !receiptValues.contains(where: { $0.image?.blobId == blobId }) { imageValues.removeValue(forKey: blobId) }
+        receiptDraftValues.removeValue(forKey: id)
+        if let blobId = receipt.image?.blobId, !receiptValues.contains(where: { $0.image?.blobId == blobId }) {
+            imageValues.removeValue(forKey: blobId)
+            pendingArtifacts.removeAll { $0.metadata.id == blobId }
+        }
     }
     func statementImports() async throws -> [KMLocalRecord<KMStatementImport>] { importValues }
     func statementTransactions() async throws -> [KMStatementTransaction] { statementValues }

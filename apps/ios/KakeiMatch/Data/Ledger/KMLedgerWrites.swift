@@ -248,6 +248,7 @@ import Foundation
         receipt.updatedAt = timestamp
         if row.payeeName == resolved.name { commitPayee(resolved) }
         replace([row]); receiptValues[receiptValues.firstIndex { $0.id == id }!] = receipt
+        receiptDraftValues.removeValue(forKey: id)
         return receipt
     }
     func editReceipt(id: String, value: KMConfirmedReceipt, expectedUpdatedAt: Date, at timestamp: Date) async throws -> KMReceipt {
@@ -264,6 +265,7 @@ import Foundation
         commitPayee(resolved); replace([row]); receiptValues[index] = receipt
         ledgerWriteState.splitTombstones += retired.map { .init(parentId: row.id, split: $0) }
         ledgerWriteState.edits.append(.init(id: UUID().uuidString, before: [previous], after: [row], receiptBefore: oldReceipt, receiptAfter: receipt, appliedAt: timestamp))
+        receiptDraftValues.removeValue(forKey: id)
         return receipt
     }
     private func deletionTree(_ id: String) throws -> [KMTransaction] {

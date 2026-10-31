@@ -69,6 +69,50 @@ import ZIPFoundation
         #expect(throws: (any Error).self) { try second.save(oldSecond) }
         #expect(try first.load().accountValues.map(\.id) == ["winner"])
     }
+    /// Two scenes share one store. A second scene waits for the first scene's commit and then
+    /// replays its own input on the committed snapshot instead of failing with a "busy" error.
+    @Test func concurrentSceneWritesAreQueuedAndBothCommit() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        async let first = store.saveManual(.init(kind: .expense, amountYen: 200, date: KMDate("2026-10-14"),
+            payeeName: "合成シーンA", categoryId: "test-food", accountId: "test-cash", memo: nil, importedId: "scene-a"))
+        async let second = store.saveManual(.init(kind: .expense, amountYen: 300, date: KMDate("2026-10-14"),
+            payeeName: "合成シーンB", categoryId: "test-food", accountId: "test-cash", memo: nil, importedId: "scene-b"))
+        let saved = try await [first, second]
+        #expect(Set(saved.compactMap(\.importedId)) == ["scene-a", "scene-b"])
+        let reopened = try KMSQLiteStore(directory: directory)
+        let rows = try await reopened.transactions(matching: .init(limit: nil))
+        #expect(Set(rows.compactMap(\.importedId)) == ["test-op", "scene-a", "scene-b"])
+        #expect(try await reopened.accounts().first?.balanceYen == -600)
+    }
+    /// Simulates a connection opened before a restore replaces the active profile pointer:
+    /// the working copy read from the superseded household must not commit.
+    @Test func profileSwitchRejectsWorkingCopyFromSupersededProfile() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        let oldProfile = try store.profile().current
+        let oldURL = directory.appendingPathComponent(oldProfile.uuidString).appendingPathComponent("household.sqlite")
+        let staleDatabase = try KMStoreDatabase(url: oldURL)
+        let stale = try staleDatabase.load()
+        try await store.importBackup(from: fixture("synthetic", "kmb"))
+        let newProfile = try store.profile().current
+        #expect(newProfile != oldProfile)
+
+        stale.settingsValue.theme = .dark
+        stale.accountValues.append(.init(id: "superseded-write", name: "合成の古い接続"))
+        #expect(throws: KMDataError.staleProfile) {
+            try staleDatabase.save(stale, ifActive: { try store.profile().current == oldProfile })
+        }
+        // Rollback leaves the superseded profile usable for the "元に戻す" operation.
+        let reloaded = try staleDatabase.load()
+        #expect(reloaded.settingsValue.theme == .system)
+        #expect(!reloaded.accountValues.contains { $0.id == "superseded-write" })
+        // The newly active profile is complete and unaffected by the rejected write.
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == 12)
+        #expect(try store.profile().current == newProfile)
+    }
     @Test func nativeBackupRoundTripsEveryProjectionAndOriginal() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let source = try KMSQLiteStore(directory: directory.appendingPathComponent("source"))
@@ -256,9 +300,9 @@ import ZIPFoundation
         let decisions = try await reopened.resolutions()
         #expect(try await migrated.resolutions() == decisions)
         #expect(try await migrated.transactions(matching: .init(limit: nil)) == transactions)
-        try reopened.returnToPreviousProfile()
+        try await reopened.returnToPreviousProfile()
         #expect(try await reopened.transaction(id: before.id) == before)
-        try reopened.returnToPreviousProfile()
+        try await reopened.returnToPreviousProfile()
         #expect(try await reopened.transactions(matching: .init(limit: nil)).count == 12)
     }
 
@@ -454,4 +498,263 @@ import ZIPFoundation
             #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted() == directoriesBefore)
         }
     }
+
+    /// Adds one PWA-shaped monthly schedule and four already-posted occurrences to the synthetic
+    /// Actual DB. The rule/action JSON matches what `createRecurringSchedule` + category rule write.
+    private func scheduledBackup(in directory: URL, nextDate: Int, complex: Bool = false, posted: Bool = true) throws -> URL {
+        let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
+        let editDirectory = directory.appendingPathComponent("schedule-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: editDirectory, withIntermediateDirectories: true)
+        let altered = try rewrite(bytes, actual: { zip in
+            try self.changeZIP(zip, in: editDirectory) { db in
+                let account = try #require(try db.rows("SELECT id FROM accounts WHERE name='メイン口座'").first?.string("id"))
+                let category = try #require(try db.rows("SELECT id FROM categories WHERE name='食費'").first?.string("id"))
+                let payee = try #require(try db.rows("SELECT id FROM payees WHERE name='青空食堂'").first?.string("id"))
+                let date = complex
+                    ? #"{"frequency":"monthly","interval":1,"start":"2026-07-15","endMode":"never","patterns":[{"type":"day","value":15}]}"#
+                    : #"{"frequency":"monthly","interval":1,"start":"2026-07-15","endMode":"never"}"#
+                let conditions = #"[{"field":"payee","op":"is","value":"\#(payee)"},{"field":"account","op":"is","value":"\#(account)"},{"field":"date","op":"isapprox","value":\#(date)},{"field":"amount","op":"is","value":-50000}]"#
+                let actions = #"[{"op":"link-schedule","value":"schedule-1"},{"field":"category","op":"set","value":"\#(category)"}]"#
+                try db.execute("INSERT INTO rules(id,stage,conditions,actions,tombstone,conditions_op) VALUES('schedule-rule-1',NULL,?,?,0,'and')",
+                    [.text(conditions), .text(actions)])
+                try db.execute("INSERT INTO schedules(id,rule,posts_transaction,completed,tombstone,name) VALUES('schedule-1','schedule-rule-1',1,0,0,'合成家賃')")
+                try db.execute("INSERT INTO schedules_next_date(id,schedule_id,local_next_date,local_next_date_ts,base_next_date,base_next_date_ts,tombstone) VALUES('nd-1','schedule-1',?,1,?,1,0)",
+                    [.integer(nextDate), .integer(nextDate)])
+                if posted {
+                    for day in [20260715, 20260815, 20260915, 20261015] {
+                        let raw = String(format: "%04d-%02d-%02d", day / 10000, day / 100 % 100, day % 100)
+                        try db.execute("INSERT INTO transactions(id,acct,date,amount,category,description,financial_id,schedule,cleared) VALUES(?,?,?,?,?,?,?,?,1)", [
+                            .text("sched-\(raw)"), .text(account), .integer(day), .integer(-50000), .text(category), .text(payee),
+                            .text("kakeimatch:schedule:schedule-1:\(raw)"), .text("schedule-1")])
+                    }
+                }
+            }
+        })
+        let file = directory.appendingPathComponent("schedule-\(UUID().uuidString).kmb")
+        try altered.write(to: file)
+        return file
+    }
+
+    /// Adds a PWA MoneyForward journal whose first created row is real and whose second created row
+    /// points at an unrelated ledger row. Only the first may become an undo target.
+    private func moneyForwardBackup(in directory: URL) throws -> (URL, String, String) {
+        let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
+        let imported = "moneyforward:\(String(repeating: "a", count: 64))"
+        let mismatch = "moneyforward:\(String(repeating: "b", count: 64))"
+        let editDirectory = directory.appendingPathComponent("moneyforward-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: editDirectory, withIntermediateDirectories: true)
+        let altered = try rewrite(bytes, local: { data in
+            var records = try #require(data["records"] as? [[String: Any]])
+            records.append(["id": "settings:moneyforward-import", "kind": "app-settings",
+                "updatedAt": "2026-09-28T00:00:00.000Z", "value": self.moneyForwardSettings(imported: imported, mismatch: mismatch)])
+            data["records"] = records
+        }, actual: { zip in
+            try self.changeZIP(zip, in: editDirectory) { db in
+                try db.execute("""
+                    INSERT INTO transactions(id,acct,date,amount,category,description,financial_id,cleared)
+                    SELECT 'mf-created',a.id,20260928,-1200,c.id,'合成カフェ',?,1
+                    FROM accounts a,categories c WHERE a.name='メイン口座' AND c.name='食費'
+                    """, [.text(imported)])
+            }
+        })
+        let file = directory.appendingPathComponent("moneyforward-\(UUID().uuidString).kmb")
+        try altered.write(to: file)
+        return (file, imported, mismatch)
+    }
+
+    private func moneyForwardSettings(imported: String, mismatch: String) -> [String: Any] {
+        func row(_ number: Int, _ key: String) -> [String: Any] {
+            ["rowNumber": number, "date": "2026-09-28", "description": "合成カフェ", "amountYen": -1200,
+             "kind": "expense", "accountName": NSNull(), "majorCategory": "食費", "minorCategory": "食料品",
+             "memo": "", "sourceTransactionId": NSNull(), "sourceKey": key, "isTransfer": false,
+             "isIncludedInCalculation": true, "categoryNeedsReviewReason": NSNull()]
+        }
+        let a = String(imported.dropFirst("moneyforward:".count)), b = String(mismatch.dropFirst("moneyforward:".count))
+        let c = String(repeating: "c", count: 64), d = String(repeating: "d", count: 64)
+        let batch: [String: Any] = [
+            "id": "pwa-mf-batch", "budgetId": "KakeiMatch-540c268",
+            "createdAt": "2026-09-28T00:00:00.000Z", "updatedAt": "2026-09-28T00:00:00.000Z", "status": "completed",
+            "mappings": ["categories": [String: Any](), "accounts": [String: Any]()],
+            "rows": [
+                ["row": row(2, a), "importedId": imported, "status": "created",
+                 "transactionSnapshot": [["id": "mf-created", "date": "2026-09-28", "account": "synthetic-account",
+                    "amount": -1200, "imported_id": imported]], "error": NSNull()],
+                ["row": row(3, b), "importedId": mismatch, "status": "created",
+                 "transactionSnapshot": [["id": "e9098745-2f4a-4bda-a534-1ca975c40c72", "date": "2026-10-03",
+                    "account": "synthetic-account", "amount": -1650, "imported_id": mismatch]], "error": NSNull()],
+                ["row": row(4, c), "importedId": "moneyforward:\(c)", "status": "duplicate",
+                 "transactionSnapshot": NSNull(), "error": NSNull()],
+                ["row": row(5, d), "importedId": "moneyforward:\(d)", "status": "excluded",
+                 "transactionSnapshot": NSNull(), "error": NSNull()],
+            ],
+        ]
+        let planned: [String: Any] = [
+            "id": "pwa-mf-planned", "budgetId": "KakeiMatch-540c268",
+            "createdAt": "2026-09-29T00:00:00.000Z", "updatedAt": "2026-09-29T00:00:00.000Z", "status": "planned",
+            "mappings": ["categories": [String: Any](), "accounts": [String: Any]()], "rows": [[String: Any]](),
+        ]
+        let e = String(repeating: "e", count: 64)
+        let undone: [String: Any] = [
+            "id": "pwa-mf-undone", "budgetId": "KakeiMatch-540c268",
+            "createdAt": "2026-09-27T00:00:00.000Z", "updatedAt": "2026-09-27T00:00:00.000Z", "status": "undone",
+            "mappings": ["categories": [String: Any](), "accounts": [String: Any]()],
+            "rows": [["row": row(6, e), "importedId": "moneyforward:\(e)", "status": "undone",
+                "transactionSnapshot": NSNull(), "error": NSNull()]],
+        ]
+        return ["version": 1,
+            "rules": ["categories": [KMMoneyForwardParser.categoryKey(kind: .expense, major: "食費", minor: "食料品"): ["kind": "new", "name": "食費"]],
+                      "accounts": ["合成口座": ["kind": "unset"]]],
+            "batches": [batch, planned, undone]]
+    }
+
+    @Test func kmbImportsActiveScheduleWithoutRecreatingPostedOccurrences() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20261115)
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: file)
+        let schedule = try #require(try await store.recurringTransactions().first)
+        #expect(schedule.id == "schedule-1")
+        #expect(schedule.name == "合成家賃")
+        #expect(schedule.kind == .expense)
+        #expect(schedule.amountYen == 50_000)
+        #expect(schedule.frequency == .monthly)
+        #expect(try schedule.startDate == KMDate("2026-07-15"))
+        #expect(try schedule.nextDate == KMDate("2026-11-15"))
+        #expect(schedule.postsTransaction)
+        #expect(try await store.recurringOccurrences(scheduleId: "schedule-1").map(\.date).sorted()
+            == [KMDate("2026-07-15"), KMDate("2026-08-15"), KMDate("2026-09-15"), KMDate("2026-10-15")])
+        let before = try await store.transactions(matching: .init(limit: nil))
+        try await store.runRecurring(through: KMDate("2026-10-20"), at: Date(timeIntervalSince1970: 1_800_000_000))
+        let after = try await store.transactions(matching: .init(limit: nil))
+        #expect(after.count == before.count)
+        #expect(after.filter { $0.importedId?.hasPrefix("kakeimatch:schedule:schedule-1:") == true }.count == 4)
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.recurringTransactions().first?.nextDate == KMDate("2026-11-15"))
+    }
+
+    @Test func kmbScheduleStaleNextDateStillSkipsPostedOccurrences() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20260915)
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: file)
+        // Actual's next_date is stale (PWA catch-up already posted October). The import must not
+        // replay July through October after the next household open.
+        #expect(try await store.recurringTransactions().first?.nextDate == KMDate("2026-11-15"))
+        let before = try await store.transactions(matching: .init(limit: nil))
+        try await store.runRecurring(through: KMDate("2026-10-20"), at: Date(timeIntervalSince1970: 1_800_000_000))
+        let after = try await store.transactions(matching: .init(limit: nil))
+        #expect(after.count == before.count)
+        #expect(after.filter { $0.importedId?.hasPrefix("kakeimatch:schedule:schedule-1:") == true }.count == 4)
+    }
+
+    @Test func kmbSchedulePostsMissingDueOccurrences() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20260715, posted: false)
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: file)
+        let before = try await store.transactions(matching: .init(limit: nil))
+        try await store.runRecurring(through: KMDate("2026-10-20"), at: Date(timeIntervalSince1970: 1_800_000_000))
+        let generated = try await store.transactions(matching: .init(limit: nil))
+            .filter { $0.importedId?.hasPrefix("kakeimatch:schedule:schedule-1:") == true }
+        #expect(generated.count == 4)
+        #expect(try generated.map(\.date).sorted() == [KMDate("2026-07-15"), KMDate("2026-08-15"), KMDate("2026-09-15"), KMDate("2026-10-15")])
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == before.count + 4)
+    }
+
+    @Test func inMemoryScheduleProjectionSkipsPostedOccurrences() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20261115)
+        let backup = try KMPortableBackup.read(url: file)
+        let staging = directory.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let store = try KMActualImport.project(backup: backup, staging: staging)
+        #expect(store.recurringValues.count == 1)
+        #expect(store.serviceState.occurrences.filter { $0.scheduleId == "schedule-1" }.count == 4)
+        let before = store.transactionValues.count
+        try await store.runRecurring(through: KMDate("2026-10-20"), at: Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(store.transactionValues.count == before)
+    }
+
+    @Test func kmbRejectsUnsupportedActiveScheduleWithoutChangingProfile() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20261115, complex: true)
+        let store = try KMSQLiteStore(directory: directory), row = try await seed(store), id = try store.profile().current
+        await #expect(throws: (any Error).self) { try await store.importBackup(from: file) }
+        #expect(try store.profile().current == id)
+        #expect(try await store.transaction(id: row.id) == row)
+    }
+
+    /// #333 projects schedules and MoneyForward history while restoring a `.kmb`. The projection
+    /// belongs to the same profile switch, so a connection opened before the restore cannot commit
+    /// over the projected rows: the staleProfile guard covers this new write path too.
+    @Test func staleConnectionAfterScheduleImportCannotOverwriteProjection() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        let oldProfile = try store.profile().current
+        let oldURL = directory.appendingPathComponent(oldProfile.uuidString).appendingPathComponent("household.sqlite")
+        let staleDatabase = try KMStoreDatabase(url: oldURL), stale = try staleDatabase.load()
+        try await store.importBackup(from: try scheduledBackup(in: directory, nextDate: 20261115))
+        #expect(try store.profile().current != oldProfile)
+        #expect(try await store.recurringTransactions().map(\.id) == ["schedule-1"])
+        stale.recurringValues = []
+        stale.masterWriteState.moneyForward = []
+        #expect(throws: KMDataError.staleProfile) {
+            try staleDatabase.save(stale, ifActive: { try store.profile().current == oldProfile })
+        }
+        #expect(try staleDatabase.load().recurringValues.isEmpty)
+        #expect(try await store.recurringTransactions().map(\.id) == ["schedule-1"])
+    }
+
+    @Test func kmbProjectsMoneyForwardHistoryAndUndoOnlyCreatedRows() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let (file, imported, mismatch) = try moneyForwardBackup(in: directory)
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: file)
+        var history = try await store.moneyForwardHistory()
+        #expect(history.count == 2)
+        let batch = try #require(history.first { $0.id == "pwa-mf-batch" })
+        let undoneBatch = try #require(history.first { $0.id == "pwa-mf-undone" })
+        #expect(undoneBatch.status == .undone)
+        #expect(undoneBatch.rows.map(\.status) == [.undone])
+        #expect(undoneBatch.rows.first?.transaction == nil)
+        #expect(batch.id == "pwa-mf-batch")
+        #expect(batch.status == .completed)
+        #expect(batch.rows.count == 4)
+        #expect(batch.rows.filter { $0.status == .created }.count == 2)
+        #expect(batch.rows.first { $0.importedId == imported }?.transaction?.id == "mf-created")
+        #expect(batch.rows.first { $0.importedId == mismatch }?.transaction == nil)
+        #expect(batch.rows.filter { $0.status == .duplicate }.count == 1)
+        #expect(batch.rows.filter { $0.status == .excluded }.count == 1)
+        let rules = try await store.moneyForwardRules()
+        #expect(rules.categories[KMMoneyForwardParser.categoryKey(kind: .expense, major: "食費", minor: "食料品")] == .new(name: "食費"))
+        #expect(rules.accounts["合成口座"] == .unset)
+        try await store.undoMoneyForward(id: "pwa-mf-batch", at: Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(try await store.transaction(id: "mf-created") == nil)
+        #expect(try await store.transaction(id: "e9098745-2f4a-4bda-a534-1ca975c40c72") != nil)
+        history = try await store.moneyForwardHistory()
+        #expect(history.first { $0.id == "pwa-mf-batch" }?.status == .undone)
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.transaction(id: "mf-created") == nil)
+        #expect(try await reopened.transaction(id: "e9098745-2f4a-4bda-a534-1ca975c40c72") != nil)
+        #expect(try await reopened.moneyForwardHistory().first { $0.id == "pwa-mf-batch" }?.status == .undone)
+    }
+
+    @Test func inMemoryMoneyForwardProjectionUndoesOnlyCreatedRows() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let (file, imported, mismatch) = try moneyForwardBackup(in: directory)
+        let backup = try KMPortableBackup.read(url: file)
+        let staging = directory.appendingPathComponent("staging", isDirectory: true)
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        let store = try KMActualImport.project(backup: backup, staging: staging)
+        #expect(store.masterWriteState.moneyForward.count == 2)
+        let batch = try #require(store.masterWriteState.moneyForward.first { $0.id == "pwa-mf-batch" })
+        #expect(store.masterWriteState.moneyForward.first { $0.id == "pwa-mf-undone" }?.status == .undone)
+        #expect(batch.rows.first { $0.importedId == imported }?.transaction?.id == "mf-created")
+        #expect(batch.rows.first { $0.importedId == mismatch }?.transaction == nil)
+        try await store.undoMoneyForward(id: "pwa-mf-batch", at: Date(timeIntervalSince1970: 1_800_000_000))
+        #expect(store.transactionValues.contains { $0.id == "mf-created" } == false)
+        #expect(store.transactionValues.contains { $0.id == "e9098745-2f4a-4bda-a534-1ca975c40c72" })
+    }
+
 }

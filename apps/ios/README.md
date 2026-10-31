@@ -1,6 +1,6 @@
 # KakeiMatch iOS
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。ホーム、記録一覧、手入力（支出・収入・振替）、レシート登録と品目編集、明細照合、定期登録、予算、カテゴリ / 支払元管理、設定（テーマ・画面ロック・マスタ管理）、問い合わせ（診断情報の添付）、バックアップ / 復元、給与明細、MoneyForward CSV 取り込みを Repository へ接続済みです。記録一覧は検索・詳細・編集・削除/取り消しまで接続しています。レシートは撮影・写真選択から AI 読み取り、警告確認、台帳登録まで動きますが、撮影画像の新規保存と未完成入力の下書き保存は未接続です。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。ホーム、記録一覧、手入力（支出・収入・振替）、レシート登録と品目編集、明細照合、定期登録、予算、カテゴリ / 支払元管理、設定（テーマ・画面ロック・マスタ管理）、問い合わせ（診断情報の添付）、バックアップ / 復元、給与明細、MoneyForward CSV 取り込みを Repository へ接続済みです。記録一覧は検索・詳細・編集・削除/取り消しまで接続しています。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。レシートは撮影・写真選択から AI 読み取り、警告確認、台帳登録まで動き、撮影画像の新規保存と未完成入力の下書き保存も接続済みです。設定の「ログイン・利用状況」はPasskeyログイン・招待コード登録・Passkey管理・ゲスト開始・ログアウト・Cloud account削除を接続しています（実機のPasskey / App Attestは未検証）。記録一覧とレシート詳細の接続範囲は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -104,15 +104,15 @@ open /tmp/ios-visual-regression/index.html
 
 PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字幅とは一致しません。差分率はレビューの目安であり、しきい値による失敗判定は行いません。テストは `node --test scripts/visual-regression.test.mjs` で、添付名の復元・対応づけ・PNGのround-trip・差分・レポート生成を確認します。
 
-## 配置と後続PR
+## 配置
 
 - `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、通常タブの本文ScrollViewを管理。通常タブの画面ViewはVStack等で本文を返します。手入力とレシートは各入力ViewがScrollView・左右16pt・固定の登録ボタンを持ちます。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。通常タブの左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。削除の取り消し通知はshellの `KMDeletionNoticeModel` が持ち、タブを移ってもPWAと同じ10秒の期限まで表示します。
 - `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除をRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。「口座・残高を見る」は設定の支払元・口座画面へ遷移します。
-- `Features/{Home,Reconciliation,Settings}/`: ホーム集計、明細照合、設定（テーマ・画面ロック・マスタ管理）を実装済みです。shellの変更は別PRで行います。
+- `Features/{Home,Reconciliation,Settings}/`: ホーム集計、明細照合、設定（テーマ・画面ロック・マスタ管理）を実装済みです。shellの変更は画面PRと分けて行いました。
 - `Features/{ManualEntry,Income,Transfer}`: 実装済みの `KMEntryFormView` を共有します。入力画面がScrollView・左右余白・固定の登録ボタンを持ちます。
-- `Features/Receipt`: 撮影/写真選択、全体/品目表示、警告確認、既存画像のAI読み取り、台帳登録、品目カテゴリの編集。画像の新規保存など残る不足は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
+- `Features/Receipt`: 撮影/写真選択と原本の新規保存、全体/品目表示、警告確認、AI読み取りと台帳登録、品目カテゴリの編集、未完成入力の下書き復元。残る差分は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
-- `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` / `.kmib` の読み書き。使い方と未実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
+- `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` / `.kmib` の読み書き。使い方と実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
 - `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIconはPWAの `public/icon.svg` から角のマスクを外して1024pxで生成しています。再生成はworkspace依存をインストール後に `node apps/ios/scripts/render-app-icon.mjs`（必要なら `PWA_BROWSER_PATH` を指定）。PWAファイルは変更しません。
 
 ### 共通部品のAPI
@@ -184,7 +184,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `AccountRepository` | 残高込みの一覧、追加/変更/利用終了、未使用口座の削除 |
 | `CategoryRepository` | 使用順/件数込みの一覧、グループ、追加/変更/非表示、未使用カテゴリの削除 |
 | `PayeeRepository` | 支払先候補の一覧 |
-| `ReceiptRepository` | レシートsnapshot/原本の参照、下書き保存、未登録下書きの削除、確認値からの台帳登録/既存取引編集 |
+| `ReceiptRepository` | レシートsnapshot/原本の参照、画像と未完成入力の新規保存/復元、未登録レシートの削除、確認値からの台帳登録/既存取引編集 |
 | `StatementRepository` | 明細CSVの原本/履歴/行の一括保存、MoneyForwardの確認・取り込み・対応ルール・履歴と取消 |
 | `ReconciliationRepository` | run計算・自動一致、手動一致・取消、候補却下、登録しない、支出/振替登録、失敗の再試行、判断参照、不正利用疑い |
 | `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
@@ -197,7 +197,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 ホームは `transactions.homeDashboard(month:today:)` の1回の取得で、収支・予算・選択月内の最近3件、要確認の件数/一致件数/最大3行、カテゴリ内訳（帯グラフ用の上位3件＋その他、全カテゴリ一覧の割合）、予算の日の目盛りをまとめて返します。表示用の計算は `Data/Aggregation/HomeAggregation.swift` にあり、Viewは返された値を描画するだけです。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
-`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。登録・登録済み編集の保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡します。Viewで代替エンジンを作らないでください。
+`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。レシート画像は `saveReceiptImage(data:contentType:replacingReceiptId:at:)` が10 MiB・JPEG/PNG/WebP・宣言形式と先頭bytesの一致を検証し、新しいpendingレシートと原本metadataを同じtransactionで保存します。未完成入力は `saveReceiptDraft(_:receiptId:at:)` / `receiptDraft(receiptId:)` が確認値と別に保存/復元し、登録・登録済み編集・未登録削除で同じtransactionから消えます。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。登録・登録済み編集の保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡します。Viewで代替エンジンを作らないでください。
 
 削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理はshellの `KMDeletionNoticeModel` が持ちます。
 
@@ -207,7 +207,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - MoneyForwardは `previewMoneyForward(rows:mappings:choices:at:)` → `importMoneyForward(id:rows:mappings:choices:rememberMappings:at:)`。同じ金額/カテゴリで±3日の候補には `.keep(transactionId:)` / `.separate` の判断が必要です。`rememberMappings` はPWAと同じく利用者が選び、batch履歴には常に対応を保存し、チェック時だけ次回用ルールにも保存します。`moneyForwardHistory` / `moneyForwardRules` で保存結果を取得し、`undoMoneyForward` は今回登録した取引だけを削除します。原CSVは保存しません。SQLiteでは途中成功がないため、失敗時は同じbatch IDで全体を再送します。
 - カテゴリは `saveCategory` / `deleteCategory`、グループは `saveCategoryGroup` / `deleteCategoryGroup` / `reorderCategoryGroups` / `reorderCategories`。使用中は削除拒否して非表示を案内します。グループの非表示も選択肢へ反映します。グループ編集の画面はPWAにないため追加しません。
 - 定期画面は `previewRecurringCatchUp(_:through:)` で過去分を確認し、複数件なら全件/今月分/キャンセルを選びます。`saveRecurringForCatchUp(_:at:)` は設定と次回日を保存し、到来分を自動生成しません。選択日は `catchUpRecurring` で生成します。従来の `saveRecurring(_:at:)` は保存時に自動到来分を処理し、家計簿を開いた時/復元後の `runRecurring(through:at:)` も維持しています。`recurringGenerations` で履歴を表示し、`undoRecurringGeneration(id:dates:at:)` のdates:nilは未編集分だけの一括取消、日付配列は選択削除です。独立した同内容の手入力と編集済み生成行を保持します。削除済み日は再生成しません。
-- v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。有効schedule付き `.kmb` と、旧PWAのMoneyForward履歴のnative投影は未対応です。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
+- v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。`.kmb` 取り込み時、PWAが作成・編集できる基本形の有効scheduleはnativeの定期設定と処理済み日へ投影し、Actualの次回日と既存の生成取引から二重生成を防ぎます。複雑なrule、名前のないschedule、閉口座・非表示カテゴリを参照するscheduleは、黙って落とさず取り込み全体を拒否します。旧PWAの `settings:moneyforward-import` は、完了・部分完了・取消済みのbatchと対応ルールをnative履歴へ投影し、PWAが作成したと確認できる取引だけを取消対象にします。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
 
 ### UI test / Previewのfixture
 
@@ -246,13 +246,22 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 
 `reconciliation.json` は既存TSエンジンの出力から固定した期待値です。再生成はNode 24で `node apps/ios/scripts/generate-reconciliation-fixture.mjs`。起動時はSwiftの照合サービスで入力から計算し、`LocalReconciliationTests.fixtureIsComputedAndEqualsPWAGolden` で期待値と比較します。入力・出力を変えたらRepositoryTestsの件数とPWAスクショ状態を同時に確認します。
 
-### 後続Linux PRへの引き継ぎ
+### Data 層の実装境界
 
-- 永続化: 通常起動は `KMSQLiteStore`。全Repositoryは同じprofileを共有し、変更はSQLite transaction内で確定します。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。複数scene/processのprofile排他は後続です。世代番号で古いsnapshotによる上書きを拒否します。
-- `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は後続projection用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
-- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。Actual Schedule/Rule互換取り込みは後続です。レシート確認からの学習呼出しは、登録・登録済み編集の保存後に `KMCategoryLearningService.observation` を `saveCategoryObservation` へ渡すところまで接続済みです。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
+- 永続化: 通常起動は `KMSQLiteStore`。アプリのcomposition rootがプロセス起動時に1つだけ開き、全sceneは同じ `KMRepositories` とstoreを `EnvironmentValues.repositories` で共有します。storeの全操作は `KMSerialQueue` で到着順に直列化し、別sceneの同時操作は「処理中」エラーにせず先行commitの後に続けます。`.kmb` / `.kmib` の取り込み・書き出し・`returnToPreviousProfile()` も同じ排他に入ります。書き込みは読み込み時のprofile UUIDをCOMMIT直前に `active.json` と再検査し、切り替わっていればtransactionをrollbackして `KMDataError.staleProfile` を返します。世代番号でも古いsnapshotによる上書きを拒否します。画面ごとのデータ再取得は各機能の責務です。詳細は [DATA_LAYER.md「複数sceneのprofile排他」](docs/DATA_LAYER.md) を参照してください。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。
+- `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は投影用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
+- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。PWAの基本形scheduleとMoneyForward履歴の取り込みは `.kmb` reader に接続済みです。Actual Schedule/Ruleの高度な条件の実行は後続です。レシート確認からの学習呼出しは、登録・登録済み編集の保存後に `KMCategoryLearningService.observation` を `saveCategoryObservation` へ渡すところまで接続済みです。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
 - API: AI抽出/分類・給与明細・問い合わせ・アカウントのtyped clientとnative認証は実装済み。AI応答はWorker側schemaと `KMAPIShapes` の両方で検証し、不正な応答を保存・表示しない。問い合わせは同意時だけ診断情報を添付し、秘密鍵を端末へ持たせない。
-- 同期の進行状態/操作protocolは、対応サービスができるまで未定義。画面ロックは端末内の設定（`@AppStorage`）と LocalAuthentication で動作し、テーマと同じく家計簿バックアップ・同期に含めません。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
+- 同期の進行状態/操作protocolは、端末間同期を iOS 版で作らない決定（利用者決定 2026-10-26）のため定義しない。画面ロックは端末内の設定（`@AppStorage`）と LocalAuthentication で動作し、テーマと同じく家計簿バックアップ・同期に含めません。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。
+
+## ログイン・利用状況の接続範囲
+
+`Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` が、設定の「ログイン・利用状況」をPWAの `settings-page-ai` とnative APIへ接続します。Passkeyログイン、招待コードからの登録、Passkeyの追加・一覧・削除、AI利用回数、AI tokenの確認、ログアウト、Cloud account削除を扱います。画面は `KMRepositories` を読まず、ログイン状態は端末内の家計データの利用可否へ影響しません。
+
+- App Attest非対応（Simulatorなど）とWorker未設定では、ログインとAIの操作を出さず、端末内の家計簿を続けられる説明だけを表示します。要求を送ってから失敗させません。
+- 未ログインでAIを使う最初のレシート読み取りでは、PWAのTurnstileダイアログに相当する確認を出し、App Attestでゲストセッションを作って同じ写真の読み取りを続けます。失敗・キャンセルでも写真と手入力は残ります。
+- ログアウトとCloud account削除は端末の家計データを消しません。削除の確認文言と入力する語はPWAと同じです。
+- 画面の検証は `KMNativeAuthModel` のstubとXCUITestのDebug専用状態で行います。実Worker・実Passkey・実App Attest・署名済みentitlement・実機での `KMNativeAPIHost` 注入は未検証で、署名済み実機での確認は利用者が行います。契約は [API_LAYER.md](docs/API_LAYER.md) と [NATIVE_APP_AUTH.md](../../docs/NATIVE_APP_AUTH.md) を参照してください。
 
 ## 記録一覧の接続範囲
 
@@ -260,24 +269,26 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 
 記録一覧の「口座・残高を見る」は、PWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」へ遷移します。削除の取り消し表示は `KMDeletionNoticeModel` がshellで保持し、タブを移っても期限まで表示します。起動時は再起動前に削除した記録のうち、まだ取り消せる最新のものを表示します。
 
-未接続・未検証の範囲は次のとおりです。
+接続済みの範囲と未検証項目は次のとおりです。
 
-- 確認待ちは一覧・未登録下書きの削除・「確認する」からレシート登録画面を開く導線を接続しています。
+- 確認待ちは一覧・撮影画像と未完成入力の復元・未登録下書きの削除・「確認する」からレシート登録画面を開く導線を接続しています。
 - 登録済みレシートは記録詳細の行からレシート編集画面（「支出の記録を編集」）を開き、基本項目・品目別カテゴリ・値引き・税額を編集できます。レシート画像は同画面のプレビューから全画面表示し、タップ位置を中心に2.5倍へ拡大できます。分類理由の閲覧も接続済みです。登録済み給与の収入記録では、登録時に確認した内訳（総支給額・控除・対象期間・支給項目）を「給与明細 / 内訳（登録時）」から開けます。
 - 日付と時刻はOSのピッカーです。カテゴリ・口座はOSの選択メニュー、削除確認はOSのダイアログです。支出集計の対象外はOSのスイッチを使います。
-- 実機、Dynamic Type、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Repositoryの単体検証とは区別します。
+- 実機、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Dynamic TypeはSimulatorのアクセシビリティXLをUIテストで確認していますが、実機の最大サイズとAX5までの全画面は未検証です。Repositoryの単体検証とは区別します。
 
 ## PWAとの差分・検証範囲
 
 - 記録一覧以外のタブも実装済みです。ホームの集計、照合、設定、定期、予算、マスタ、バックアップ、給与明細、MoneyForward 取り込みまで接続し、記録一覧は空状態と種類別の空状態も表示します。各画面の PR では参照スクリーンショットと同じ状態を撮って比較しています。PWA との全画面の比較は `scripts/visual-regression.mjs` が artifact にまとめ、差分率は目安で合否判定にはしません。
+- 認証: PWAのTurnstileウィジェットの代わりにApp Attestで端末を確認します。確認ダイアログの説明は「ロボットでないこと」ではなく「この端末が正規のアプリか」に置き換え、それ以外の文言・順序・操作はPWAに合わせます。招待コードは `window.prompt` ではなくOSのアラート入力欄です。SimulatorとApp Attest非対応端末では、PWAの汎用エラーではなく理由と端末内機能の継続を表示します。ログアウト後はゲストの当日利用回数を再取得します（PWAは直前の値を残します）。実機のPasskey・App Attest・Associated Domains・`KMNativeAPIHost` の注入は未検証です。
 - 「口座・残高を見る」はPWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」を開きます。戻ると設定の一覧です。
-- 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移っても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
+- 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移しても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
 - お問い合わせは文章のみです。利用者の決定（2026/10）で、iOS版は音声の録音・文字起こしを作らず、設定行の「声でも送れます」と問い合わせ画面の音声の文言・ボタンも表示しません。診断情報は「直前のアプリ動作情報を添付する」を選んだ時だけ、PWAと同じ固定語彙（メモリに最大40件・15分、送信時は直近20件）を添付します。問い合わせ画面内の操作・エラーは添付から除外します。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。
 - セグメントは36ptの見た目を44ptのヒット領域に中央配置します。下地の高さ44ptもPWAと一致させ、アクセシビリティのために外側の余白を増やしません。
-- フォントの字形・改行はネイティブの組版に依存します。固定サイズをPWAに合わせた土台であり、Dynamic Typeの拡大対応は後続の検証課題です。
+- フォントの字形・改行はネイティブの組版に依存します。文字サイズはPWAの固定サイズを基準にし、標準（Large）では今の見た目を変えず、利用者が大きくした時だけ `@ScaledMetric` で `relativeTo` の比率に比例して拡大します。縮小設定では基準より小さくしません。アクセシビリティサイズでは、記録行・入力行・照合行を折り返しや縦積みへ切り替え、金額だけ `minimumScaleFactor` で収めます。下部ナビは高さ64ptを保ち、ラベルを1行に収めます。
+- Dynamic TypeのアクセシビリティXLは `KakeiMatchUITests/DynamicTypeLayoutTests` が、Home・記録一覧・手入力・レシート・照合・設定の主要要素が画面内にあり、タップできることを確認します。標準サイズの見た目は既存のUIテストとスクリーンショットで確認します。
 - 参考画像: `docs/screenshots/apricot-foundation-light-390-{home,chooser,records}.png`。実際に取得したCI画像との残差分・検証SHAはPR本文へ記録します。
 
 ## 参照資料

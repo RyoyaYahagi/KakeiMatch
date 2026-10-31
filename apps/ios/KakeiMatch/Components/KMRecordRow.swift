@@ -57,23 +57,12 @@ struct KMRecordRow: View {
     let record: KMRecordSummary
     let identifier: String
     let open: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Button(action: open) {
-            HStack(spacing: KMSpacing.space3) {
-                KMIcon(name: record.visual.icon, size: 20)
-                    .foregroundStyle(record.visual.foreground)
-                    .frame(width: KMLayout.recordIcon, height: KMLayout.recordIcon)
-                    .background(record.visual.background, in: Circle())
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(record.title).font(KMTypography.body(16, weight: .medium))
-                        .foregroundStyle(KMColor.text).lineLimit(1)
-                    (Text(record.needsReview ? "△ 要確認" + (record.note.isEmpty ? "" : " · ") : "")
-                        .foregroundColor(KMColor.warning) + Text(record.note).foregroundColor(KMColor.muted))
-                        .font(KMTypography.note).lineLimit(1)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                KMAmount(yen: record.amountYen, kind: record.kind)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize { largeTextLayout } else { standardLayout }
             }
             .padding(.vertical, KMSpacing.space2)
             .frame(minHeight: KMLayout.recordHeight)
@@ -84,5 +73,46 @@ struct KMRecordRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(record.accessibilityLabel)
         .accessibilityIdentifier(identifier)
+    }
+
+    private var standardLayout: some View {
+        HStack(spacing: KMSpacing.space3) {
+            icon
+            VStack(alignment: .leading, spacing: 0) {
+                Text(record.title).font(KMTypography.body(16, weight: .medium))
+                    .foregroundStyle(KMColor.text).lineLimit(1)
+                note.lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            KMAmount(yen: record.amountYen, kind: record.kind)
+        }
+    }
+
+    /// At accessibility sizes the amount moves under the label and the note may
+    /// use two lines, so neither the store name nor the amount is truncated.
+    private var largeTextLayout: some View {
+        HStack(alignment: .top, spacing: KMSpacing.space3) {
+            icon
+            VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                Text(record.title).font(KMTypography.body(16, weight: .medium))
+                    .foregroundStyle(KMColor.text).lineLimit(2)
+                note.lineLimit(2)
+                KMAmount(yen: record.amountYen, kind: record.kind)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var icon: some View {
+        KMIcon(name: record.visual.icon, size: 20)
+            .foregroundStyle(record.visual.foreground)
+            .frame(width: KMLayout.recordIcon, height: KMLayout.recordIcon)
+            .background(record.visual.background, in: Circle())
+    }
+
+    private var note: some View {
+        (Text(record.needsReview ? "△ 要確認" + (record.note.isEmpty ? "" : " · ") : "")
+            .foregroundColor(KMColor.warning) + Text(record.note).foregroundColor(KMColor.muted))
+            .font(KMTypography.note)
     }
 }

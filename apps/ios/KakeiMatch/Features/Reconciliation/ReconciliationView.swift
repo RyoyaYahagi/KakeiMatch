@@ -9,6 +9,7 @@ struct ReconciliationView: View {
     @State private var suspectedExpanded = false
     @State private var expandedRows: Set<String> = []
     @State private var confirmation: Confirmation?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private struct Confirmation: Identifiable {
         let id = UUID()
@@ -19,13 +20,19 @@ struct ReconciliationView: View {
     var body: some View {
         ScrollViewReader { scroll in
             VStack(alignment: .leading, spacing: KMSpacing.space3) {
-                HStack {
-                    Text("照合").font(KMTypography.body(22, weight: .bold)).foregroundStyle(KMColor.text)
-                    Spacer(minLength: 8)
-                    Button { Task { await model.rerun(repositories) } } label: {
-                        HStack(spacing: 4) { KMIcon(name: "repeat", size: 18); Text("もう一度照合する") }
-                    }.buttonStyle(KMButtonStyle(role: .secondary))
-                        .accessibilityIdentifier("reconciliation.runAgain")
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                            Text("照合").font(KMTypography.body(22, weight: .bold)).foregroundStyle(KMColor.text)
+                            rerunButton
+                        }
+                    } else {
+                        HStack {
+                            Text("照合").font(KMTypography.body(22, weight: .bold)).foregroundStyle(KMColor.text)
+                            Spacer(minLength: 8)
+                            rerunButton
+                        }
+                    }
                 }
                 if let error = model.errorMessage {
                     KMBanner(status: .danger, title: "照合情報を確認してください", detail: error,
@@ -79,6 +86,13 @@ struct ReconciliationView: View {
         }
     }
     private var rule: some View { Rectangle().fill(KMColor.border).frame(height: 1) }
+
+    private var rerunButton: some View {
+        Button { Task { await model.rerun(repositories) } } label: {
+            HStack(spacing: 4) { KMIcon(name: "repeat", size: 18); Text("もう一度照合する") }
+        }.buttonStyle(KMButtonStyle(role: .secondary))
+            .accessibilityIdentifier("reconciliation.runAgain")
+    }
     private var importer: some View {
         ReconciliationImporter(model: model, repositories: repositories)
     }
@@ -260,19 +274,46 @@ struct ReconciliationSummaryRow: View {
     var statement: KMStatementTransaction
     var note: String
     var status: KMStatus?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
     var body: some View {
-        HStack(spacing: 12) {
-            KMIcon(name: status == .warning ? "warning" : status == .success ? "check" : status == nil ? "eyeOff" : "unmatched", size: 22)
-                .foregroundStyle(status?.foreground ?? KMColor.muted)
-                .frame(width: 36, height: 36).background(status?.background ?? KMColor.sunken, in: Circle())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(statement.merchant).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
-                // PWA's later .record-note CSS rule overrides the note tone.
-                Text("\(KMReconciliationPresentation.shortDay(statement.usedDate)) · \(note)")
-                    .font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted).lineLimit(1)
-            }.frame(maxWidth: .infinity, alignment: .leading)
-            KMAmount(yen: statement.amountYen, size: 16)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    HStack(alignment: .top, spacing: 12) {
+                        statusIcon
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(statement.merchant).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(2)
+                            noteText.lineLimit(2)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    KMAmount(yen: statement.amountYen, size: 16)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .padding(.vertical, KMSpacing.space2)
+            } else {
+                HStack(spacing: 12) {
+                    statusIcon
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(statement.merchant).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
+                        noteText.lineLimit(1)
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    KMAmount(yen: statement.amountYen, size: 16)
+                }
+            }
         }.frame(minHeight: 64).contentShape(Rectangle())
             .accessibilityElement(children: .combine)
+    }
+
+    private var statusIcon: some View {
+        KMIcon(name: status == .warning ? "warning" : status == .success ? "check" : status == nil ? "eyeOff" : "unmatched", size: 22)
+            .foregroundStyle(status?.foreground ?? KMColor.muted)
+            .frame(width: 36, height: 36).background(status?.background ?? KMColor.sunken, in: Circle())
+    }
+
+    private var noteText: some View {
+        // PWA's later .record-note CSS rule overrides the note tone.
+        Text("\(KMReconciliationPresentation.shortDay(statement.usedDate)) · \(note)")
+            .font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted)
     }
 }

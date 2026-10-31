@@ -144,3 +144,58 @@ struct KMReceipt: Codable, Equatable, Sendable, Identifiable {
     var confirmedValue: KMConfirmedReceipt?
     var registration: Registration
 }
+
+// TS: apps/pwa/src/local-ui.ts — ReceiptDraft
+/// Unfinished editor input. Kept separate from `KMConfirmedReceipt`; empty or malformed
+/// amount text stays as typed so a partially filled form can be reopened unchanged.
+struct KMReceiptDraft: Codable, Equatable, Sendable {
+    var merchant: String
+    var purchasedDate: String
+    var purchasedTime: String?
+    var totalAmountText: String
+    var categoryId: String
+    var accountId: String
+    var items: [KMReceiptItem]
+    var adjustments: [KMReceiptAdjustment]
+    var taxAmountText: String
+    var memo: String?
+    var excludedFromSpending: Bool
+
+    /// PWA local-ui.ts: an empty form is saved but not restored over confirmed/extracted values.
+    var isUseful: Bool {
+        !merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || (Int(totalAmountText) ?? 0) > 0 || !items.isEmpty
+    }
+}
+
+// TS: src/lib/receipt-validation.ts — detectContentType / validateReceiptImage
+enum KMReceiptImageValidation {
+    static let maxBytes = 10 * 1024 * 1024
+    static let contentTypes = ["image/jpeg", "image/png", "image/webp"]
+
+    static func validate(_ data: Data, declaredContentType: String) throws -> KMReceipt.Image {
+        guard !data.isEmpty else { throw KMDataError.invalidData("画像ファイルを選択してください。") }
+        guard data.count <= maxBytes else { throw KMDataError.invalidData("画像のサイズは10 MiB以下にしてください。") }
+        guard contentTypes.contains(declaredContentType) else {
+            throw KMDataError.invalidData("JPEG、PNG、WebP形式の画像を選択してください。")
+        }
+        guard let detected = detect(data) else {
+            throw KMDataError.invalidData("画像形式を確認できませんでした。JPEG、PNG、WebP形式の画像を選択してください。")
+        }
+        guard detected == declaredContentType else {
+            throw KMDataError.invalidData("画像の形式がファイル情報と一致しません。画像を選び直してください。")
+        }
+        return .init(blobId: "", contentType: detected, sizeBytes: data.count)
+    }
+
+    static func detect(_ data: Data) -> String? {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.count >= 3, bytes[0] == 0xff, bytes[1] == 0xd8, bytes[2] == 0xff { return "image/jpeg" }
+        if bytes.count >= 8, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].enumerated().allSatisfy({ $1 == bytes[$0] }) {
+            return "image/png"
+        }
+        if bytes.count >= 12, String(decoding: bytes[0..<4], as: UTF8.self) == "RIFF",
+           String(decoding: bytes[8..<12], as: UTF8.self) == "WEBP" { return "image/webp" }
+        return nil
+    }
+}

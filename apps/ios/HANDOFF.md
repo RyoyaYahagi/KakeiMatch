@@ -45,7 +45,7 @@ cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 
 5. ビルド変数は次のビルドで反映される。main へ次の PR がマージされるのを待つか、`cf builds create dd4b3c09-9880-47c0-850c-bc30ce881bc5`（body の形は `cf schema builds create` で確認）で再ビルドする。
 6. 反映後に `curl https://kakeimatch.yhgry.workers.dev/api/native/config` が `available:true`、`/.well-known/apple-app-site-association` が 200 で `webcredentials.apps` に `<App ID Prefix>.jp.kakeimatch.ios` を含むことを確認する。
-7. 署名済みの実機で、PWA で登録済みの Passkey によるログイン、App Attest によるゲスト利用、ログアウト・失効を確認する（Simulator は App Attest 非対応なので、クラウド機能が拒否され端末内機能は動くことを確認する）。結果は Issue #240 にコメントする。
+7. 署名済みの実機で、PWA で登録済みの Passkey によるログイン、App Attest によるゲスト利用、ログアウト・失効を確認する（Simulator は App Attest 非対応なので、クラウド機能が拒否され端末内機能は動くことを確認する）。この確認は利用者が行い、結果は Issue #240 にコメントする。`KMNativeAPIHost` は `project.yml` の `postBuildScripts` が署名前に `$(KM_NATIVE_HOST)` を注入するため、生成plistの値を実機ビルドで確認する。
 
 ローカルで生成済みのprojectから確認する場合（CIはビルド成果物を共有してテストを分割する。詳細とartifactの取得方法は `README.md` の「生成・ビルド・テスト」を参照。simulator 名は `xcrun simctl list devices available` で実在するものを使う）:
 
@@ -84,7 +84,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 設定・テーマ・画面ロック | `feature/ios-settings`, `feature/ios-settings-shell` | #303, #305 | **Mac** | マージ済み（PWA準拠の設定、テーマ、画面ロック） |
 | 明細照合（CSV取り込み・判断履歴） | `feature/ios-reconciliation` | #304 | **Mac** | マージ済み |
 | 手入力（支出・収入・振替） | `feature/ios-entry` | #307 | **Mac** | マージ済み |
-| レシート登録（撮影・AI読み取り・警告確認・台帳登録） | `feature/ios-receipt` | #308 | **Mac** | マージ済み。撮影画像の新規保存と未完成入力の下書き保存は未接続 |
+| レシート登録（撮影・AI読み取り・警告確認・台帳登録） | `feature/ios-receipt` | #308 | **Mac** | マージ済み。撮影画像の新規保存と未完成入力の下書き保存は #331 で接続 |
 | 予算 | `feature/ios-budget` | #309 | **Mac** | マージ済み |
 | 問い合わせ | `feature/ios-contact`, `feature/ios-contact-diagnostics` | #310, #320 | **Mac** | マージ済み。同意時の診断情報添付まで接続 |
 | 定期登録（追いつき履歴を含む） | `t3/ios-recurring-registration`, `t3/ios-recurring-catch-up` | #312, #315 | **Mac** | マージ済み |
@@ -98,10 +98,20 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | `feature/ios-visual-regression` | #325 | **Mac** | マージ済み（`e91a9db`）。`ios` job の main push・手動実行で `ios-visual-regression` artifact を生成。差分率による合否判定はしない |
 | Home の表示集計を Repository の1回の取得にまとめる | `feature/ios-home-summary-repository` | #326 | **Mac** | マージ済み（`6cbccec`）。`transactions.homeDashboard(month:today:)` で収支・予算・要確認・カテゴリ内訳をまとめて取得 |
 | ローカル Simulator の JavaScriptCore クラッシュ修正 | `fix/ios-local-jsc-crash` | #328 | **Mac** | マージ済み（`fc4decd`）。原因と回避策は `docs/LOCAL_SIMULATOR_JSC.md` |
+| 記録詳細の給与内訳 | `feature/ios-payroll-breakdown-detail` | #327 | **Mac** | マージ済み（`ce8afb3`）。登録済み給与の収入記録で、登録時に確認した内訳を折りたたみ表示 |
+| AI 応答 schema 検証の監査 | `feature/ios-ai-response-validation` | #330 | **Mac** | マージ済み（`6aec4d6`）。レシート・分類・給与の3応答は `KMAPIShapes` で検証済みと確認し、不正応答の拒否テストを追加 |
+| `.kmb` の有効 schedule と MoneyForward 履歴の投影 | `feature/ios-kmb-schedules-mf-history` | #333 | **Mac** | マージ済み（`66401c2`）。基本形 schedule を native 定期へ、旧 MoneyForward 履歴を native へ投影。複雑な schedule は取り込み全体を拒否 |
+| 設定（ログイン・利用状況） | `feature/ios-native-auth-ui` | #322 | **Mac** | マージ済み（`bf2277a`）。初回Passkeyログイン・招待コード登録・Passkey追加/一覧/削除・ゲスト開始・AI利用回数・ログアウト・Cloud account削除。実機のPasskey / App Attestは未検証 |
+| ネイティブ認証文書の更新 | `docs/native-app-auth-ios-ui` | #329 | **Mac** | マージ済み（`b6f047c`）。`docs/NATIVE_APP_AUTH.md` を #322 の画面と `KMNativeAPIHost` 注入に合わせて更新 |
+| Dynamic Type 対応 | `feature/ios-dynamic-type` | #334 | **Mac** | マージ済み（`2ba3521`）。標準はPWAの固定サイズ、拡大時だけ `@ScaledMetric` で比例拡大。アクセシビリティXLをUIテストで確認 |
+| 複数 scene の profile 排他と古い profile 書込み拒否 | `feature/ios-profile-exclusivity` | #332 | **Mac** | マージ済み（`69a11e1`）。`KMSerialQueue` で全操作を直列化し、COMMIT直前に `active.json` を再検査して `staleProfile` を返す |
+| レシート撮影画像の新規保存と未完成入力の下書き保存 | `feature/ios-receipt-image-draft` | #331 | **Mac** | マージ済み（`e5166ec`）。撮影直後に原本を保存し、下書きを350msのdebounceで保存・再open時に復元 |
 
-2026-10-31 時点で、初回の Passkey ログイン・ゲスト開始・ログアウト画面は PR #322 で進行中です（未マージ）。
+2026-10-31 時点で、3 節の画面はすべて main にマージ済みです。残る作業は 6 節の実機確認と、取り込み・Dynamic Type の未検証範囲です。
 
-## 3. Mac 側でやること: 画面ごとの PR
+## 3. 画面ごとの実装（すべてマージ済み）
+
+3 節の画面はすべて main にマージ済みです。以下は当時の進め方と完了条件の記録で、新しい画面を追加するときの基準として残します。
 
 進め方は 1 画面 1 PR。`Features/<Name>/<Name>View.swift` を変更する。shell・共通部品を変えたいときは別の小さな PR に分ける。
 
@@ -145,16 +155,16 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - Home は `transactions.homeDashboard(month:today:)` の1回で、要確認の件数/一致件数/最大3行、カテゴリ内訳、予算の日の目盛りまで取得する。表示用の計算は `Data/Aggregation/HomeAggregation.swift` にあり、Viewで再計算しない。`today` は `repositories.referenceDate` から渡す。
 - 照合・重複検出・状態遷移・カテゴリ学習・定期・予算の計算は `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/` にある。View に計算を書かない。照合の全操作は SQLite に接続済みで、run 入力 snapshot・候補却下・別名・取消履歴も再起動後に残る。カテゴリ学習は `saveCategoryObservation` で確認履歴を保存し、`categoryRules` で導出結果を取得する。レシート登録成功後、画面モデルが `KMCategoryLearningService.observation` で確認履歴を導出し、既存 Repository へ保存する。定期は `previewRecurringCatchUp` で未登録日を計算し、`saveRecurringForCatchUp` で自動実行せず予定を保存した後、`catchUpRecurring(id:dates:through:at:)` で選択日の取引・処理済み記録・生成履歴を一括保存する。`runRecurring(through:at:)` は保存済みの `nextDate` 以降を自動登録し、過去分の選択で飛ばした日を後から生成しない。予算設定も永続化済み。定期の生成snapshot/未編集分の取消/編集行の保持/自動到来分の処理も接続済み。`saveRecurring(_:at:)` にfixture時計を渡し、家計簿を開く時/復元後には `runRecurring(through:at:)` を呼ぶ。自動登録OFFでも追いつき登録可能。旧 v1/v2/v3 DB は v4 へ移行し、旧 run は表示を維持するが操作前に再照合する。
 - 取引の書き込みは `Data/Ledger` に接続済み。手入力/振替は `saveManual` / `saveTransfer`（新規id:nil・編集は既存ID）。同一importedIdの同値再送は同じID、異値は既存保持でエラー。編集は既存importedId/cleared/reconciled、振替の対IDを維持する。支払先はmasterへ保存し、取引と同じtransactionで確定する。
-- レシートは下書きの `saveReceipt` 後、`receipts.registerReceipt(id:at:)` で確認値を台帳へ登録する。編集は `editReceipt(id:value:expectedUpdatedAt:at:)`。子の合計検証・値引き/外税の按分・単一/分割の組み替えをViewで行わない。画像あり0円も扱う。登録済みsnapshotを `saveReceipt` で直接置換しない。画像の新規保存は後続。登録後のカテゴリ学習は `KMCategoryLearningService.observation` と `categoryLearning.saveCategoryObservation` を使う。
+- レシートは下書きの `saveReceipt` 後、`receipts.registerReceipt(id:at:)` で確認値を台帳へ登録する。編集は `editReceipt(id:value:expectedUpdatedAt:at:)`。子の合計検証・値引き/外税の按分・単一/分割の組み替えをViewで行わない。画像あり0円も扱う。登録済みsnapshotを `saveReceipt` で直接置換しない。画像の新規保存は `receipts.saveReceiptImage(data:contentType:replacingReceiptId:at:)`、未完成入力の下書きは `saveReceiptDraft` / `receiptDraft` で接続済み。登録後のカテゴリ学習は `KMCategoryLearningService.observation` と `categoryLearning.saveCategoryObservation` を使う。
 - レシート分類では `categoryLearning.categoryRules()` の品目規則を店規則より優先して適用し、未解決の品目 index だけを `KMWorkerAPI.classify(..., itemIndexes:)` に渡す。登録後は画面モデルが確認値から学習観測を導出し、既存 Repository へ保存する。
 - 削除は `transactions.deleteTransaction(id:expected:at:)` → `KMTransactionDeletion`。root/振替対/分割親子と関連レシート状態を一括で削除印にし、画像/品目/確認値は保持する。履歴IDで `undoTransactionDeletion(id:at:)` を呼ぶと10秒未満に同じIDで戻る。`transactionDeletions()` は再open後も取得できる。表示と期限の管理はshellの `KMDeletionNoticeModel` が持ち、別タブでも期限まで表示し、起動時は最新の未期限切れを復元する。旧 `deleteTransaction(id:)` も同じ削除処理だがUndoの戻り値はない。schema v1/v2/v3はv4へ移行し、編集/削除履歴は`.kmib`にも残る。
 - 明細は `statements.importStatement(data:provider:at:)` で原本/履歴/行を一括保存。取り込み時に支出取引は作らず、サービスとCSVだけで受け付ける。再取り込みは判断を保ち、欠けた行だけ回復する。
 - MoneyForwardは `StatementRepository` の `previewMoneyForward` → `importMoneyForward`。カテゴリ/口座の一括対応と候補へのkeep/separate判断を渡す。`moneyForwardHistory` / `moneyForwardRules` / `undoMoneyForward` を利用する。CSV原本は保存しない。失敗時は全体rollbackなので同じbatch IDで再送する。
 - 口座の `createAccount(_:startingBalanceYen:startingDate:)` は開始残高を日付付きで計上。通常の `saveAccount` は残高を上書きせず、残高0円だけ利用終了可能（空口座も再開可能）。表示残高は今日まで、固定日は `accounts(asOf:includeClosed:)`。カテゴリは使用中削除を拒否し非表示を案内。グループhiddenも選択可否へ反映。グループ編集画面はPWAにないので追加しない。
 - 定期取消は `recurringGenerations(scheduleId:)` → `undoRecurringGeneration(id:dates:at:)`。dates:nilなら未編集生成行だけ取消、編集行と独立した手入力は保持。日付配列なら選択行のsnapshotを再検査。取消済み日を再生成しない。
-- 対象はKakeiMatch画面の操作結果。Actual専用rule/CRDTは再実装しない。有効schedule付き`.kmb`の取り込みと旧PWAのMoneyForward履歴のnative投影は未対応（元記録はprovenanceに保持）。詳細/テスト対応は `docs/DATA_LAYER.md`「書き込みの意味論」を参照する。
+- 対象はKakeiMatch画面の操作結果。Actual専用rule/CRDTは再実装しない。`.kmb` の基本形scheduleはnative定期へ、旧PWAのMoneyForward履歴はnativeの移行履歴へ取り込み時に投影する（元記録はprovenanceに保持）。複雑なscheduleは取り込み全体を拒否する。詳細/テスト対応は `docs/DATA_LAYER.md`「書き込みの意味論」を参照する。
 - `.kmb` 取り込みは `repositories.localStore` の `importBackup(from:)` / `returnToPreviousProfile()`。画面は利用者確認、security-scoped URL、エラー表示、成功後の再取得を担当する。
-- APIは `KMWorkerAPI` actorのasync/awaitを使う。native modeはOrigin/Cookieを送らず `/api/native/*` 専用境界を使う。`.existingWorkerCompatibility` は旧Web API向けの明示オプションで、アプリ真正性の証明ではない。既存WebのOrigin/CSRF条件は変更しない。`KM_NATIVE_HOST` はbundleのAPI hostと `webcredentials:` entitlementの両方に使い、previewでは同じbuild settingをpreview hostへ上書きする。App Attest非対応時はクラウド機能を拒否し、端末内機能は継続する。初回Passkey/ゲスト作成UI、診断recorder、録音UI、Repository連携は未実装。契約と未検証範囲は `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
+- APIは `KMWorkerAPI` actorのasync/awaitを使う。native modeはOrigin/Cookieを送らず `/api/native/*` 専用境界を使う。`.existingWorkerCompatibility` は旧Web API向けの明示オプションで、アプリ真正性の証明ではない。既存WebのOrigin/CSRF条件は変更しない。`KM_NATIVE_HOST` はbundleのAPI hostと `webcredentials:` entitlementの両方に使い、previewでは同じbuild settingをpreview hostへ上書きする。`project.yml` の `postBuildScripts` が署名前に `KMNativeAPIHost` を生成plistへ注入する（`INFOPLIST_KEY_` はcustom keyを反映しないため使わない）。App Attest非対応時はクラウド機能を拒否し、端末内機能は継続する。初回Passkeyログイン・招待登録・Passkey管理・ゲスト開始・ログアウトは設定の「ログイン・利用状況」とレシート読み取り前の確認へ接続済み。実Worker・実Passkey・実App Attest・実機での `KMNativeAPIHost` 注入は未検証で、署名済み実機での確認は利用者が行う。診断recorderは問い合わせの同意時に動作する。音声の録音・文字起こしは作らない（利用者決定、2026-10-30）。契約と未検証範囲は `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
 - `readReceipt`は元画像を保持する責任を持たない。画面/Repository側で保存してから呼ぶ。給与は `KMMaskedPayrollImage.prepare` に利用者指定マスクと確認を渡し、同じ画像を見せて同意を取る。送信失敗・画面移動時の給与画像破棄も画面側で行う。contactのflowIdは結果不明時に勝手に再発行しない。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数を使い、画面ごとに作らない。
 
@@ -175,9 +185,13 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - iOS → PWA の書き出しは提供しない（利用者決定 2026-10-26）。PWA の `.kmb` は iOS へ一方向に取り込める。iOS のバックアップは iOS 同士でのみ復元できる
 - 端末間同期は iOS 版では作らない（利用者決定 2026-10-26）
 - 認証: iOS native APIはWebのOrigin/Cookieを送らず、専用session/token境界を使う。旧WebのOrigin/CSRF検査を緩めない。Worker側のendpoint契約と未確認項目は `../../docs/NATIVE_APP_AUTH.md` に記載する。
-- Cloud Passkey: `ASAuthorizationPlatformPublicKeyCredentialProvider`、App Attest、`webcredentials:` entitlementを使うstub差し替え可能なAPI層を追加。previewは `KM_NATIVE_HOST` でAPI URLとAssociated Domainsを同時に切り替える。実端末のPasskey、Associated Domains、署名済みentitlementとWorker統合は未検証。初回登録・ログイン・追加の画面導線、session参照・一覧/削除UIは未実装。
+- Cloud Passkey: `ASAuthorizationPlatformPublicKeyCredentialProvider`、App Attest、`webcredentials:` entitlementを使うstub差し替え可能なAPI層を追加。previewは `KM_NATIVE_HOST` でAPI URLとAssociated Domainsを同時に切り替える。`KMNativeAPIHost` は `project.yml` の `postBuildScripts` が署名前に生成plistへ注入する。実端末のPasskey、App Attest、Associated Domains、署名済みentitlement、`KMNativeAPIHost` の注入とWorker統合は未検証で、署名済み実機での確認は利用者が行う。初回登録・ログイン・Passkey追加/一覧/削除・ログアウトの画面導線は設定の「ログイン・利用状況」に実装し、stubとXCUITestで確認した。
 - ゲスト: Turnstileへのnative fallbackはせず、App Attest assertionから専用guest sessionを作る契約。端末合言葉はKeychain、native AI tokenはopaqueな短期値をメモリだけに保持し、30秒の期限余裕で更新する。App Attest非対応時も端末内利用は継続する。詳細・endpoint schemaは `../../docs/NATIVE_APP_AUTH.md` / `docs/API_LAYER.md`。
-- 送信前画像: 通常レシートはPWAどおり元JPEG/PNG/WebPを送るため、HEIC変換や自動メタデータ除去を保証しない。給与だけは1800px以下への縮小・黒塗り・JPEG再描画を提供する。マスキング操作と送信後破棄のUIは別担当。
+- 送信前画像: 通常レシートはPWAどおり元JPEG/PNG/WebPを送るため、HEIC変換や自動メタデータ除去を保証しない。給与だけは1800px以下への縮小・黒塗り・JPEG再描画を提供し、マスキングの指指定・同意チェック・送信後の画像破棄は `Features/Payroll` で接続済み。
+- Dynamic Type: `KMTypography` は標準（Large）でPWAの固定サイズを保ち、拡大設定だけ `@ScaledMetric` で比例拡大する。SimulatorのアクセシビリティXL（AX3）は `DynamicTypeLayoutTests` で確認済み。実機、AX5までの全画面、ダーク外観のアクセシビリティサイズ、VoiceOver、横向きは未検証。
+- `.kmb` 取り込み: PWAの基本形scheduleはnative定期へ、旧MoneyForward履歴はnativeの履歴へ投影する。複雑なActual schedule（可変金額・終了条件・休日調整・複数条件）は取り込み全体を拒否する（黙って落とさないための意図的な制約）。実機・実PWAで作成したschedule付き`.kmb`での手動確認はしていない。
+- 複数scene: iPadの複数ウィンドウは有効で、全sceneが同じ `KMSQLiteStore` を共有する。`KMSerialQueue` で直列化し、profile切替後の古い書込みは `staleProfile` で拒否する。実機iPadでの複数ウィンドウ手動操作、大容量DBでの待機時間、強制終了時の挙動は未検証。profile切替後に他sceneが保持する表示snapshotは自動更新されない。
+- レシート画像の保存・下書き: 撮影/写真選択の直後に原本を保存し、未完成入力は350msのdebounceで保存・再open時に復元する。署名済み実機のカメラ撮影・写真ライブラリ権限拒否・HEIC等の各形式、6 MiB超10 MiB以下の画像、実端末での再起動後の下書き復元、SQLiteの空き容量不足時の挙動は未検証。
 
 - `.xcodeproj` はコミットせず、XcodeGen の `project.yml` から生成する（Issue の想定構成との差）
 - Liquid Glass の枠部分は PWA と見た目が変わる（利用者の希望による意図的な差）

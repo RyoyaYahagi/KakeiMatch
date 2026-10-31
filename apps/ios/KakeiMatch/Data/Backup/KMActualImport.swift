@@ -71,7 +71,7 @@ import ZIPFoundation
     private static func readActual(url: URL, budgetId: String) throws -> KMInMemoryStore {
         let db = try KMSQLite(url: url, readOnly: true)
         guard try db.rows("PRAGMA integrity_check").first?.string("integrity_check") == "ok" else { throw KMPortableBackup.invalid() }
-        let required = ["__migrations__", "accounts", "categories", "category_groups", "transactions", "payees", "category_mapping", "payee_mapping", "zero_budgets", "reflect_budgets", "schedules", "preferences"]
+        let required = ["__migrations__", "accounts", "categories", "category_groups", "transactions", "payees", "category_mapping", "payee_mapping", "zero_budgets", "reflect_budgets", "schedules", "schedules_next_date", "rules", "preferences"]
         let tables = Set(try db.rows("SELECT name FROM sqlite_master WHERE type='table'").compactMap { $0.string("name") })
         struct Migrations: Decodable { var apiVersion: String; var ids: [Int] }
         guard let migrationURL = Bundle.main.url(forResource: "actual-migrations", withExtension: "json") else { throw KMPortableBackup.invalid() }
@@ -89,10 +89,6 @@ import ZIPFoundation
         guard currency == nil || currency == "" || currency == "JPY" else { throw KMDataError.unsupported("円以外の通貨を設定した家計簿には対応していません。") }
         let budgetType = try db.rows("SELECT value FROM preferences WHERE id='budgetType'").first?.string("value") ?? "envelope"
         guard budgetType == "envelope" || budgetType == "tracking" else { throw KMDataError.unsupported("未対応の予算方式です。") }
-        // Schedule/rule interpretation belongs to the parallel recurring service. Do not silently lose an active schedule.
-        guard try db.rows("SELECT id FROM schedules WHERE tombstone=0 AND completed=0 LIMIT 1").isEmpty else {
-            throw KMDataError.unsupported("定期登録を含む家計簿の取り込みは未対応です。元のPWAのデータは変更されていません。")
-        }
         let accountRows = try db.rows("SELECT id,name,closed,offbudget FROM accounts WHERE tombstone=0 ORDER BY sort_order,id")
         let accounts = try accountRows.map { row in KMAccount(id: try row.required("id"), name: try row.required("name"), closed: row.int("closed") == 1, offbudget: row.int("offbudget") == 1) }
         let groupRows = try db.rows("SELECT id,name,is_income,hidden FROM category_groups WHERE tombstone=0 ORDER BY sort_order,id")
@@ -169,9 +165,10 @@ import ZIPFoundation
             let key = try KMYearMonth(String(format: "%04d-%02d", month / 100, month % 100)).rawValue
             store.nativeBudgets[key, default: [:]][category] = try row.yen("amount")
         }
+        try KMScheduleImport.project(db: db, into: store, at: Date())
         return store
     }
-    private static func actualDate(_ value: Int?) throws -> KMDate {
+    static func actualDate(_ value: Int?) throws -> KMDate {
         guard let value else { throw KMPortableBackup.invalid() }
         return try KMDate(String(format: "%04d-%02d-%02d", value / 10000, value / 100 % 100, value % 100))
     }
@@ -214,7 +211,13 @@ import ZIPFoundation
         return result
     }
     private static func apply(records: [KMPortableRecord], to store: KMInMemoryStore, budgetId: String) throws {
-        store.serviceState = try serviceState(records: records)
+        var state = try serviceState(records: records)
+        // Schedules were projected from Actual before portable records ran. Keep their consumed dates
+        // without overriding the PWA catch-up audits that describe the same day.
+        for occurrence in store.serviceState.occurrences where !state.occurrences.contains(where: {
+            $0.scheduleId == occurrence.scheduleId && $0.date == occurrence.date
+        }) { state.occurrences.append(occurrence) }
+        store.serviceState = state
         for record in records {
             switch record.kind {
             case .receiptMetadata: store.receiptValues.append(try record.decode(KMReceipt.self))
@@ -239,6 +242,9 @@ import ZIPFoundation
                 if record.id.hasPrefix("category-rule-override:") { store.ruleOverrides.append(try record.decode(KMCategoryRuleOverride.self)) }
                 if record.id == "settings:backup" {
                     struct Backup: Decodable { var lastExportAt: Date }; store.settingsValue.lastExportAt = try record.decode(Backup.self).lastExportAt
+                }
+                if record.id == "settings:moneyforward-import" {
+                    try KMMoneyForwardProjection.project(record, into: store)
                 }
             // Every known record remains verbatim in provenance, including drafts, mappings and audit logs.
             // These are service-owned inputs, not new ledger transactions or runnable rules.

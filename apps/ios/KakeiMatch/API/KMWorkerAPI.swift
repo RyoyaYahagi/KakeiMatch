@@ -12,6 +12,9 @@ actor KMWorkerAPI {
     private let now: @Sendable () -> Date
     private let appAttest: any KMAppAttesting
     private let passkeyAuthorizer: (any KMPasskeyAuthorizing)?
+    /// Read once at construction so the account UI can explain an unsupported
+    /// device before any network request. App Attest cannot be simulated.
+    nonisolated let appAttestSupported: Bool
     private var cachedToken: (value: KMAIToken, identity: Identity)?
     private var credentialRevision = 0
     private var appAttestEnrollment: Task<String, Error>?
@@ -24,7 +27,9 @@ actor KMWorkerAPI {
         self.configuration = configuration
         self.credentials = credentials ?? KMKeychainCredentials(service: configuration.credentialService)
         self.now = now
-        self.appAttest = appAttest ?? KMLiveAppAttest()
+        let attest = appAttest ?? KMLiveAppAttest()
+        self.appAttest = attest
+        self.appAttestSupported = attest.isSupported
         self.passkeyAuthorizer = passkeyAuthorizer
         if let session { self.session = session }
         else {

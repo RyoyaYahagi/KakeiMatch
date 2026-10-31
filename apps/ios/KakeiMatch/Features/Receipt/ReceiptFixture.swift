@@ -8,9 +8,22 @@ extension KMReceiptModel {
         guard let index = arguments.firstIndex(of: "-ReceiptScenario"), arguments.indices.contains(index + 1) else { return }
         let scenario = arguments[index + 1]
         try await loadFixtureReceipt(warning: scenario == "warnings")
-        imageData = Self.syntheticImage(merchant: merchant, items: items).pngData()
+        guard let repositories, let original = receipt,
+              let png = Self.syntheticImage(merchant: merchant, items: items).pngData() else { return }
+        // Store the photo through the real repository so the screen shows a saved original.
+        var saved = try await repositories.receipts.saveReceiptImage(data: png, contentType: "image/png",
+            replacingReceiptId: original.id, at: now)
+        saved.extraction = original.extraction
+        saved.reviewedWarnings = original.reviewedWarnings
+        saved.itemCategories = original.itemCategories
+        saved.aiSuggestion = original.aiSuggestion
         if scenario == "initial" || scenario == "loading" {
-            receipt?.extraction = nil; reviewed = []
+            saved.extraction = nil; saved.reviewedWarnings = []; saved.itemCategories = nil
+            saved.aiSuggestion = KMReceipt.AISuggestion(source: .unclassified)
+        }
+        try await repositories.receipts.saveReceipt(saved)
+        try await display(saved)
+        if scenario == "initial" || scenario == "loading" {
             merchant = ""; amount = ""; categoryId = ""; items = []; adjustments = []; tax = ""
         }
         if scenario == "loading" { phase = .reading; startedReading = Date() }
