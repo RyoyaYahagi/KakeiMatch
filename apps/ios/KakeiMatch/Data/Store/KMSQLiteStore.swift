@@ -200,6 +200,9 @@ import Foundation
     func transaction(id: String) async throws -> KMTransaction? { try await access { try await $0.transaction(id: id) } }
     func recordDays(matching query: KMTransactionQuery) async throws -> [KMRecordDay] { try await access { try await $0.recordDays(matching: query) } }
     func home(month: KMYearMonth) async throws -> KMHomeSnapshot { try await access { try await $0.home(month: month) } }
+    func homeDashboard(month: KMYearMonth, today: KMDate) async throws -> KMHomeDashboard {
+        try await access { try await $0.homeDashboard(month: month, today: today) }
+    }
     func saveManual(_ input: KMManualTransactionInput, id: String? = nil) async throws -> KMTransaction { try await access(true) { try await $0.saveManual(input, id: id) } }
     func saveTransfer(_ input: KMTransferInput, id: String? = nil) async throws -> KMTransaction { try await access(true) { try await $0.saveTransfer(input, id: id) } }
     func setSpendingExclusion(id: String, excluded: Bool) async throws { try await access(true) { try await $0.setSpendingExclusion(id: id, excluded: excluded) } }

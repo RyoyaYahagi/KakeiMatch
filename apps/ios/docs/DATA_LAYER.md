@@ -70,6 +70,16 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 参照元は `src/lib/actual-browser-ledger.ts` のmapping/集計、`local-backup-format.ts` のrecord schema、導入済みActual APIのSQL/view定義。closed口座も残高計算に残す。[PWA (2026/10), Actual adapter] [Actual API (26.9.0), schema / migrate / cloud-storage]
 
+## Home の表示集計
+
+Home の画面は `TransactionRepository.homeDashboard(month:today:)` を1回だけ呼ぶ。戻り値の `KMHomeDashboard` に、月次snapshot（収支・予算・最近3件）、要確認の件数/一致件数/最大3行、カテゴリ内訳、予算の日の目盛りが入る。Viewは値を受け取って描画するだけで、件数・優先順・割合・目盛りを計算しない。既存の `home(month:)` はParity等の呼び出し向けに残し、`homeDashboard` が同じsnapshotに表示用集計を加える。
+
+- 要確認: `KMHomeAttention` が `local-ui.ts` / `home-attention.ts` と同じ優先順（反映未完了→不正利用？→要確認→記録なし）で件数・一致件数・最大3行を作る。runがない場合は取込案内だけを返す。
+- カテゴリ内訳: `KMHomeCategoryBreakdown` が `local-monthly-dashboard.ts` と同じ安定順、上位3件、重複しない色、「その他」、小数1桁の割合を作る。全カテゴリ一覧用の行も同じ関数の割合を使う。金額は整数円、割合のbinary64境界は `KMJSNumber`/`Decimal` で再現する。
+- 日の目盛り: `KMHomeBudgetScale` が月の日数、経過日、予算に対する塗り、目安との差、超過を作る。
+- カテゴリ色の名前/ハッシュ対応は Data の `KMCategoryTone` に置き、SwiftUIの色は `DesignSystem` の extension にする。Data層はSwiftUIへ依存しない。
+- 純関数は `KakeiMatchCoreTests/HomeAggregationTests.swift`、両adapterの取得結果は `KakeiMatchTests/HomeDashboardTests.swift`（in-memory/SQLiteを同じ入力で実行）が検査する。
+
 ## 明細取り込みと照合の呼び出し順
 
 `StatementRepository.importStatement` は原本・取り込み履歴・明細行を保存するAPIであり、照合runを更新しない。PWAも `LocalStatementService.importFile` では保存だけを行い、`apps/pwa/src/local-ui.ts` の送信処理がその後に `reconciliation.run()` を呼ぶ。iOSで「取り込んで照合」を再現する呼び出し側は、`importStatement` の成功後に `ReconciliationRepository.runReconciliation(id:at:)` を明示的に呼ぶ。再取り込みで追加0件でも照合を実行する。
@@ -95,7 +105,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | 振替 | 両側に相互IDを持つ対を作り、sourceだけにimportedIdを持たせる。出金/入金の符号は逆、一覧は出金だけ、両口座残高に反映、月次集計から除外。同じIDの同値再送は対を再作成せず、異値は拒否。片側IDからの編集も両側を一括更新する | `saveTransfer(input,id:nil/existingId)`。対のID・importedId・cleared/reconciledを維持 |
 | 予算内外の振替category | Actualは両口座のoffbudgetが同じときcategoryを消し、境界をまたぐと元のcategoryを保持する。ただし **KakeiMatchは振替にcategoryを入力しない** ため新規も編集も両側nil。境界をまたいでも支出を作らない。Actualで作成したcategory付き振替の編集はPWA同様拒否 | 振替の全口座組み合わせ。category入力を勝手に追加しない |
 | 削除 | rootと振替対、または分割の親子全体を削除印付きsnapshotとして保持。有効一覧・検索・集計・残高・使用回数から除く。関連レシートはdeletedにするが画像・品目・確認値は残す。古いexpected snapshot、不完全な対、登録/照合結果確認中は拒否 | `deleteTransaction(id:expected:at:)` → `KMTransactionDeletion`。従来の `deleteTransaction(id:)` も同じ処理 |
-| Undo | 削除完了から10秒未満だけ開始でき、同じ全ID・分割配分・対リンク・照合状態・関連レシートsnapshotを復元。ID/importedIdの衝突・master消失は拒否。削除/復元履歴とtombstoneは再open・`.kmib`復元後も保持 | `transactionDeletions()`、`undoTransactionDeletion(id:at:)`。10秒ちょうどは期限切れ。toastの表示/期限管理は画面側 |
+| Undo | 削除完了から10秒未満だけ開始でき、同じ全ID・分割配分・対リンク・照合状態・関連レシートsnapshotを復元。ID/importedIdの衝突・master消失は拒否。削除/復元履歴とtombstoneは再open・`.kmib`復元後も保持 | `transactionDeletions()`、`undoTransactionDeletion(id:at:)`。10秒ちょうどは期限切れ。toastの表示/期限管理はshellの `KMDeletionNoticeModel` が持つ |
 | 明細CSV | provider由来の取引番号、なければfingerprint＋同一行ordinalで重複を判定。IDは同じJSON配列のSHA-256。口座を要求せず、台帳支出をまだ作らない。同じファイルの再取込は元のimport ID/旧accountIdを維持し、欠けた行だけ回復。番号の同じ異値明細は全体を拒否 | `statements.importStatement(data:provider:at:)`。#281 parser→原本/取込履歴/明細行を一括保存。fatal error時は原本も保存しない |
 | 外部取引/imported_id | 全口座のrootを検索し、既存IDは既存値を返してスキップする（手入力の異値再送エラーとは別）。未分類はnil、新規はcleared=false。payeeは完全名→ActualのUnicode小文字一致、fuzzy照合や振替対生成をしない | `transactions.importExternalTransaction`。`addTransactions(learnCategories:false, runTransfers:false)` 相当 |
 | MoneyForward | parser出力とカテゴリ/口座の一括対応を受ける。全口座のimported ID重複とファイル内重複をスキップ。±3日・同じ符号付き金額/変換後カテゴリの既存記録は統一/別登録の明示判断が必要。将来日付/振替/計算対象外/指定除外は登録しない。新規masterは同名を再利用、未設定口座は「移行元未設定」 | `previewMoneyForward` → `importMoneyForward(id:rows:mappings:choices:rememberMappings:at:)`。原CSVは保存しない。batch履歴には対応ルールと元の空欄内容を保持し、`rememberMappings` がtrueの場合だけ次回用ルールにも保存する。失敗時は全体rollback、同じbatch IDで再送できる |

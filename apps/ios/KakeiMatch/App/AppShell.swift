@@ -6,6 +6,9 @@ struct AppShell: View {
     @State private var showsChooser = false
     @State private var entry: KMEntryDestination? = nil
     @State private var budgetRouteMonth: KMYearMonth?
+    @State private var settingsAccountsRoute = false
+    @State private var recordsRefreshToken = 0
+    @State private var deletionNotice = KMDeletionNoticeModel()
     @State private var moneyForwardRoute = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -30,6 +33,7 @@ struct AppShell: View {
         ZStack {
             KMColor.bg.ignoresSafeArea()
             VStack(spacing: 0) {
+                deletionFeedback
                 if let entry {
                     VStack(spacing: 0) {
                         if let reviewCountError {
@@ -74,9 +78,15 @@ struct AppShell: View {
                                         budgetRouteMonth = month
                                         tab = .settings
                                     })
-                                    case .records: RecordsView()
+                                    case .records: RecordsView(refreshToken: recordsRefreshToken,
+                                        onOpenAccounts: { settingsAccountsRoute = true; tab = .settings },
+                                        onDeleted: { deletionNotice.show($0) })
                                     case .reconciliation: ReconciliationView()
-                                    case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth, onBudgetBack: { budgetRouteMonth = nil }, onOpenMoneyForward: { moneyForwardRoute = true })
+                                    case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth,
+                                        initialAccounts: settingsAccountsRoute,
+                                        onBudgetBack: { budgetRouteMonth = nil },
+                                        onAccountsBack: { settingsAccountsRoute = false },
+                                        onOpenMoneyForward: { moneyForwardRoute = true })
                                     }
                                 }
                             }
@@ -101,6 +111,8 @@ struct AppShell: View {
                     }
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
+                    if destination != .settings { settingsAccountsRoute = false }
+                    deletionNotice.clearTransientStatus()
                     tab = destination
                     entry = nil // Reselecting the current tab also leaves an entry, like PWA.
                     moneyForwardRoute = false
@@ -171,7 +183,47 @@ struct AppShell: View {
             }
             if screenLockEnabledForShell { lockScreen() }
             await refreshReviewCount()
+            await deletionNotice.configure(repositories)
         }
+    }
+
+    /// PWA keeps the deletion notice above the tab content, so it remains while tabs change.
+    @ViewBuilder private var deletionFeedback: some View {
+        if deletionNotice.deletion != nil || deletionNotice.restored || deletionNotice.failure != nil {
+            VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                if deletionNotice.deletion != nil {
+                    KMToast(message: KMDeletionNoticeText.deleted,
+                            actionTitle: KMDeletionNoticeText.undo,
+                            trailingMessage: KMDeletionNoticeText.hint,
+                            isBusy: deletionNotice.busy) {
+                        Task { await undoDeletion() }
+                    }
+                    .accessibilityIdentifier("shell.deletionToast")
+                } else if deletionNotice.restored {
+                    // PWA replaces the toast text with this, and it has no timer.
+                    KMToast(message: KMDeletionNoticeText.restored)
+                        .accessibilityIdentifier("shell.deletionRestored")
+                }
+                if let failure = deletionNotice.failure {
+                    Text(failure).font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("shell.deletionStatus")
+                }
+            }
+            .padding(.horizontal, KMSpacing.space4)
+            .padding(.top, KMSpacing.space2)
+            .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
+            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @MainActor private func undoDeletion() async {
+        guard await deletionNotice.undo() else { return }
+        // PWA's undo handler returns to the records page after restoring.
+        entry = nil
+        settingsAccountsRoute = false
+        recordsRefreshToken += 1
+        tab = .records
     }
 
     private var screenLockOverlay: some View {
