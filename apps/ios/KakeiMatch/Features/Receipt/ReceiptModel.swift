@@ -376,6 +376,13 @@ final class KMReceiptModel {
         guard imageIsSaved, let imageData, let image = receipt?.image else {
             error = "先にレシートの写真を選んでください。手で入力して続けられます。"; return nil
         }
+        // PWA local-receipts.ts: over 6 MiB the original stays saved but is never sent to AI.
+        guard imageData.count <= 6 * 1024 * 1024 else {
+            revision = UUID(); operation?.cancel()
+            phase = .failed(.invalidRequest)
+            error = "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。"
+            return nil
+        }
         revision = UUID(); let token = revision
         phase = .reading; startedReading = Date(); error = nil; status = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)

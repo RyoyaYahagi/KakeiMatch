@@ -118,6 +118,20 @@ struct ReceiptPresentationTests {
         #expect(try await repositories.receipts.receiptImage(blobId: try #require(receipt.image?.blobId)) == Self.syntheticPNG)
     }
 
+    @Test func imageOverAILimitIsSavedButNotSent() async throws {
+        let repositories = try KMFixtureLoader.load(named: "migration")
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
+        let large = Self.syntheticPNG + Data(repeating: 0, count: 7 * 1024 * 1024)
+        await model.selectImage(large, contentType: "image/png")
+        #expect(model.imageIsSaved)
+        #expect(model.receipt?.image?.sizeBytes == large.count)
+        #expect(model.startReading() == nil)
+        #expect(model.phase == .failed(.invalidRequest))
+        #expect(model.error?.contains("6 MiB以下") == true)
+        let id = try #require(model.receipt?.id)
+        #expect(try await repositories.receipts.receipt(id: id)?.extraction == nil)
+    }
+
     @Test func unfinishedDraftRestoresAndIsRemovedAfterRegistration() async throws {
         let repositories = try KMFixtureLoader.load(named: "migration")
         let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
