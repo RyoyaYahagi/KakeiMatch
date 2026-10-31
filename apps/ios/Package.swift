@@ -70,6 +70,8 @@ let package = Package(
                 "Core/KMDeletionUndoPolicy.swift",
                 "Core/KMReceiptPresentation.swift",
                 "Data/Aggregation/BudgetAggregation.swift",
+                "Data/Aggregation/HomeAggregation.swift",
+                "Data/Aggregation/KMCategoryToneMapping.swift",
                 "Data/Aggregation/TransactionAggregation.swift",
                 "Data/Budget/MonthlyBudgetService.swift",
                 "Data/CategoryLearning/CategoryLearningService.swift",
