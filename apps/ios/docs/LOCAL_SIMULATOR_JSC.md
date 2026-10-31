@@ -87,8 +87,9 @@ cd apps/ios
 | JSC | iOS 26.2の`JavaScriptCore.framework` 8623.1.14.10.9 | 同左 | 同左（同一runtime build） |
 
 新しいSimulatorデバイスを作り直しても旧実装で再現したため、特定のSimulator
-デバイスの状態の破損ではない。iOS runtimeのbuild番号とJSCのframework版はCIと
-同じで、異なるのはホストのmacOS・Xcode・CoreSimulatorの組み合わせである。
+デバイスの状態の破損ではない。CIも同じiOS 26.2 (23C54)を使うためJSCの
+framework版も同じはずで、確認できた違いはホストのmacOS・Xcode・CoreSimulatorの
+組み合わせである。
 
 ## 原因
 
@@ -101,8 +102,8 @@ JSCのrope解決処理の不具合で、アプリの検証ロジックや `.kmb`
   の両方にまたがる。特定の1入力や1テストケースに依存しない。
 - 旧実装は `KMBackupSchema.validate` のたびに `JSContext` を作っていた。
   `JSContext` は独自の `JSVirtualMachine` を持つ。`.kmb` 1件の取り込みで
-  manifest用とlocal data用の2回検証するため、`ParityTests` は31回前後の
-  取り込みで60個前後のJSC VMを作っていた。JSC VMを作り続けることが
+  manifest用とlocal data用の2回検証するため、`ParityTests` は26回の
+  取り込みで52個のJSC VMを作っていた。JSC VMを作り続けることが
   クラッシュの引き金になっていた可能性が高い。
 - 1つの `JSContext` を再利用すると、同じ入力・同じテストが再現しなくなった。
   クラッシュがJSC内部のrope解決で起きることと合わせると、JSC側のメモリ管理に
