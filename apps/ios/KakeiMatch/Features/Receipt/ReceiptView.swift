@@ -17,6 +17,10 @@ private enum KMReceiptCategoryTarget: Identifiable {
 struct ReceiptView: View {
     var source: KMEntryDestination? = nil
     var receiptID: String? = nil
+    /// PWA receiptEditor edit mode: an applied receipt opens as "支出の記録を編集".
+    var editing = false
+    /// The tapped detail row decides the first pane (category -> items).
+    var initialPane: String? = nil
     var onSaved: (() -> Void)? = nil
     @Environment(\.repositories) private var repositories
     @State private var model = KMReceiptModel()
@@ -36,7 +40,7 @@ struct ReceiptView: View {
             ScrollViewReader { scroll in
                 ScrollView {
                     VStack(alignment: .leading, spacing: KMSpacing.space3) {
-                        Text("レシートを登録する").font(KMTypography.body(22, weight: .bold)).accessibilityAddTraits(.isHeader)
+                        Text(editing ? "支出の記録を編集" : "レシートを登録する").font(KMTypography.body(22, weight: .bold)).accessibilityAddTraits(.isHeader)
                         tabs
                         if model.loading { ProgressView("レシートを読み込んでいます。") }
                         else if model.pane == "overview" { overview }
@@ -63,7 +67,7 @@ struct ReceiptView: View {
                             .accessibilityIdentifier("receipt-save-state")
                     }
                     if model.didSave {
-                        Button("記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
+                        Button(editing ? "記録詳細へ" : "記録一覧へ") { onSaved?() }.buttonStyle(KMButtonStyle(role: .primary))
                             .accessibilityIdentifier("receipt.recordsButton")
                     } else if model.isReading {
                         Button(model.phase == .categorizing ? "分類を待っています…" : "読み取り中…") {}
@@ -86,10 +90,16 @@ struct ReceiptView: View {
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("receipt.screen")
         .task {
-            await model.load(repositories, receiptID: receiptID)
+            await model.load(repositories, receiptID: receiptID, editing: editing)
+            if let initialPane { model.pane = initialPane }
             if receiptID == nil && repositories?.fixtureName != "receipt" { openSource() }
         }
         .onDisappear { if !showsImage && !showsCamera && !showsPhotos { model.stopWaiting() } }
+        .onChange(of: model.didSave) { _, saved in
+            // PWA local-ui.ts: an edited receipt returns to its detail after the save.
+            // Keep the editor open when the ledger saved but the learning write failed.
+            if saved && editing && model.error == nil { onSaved?() }
+        }
         .onChange(of: model.phase) { _, phase in
             let message: String
             switch phase {
@@ -142,7 +152,7 @@ struct ReceiptView: View {
 
     private var saveButton: some View {
         Button { focusedField = nil; Task { await model.save() } } label: {
-            Text(model.saving ? "登録しています…" : "登録する")
+            Text(model.saving ? (editing ? "保存しています…" : "登録しています…") : (editing ? "変更を保存する" : "登録する"))
                 .font(KMTypography.body(17, weight: .bold)).frame(maxWidth: .infinity, minHeight: 52)
         }
         .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.saveButton")
@@ -191,14 +201,14 @@ struct ReceiptView: View {
             } else if model.receipt?.image != nil {
                 Text("レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted)
-            } else {
+            } else if !editing {
                 HStack {
                     Button("レシートを撮る") { openCamera() }.accessibilityIdentifier("receipt.cameraButton")
                     Button("写真から") { showsPhotos = true }.accessibilityIdentifier("receipt.imageInput")
                 }.buttonStyle(KMButtonStyle(role: .text))
             }
-            warningBand
-            if model.imageData != nil {
+            if !editing { warningBand }
+            if !editing, model.imageData != nil {
                 Text("画像から店名・日付・金額・品目を読み取り、カテゴリを設定します。")
                     .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                 if model.isReading || isFailed { progress }

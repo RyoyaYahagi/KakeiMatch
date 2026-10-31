@@ -32,6 +32,8 @@ final class KMReceiptModel {
     var error: String?
     var status: String?
     var startedReading = Date()
+    /// PWA local-ui.ts: receiptEditor opens an applied receipt as "支出の記録を編集".
+    var editing = false
     @ObservationIgnored private var requiresExistingReceipt = false
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
@@ -67,9 +69,10 @@ final class KMReceiptModel {
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
 
-    func load(_ repositories: KMRepositories?, receiptID: String?) async {
+    func load(_ repositories: KMRepositories?, receiptID: String?, editing: Bool = false) async {
         guard loading else { return }
         self.repositories = repositories
+        self.editing = editing
         requiresExistingReceipt = receiptID != nil
         defer { loading = false }
         guard let repositories else { error = "家計簿を読み込めません。アプリを開き直してください。"; return }
@@ -80,13 +83,15 @@ final class KMReceiptModel {
             accounts = try await repositories.accounts.accounts(includeClosed: false)
             date = today.rawValue
             if let receiptID {
-                guard let existing = try await repositories.receipts.receipt(id: receiptID), existing.registration.status == .pending else {
-                    throw KMDataError.invalidData("確認待ちのレシートが見つかりません。記録一覧を開き直してください。")
+                guard let existing = try await repositories.receipts.receipt(id: receiptID),
+                      existing.registration.status == (editing ? .applied : .pending) else {
+                    throw KMDataError.invalidData(editing ? "登録済みのレシートが見つかりません。記録一覧を開き直してください。"
+                        : "確認待ちのレシートが見つかりません。記録一覧を開き直してください。")
                 }
                 try await display(existing)
             }
             #if DEBUG
-            if repositories.fixtureName == "receipt", ProcessInfo.processInfo.arguments.contains("-ReceiptScenario") {
+            if !editing, repositories.fixtureName == "receipt", ProcessInfo.processInfo.arguments.contains("-ReceiptScenario") {
                 try await configureFixture()
             }
             #endif
@@ -405,8 +410,9 @@ final class KMReceiptModel {
     }
 
     private func ensureCurrent(_ receipt: KMReceipt) async throws {
+        let expectedStatus: KMReceipt.RegistrationStatus = editing ? .applied : .pending
         guard let saved = try await repositories?.receipts.receipt(id: receipt.id),
-              saved.updatedAt == receipt.updatedAt, saved.registration.status == .pending else {
+              saved.updatedAt == receipt.updatedAt, saved.registration.status == expectedStatus else {
             throw KMDataError.invalidData("レシートが変更されています。記録一覧から開き直してください。")
         }
     }
@@ -432,12 +438,26 @@ final class KMReceiptModel {
             // The repository owns allocation validation and posting, including mixed-category splits.
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
+            let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
+                purchasedTime: time.isEmpty ? nil : time, totalAmountYen: total, categoryId: fallback,
+                accountId: accountId, excludedFromSpending: excluded, memo: memo.isEmpty ? nil : memo,
+                taxAmountYen: taxYen, items: items, adjustments: adjustments)
+            if editing {
+                guard let current = receipt else { throw KMDataError.invalidData("登録済みのレシートを確認できません。記録一覧を開き直してください。") }
+                try await ensureCurrent(current)
+                // PWA local-receipts.ts:edit rejects a stale updatedAt before touching the ledger.
+                let saved = try await repositories.receipts.editReceipt(id: current.id, value: confirmed,
+                    expectedUpdatedAt: current.updatedAt, at: now)
+                receipt = saved
+                await saveLearning(receiptId: saved.id, fallback: fallback, repositories: repositories,
+                    successMessage: "変更は保存しましたが、カテゴリの学習を保存できませんでした。")
+                didSave = true; status = "変更を保存しました。"
+                return
+            }
             var updated = receipt ?? KMReceipt(id: "receipt:\(UUID().uuidString)", createdAt: now, updatedAt: now,
                 aiSuggestion: .init(source: .unclassified), registration: .init(status: .pending))
             if receipt != nil { try await ensureCurrent(updated) }
-            updated.confirmedValue = .init(merchant: merchant, purchasedDate: purchasedDate, purchasedTime: time.isEmpty ? nil : time,
-                totalAmountYen: total, categoryId: fallback, accountId: accountId, excludedFromSpending: excluded,
-                memo: memo.isEmpty ? nil : memo, taxAmountYen: taxYen, items: items, adjustments: adjustments)
+            updated.confirmedValue = confirmed
             updated.reviewedWarnings = reviewed; updated.updatedAt = now
             try await repositories.receipts.saveReceipt(updated)
             // Retain the pending snapshot if posting fails, so a retry never creates a second receipt.
@@ -449,20 +469,25 @@ final class KMReceiptModel {
                 throw KMDataError.invalidData("登録結果を確認できませんでした。記録一覧を確認してください。")
             }
             receipt = saved; didSave = true; status = "登録しました。"
-            if let observation = KMCategoryLearningService.observation(
-                receiptId: saved.id, merchant: merchant, defaultCategoryId: fallback,
-                items: items.map { (name: $0.name, categoryId: $0.categoryId) },
-                availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
-            ) {
-                do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
-                catch {
-                    KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
-                    self.error = "レシートは登録しましたが、カテゴリの学習を保存できませんでした。\(error.localizedDescription)"
-                }
-            }
+            await saveLearning(receiptId: saved.id, fallback: fallback, repositories: repositories,
+                successMessage: "レシートは登録しましたが、カテゴリの学習を保存できませんでした。")
         } catch {
             KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
             self.error = error.localizedDescription
+        }
+    }
+
+    private func saveLearning(receiptId: String, fallback: String, repositories: KMRepositories, successMessage: String) async {
+        guard let observation = KMCategoryLearningService.observation(
+            receiptId: receiptId, merchant: merchant, defaultCategoryId: fallback,
+            items: items.map { (name: $0.name, categoryId: $0.categoryId) },
+            availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
+        ) else { return }
+        do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
+        catch {
+            // PWA local-ui.ts reports the same failure for both edit and register saves.
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
+            self.error = "\(successMessage)\(error.localizedDescription)"
         }
     }
 }

@@ -31,7 +31,7 @@ struct KMMigrationFixture: Decodable, Sendable {
 
 @MainActor enum KMFixtureLoader {
     enum Scenario: String, CaseIterable, Sendable {
-        case migration, populated, empty, budgetWarning = "budget-warning", receipt, reconciliation, payroll
+        case migration, populated, empty, budgetWarning = "budget-warning", receipt, receiptApplied = "receipt-applied", reconciliation, payroll
     }
     static func document(bundle: Bundle = .main) throws -> KMMigrationFixture {
         let value = try KMJSON.decoder().decode(KMMigrationFixture.self, from: resource("migration", bundle: bundle))
@@ -82,7 +82,7 @@ struct KMMigrationFixture: Decodable, Sendable {
         }
         let groups = [KMCategoryGroup(id: "fixture-expenses", name: "支出", categoryIds: categories.filter { !$0.isIncome }.map(\.id)),
                       KMCategoryGroup(id: "fixture-income", name: "収入", isIncome: true, categoryIds: categories.filter(\.isIncome).map(\.id))]
-        let transactions = try fixture.transactions.enumerated().map { index, value -> KMTransaction in
+        var transactions = try fixture.transactions.enumerated().map { index, value -> KMTransaction in
             guard value.type != .transfer, value.amountYen > 0,
                   let account = accounts.first(where: { $0.name == value.account }), let category = categories.first(where: { $0.name == value.category }) else {
                 throw KMDataError.invalidData("fixtureの取引の対応が不正です。")
@@ -92,6 +92,22 @@ struct KMMigrationFixture: Decodable, Sendable {
                 amountYen: value.type == .expense ? -value.amountYen : value.amountYen, kind: value.type,
                 payeeName: value.payee, categoryName: category.name, accountId: account.id, categoryId: category.id,
                 importedId: "fixture-manual-\(index)", isSplit: false)
+        }
+        // 登録済みレシートの編集導線を合成状態で固定する。金額と内訳はfixture.receiptと同じ。
+        let appliedReceiptAccount = accounts.first { $0.accountType == .creditCard } ?? accounts[0]
+        let appliedReceiptCategories = fixture.receipt.items.map { item in
+            categories.first { $0.name == (item.name == "台所用洗剤" ? "日用品" : "食費") }!
+        }
+        if scenario == .receiptApplied {
+            let foodTotal = zip(fixture.receipt.items, appliedReceiptCategories).filter { $0.1.name == "食費" }.reduce(0) { $0 + $1.0.amountYen }
+            let householdTotal = fixture.receipt.totalYen - foodTotal
+            transactions.append(KMTransaction(id: "fixture-transaction-receipt", date: fixture.receipt.date,
+                amountYen: -fixture.receipt.totalYen, kind: .expense, payeeName: fixture.receipt.merchant,
+                categoryName: nil, accountId: appliedReceiptAccount.id, importedId: "kakeimatch:fixture-receipt-applied",
+                isSplit: true, splits: [
+                    .init(id: "fixture-receipt-split-food", categoryId: categories.first { $0.name == "食費" }!.id, amountYen: -foodTotal),
+                    .init(id: "fixture-receipt-split-household", categoryId: categories.first { $0.name == "日用品" }!.id, amountYen: -householdTotal),
+                ]))
         }
         let store = KMInMemoryStore(transactions: transactions, accounts: accounts, categories: categories, groups: groups)
         store.monthlySettings = try store.monthlySettings.applyingDefaultPlan(
@@ -104,6 +120,23 @@ struct KMMigrationFixture: Decodable, Sendable {
             store.receiptValues = [KMReceipt(id: "fixture-receipt", createdAt: fixture.now, updatedAt: fixture.now, extraction: extraction,
                 itemCategories: fixture.receipt.items.map { item in categories.first { $0.name == (item.name == "台所用洗剤" ? "日用品" : "食費") }?.id },
                 aiSuggestion: .init(source: .unclassified), registration: .init(status: .pending))]
+        }
+        if scenario == .receiptApplied {
+            let items = fixture.receipt.items.enumerated().map { index, item in
+                KMReceiptItem(id: "receipt-item:fixture-receipt-applied:\(index)", name: item.name,
+                    amountYen: item.amountYen, categoryId: appliedReceiptCategories[index].id)
+            }
+            let value = KMConfirmedReceipt(merchant: fixture.receipt.merchant, purchasedDate: fixture.receipt.date,
+                purchasedTime: fixture.receipt.time, totalAmountYen: fixture.receipt.totalYen,
+                categoryId: appliedReceiptCategories[0].id, accountId: appliedReceiptAccount.id,
+                excludedFromSpending: false, memo: nil, taxAmountYen: fixture.receipt.taxYen, items: items, adjustments: nil)
+            let imageData = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABQAAAAeCAIAAACjcKk8AAAAHklEQVR4nGM4cekO2YhhVPOo5lHNo5pHNY9qHs6aAZw4xNzPmEv+AAAAAElFTkSuQmCC")!
+            store.imageValues["fixture-receipt-image"] = imageData
+            store.receiptValues = [KMReceipt(id: "fixture-receipt-applied", createdAt: fixture.now, updatedAt: fixture.now,
+                image: .init(blobId: "fixture-receipt-image", contentType: "image/png", sizeBytes: imageData.count),
+                extraction: nil, aiFlowId: nil, itemCategories: appliedReceiptCategories.map(\.id), reviewedWarnings: nil,
+                classificationAttempt: nil, aiSuggestion: .init(source: .unclassified), confirmedValue: value,
+                registration: .init(status: .applied, actualTransactionId: "fixture-transaction-receipt"))]
         }
         if scenario == .reconciliation {
             let importId = "fixture-statement-import"
