@@ -9,6 +9,7 @@ struct KMBottomSheet<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @AccessibilityFocusState private var titleFocused: Bool
     @State private var contentHeight: CGFloat = 360
+    @State private var headerHeight: CGFloat = 77
 
     var body: some View {
         GeometryReader { geometry in
@@ -17,27 +18,32 @@ struct KMBottomSheet<Content: View>: View {
                     .contentShape(Rectangle()).onTapGesture { isPresented = false }
                     .accessibilityHidden(true)
                 VStack(spacing: 0) {
-                    Capsule().fill(KMColor.borderStrong).frame(width: 40, height: 5)
-                        .padding(.top, KMSpacing.space2).padding(.bottom, KMSpacing.space2)
-                        .frame(maxWidth: .infinity).contentShape(Rectangle())
-                        .gesture(dismissDrag).accessibilityHidden(true)
-                    HStack(spacing: KMSpacing.space3) {
-                        Text(title).font(KMTypography.body(20, weight: .bold))
-                            .foregroundStyle(KMColor.text)
-                            .accessibilityAddTraits(.isHeader)
-                            .accessibilityFocused($titleFocused)
-                        Spacer(minLength: 0)
-                        Button { isPresented = false } label: {
-                            KMIcon(name: "close", size: 20)
-                                .frame(width: KMLayout.minimumHit, height: KMLayout.minimumHit)
-                                .glassEffect(.regular, in: Circle())
+                    VStack(spacing: 0) {
+                        Capsule().fill(KMColor.borderStrong).frame(width: 40, height: 5)
+                            .padding(.top, KMSpacing.space2).padding(.bottom, KMSpacing.space2)
+                            .frame(maxWidth: .infinity).contentShape(Rectangle())
+                            .gesture(dismissDrag).accessibilityHidden(true)
+                        HStack(spacing: KMSpacing.space3) {
+                            Text(title).font(KMTypography.body(20, weight: .bold))
+                                .foregroundStyle(KMColor.text)
+                                .accessibilityAddTraits(.isHeader)
+                                .accessibilityFocused($titleFocused)
+                            Spacer(minLength: 0)
+                            Button { isPresented = false } label: {
+                                KMIcon(name: "close", size: 20)
+                                    .frame(width: KMLayout.minimumHit, height: KMLayout.minimumHit)
+                                    .glassEffect(.regular, in: Circle())
+                            }
+                            .buttonStyle(.plain).foregroundStyle(KMColor.text)
+                            .keyboardShortcut(.cancelAction)
+                            .accessibilityLabel("閉じる").accessibilityIdentifier("record-sheet.close")
                         }
-                        .buttonStyle(.plain).foregroundStyle(KMColor.text)
-                        .keyboardShortcut(.cancelAction)
-                        .accessibilityLabel("閉じる").accessibilityIdentifier("record-sheet.close")
+                        .contentShape(Rectangle()).gesture(dismissDrag)
+                        .padding(.bottom, KMSpacing.space3)
                     }
-                    .contentShape(Rectangle()).gesture(dismissDrag)
-                    .padding(.bottom, KMSpacing.space3)
+                    // The PWA header is 77pt at the default size, but its title can
+                    // wrap at accessibility sizes, so measure it instead of clipping.
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
                     ScrollView {
                         content()
                             .padding(.bottom, KMSpacing.space6 + geometry.safeAreaInsets.bottom)
@@ -47,8 +53,7 @@ struct KMBottomSheet<Content: View>: View {
                 }
                 .padding(.horizontal, KMSpacing.space4)
                 .frame(maxWidth: KMLayout.contentMax)
-                // Grabber (21) + header hit target (44) + PWA header margin (12).
-                .frame(height: min(contentHeight + 77, geometry.size.height - 48))
+                .frame(height: min(contentHeight + headerHeight, geometry.size.height - 48))
                 .glassEffect(.regular.tint(KMColor.bg), in: UnevenRoundedRectangle(topLeadingRadius: KMRadius.sheet, topTrailingRadius: KMRadius.sheet))
                 .accessibilityElement(children: .contain)
                 .accessibilityAddTraits(.isModal)

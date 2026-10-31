@@ -7,6 +7,7 @@ struct RecordsView: View {
     @Environment(\.repositories) private var repositories
     @State private var model = KMRecordsModel()
     @State private var pendingToDelete: KMReceipt?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -131,26 +132,65 @@ struct RecordsView: View {
     }
 
     private func pendingRow(_ receipt: KMReceipt) -> some View {
-        HStack(spacing: KMSpacing.space2) {
-            Button {
-                model.selectedReceipt = receipt; model.page = .pending; model.message = nil
-            } label: {
-                HStack(spacing: KMSpacing.space3) {
-                    KMIcon(name: "receipt", size: 20).foregroundStyle(KMColor.warning)
-                        .frame(width: KMLayout.recordIcon, height: KMLayout.recordIcon).background(KMColor.warningSoft, in: Circle())
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(KMRecordsPresentation.pendingTitle(receipt)).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
-                        Text("内容を確認して登録してください").font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    Button {
+                        model.selectedReceipt = receipt; model.page = .pending; model.message = nil
+                    } label: {
+                        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                            HStack(alignment: .top, spacing: KMSpacing.space3) {
+                                pendingIcon
+                                VStack(alignment: .leading, spacing: 0) {
+                                    Text(KMRecordsPresentation.pendingTitle(receipt)).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(2)
+                                    Text("内容を確認して登録してください").font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            HStack(spacing: KMSpacing.space2) {
+                                Spacer(minLength: 0)
+                                Text("確認する").foregroundStyle(KMColor.primary).font(KMTypography.body(16, weight: .bold))
+                                    .frame(minHeight: KMLayout.minimumHit)
+                            }
+                        }
+                        .frame(minHeight: 60).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("records.pending.\(receipt.id)")
+                    if canDeletePending(receipt) {
+                        Button("削除") { pendingToDelete = receipt }.buttonStyle(KMButtonStyle(role: .destructive))
+                            .accessibilityLabel("削除: \(KMRecordsPresentation.pendingTitle(receipt))")
                     }
-                    Spacer(minLength: 0)
-                    Text("確認する").foregroundStyle(KMColor.primary).font(KMTypography.body(16, weight: .bold))
-                }.frame(minHeight: 60).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityIdentifier("records.pending.\(receipt.id)")
-            if receipt.registration.status == .pending && receipt.registration.actualTransactionId == nil {
-                Button("削除") { pendingToDelete = receipt }.buttonStyle(KMButtonStyle(role: .destructive))
-                    .accessibilityLabel("削除: \(KMRecordsPresentation.pendingTitle(receipt))")
+                }
+            } else {
+                HStack(spacing: KMSpacing.space2) {
+                    Button {
+                        model.selectedReceipt = receipt; model.page = .pending; model.message = nil
+                    } label: {
+                        HStack(spacing: KMSpacing.space3) {
+                            pendingIcon
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(KMRecordsPresentation.pendingTitle(receipt)).font(KMTypography.body(16, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
+                                Text("内容を確認して登録してください").font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
+                            Text("確認する").foregroundStyle(KMColor.primary).font(KMTypography.body(16, weight: .bold))
+                        }.frame(minHeight: 60).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("records.pending.\(receipt.id)")
+                    if canDeletePending(receipt) {
+                        Button("削除") { pendingToDelete = receipt }.buttonStyle(KMButtonStyle(role: .destructive))
+                            .accessibilityLabel("削除: \(KMRecordsPresentation.pendingTitle(receipt))")
+                    }
+                }
             }
         }.disabled(model.busy)
+    }
+
+    private var pendingIcon: some View {
+        KMIcon(name: "receipt", size: 20).foregroundStyle(KMColor.warning)
+            .frame(width: KMLayout.recordIcon, height: KMLayout.recordIcon).background(KMColor.warningSoft, in: Circle())
+    }
+
+    private func canDeletePending(_ receipt: KMReceipt) -> Bool {
+        receipt.registration.status == .pending && receipt.registration.actualTransactionId == nil
     }
 
     // Pending receipts reuse the same editor as the add menu.
