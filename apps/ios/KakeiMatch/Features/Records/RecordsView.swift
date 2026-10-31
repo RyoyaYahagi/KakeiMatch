@@ -208,4 +208,6 @@ struct RecordsView: View {
     }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("reconciliation") { RecordsView() } }
+#endif
