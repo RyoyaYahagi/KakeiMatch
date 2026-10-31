@@ -949,6 +949,67 @@ struct APIClientTests {
 
     @Test
     @MainActor
+    func aiResponsesRejectNestedUnknownKeysMissingRequiredNullsAndReferenceViolations() async throws {
+        let tooManyItems = Array(repeating: #"{"name":"合成","amountYen":1}"#, count: 101).joined(separator: ",")
+        let tooManyAllowances = Array(repeating: #"{"name":"合成手当","amountYen":1}"#, count: 31).joined(separator: ",")
+        let cases: [(Endpoint, String)] = [
+            (.receipt, Self.receipt.replacingOccurrences(of: #""items":[]"#,
+                with: #""items":[{"name":"合成","amountYen":1,"unknown":true}]"#)),
+            (.receipt, Self.receipt.replacingOccurrences(of: #""taxAmountYen":null,"#, with: "")),
+            (.receipt, Self.receipt.replacingOccurrences(of: #""items":[]"#,
+                with: #""items":[{"name":"合成","amountYen":1}],"adjustments":[{"label":"合成","amountYen":-1,"targetItemIndex":1}]"#)),
+            (.receipt, Self.receipt.replacingOccurrences(of: #""warnings":[]"#,
+                with: #""warnings":[{"field":"merchant","code":"unreadable","message":"合成","index":0}]"#)),
+            (.receipt, Self.receipt.replacingOccurrences(of: #""items":[]"#,
+                with: #""items":[{"name":"合成","amountYen":1,"quantity":0}]"#)),
+            (.receipt, Self.receipt.replacingOccurrences(of: #""items":[]"#,
+                with: #""items":[\#(tooManyItems)]"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""employerName":null,"#, with: "")),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""incomeTaxYen":null,"#, with: "")),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""deductions":{"#,
+                with: #""deductions":{"unknown":null,"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""allowances":[]"#,
+                with: #""allowances":[{"name":"社員番号1234567","amountYen":1}]"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""warnings":[]"#,
+                with: #""warnings":[{"field":null,"code":"unknown"}]"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""netPayYen":null"#, with: #""netPayYen":-1"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""grossPayYen":null"#, with: #""grossPayYen":1.5"#)),
+            (.payroll, Self.payroll.replacingOccurrences(of: #""allowances":[]"#,
+                with: #""allowances":[\#(tooManyAllowances)]"#)),
+            (.jev, Endpoint.jev.body.replacingOccurrences(of: #""confidence":1,"#, with: "")),
+            (.jev, Endpoint.jev.body.replacingOccurrences(of: #""confidence":1"#,
+                with: #""confidence":1,"unknown":true"#)),
+            (.jev, Endpoint.jev.body.replacingOccurrences(of: #""food":1"#,
+                with: #""food":0.9,"extra":0.1"#)),
+            (.jev, Endpoint.jev.body.replacingOccurrences(of: #""food":1"#, with: #""food":0.97"#)),
+            (.suggestion, Endpoint.suggestion.body.replacingOccurrences(of: #""food""#, with: #""unknown""#))
+        ]
+        for (endpoint, body) in cases {
+            APIStub.reset { request in .init(body: request.url?.path == endpoint.path ? body : Self.token) }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client()) }
+        }
+    }
+
+    @Test
+    @MainActor
+    func jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory() async throws {
+        let options = [KMCategoryOption(id: "food", name: "合成食費"), KMCategoryOption(id: "other", name: "合成その他")]
+        let extraction = try KMAPIValidation.decode(KMReceiptExtraction.self,
+            data: Data(Self.receipt.replacingOccurrences(of: #""merchant":null"#, with: #""merchant":"合成店""#).utf8),
+            shape: KMAPIShapes.receipt)
+        APIStub.reset { request in
+            if request.url?.path == "/api/ai/jev" {
+                return .init(body: #"{"model":"synthetic-model","answers":{"category":{"type":"choice","choice":"food","confidence":0.2,"probabilities":{"food":0.2,"other":0.8}}}}"#)
+            }
+            return .init(body: Self.token)
+        }
+        await #expect(throws: KMAPIError.invalidResponse) {
+            _ = try await client().classify(extraction: extraction, flowID: Self.flow, categories: options)
+        }
+    }
+
+    @Test
+    @MainActor
     func refusesUnlistedCategoryAndNonUnitDistribution() async throws {
         for body in [Endpoint.jev.body.replacingOccurrences(of: "\"choice\":\"food\"", with: "\"choice\":\"unknown\""), Endpoint.jev.body.replacingOccurrences(of: "\"food\":1", with: "\"food\":0.2")] {
             APIStub.reset { request in .init(body: request.url?.path == "/api/ai/token" ? Self.token : body) }

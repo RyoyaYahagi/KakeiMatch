@@ -170,7 +170,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 `KMDate` はAsia/Tokyoのグレゴリオ暦日（`YYYY-MM-DD`）、`KMYearMonth` は年月です。未知の入力には `try KMDate(string)` / `try KMYearMonth(string)`、JSONにはCodableを使います。`init(rawValue:)` は検証済み定数用です。不正値はprecondition違反になります。`Date` は作成時刻等の瞬間だけに使います。保存JSONの日時には `KMJSON.decoder()` / `.encoder()` を使ってください（ISO8601、offset・小数秒に対応）。通常のJSONDecoderのDate既定値は互換ではありません。
 
-状態enumのrawValueはPWAに合わせています。`Codable` は将来のデコードの土台であり、`.kmb` 全体の検証/移行器ではありません。未知キーの拒否、nullable必須キーと欠落の区別、IDの参照整合性、AI応答の完全なschema検証は後続の取り込み/API境界で行います。これらの型へdecodeできただけでAI応答を保存してはいけません。
+状態enumのrawValueはPWAに合わせています。`Codable` は保存JSONのデコード土台であり、`.kmb` 全体の検証/移行器ではありません。`.kmb` は取り込み時に同梱のPWA validatorで検証します。AI応答は `API/` の `KMAPIValidation` / `KMAPIShapes` がAPI境界で、未知キー・nullable必須キーの欠落・型/範囲・整数円・ID参照・件数上限を検証し、不正なら `KMAPIError.invalidResponse` として拒否します。これらの型へdecodeできただけでAI応答を保存・表示してはいけません。
 
 `KMAccount` の明細サービスと `KMCategory` の色トーン・使用件数/順序は、ActualとKakeiMatch記録を合わせた画面用projectionです。`KMTransaction.splits` もActual子行をまとめたprojectionで、保存JSONへそのまま追加するフィールドではありません。色未指定時の見た目は既存 `KMCategoryTone.visual(name:id:)` を使います。Data層はSwiftUIへ依存しません。テーマは端末設定で、家計簿バックアップ・同期に含めません。画面ロックの秘密情報やCloud credentialsはこの型に持たせません。
 
@@ -251,7 +251,7 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 - 永続化: 通常起動は `KMSQLiteStore`。全Repositoryは同じprofileを共有し、変更はSQLite transaction内で確定します。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。複数scene/processのprofile排他は後続です。世代番号で古いsnapshotによる上書きを拒否します。
 - `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は後続projection用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
 - 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。Actual Schedule/Rule互換取り込み、レシート確認からの学習呼出しは後続です。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
-- API: AI抽出/分類、アカウントは別PR。問い合わせのtyped要求/応答・認証と、同意時だけ送る診断情報の添付は実装済み。Worker境界で検証し、秘密鍵を端末へ持たせない。
+- API: AI抽出/分類・給与明細・問い合わせ・アカウントのtyped clientとnative認証は実装済み。AI応答はWorker側schemaと `KMAPIShapes` の両方で検証し、不正な応答を保存・表示しない。問い合わせは同意時だけ診断情報を添付し、秘密鍵を端末へ持たせない。
 - 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
 ## ログイン・利用状況の接続範囲
