@@ -6,6 +6,8 @@ struct KMRecordDetailView: View {
     @State private var confirmsDeletion = false
     @State private var showsItems = false
     @State private var showsImage = false
+    @State private var editsReceipt = false
+    @State private var editsReceiptItems = false
     @State private var image: UIImage?
     @State private var imageError: String?
     @FocusState private var focus: String?
@@ -57,7 +59,7 @@ struct KMRecordDetailView: View {
                     .accessibilityIdentifier("records.excluded").padding(.bottom, KMSpacing.space3)
                 }
                 if let receipt = model.selectedReceipt { receiptDetails(receipt) }
-                if model.canEdit && row.kind != .transfer || model.editing == "transfer" {
+                if (model.selectedReceipt == nil && model.canEdit && row.kind != .transfer) || model.editing == "transfer" {
                     Button("変更を保存する") { collapse(); Task { await model.save() } }
                         .buttonStyle(KMButtonStyle(role: .primary)).disabled(!model.changed)
                         .accessibilityIdentifier("records.save").padding(.bottom, KMSpacing.space2)
@@ -81,6 +83,33 @@ struct KMRecordDetailView: View {
             Button("削除する", role: .destructive) { Task { await model.remove() } }
             Button("キャンセル", role: .cancel) { }
         }
+        .fullScreenCover(isPresented: $editsReceipt) {
+            if let receipt = model.selectedReceipt, let row = model.selected {
+                VStack(spacing: 0) {
+                    HStack {
+                        Button { editsReceipt = false } label: {
+                            HStack(spacing: 2) {
+                                KMIcon(name: "chevronLeft", size: 20)
+                                Text("キャンセル")
+                            }
+                        }
+                        .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.editReceiptCancel")
+                        Spacer()
+                    }
+                    .padding(.horizontal, KMSpacing.space4).padding(.top, KMSpacing.space2)
+                    ReceiptView(receiptID: receipt.id, editing: true,
+                        initialPane: editsReceiptItems ? "items" : nil,
+                        onSaved: {
+                            editsReceipt = false
+                            Task {
+                                await model.open(row)
+                                model.message = "変更を保存しました。"
+                            }
+                        })
+                }
+                .background(KMColor.bg)
+            }
+        }
     }
 
     private var rule: some View { Rectangle().fill(KMColor.border).frame(height: 1) }
@@ -99,7 +128,13 @@ struct KMRecordDetailView: View {
                 }.frame(minHeight: 44)
             } else if model.canEdit && model.selected?.kind != .transfer {
                 Button {
-                    if id == "category" && hasItems { showsItems = true; collapse() }
+                    // PWA receiptDetail: tapping a row opens the receipt editor for an applied
+                    // receipt, so item categories and the image zoom keep the same route.
+                    if model.selectedReceipt != nil {
+                        editsReceiptItems = id == "category" && hasItems
+                        editsReceipt = true
+                        collapse()
+                    } else if id == "category" && hasItems { showsItems = true; collapse() }
                     else { model.editing = id; focus = id }
                 } label: { detailValue(label, value: value, amount: amount, editable: true) }
                 .buttonStyle(.plain).accessibilityLabel("\(label)を編集: \(value)")

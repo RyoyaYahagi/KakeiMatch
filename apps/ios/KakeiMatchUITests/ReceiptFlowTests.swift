@@ -130,4 +130,41 @@ extension ReceiptFlowTests {
         XCTAssertTrue(app.buttons["records.search"].waitForExistence(timeout: 5))
         app.terminate()
     }
+
+    @MainActor func testAppliedReceiptDetailZoomsImageAndEditsItemCategory() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestFixture", "receipt-applied", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        app.buttons["receipt-tab"].tap()
+        let row = app.buttons["records.row.fixture-transaction-receipt"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        let categoryRow = app.buttons["records.detail.category"]
+        XCTAssertTrue(categoryRow.waitForExistence(timeout: 5))
+        // PWA opens the applied receipt editor from a detail row; the image zooms there.
+        app.buttons["records.detail.amount"].tap()
+        XCTAssertTrue(app.staticTexts["支出の記録を編集"].waitForExistence(timeout: 10))
+        let preview = app.buttons["receipt.imagePreview"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 5))
+        preview.tap()
+        XCTAssertTrue(app.buttons["receipt.closeImage"].waitForExistence(timeout: 5))
+        app.buttons["receipt.closeImage"].tap()
+        app.buttons["receipt.itemsTab"].tap()
+        let firstItem = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "receipt.row.")).firstMatch
+        XCTAssertTrue(firstItem.waitForExistence(timeout: 5))
+        firstItem.tap()
+        let itemCategory = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "receipt.item.category.")).firstMatch
+        XCTAssertTrue(itemCategory.waitForExistence(timeout: 5))
+        let identifier = itemCategory.identifier
+        itemCategory.tap()
+        let household = app.buttons["日用品"]
+        XCTAssertTrue(household.waitForExistence(timeout: 5))
+        household.tap()
+        XCTAssertTrue(app.buttons[identifier].label.contains("日用品"))
+        app.buttons["receipt.saveButton"].tap()
+        XCTAssertTrue(app.staticTexts["records.message"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.staticTexts["records.message"].label, "変更を保存しました。")
+        app.terminate()
+    }
 }
