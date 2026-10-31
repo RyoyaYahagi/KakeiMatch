@@ -77,11 +77,23 @@ struct HomeView: View {
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .accessibilityIdentifier("home.monthly.expense")
             }
-            HStack(spacing: 0) {
-                totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
-                totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
-                    .padding(.leading, KMSpacing.space3)
-                    .overlay(alignment: .leading) { Rectangle().fill(KMColor.border).frame(width: 1) }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    // Side by side would truncate the balance at AX5; give each
+                    // amount the full content width instead.
+                    VStack(spacing: 0) {
+                        totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
+                        Rectangle().fill(KMColor.border).frame(height: 1)
+                        totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
+                        totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
+                            .padding(.leading, KMSpacing.space3)
+                            .overlay(alignment: .leading) { Rectangle().fill(KMColor.border).frame(width: 1) }
+                    }
+                }
             }
             .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
