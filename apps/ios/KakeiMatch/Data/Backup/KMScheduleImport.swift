@@ -101,7 +101,9 @@ import Foundation
                 guard transaction.string("schedule") == id || (financialId?.hasPrefix(prefix) ?? false),
                       let dateRepr = transaction.int("date") else { continue }
                 let day = try KMActualImport.actualDate(dateRepr)
-                consumed[day] = financialId ?? KMRecurringScheduleService.importedId(scheduleId: id, date: day)
+                // Keep the schedule's stable ID even when Actual posted the row without one.
+                if let financialId, financialId.hasPrefix(prefix) { consumed[day] = financialId }
+                else { consumed[day] = KMRecurringScheduleService.importedId(scheduleId: id, date: day) }
             }
             var nextDate: KMDate?
             if let value = row.int("next_date") { nextDate = try KMActualImport.actualDate(value) }
