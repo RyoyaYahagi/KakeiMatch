@@ -95,7 +95,11 @@ struct ReceiptView: View {
             if let initialPane { model.pane = initialPane }
             if receiptID == nil && repositories?.fixtureName != "receipt" { openSource() }
         }
-        .onDisappear { if !showsImage && !showsCamera && !showsPhotos { model.stopWaiting() } }
+        .onDisappear {
+            if !showsImage && !showsCamera && !showsPhotos { model.stopWaiting() }
+            Task { await model.flushDraft() }
+        }
+        .onChange(of: model.draftSnapshot) { _, _ in model.scheduleDraftSave() }
         .onChange(of: model.didSave) { _, saved in
             // PWA local-ui.ts: an edited receipt returns to its detail after the save.
             // Keep the editor open when the ledger saved but the learning write failed.
@@ -129,14 +133,14 @@ struct ReceiptView: View {
                 do {
                     guard let value, let data = try await value.loadTransferable(type: Data.self) else { return }
                     let mime = value.supportedContentTypes.first?.preferredMIMEType ?? ""
-                    model.selectImage(data, contentType: mime)
+                    await model.selectImage(data, contentType: mime)
                 } catch { model.error = "写真を開けませんでした。もう一度選んでください。" }
             }
         }
         .fullScreenCover(isPresented: $showsCamera) {
             KMReceiptCamera { data in
                 showsCamera = false
-                if let data { model.selectImage(data, contentType: "image/jpeg") }
+                if let data { Task { await model.selectImage(data, contentType: "image/jpeg") } }
             }
             .ignoresSafeArea()
         }

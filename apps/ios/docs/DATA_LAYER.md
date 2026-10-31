@@ -21,15 +21,16 @@ Application Support/KakeiMatch/
     household.sqlite            # Native SQLite schema version 4
 ```
 
-- `objects(collection,id,ordinal,json)`：Repository用の型付きsnapshot。`id` はcollection内の格納位置で、**ドメインIDはJSON内に元の値を保持**する。配列順を維持する。現段階ではSQLで家計集計せず、読み出した作業用snapshotで既存のCRUD/集計を共有する。
+- `objects(collection,id,ordinal,json)`：Repository用の型付きsnapshot。`id` はcollection内の格納位置で、**ドメインIDはJSON内に元の値を保持**する。配列順を維持する。例外は `receipt-drafts` で、レシートIDをkeyに1件だけ持つ。現段階ではSQLで家計集計せず、読み出した作業用snapshotで既存のCRUD/集計を共有する。
 - `artifacts(id,metadata,payload)`：レシート画像とCSV原本。metadataはportable manifestの情報、payloadは元のbytes。archiveのpathを端末のpathへ使わない。
 - `control(id,revision)`：snapshotの世代。読み込みはtransaction内で一貫した版を取得し、保存transaction内で再検査する。別のwriterが先に保存していたら古いsnapshotの上書きを拒否する。
+- `objects` の `receipt-drafts`：確認待ち/編集画面の未完成入力。確認値 `receipts[*].confirmedValue` とは別recordで、存在するレシートにだけ保存する。
 - `objects` の `service-state` singleton：照合の入力 snapshot・別名・候補却下・手動再確認・取消履歴、分類観測、定期の処理済み日。取引等の全 collection と同じ transaction で保存する。v2 はこの collection を追加し、table/column の追加はない。
 - `objects` の `ledger-writes` singleton：削除済みの印つき取引snapshot、分割編集で除いた子、削除/Undo履歴、編集前後の履歴。`transactions` は有効取引だけのprojectionとし、削除時も完全な取引値はtombstone領域に保持する。削除印を外すUndoは同じ親・子・振替対IDを復元する。原本・確認値を捨てない。
 - `objects` の `master-writes` singleton（v4）：日付付き開始残高/不正行の残高、定期設定監査・生成snapshot/取消結果、MoneyForwardの移行履歴/対応ルール。取引・明細・CSV原本の新規書き込みも同じ世代検査付きtransactionで確定する。
 - `provenance(id,payload)`：検証済みの元 `manifest.json`、`local-data.json`、`actual-budget.zip`。対応済みrecord kindはすべて原形のまま保持する。**現在の家計簿のexportではない**。iOSの編集をここへ逆投影したとは扱わない。
 
-保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。COMMIT直前に読み込み時のprofile UUIDが `active.json` の現在値と一致することを再検査し、切り替わっていれば全体をrollbackする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本も同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
+保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。COMMIT直前に読み込み時のprofile UUIDが `active.json` の現在値と一致することを再検査し、切り替わっていれば全体をrollbackする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本と未完成入力の下書きも同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
 
 DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログイン・API token・画面ロック情報を保存しない。このPRは独自の暗号化やKeychain認証を実装しない。
 
@@ -61,6 +62,7 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 | 開始残高/不正行/削除行/集計対象外 | PWAの集計境界に合わせ、削除行はprojectionへ出さない。開始残高/不正行は月次集計へ出さず、残高だけに反映。offbudget口座と支出対象外取引は集計から除外 |
 | `zero_budgets` / tracking方式の `reflect_budgets` | `native-budgets`。KakeiMatchの月次設定と分離 |
 | `receipt-metadata` | `receipts`。画像のID・抽出・確認値・登録状態を保持。画像は `artifacts` |
+| `category-state`（`receipt-draft:<id>`） | `receipt-drafts`。未完成入力だけを保持し、確認値・登録状態とは混ぜない |
 | `statement-import` / `statement-transaction` | `imports` / `statements`。CSVも `artifacts`。CSVを再解析して行を生成しない |
 | `reconciliation-run` / `reconciliation-resolution` | `runs` / `resolutions`。保存済み結果を表示する。取り込み時に照合や判断の再適用はしない |
 | `payroll-record` | `payroll`。確認済み内訳だけ。給与登録時は手取りの収入取引と同じSQLite transactionで保存し、画像は持ち込まない |
@@ -99,7 +101,9 @@ Home の画面は `TransactionRepository.homeDashboard(month:today:)` を1回だ
 | 給与明細の登録 | 勤務先・支給日・手取り・内訳を確認し、手取りだけを収入に登録する。控除から支出は作らない。安定した給与IDで再送し、収入取引と確認済み内訳snapshotを一つのSQLite transactionで保存する。失敗時は両方をrollback | `payroll.registerPayrollRecord(_:income:)`。既存Worker APIのtyped応答を検証し、画像は保存しない |
 | IDのない既存取引との照合 | ActualのstrictIdCheckingどおり、同じ口座・金額・±7日・importedIdなしを対象とし、同名支払先、次に日付の近さで照合する。既存の値を優先し、画面入力とのreadbackが一致する場合だけIDを引き継ぐ。別のimportedIdがある記録は統合しない | 手入力/レシートの新規登録経路。給与/定期の明示追加は既存どおり別扱い |
 | 通常取引の編集 | 種類を変えず日付・金額・支払先・category・口座・memoを更新。既存の取引ID/importedId/cleared/reconciledを保持する。分割・レシート・振替は専用経路に限定 | `saveManual(input,id:existingId)`。input.importedIdは編集では書き換えに使用しない |
-| レシート登録 | 確認値から単一取引、またはcategoryごとの親＋子を作る。子はsigned円で親合計と一致、親はcategoryなし、集計/残高で二重計上しない。基本category IDはPWAと同じ名称対応で解決し、同じ実categoryへ再集約する。画像のある0円支出は単一取引、画像なし手入力は1円以上 | `receipts.registerReceipt(id:at:)`。`saveReceipt`は下書きsnapshot保存だけ。appliedは同じ結果、deletedは再登録拒否 |
+| レシート画像の新規保存 | 撮影/写真選択の直後、AI送信前に原本を保存する。宣言形式（JPEG/PNG/WebP）と先頭bytesを一致検査し、10 MiBを超える画像・空画像・不一致は拒否する。保存先は `receipt-image:<receipt id>` のartifactで、metadataのownerKindは `receipt`。pendingレシートと同一transactionで確定し、失敗時はレシート・bytes・metadataを残さない。撮り直しは新しいpendingレシートを同じtransactionで作り、置換前のpendingの画像と下書きを消す。保持期間の自動削除はせず、未登録削除で消え、登録済みレシートの削除では画像を残す。AIの送信上限6 MiBは保存とは別で、超える画像は保存だけ行い送信しない | `receipts.saveReceiptImage(data:contentType:replacingReceiptId:at:)`、`KMReceiptImageValidation`。PWA `local-receipts.ts:saveImage` / `receipt-validation.ts` に対応 |
+| 未完成入力の下書き | 入力中の店名・日付・時刻・金額文字列・カテゴリ・支払元・品目・値引き/調整・税額・メモ・集計除外を、確認値とは別のrecordとして350 msのdebounceで保存する。空文字や不正な金額文字列もそのまま保持し、`merchant`・正の金額・品目のいずれかがある時だけ復元に使う。確認待ち/登録済み編集の再openでは確認値・抽出値より下書きを優先する。登録・登録済み編集・未登録削除で下書きも同じtransaction内に消える。存在しないレシートへは作らない | `receipts.saveReceiptDraft(_:receiptId:at:)` / `receiptDraft(receiptId:)` / `deleteReceiptDraft(receiptId:)`。PWA `local-ui.ts:read/saveDraft` と `ReceiptDraft` に対応 |
+| レシート登録 | 確認値から単一取引、またはcategoryごとの親＋子を作る。子はsigned円で親合計と一致、親はcategoryなし、集計/残高で二重計上しない。基本category IDはPWAと同じ名称対応で解決し、同じ実categoryへ再集約する。画像のある0円支出は単一取引、画像なし手入力は1円以上 | `receipts.registerReceipt(id:at:)`。`saveReceipt`は下書きsnapshot保存だけ。appliedは同じ結果、deletedは再登録拒否。登録成功時に未完成入力の下書きを消す |
 | 品目・値引き・税 | 単一categoryは印字総額を優先。複数categoryは対象付き値引き→対象なし調整の金額比按分→外税を金額比按分。端数は最大剰余、同率は品目登場順。内税を二重加算しない。不明金額・不正対象・合計不一致・負のcategory小計・安全整数超過は拒否 | `KMReceiptAllocation`。UIntの全幅乗除算でTS BigIntと同じ整数商/剰余を計算し、Doubleは使わない |
 | レシート編集・分割の組み替え | 同じ親ID/importedId/cleared/reconciledを維持。子IDは順番に再使用し、不足分だけ作り、余分な子はsnapshot付きの削除印として保持。通常→分割→通常を扱う。古いupdatedAtは拒否。履歴は追加し、以前の履歴を上書きしない | `receipts.editReceipt(id:value:expectedUpdatedAt:at:)`。取引・確認値・編集履歴を一括保存 |
 | 振替 | 両側に相互IDを持つ対を作り、sourceだけにimportedIdを持たせる。出金/入金の符号は逆、一覧は出金だけ、両口座残高に反映、月次集計から除外。同じIDの同値再送は対を再作成せず、異値は拒否。片側IDからの編集も両側を一括更新する | `saveTransfer(input,id:nil/existingId)`。対のID・importedId・cleared/reconciledを維持 |
@@ -126,7 +130,7 @@ Home の画面は `TransactionRepository.homeDashboard(month:today:)` を1回だ
 - MoneyForwardのPWA `settings:moneyforward-import` は、完了・部分完了・取消途中・取消済みのbatchと対応ルールをnativeの `moneyForwardHistory` / `moneyForwardRules` へ投影する。`planned`/`processing`/`undoing` と `pending`/`importing`/`failed` 行はPWA側で状態が動いているため投影しない。`created` 行でも、PWAのsnapshotのID・imported IDとnativeの取引のimported IDが一致する場合だけ削除対象のsnapshotを保持する。duplicate/excluded、対象取引が消えている行、IDが食い違う行は削除対象を持たないため、`undoMoneyForward` はPWA由来でない取引を消さない。元recordはprovenanceに保持する。
 - 比較テスト担当の `test/ios-pwa-parity` / `KakeiMatchTests/Parity` は変更しない。単体テストは画面接続やPWA実行との総合比較完了を意味しない。
 
-`LedgerWriteTests` は両adapterの同じ入力で登録・編集・再送・衝突・削除Undo・再open・SQLite失敗rollback・v2→v3・native backupを検査する。`ReceiptAllocationTests` は `src/lib/local-receipts.test.ts` の按分入力/期待値を移植し、64bit積を超える金額の端数処理も検査する。支払先規則の再生成は依存導入後 `node apps/ios/scripts/generate-payee-normalization.mjs`。Actualライセンスは `Data/Ledger/ActualLicense.txt` に同梱する。
+`LedgerWriteTests` は両adapterの同じ入力で登録・編集・再送・衝突・削除Undo・再open・SQLite失敗rollback・v2→v3・native backupを検査する。`ReceiptAllocationTests` は `src/lib/local-receipts.test.ts` の按分入力/期待値を移植し、64bit積を超える金額の端数処理も検査する。支払先規則の再生成は依存導入後に `node apps/ios/scripts/generate-payee-normalization.mjs`。Actualライセンスは `Data/Ledger/ActualLicense.txt` に同梱する。`ReceiptImageDraftStoreTests` は両adapterで画像と下書きの一括保存・再open・置換・登録時の下書き削除・SQLite失敗rollbackを検査する。`ReceiptImageDraftTests` は形式判定と未完成入力の保持を検査する。
 
 ## `.kmb` 取り込みと互換性
 
@@ -186,7 +190,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
 - `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
-- レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Ruleの高度な条件の実行は後続。`.kmb` の基本形scheduleと旧PWAのMoneyForward履歴は取り込み時に投影済み。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
+- 端末からの全削除/原本整理、Actual Schedule/Ruleの高度な条件の実行は後続。`.kmb` の基本形scheduleと旧PWAのMoneyForward履歴は取り込み時に投影済み。レシート画像の新規保存・台帳登録/編集・確認時の分類学習・取引削除Undoは上記専用APIを使う。
 - I/O・検証は現段階でMainActor直列。storeの全操作は `KMSerialQueue` で到着順に直列化し、別sceneの同時要求もエラーにせず待機させる（queueは再入不可）。大容量での実機メモリ/応答性、アプリ強制終了/容量不足は未検証。複数sceneのprofile排他と別プロセス経路の有無は「複数sceneのprofile排他」を参照。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。
 - nativeのraw provenanceは監査/後続projection用。iOS編集後の正本と混同しない。端末からの全削除/原本整理は認証情報と分離して別途実装する。

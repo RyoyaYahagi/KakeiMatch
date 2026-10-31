@@ -89,7 +89,10 @@ struct ReceiptPresentationTests {
         #expect(model.didSave && model.error == nil)
         #expect(try await repositories.receipts.receipts().count == 1)
     }
-    @Test func unsavedImageCannotBeSentAndStopPreservesManualInput() async throws {
+    private static let syntheticPNG = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
+
+    @Test func photoLessReadIsRefusedAndStopPreservesManualInput() async throws {
         let repositories = try KMFixtureLoader.load(named: "migration")
         let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
         model.merchant = "合成手入力"; model.amount = "100"
@@ -97,7 +100,75 @@ struct ReceiptPresentationTests {
         model.startReading()
         #expect(model.phase == .idle)
         #expect(model.merchant == "合成手入力" && model.amount == "100")
-        #expect(model.error?.contains("保存できない") == true)
+        #expect(model.error?.contains("先にレシートの写真") == true)
+    }
+
+    @Test func selectingPhotoSavesTheOriginalAndRejectsInvalidImages() async throws {
+        let repositories = try KMFixtureLoader.load(named: "migration")
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
+        await model.selectImage(Data([0x00]), contentType: "image/heic")
+        #expect(model.receipt == nil)
+        #expect(model.error == "JPEG、PNG、WebP形式の画像を選択してください。")
+
+        await model.selectImage(Self.syntheticPNG, contentType: "image/png")
+        let receipt = try #require(model.receipt)
+        #expect(model.error == nil && model.imageIsSaved)
+        #expect(receipt.registration.status == .pending)
+        #expect(receipt.image?.contentType == "image/png")
+        #expect(receipt.image?.sizeBytes == Self.syntheticPNG.count)
+        #expect(try await repositories.receipts.receiptImage(blobId: try #require(receipt.image?.blobId)) == Self.syntheticPNG)
+    }
+
+    @Test func imageOverAILimitIsSavedButNotSent() async throws {
+        let repositories = try KMFixtureLoader.load(named: "migration")
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
+        let large = Self.syntheticPNG + Data(repeating: 0, count: 7 * 1024 * 1024)
+        await model.selectImage(large, contentType: "image/png")
+        #expect(model.imageIsSaved)
+        #expect(model.receipt?.image?.sizeBytes == large.count)
+        #expect(model.startReading() == nil)
+        #expect(model.phase == .failed(.invalidRequest))
+        #expect(model.error?.contains("6 MiB以下") == true)
+        let id = try #require(model.receipt?.id)
+        #expect(try await repositories.receipts.receipt(id: id)?.extraction == nil)
+    }
+
+    @Test func unfinishedDraftRestoresAndIsRemovedAfterRegistration() async throws {
+        let repositories = try KMFixtureLoader.load(named: "migration")
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: nil)
+        await model.selectImage(Self.syntheticPNG, contentType: "image/png")
+        let id = try #require(model.receipt?.id)
+        model.merchant = "合成の下書き"; model.amount = "12x"; model.memo = "途中"
+        _ = model.addItem()
+        await model.flushDraft()
+        #expect(try await repositories.receipts.receiptDraft(receiptId: id)?.totalAmountText == "12x")
+        #expect(try await repositories.receipts.receiptDraft(receiptId: id)?.items.count == 1)
+
+        let reopened = KMReceiptModel(); await reopened.load(repositories, receiptID: id)
+        #expect(reopened.merchant == "合成の下書き")
+        #expect(reopened.amount == "12x" && reopened.memo == "途中")
+        #expect(reopened.items.count == 1 && reopened.items[0].name.isEmpty)
+
+        reopened.amount = "100"
+        reopened.removeItem(try #require(reopened.items.first?.id))
+        reopened.categoryId = try #require(reopened.categories.first?.id)
+        reopened.accountId = try #require(reopened.accounts.first?.id)
+        await reopened.save()
+        #expect(reopened.didSave && reopened.error == nil)
+        #expect(try await repositories.receipts.receiptDraft(receiptId: id) == nil)
+        #expect(try await repositories.receipts.receipt(id: id)?.registration.status == .applied)
+    }
+
+    @Test func failedRegistrationKeepsTheDraftForRetry() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        let id = try #require(try await repositories.receipts.receipts().first?.id)
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: id)
+        model.accountId = try #require(model.accounts.first?.id)
+        model.items[0].amountYen = nil
+        model.merchant = "合成の修正"
+        await model.save()
+        #expect(!model.didSave && model.error != nil)
+        #expect(try await repositories.receipts.receiptDraft(receiptId: id)?.merchant == "合成の修正")
     }
 
     @Test func appliedReceiptItemCategoryEditUsesEditReceiptAndSavesLearning() async throws {

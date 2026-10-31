@@ -84,7 +84,12 @@ final class DynamicTypeLayoutTests: XCTestCase {
         XCTAssertTrue(reconciliation.otherElements["reconciliation.screen"].waitForExistence(timeout: 10))
         let reconciliationScreen = reconciliation.windows.firstMatch
         assertHittable(reconciliation.buttons["reconciliation.runAgain"], screen: reconciliationScreen)
-        reconciliation.swipeUp()
+        // At Accessibility XL the CSV importer starts just above the tab bar, so a full-speed
+        // swipe carries it to the very top edge of the scroll view. There the button is clipped
+        // under the status bar and its hit point is no longer tappable, which made this check
+        // depend on the runner's scroll inertia rather than on the layout. Scroll at .slow so
+        // the content moves by the drag distance only and the button stays inside the screen.
+        reconciliation.swipeUp(velocity: .slow)
         assertHittable(reconciliation.buttons["reconciliation.importCsvButton"], screen: reconciliationScreen)
         assertTappable(reconciliation.buttons["reconciliation-tab"], screen: reconciliationScreen)
         screenshot(reconciliation, named: "dynamic-type-xl-reconciliation")
