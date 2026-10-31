@@ -181,7 +181,7 @@ iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
 - `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
-- レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projectionは後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
+- Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projection、端末からの全削除/原本整理は後続。レシートの画像保存・台帳登録/編集・確認時の分類学習、取引削除Undoは上記専用APIを使う。
 - I/O・検証は現段階でMainActor直列。busy中の再入要求はエラーとし、自動再試行しない。大容量での実機メモリ/応答性、アプリ強制終了/容量不足、複数scene/process間の排他は未検証。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。
 - nativeのraw provenanceは監査/後続projection用。iOS編集後の正本と混同しない。端末からの全削除/原本整理は認証情報と分離して別途実装する。
