@@ -161,21 +161,23 @@ struct ReceiptView: View {
                     .font(KMTypography.text)
                     .foregroundStyle(KMColor.text)
                     .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: KMSpacing.space2) {
-                    ProgressView().tint(KMColor.primary).accessibilityHidden(true)
-                    Text(KMNativeAuthPresentation.guestStartProgress)
-                        .font(KMTypography.note)
-                        .foregroundStyle(KMColor.muted)
-                        .accessibilityIdentifier("receipt.guestStartProgress")
-                }
+                // PWA keeps a 65pt widget slot here; App Attest has no UI, so a
+                // spinner occupies the same space while the check runs.
+                ProgressView()
+                    .tint(KMColor.primary)
+                    .frame(maxWidth: .infinity, minHeight: 65)
+                    .accessibilityLabel(KMNativeAuthPresentation.guestStartProgress)
                 Button(KMNativeAuthPresentation.guestStartCancel) { model.cancelGuestStart() }
                     .buttonStyle(KMButtonStyle(role: .secondary, width: .intrinsic))
                     .accessibilityIdentifier("receipt.guestStartCancel")
             }
             .padding(KMSpacing.space5)
-            .frame(maxWidth: KMLayout.contentMax, alignment: .leading)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: KMRadius.lg))
-            .padding(.horizontal, KMSpacing.space5)
+            .frame(maxWidth: 420, alignment: .leading)
+            .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
+            .overlay {
+                RoundedRectangle(cornerRadius: KMRadius.xl).strokeBorder(KMColor.border, lineWidth: 1)
+            }
+            .padding(.horizontal, KMSpacing.space4)
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(.isModal)
             .accessibilityIdentifier("receipt.guestStart")
