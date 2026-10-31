@@ -28,15 +28,44 @@ struct KMPortableRecord: Sendable {
 /// Strict Zod schemas/refinements are built from the reference TS, not approximated by Codable.
 /// JavaScriptCore executes only a bundled program and JSON data. No network, eval of input, or engine API.
 @MainActor enum KMBackupSchema {
-    static func validate(manifest: Data, local: Data, bundle: Bundle = .main) throws -> (KMBackupManifest, [KMPortableRecord]) {
-        guard let source = bundle.url(forResource: "backup-validator", withExtension: "js"), let context = JSContext(),
-              let manifestText = String(data: manifest, encoding: .utf8), let localText = String(data: local, encoding: .utf8) else {
-            throw KMDataError.invalidData("バックアップの検証機能またはUTF-8を読み込めません。")
+    private static var cachedContext: JSContext?
+    private static var cachedBundleURL: URL?
+
+    /// One JSVirtualMachine is enough: the bundled program is stateless. Creating a context per
+    /// import also re-parsed the ~470 KiB validator and triggered a JSC SIGSEGV in
+    /// JSRopeString::resolveToBuffer on the local iOS 26.2 Simulator.
+    /// See docs/LOCAL_SIMULATOR_JSC.md.
+    private static func context(for bundle: Bundle) throws -> JSContext {
+        let bundleURL = bundle.bundleURL
+        if let cachedContext, cachedBundleURL == bundleURL { return cachedContext }
+        guard let source = bundle.url(forResource: "backup-validator", withExtension: "js"), let context = JSContext() else {
+            throw KMDataError.invalidData("バックアップの検証機能を読み込めません。")
         }
         context.evaluateScript(try String(contentsOf: source, encoding: .utf8))
-        guard context.exception == nil,
-              let result = context.objectForKeyedSubscript("KMBackupValidation")?.objectForKeyedSubscript("validate")?.call(withArguments: [manifestText, localText]),
-              context.exception == nil, let text = result.toString(), let bytes = text.data(using: .utf8),
+        guard context.exception == nil else {
+            throw KMDataError.invalidData("バックアップの検証機能を読み込めません。")
+        }
+        cachedContext = context
+        cachedBundleURL = bundleURL
+        return context
+    }
+
+    private static func discardContext() {
+        cachedContext = nil
+        cachedBundleURL = nil
+    }
+
+    static func validate(manifest: Data, local: Data, bundle: Bundle = .main) throws -> (KMBackupManifest, [KMPortableRecord]) {
+        guard let manifestText = String(data: manifest, encoding: .utf8), let localText = String(data: local, encoding: .utf8) else {
+            throw KMDataError.invalidData("バックアップの検証機能またはUTF-8を読み込めません。")
+        }
+        let context = try context(for: bundle)
+        let result = context.objectForKeyedSubscript("KMBackupValidation")?.objectForKeyedSubscript("validate")?.call(withArguments: [manifestText, localText])
+        guard context.exception == nil, let result else {
+            discardContext()
+            throw KMDataError.invalidData("バックアップの目録または端末記録が未対応・不正です。")
+        }
+        guard let text = result.toString(), let bytes = text.data(using: .utf8),
               let object = try JSONSerialization.jsonObject(with: bytes) as? [String: Any], object["error"] == nil,
               let manifestObject = object["manifest"], let localObject = object["local"] as? [String: Any],
               let rows = localObject["records"] as? [[String: Any]] else {
