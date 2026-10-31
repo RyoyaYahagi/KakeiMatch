@@ -93,10 +93,13 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | バックアップ / 復元 | `feature/ios-backup-screen-v2` | #317 | **Mac** | マージ済み（`.kmib` 書き出し、`.kmb` / `.kmib` 復元） |
 | MoneyForward CSV 取り込み | `feature/ios-moneyforward-v2` | #318 | **Mac** | マージ済み |
 | 画面13: 給与明細 | `feature/ios-payroll` | #319 | **Mac** | マージ済み（`e31be35`）。収入入力導線、AI読取、確認、手取り収入と内訳snapshotの一括保存 |
+| 記録一覧の口座導線と削除取り消しのタブ横断表示 | `feature/ios-shell-account-undo` | #321 | **Mac** | マージ済み（`b403b3c`）。「口座・残高を見る」から設定の支払元・口座へ遷移し、取り消し通知は shell が保持してタブを移っても10秒表示 |
 | 登録済みレシートの品目カテゴリ編集・画像拡大 | `feature/ios-receipt-item-category-edit` | #323 | **Mac** | マージ済み（`bfa5848`） |
-| Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
+| Visual regression（PWA と iOS のスクショ比較・差分 artifact） | `feature/ios-visual-regression` | #325 | **Mac** | マージ済み（`e91a9db`）。`ios` job の main push・手動実行で `ios-visual-regression` artifact を生成。差分率による合否判定はしない |
+| Home の表示集計を Repository の1回の取得にまとめる | `feature/ios-home-summary-repository` | #326 | **Mac** | マージ済み（`6cbccec`）。`transactions.homeDashboard(month:today:)` で収支・予算・要確認・カテゴリ内訳をまとめて取得 |
+| ローカル Simulator の JavaScriptCore クラッシュ修正 | `fix/ios-local-jsc-crash` | #328 | **Mac** | マージ済み（`fc4decd`）。原因と回避策は `docs/LOCAL_SIMULATOR_JSC.md` |
 
-2026-10-31 時点で、記録一覧の口座導線と削除取り消しのタブ横断表示は PR #321、初回の Passkey ログイン・ゲスト開始・ログアウト画面は PR #322 で進行中です（いずれも未マージ）。
+2026-10-31 時点で、初回の Passkey ログイン・ゲスト開始・ログアウト画面は PR #322 で進行中です（未マージ）。
 
 ## 3. Mac 側でやること: 画面ごとの PR
 
