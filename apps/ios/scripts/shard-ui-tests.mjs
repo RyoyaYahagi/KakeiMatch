@@ -65,6 +65,8 @@ export const screenshotOnly = [
   'RecurringFlowTests/testCatchUpDialogDarkScreenshot',
   'RecurringFlowTests/testCatchUpHistoryLightScreenshot',
   'RecurringFlowTests/testCatchUpHistoryDarkScreenshot',
+  'RecordsFlowTests/testPayrollBreakdownLightScreenshot',
+  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot',
   'PayrollFlowTests/testPayrollInitialLightScreenshot',
   'PayrollFlowTests/testPayrollInitialDarkScreenshot',
   'PayrollFlowTests/testPayrollConfirmLightScreenshot',

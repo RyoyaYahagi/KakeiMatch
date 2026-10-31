@@ -17,6 +17,7 @@ final class KMRecordsModel {
     var reviewIDs: Set<String> = []
     var selected: KMTransaction?
     var selectedReceipt: KMReceipt?
+    var selectedPayroll: KMPayrollRecord?
     var draft: KMRecordEditDraft?
     var originalDraft: KMRecordEditDraft?
     var editing: String?
@@ -95,7 +96,7 @@ final class KMRecordsModel {
 
     func showList() async {
         guard !busy else { return }
-        page = .list; searchOrigin = false; editing = nil; selected = nil; draft = nil
+        page = .list; searchOrigin = false; editing = nil; selected = nil; selectedReceipt = nil; selectedPayroll = nil; draft = nil
         await reload()
     }
 
@@ -107,8 +108,11 @@ final class KMRecordsModel {
                 throw KMDataError.notFound("記録が見つかりません。記録一覧を読み込み直してください。")
             }
             let receipts = try await repositories.receipts.receipts()
+            let payroll = try await repositories.payroll.payrollRecords()
             selected = current
             selectedReceipt = receipts.first { $0.registration.actualTransactionId == current.id && $0.registration.status == .applied }
+            // PWA transactionDetail: the confirmed snapshot linked to this income stays visible after edits.
+            selectedPayroll = payroll.first { $0.actualTransactionId == current.id }
             draft = KMRecordEditDraft(current, receipt: selectedReceipt); originalDraft = draft
             editing = nil; page = .detail
         } catch { self.error = error.localizedDescription }
@@ -117,7 +121,7 @@ final class KMRecordsModel {
 
     func backFromDetail() async {
         guard !busy else { return }
-        editing = nil; selected = nil; selectedReceipt = nil; draft = nil; error = nil
+        editing = nil; selected = nil; selectedReceipt = nil; selectedPayroll = nil; draft = nil; error = nil
         if searchOrigin { page = .search; await reload() }
         else { await showList() }
     }
