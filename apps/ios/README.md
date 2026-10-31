@@ -6,7 +6,7 @@ Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseli
 
 macOS / Xcode 26以上 / XcodeGen 2.44.1以上を使います。CIと揃える場合はXcode 26.2、iPhone 17 / iOS 26.2を選びます。
 
-ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。Simulator上で `KakeiMatchTests` の全suiteを実行するときは `--all` を指定してください。既定で除外するバックアップテストは `--all` で含められます。全体の成否はCIで判断します。
+ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。`--all` を指定すると、`--only` がない場合にscheme内の全テストを実行します。バックアップ・`.kmb` 取り込み系のテストも通常どおり実行対象です。全体の成否はCIで判断します。ローカルSimulatorでJavaScriptCoreごと落ちた事象は [docs/LOCAL_SIMULATOR_JSC.md](docs/LOCAL_SIMULATOR_JSC.md) に記録しています。
 
 FoundationまたはCryptoKitだけで動く計算ロジックは、リポジトリrootで `swift test --package-path apps/ios` を実行します。iOS Simulatorの起動は不要です。Packageのdeployment targetはmacOS 15です。
 
