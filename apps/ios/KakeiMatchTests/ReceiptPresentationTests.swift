@@ -99,6 +99,47 @@ struct ReceiptPresentationTests {
         #expect(model.merchant == "合成手入力" && model.amount == "100")
         #expect(model.error?.contains("保存できない") == true)
     }
+
+    @Test func appliedReceiptItemCategoryEditUsesEditReceiptAndSavesLearning() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt-applied")
+        let receipt = try #require(try await repositories.receipts.receipts().first)
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: receipt.id, editing: true)
+        #expect(model.editing && model.error == nil)
+        let first = try #require(model.items.first)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let household = try #require(model.categories.first { $0.name == "日用品" })
+        #expect(first.categoryId == food.id)
+        model.setItemCategory(first.id, categoryId: household.id)
+        await model.save()
+        #expect(model.error == nil && model.didSave)
+        let saved = try #require(try await repositories.receipts.receipt(id: receipt.id))
+        #expect(saved.confirmedValue?.items?.first?.categoryId == household.id)
+        let transaction = try #require(try await repositories.transactions.transaction(id: "fixture-transaction-receipt"))
+        #expect(transaction.splits?.contains { $0.categoryId == household.id } == true)
+        let learning = try #require(try await repositories.categoryLearning.categoryObservations().first { $0.receiptId == receipt.id })
+        #expect(learning.items.first?.categoryId == household.id)
+    }
+
+    @Test func appliedReceiptEditRejectsStaleSnapshotAndKeepsInputForRetry() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt-applied")
+        let receipt = try #require(try await repositories.receipts.receipts().first)
+        let model = KMReceiptModel(); await model.load(repositories, receiptID: receipt.id, editing: true)
+        let first = try #require(model.items.first)
+        let household = try #require(model.categories.first { $0.name == "日用品" })
+        // Simulate another screen saving first; the loaded updatedAt is now stale.
+        var other = try #require(receipt.confirmedValue)
+        other.memo = "別の画面で変更"
+        _ = try await repositories.receipts.editReceipt(id: receipt.id, value: other,
+            expectedUpdatedAt: receipt.updatedAt, at: repositories.referenceDate.addingTimeInterval(10))
+        model.setItemCategory(first.id, categoryId: household.id)
+        await model.save()
+        #expect(!model.didSave && model.error != nil)
+        // The rejected edit left the ledger alone and kept the unsaved input in the model.
+        let current = try #require(try await repositories.receipts.receipt(id: receipt.id))
+        #expect(current.confirmedValue?.memo == "別の画面で変更")
+        #expect(current.confirmedValue?.items?.first?.categoryId == receipt.confirmedValue?.items?.first?.categoryId)
+        #expect(model.items.first?.categoryId == household.id)
+    }
 }
 
 

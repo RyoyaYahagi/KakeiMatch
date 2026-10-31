@@ -55,8 +55,8 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 | POST `/api/ai/payroll` | 上記 + `{maskingConfirmed:true}` | `{extraction:Payroll,model:String(1…100),promptVersion:payroll-v1}` | B + O、実装済み |
 | POST `/api/ai/jev` | `{flowId,receipt:{merchant:String|null,totalAmountYen:Int|null,items:[{name,amountYen:Int|null}]},categories:[{id,name}],itemIndexes?:[Int]}` | `{model:String,answers:{categoryまたはitem_N:Choice}}` | B + O、実装済み |
 | POST `/api/ai/category-suggestion` | `{flowId,sourceCategoryName:String(1…200),categories:[{id,name}]}` | `{categoryId:候補内ID|null}` | B + O、実装済み |
-| POST `/api/contact` | `{flowId,kind:bug|improvement|question,message:String(1…4000),originalMessage?:String(1…4000),diagnostic?:Diagnostic}`、20 KiB以下 | `{feedbackId,kind,reply,issueUrl:null}` | B + O。PWA / iOS は account のみ。通信実装済み、diagnostic送信は未実装 |
-| POST `/api/contact/transcribe` | `{flowId,audioBase64,contentType:audio/mp4|audio/webm|audio/ogg|audio/wav|audio/mpeg}` | `{text:String(1…4000)}` | B + O。PWA / iOS は account のみ。通信実装済み、録音UIなし |
+| POST `/api/contact` | `{flowId,kind:bug|improvement|question,message:String(1…4000),originalMessage?:String(1…4000),diagnostic?:Diagnostic}`、20 KiB以下 | `{feedbackId,kind,reply,issueUrl:null}` | B + O。PWA / iOS は account のみ。通信実装済み。診断情報は利用者が同意した時だけ添付 |
+| POST `/api/contact/transcribe` | `{flowId,audioBase64,contentType:audio/mp4|audio/webm|audio/ogg|audio/wav|audio/mpeg}` | `{text:String(1…4000)}` | B + O。PWA は account のみ。iOS は音声入力を作らないため呼ばない |
 | POST `/api/contact/interview` | `{flowId,message,history:[{question,answer}]最大4,finish:Bool,diagnostic?:Diagnostic}` | `{status:ask|ready,kind,question,recommendation,summary}` | B + O。旧互換用、通常PWAから呼ばないため移植しない |
 | GET `/api/auth/get-session` | なし | `{user:User,session:Session}|null` | S、実装済み |
 | GET `/api/auth/passkey/list-user-passkeys` | なし | `[Passkey]` | S、実装済み |
@@ -79,7 +79,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 - **Cost**: `{requests,inputTokens,outputTokens,costUsdMicros,unknownRequests}` は非負の安全整数。合計料金・不明件数はprovider和と一致、`unknownRequests<=requests`。通貨はUSD。金額にDoubleを使わない。[Costs (2026/10), monthlyCosts]
 - **User / Session**: Userは`{id,name,email,emailVerified,image?:String|null,createdAt,updatedAt}`、Sessionは`{id,userId,token,expiresAt,createdAt,updatedAt,ipAddress?:String|null,userAgent?:String|null}`。日時はtimezone付きISO8601。user ID一致とsession期限を検証する。取得結果は保存・ログ・診断へ入れない。[Better Auth (2026/10), get-session; 実装: KMAPIModels.swift]
 - **Passkey**: `{id,name?:String|null,publicKey,userId,credentialID,counter:Int>=0,deviceType:singleDevice|multiDevice,backedUp:Bool,transports?:String|null,createdAt?:ISO8601|null,aaguid?:String|null}`。一覧のID重複を拒否。[Better Auth (2026/10), Passkey schema / listPasskeys]
-- **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSはこのrecorderが未実装のため、任意文字列JSONを受ける代用品を作らず添付自体を未実装にした。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts]
+- **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSも同じrecorderを `Features/Contact/ContactDiagnosticRecorder.swift` に持ち、40件・15分・contact除外・明示同意の条件と、画面名・操作種別・安全なエラーコード・オンライン状態・相対秒だけの固定語彙を揃えた。iOSは送信前に同じschemaで自己検証し、未知キー・未知値・欠けた項目を含む診断情報は送らない。native gatewayはbodyを変えず `/api/contact` へ転送し、Workerが同じschemaで再検証する。任意文字列JSONを受ける代用品は作らない。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts; 実装: ContactPresentation.swift / KMWorkerAPI.swift]
 
 すべての応答はJSON Content-Type・1 MiB上限・形の検証を経てCodableへdecodeする。未知キー、未知enum、欠けたnullable必須キー、整数円の小数・負値・JS安全整数超過、実在しない日付、範囲外indexを正常値として返さない。Receiptの日付はWorkerの簡易正規表現より厳しく暦日を検証する。欠損を空値に置換しない。[実装: KMAPIValidation.swift / KMAPIShapes.swift]
 
@@ -109,13 +109,15 @@ logout・account削除はAIキャッシュとsessionを破棄するが、ゲス�
 
 PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact画面は `contact-ui.ts:errorMessage`、給与明細画面は `payroll-ui.ts` の文脈別文言に合わせる。APIは生のserver message・未知errorを画面へ出さない。[PWA (2026/10), gatewayError / contact-ui.ts / payroll-ui.ts]
 
+問い合わせのnative経路は `/api/native/contact` がbodyをそのまま `/api/contact` へ転送する。Worker設定不足は `503 not_configured`、未ログインは `401 unauthorized`、不正な本文・診断情報は `400 invalid_request`、同じflowIdで内容を変えた再送は `409 invalid_flow`、レート制限は `429 rate_limited`、保存鍵の設定不良も `503 not_configured` で返る。iOSはこれらを既存の `KMAPIError` へ分類し、ログイン・設定不足・入力・混雑を別の文言にする。SimulatorやApp Attest非対応端末は要求前に `nativeUnsupported` で止まり、通信失敗として扱わない。[Worker (2026/10), handleRequest / contact.ts / native-auth.ts; 実装: KMWorkerAPI.swift / ContactPresentation.swift]
+
 ## 画像・音声の前処理
 
 **通常レシート**はPWAの送信前縮小・変換・自動マスキングが存在しない。保存時はJPEG/PNG/WebP・署名・10 MiB上限、送信時は元bytesをBase64化し6 MiB超を拒否する。iOSの `KMUploadImage` も送信前は署名・MIME一致・6 MiBを検証し、元bytesを変更しない。HEICは拒否する。写真選択UIでHEIC変換を追加する場合は、PWAとの差分として別途判断する。元画像のメタデータ除去を今回のレシートAPIの保証にしない。[PWA (2026/10), local-receipts.ts:analyze; Security, Cloud account and AI]
 
 **給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。`Features/Payroll/PayrollView` がマスキング画像・同意を表示し、送信後/失敗/画面移動時に画像を破棄する。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: KMUploadMedia.swift / Features/Payroll/PayrollView.swift]
 
-音声は2 MiB上限と形式署名を検証する。MP4は要求では`audio/mp4`、WorkerがGoogle向けに`audio/m4a`へ変換する。最大60秒の録音停止・同じ録音flowIdでの明示再試行・画面移動時停止はUI側で実装する。APIは録音しない。[Contact (2026/10), parseContactInput / transcriptionPayload; docs/CONTACT.md]
+音声（PWAのみ）は2 MiB上限と形式署名を検証する。MP4は要求では`audio/mp4`、WorkerがGoogle向けに`audio/m4a`へ変換する。最大60秒の録音停止・同じ録音flowIdでの明示再試行・画面移動時停止はUI側で実装する。APIは録音しない。iOSは利用者の決定により音声入力（録音・文字起こし）を作らず、`/api/contact/transcribe` を呼ばない。設定の「お問い合わせ」行にも「声でも送れます」を出さず、問い合わせ画面にも音声の文言・ボタンを置かない。[Contact (2026/10), parseContactInput / transcriptionPayload; docs/CONTACT.md; 利用者決定 2026/10]
 
 レシート/給与の新しい明示読み取りはUUIDv4を使う。JevはGeminiと同じflowIdと抽出値に結び付く。サーバーのフローは開始から10分・各段階最大3試行、カテゴリ候補更新でflowを勝手に再発行しない。問い合わせ最終送信は同じ内容とflowIdで冪等、結果不明時は自動再送しない。MoneyForward提案も利用枠と費用制限を通る。[Cloud account, AI entitlementと利用量; Worker, categorySuggestion; Contact, サーバーの記録と二重投稿]
 

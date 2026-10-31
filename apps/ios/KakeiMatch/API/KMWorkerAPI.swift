@@ -529,9 +529,13 @@ actor KMWorkerAPI {
         return result
     }
 
-    func submitContact(kind: KMContactResult.Kind, message: String, originalMessage: String? = nil, flowID: UUID) async throws -> KMContactResult {
+    func submitContact(kind: KMContactResult.Kind, message: String, originalMessage: String? = nil,
+                       diagnostic: KMContactDiagnosticContext? = nil, flowID: UUID) async throws -> KMContactResult {
         try KMAPIValidation.flow(flowID)
-        let body = try KMAPIValidation.request(KMContactRequest(flowId: flowID.uuidString, kind: kind, message: message, originalMessage: originalMessage), shape: .object(["flowId": .text(max: 36), "kind": .values(["bug", "improvement", "question"]), "message": .text(max: 4000), "originalMessage": .text(max: 4000)], optional: ["originalMessage"]))
+        if let diagnostic, !KMContactPresentation.isValidForWorker(diagnostic) { throw KMAPIError.invalidRequest }
+        let body = try KMAPIValidation.request(KMContactRequest(flowId: flowID.uuidString, kind: kind, message: message,
+                                                               originalMessage: originalMessage, diagnostic: diagnostic),
+                                               shape: KMAPIShapes.contactRequest)
         guard body.count <= 20 * 1024 else { throw KMAPIError.invalidRequest }
         let token = try await accessToken(allowGuest: false)
         let result: KMContactResult = try await send("POST", "/api/contact", body: body, authorization: "Bearer \(token)", shape: KMAPIShapes.contactResult)

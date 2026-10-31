@@ -19,6 +19,7 @@ struct SettingsPresentationTests {
         #expect(sections[3].rows[1].destination == .contact)
         #expect(sections[2].rows[0].destination == .ai)
         #expect(sections[2].rows[0].value == nil)
+        #expect(sections[3].rows[1].value == nil)
     }
 
     @Test func themeAndScreenLockLabelsMatchPWAStateMeaning() {

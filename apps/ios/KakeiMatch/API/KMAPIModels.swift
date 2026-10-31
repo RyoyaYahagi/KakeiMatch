@@ -169,6 +169,6 @@ struct KMCategorySuggestionRequest: Codable, Sendable {
 struct KMContactRequest: Codable, Sendable {
     let flowId: String; let kind: KMContactResult.Kind; let message: String
     let originalMessage: String?
-    // Diagnostic attachment intentionally deferred until the memory-only recorder is ported.
+    let diagnostic: KMContactDiagnosticContext?
 }
 struct KMAudioRequest: Codable, Sendable { let flowId: String; let audioBase64: String; let contentType: String }

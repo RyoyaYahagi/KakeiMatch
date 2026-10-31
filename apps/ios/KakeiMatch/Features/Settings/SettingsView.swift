@@ -134,7 +134,10 @@ struct SettingsView: View {
             case .screenLock: page = .screenLock
             case .budget: page = .budget
             case .recurring: page = .recurring
-            case .contact: page = .contact
+            case .contact:
+                KMContactDiagnosticRecorder.shared.recordAction(.openContact, screen: .settings)
+                KMContactDiagnosticRecorder.shared.recordScreen(.contact)
+                page = .contact
             case .categoryRules: page = .categoryRules
             case .categories: page = .categories
             case .accounts: page = .accounts
