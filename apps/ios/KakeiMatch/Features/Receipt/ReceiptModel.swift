@@ -41,6 +41,8 @@ final class KMReceiptModel {
     @ObservationIgnored private var draftTask: Task<Void, Never>?
     /// Snapshot currently on screen from load/extraction; unchanged values are not re-saved.
     @ObservationIgnored private var displayedDraft: KMReceiptDraft?
+    /// After the first user edit, even returning to the original values must replace the draft.
+    @ObservationIgnored private var draftSavedOnce = false
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var api: KMWorkerAPI?
 
@@ -305,7 +307,7 @@ final class KMReceiptModel {
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
             categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
             reviewed = []; status = nil; error = nil
-            displayedDraft = draftSnapshot
+            displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
             imageData = nil; imageIsSaved = false
             self.error = error.localizedDescription
@@ -338,7 +340,7 @@ final class KMReceiptModel {
     /// PWA local-ui.ts:scheduleDraft — debounce 350 ms; the latest edit wins.
     func scheduleDraftSave() {
         guard !loading, !saving, !didSave, let receipt, !receipt.id.isEmpty,
-              draftSnapshot != displayedDraft else { return }
+              draftSnapshot != displayedDraft || draftSavedOnce else { return }
         draftTask?.cancel()
         draftTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -352,7 +354,7 @@ final class KMReceiptModel {
         guard let receipt, let repositories, !didSave, !saving else { return }
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
-            displayedDraft = draftSnapshot
+            displayedDraft = draftSnapshot; draftSavedOnce = true
             status = "入力内容を端末に保存しました。"
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
