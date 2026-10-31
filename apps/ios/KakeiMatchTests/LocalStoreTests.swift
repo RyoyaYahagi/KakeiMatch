@@ -69,6 +69,50 @@ import ZIPFoundation
         #expect(throws: (any Error).self) { try second.save(oldSecond) }
         #expect(try first.load().accountValues.map(\.id) == ["winner"])
     }
+    /// Two scenes share one store. A second scene waits for the first scene's commit and then
+    /// replays its own input on the committed snapshot instead of failing with a "busy" error.
+    @Test func concurrentSceneWritesAreQueuedAndBothCommit() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        async let first = store.saveManual(.init(kind: .expense, amountYen: 200, date: KMDate("2026-10-14"),
+            payeeName: "合成シーンA", categoryId: "test-food", accountId: "test-cash", memo: nil, importedId: "scene-a"))
+        async let second = store.saveManual(.init(kind: .expense, amountYen: 300, date: KMDate("2026-10-14"),
+            payeeName: "合成シーンB", categoryId: "test-food", accountId: "test-cash", memo: nil, importedId: "scene-b"))
+        let saved = try await [first, second]
+        #expect(Set(saved.compactMap(\.importedId)) == ["scene-a", "scene-b"])
+        let reopened = try KMSQLiteStore(directory: directory)
+        let rows = try await reopened.transactions(matching: .init(limit: nil))
+        #expect(Set(rows.compactMap(\.importedId)) == ["test-op", "scene-a", "scene-b"])
+        #expect(try await reopened.accounts().first?.balanceYen == -600)
+    }
+    /// Simulates a connection opened before a restore replaces the active profile pointer:
+    /// the working copy read from the superseded household must not commit.
+    @Test func profileSwitchRejectsWorkingCopyFromSupersededProfile() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        let oldProfile = try store.profile().current
+        let oldURL = directory.appendingPathComponent(oldProfile.uuidString).appendingPathComponent("household.sqlite")
+        let staleDatabase = try KMStoreDatabase(url: oldURL)
+        let stale = try staleDatabase.load()
+        try await store.importBackup(from: fixture("synthetic", "kmb"))
+        let newProfile = try store.profile().current
+        #expect(newProfile != oldProfile)
+
+        stale.settingsValue.theme = .dark
+        stale.accountValues.append(.init(id: "superseded-write", name: "合成の古い接続"))
+        #expect(throws: KMDataError.staleProfile) {
+            try staleDatabase.save(stale, ifActive: { try store.profile().current == oldProfile })
+        }
+        // Rollback leaves the superseded profile usable for the "元に戻す" operation.
+        let reloaded = try staleDatabase.load()
+        #expect(reloaded.settingsValue.theme == .system)
+        #expect(!reloaded.accountValues.contains { $0.id == "superseded-write" })
+        // The newly active profile is complete and unaffected by the rejected write.
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == 12)
+        #expect(try store.profile().current == newProfile)
+    }
     @Test func nativeBackupRoundTripsEveryProjectionAndOriginal() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let source = try KMSQLiteStore(directory: directory.appendingPathComponent("source"))
@@ -256,9 +300,9 @@ import ZIPFoundation
         let decisions = try await reopened.resolutions()
         #expect(try await migrated.resolutions() == decisions)
         #expect(try await migrated.transactions(matching: .init(limit: nil)) == transactions)
-        try reopened.returnToPreviousProfile()
+        try await reopened.returnToPreviousProfile()
         #expect(try await reopened.transaction(id: before.id) == before)
-        try reopened.returnToPreviousProfile()
+        try await reopened.returnToPreviousProfile()
         #expect(try await reopened.transactions(matching: .init(limit: nil)).count == 12)
     }
 
