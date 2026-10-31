@@ -684,6 +684,28 @@ import ZIPFoundation
         #expect(try await store.transaction(id: row.id) == row)
     }
 
+    /// #333 projects schedules and MoneyForward history while restoring a `.kmb`. The projection
+    /// belongs to the same profile switch, so a connection opened before the restore cannot commit
+    /// over the projected rows: the staleProfile guard covers this new write path too.
+    @Test func staleConnectionAfterScheduleImportCannotOverwriteProjection() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        _ = try await seed(store)
+        let oldProfile = try store.profile().current
+        let oldURL = directory.appendingPathComponent(oldProfile.uuidString).appendingPathComponent("household.sqlite")
+        let staleDatabase = try KMStoreDatabase(url: oldURL), stale = try staleDatabase.load()
+        try await store.importBackup(from: try scheduledBackup(in: directory, nextDate: 20261115))
+        #expect(try store.profile().current != oldProfile)
+        #expect(try await store.recurringTransactions().map(\.id) == ["schedule-1"])
+        stale.recurringValues = []
+        stale.masterWriteState.moneyForward = []
+        #expect(throws: KMDataError.staleProfile) {
+            try staleDatabase.save(stale, ifActive: { try store.profile().current == oldProfile })
+        }
+        #expect(try staleDatabase.load().recurringValues.isEmpty)
+        #expect(try await store.recurringTransactions().map(\.id) == ["schedule-1"])
+    }
+
     @Test func kmbProjectsMoneyForwardHistoryAndUndoOnlyCreatedRows() async throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let (file, imported, mismatch) = try moneyForwardBackup(in: directory)

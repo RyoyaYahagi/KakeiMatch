@@ -174,7 +174,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 - 全Repository操作と `.kmb` / `.kmib` の取り込み・書き出し・`returnToPreviousProfile()` は `KMSerialQueue` で到着順に直列化する。前の操作が `await` 中でも次のsceneは待機し、「家計データを処理中です」のような再入エラーを画面へ出さない。queueは再入不可であり、Repository操作の内側から別のstore操作を呼ばない。
 - 書き込みは読み込み時に取得したprofile UUIDを持ち、`KMStoreDatabase.save` のCOMMIT直前に `active.json` の現在値と一致することを再検査する。一致しなければtransaction全体をrollbackし、`KMDataError.staleProfile`（「別の画面で家計データが切り替わりました。…変更内容は保存されていません。」）を返す。復元で切り替わる前の作業copyが旧profileへ書かれず、旧profileは `returnToPreviousProfile()` 用にそのまま残る。
 - widget・share/notification extension等のtargetとApp Groupは `project.yml` にない。DBはアプリsandboxのApplication Supportにあり、現在の構成で別プロセスから開く経路はない。そのためcross-process用のlock fileや抽象化は追加しない。SQLiteは既存の `busy_timeout`（3秒）と `control.revision` の世代検査を持ち、将来プロセス境界を追加する場合も古いsnapshotはcommitできない。
-- `KMSerialQueueTests` はFIFO待機と失敗時のqueue解放を、`LocalStoreTests` は同一storeへの同時scene書き込みの両立と、profile切替後に旧profileの作業copyが `staleProfile` で拒否され旧DBが無傷であることを検査する。実機での複数ウィンドウ操作、大容量時の待機時間、強制終了は未検証である。
+- `KMSerialQueueTests` はFIFO待機と失敗時のqueue解放を、`LocalStoreTests` は同一storeへの同時scene書き込みの両立と、profile切替後に旧profileの作業copyが `staleProfile` で拒否され旧DBが無傷であることを検査する。`.kmb` 復元でschedule/MoneyForward履歴を投影した場合も、投影前の接続からの書込みが同じく拒否され、投影済みの定期設定が残ることを確認する。実機での複数ウィンドウ操作、大容量時の待機時間、強制終了は未検証である。
 
 ## 検証・既知の制約・後続への申し送り
 
