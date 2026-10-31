@@ -1,6 +1,6 @@
 # KakeiMatch iOS
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。レシートのカメラ・AI画面接続は未実装です。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。設定の「ログイン・利用状況」はPasskeyログイン・招待コード登録・Passkey管理・ログアウト・Cloud account削除を接続しています。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -207,7 +207,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 - MoneyForwardは `previewMoneyForward(rows:mappings:choices:at:)` → `importMoneyForward(id:rows:mappings:choices:rememberMappings:at:)`。同じ金額/カテゴリで±3日の候補には `.keep(transactionId:)` / `.separate` の判断が必要です。`rememberMappings` はPWAと同じく利用者が選び、batch履歴には常に対応を保存し、チェック時だけ次回用ルールにも保存します。`moneyForwardHistory` / `moneyForwardRules` で保存結果を取得し、`undoMoneyForward` は今回登録した取引だけを削除します。原CSVは保存しません。SQLiteでは途中成功がないため、失敗時は同じbatch IDで全体を再送します。
 - カテゴリは `saveCategory` / `deleteCategory`、グループは `saveCategoryGroup` / `deleteCategoryGroup` / `reorderCategoryGroups` / `reorderCategories`。使用中は削除拒否して非表示を案内します。グループの非表示も選択肢へ反映します。グループ編集の画面はPWAにないため追加しません。
 - 定期画面は `previewRecurringCatchUp(_:through:)` で過去分を確認し、複数件なら全件/今月分/キャンセルを選びます。`saveRecurringForCatchUp(_:at:)` は設定と次回日を保存し、到来分を自動生成しません。選択日は `catchUpRecurring` で生成します。従来の `saveRecurring(_:at:)` は保存時に自動到来分を処理し、家計簿を開いた時/復元後の `runRecurring(through:at:)` も維持しています。`recurringGenerations` で履歴を表示し、`undoRecurringGeneration(id:dates:at:)` のdates:nilは未編集分だけの一括取消、日付配列は選択削除です。独立した同内容の手入力と編集済み生成行を保持します。削除済み日は再生成しません。
-- v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。有効schedule付き `.kmb` と、旧PWAのMoneyForward履歴のnative投影は未対応です。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
+- v4の `master-writes` に日付付き開始残高・定期監査/生成snapshot・移行履歴を保存します。v1/v2/v3は一括移行します。`.kmb` 取り込み時、PWAが作成・編集できる基本形の有効scheduleはnativeの定期設定と処理済み日へ投影し、Actualの次回日と既存の生成取引から二重生成を防ぎます。複雑なrule、名前のないschedule、閉口座・非表示カテゴリを参照するscheduleは、黙って落とさず取り込み全体を拒否します。旧PWAの `settings:moneyforward-import` は、完了・部分完了・取消済みのbatchと対応ルールをnative履歴へ投影し、PWAが作成したと確認できる取引だけを取消対象にします。境界と理由は [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。
 
 ### UI test / Previewのfixture
 
@@ -250,9 +250,18 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 
 - 永続化: 通常起動は `KMSQLiteStore`。全Repositoryは同じprofileを共有し、変更はSQLite transaction内で確定します。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。複数scene/processのprofile排他は後続です。世代番号で古いsnapshotによる上書きを拒否します。
 - `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は後続projection用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
-- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。Actual Schedule/Rule互換取り込み、レシート確認からの学習呼出しは後続です。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
+- 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。PWAの基本形scheduleとMoneyForward履歴の取り込みは `.kmb` reader に接続済みです。Actual Schedule/Ruleの高度な条件の実行と、レシート確認からの学習呼出しは後続です。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
 - API: AI抽出/分類・給与明細・問い合わせ・アカウントのtyped clientとnative認証は実装済み。AI応答はWorker側schemaと `KMAPIShapes` の両方で検証し、不正な応答を保存・表示しない。問い合わせは同意時だけ診断情報を添付し、秘密鍵を端末へ持たせない。
 - 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
+
+## ログイン・利用状況の接続範囲
+
+`Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` が、設定の「ログイン・利用状況」をPWAの `settings-page-ai` とnative APIへ接続します。Passkeyログイン、招待コードからの登録、Passkeyの追加・一覧・削除、AI利用回数、AI tokenの確認、ログアウト、Cloud account削除を扱います。画面は `KMRepositories` を読まず、ログイン状態は端末内の家計データの利用可否へ影響しません。
+
+- App Attest非対応（Simulatorなど）とWorker未設定では、ログインとAIの操作を出さず、端末内の家計簿を続けられる説明だけを表示します。要求を送ってから失敗させません。
+- 未ログインでAIを使う最初のレシート読み取りでは、PWAのTurnstileダイアログに相当する確認を出し、App Attestでゲストセッションを作って同じ写真の読み取りを続けます。失敗・キャンセルでも写真と手入力は残ります。
+- ログアウトとCloud account削除は端末の家計データを消しません。削除の確認文言と入力する語はPWAと同じです。
+- 画面の検証は `KMNativeAuthModel` のstubとXCUITestのDebug専用状態で行います。実Worker・実Passkey・実App Attest・署名済みentitlementは未検証です。契約は [API_LAYER.md](docs/API_LAYER.md) と [NATIVE_APP_AUTH.md](../../docs/NATIVE_APP_AUTH.md) を参照してください。
 
 ## 記録一覧の接続範囲
 
@@ -270,8 +279,9 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 ## PWAとの差分・検証範囲
 
 - 記録一覧以外のタブ内はplaceholderです。ホームの集計・照合・設定の本実装とデータ状態の比較は後続PRです。記録一覧は空状態と種類別の空状態も表示します。
+- 認証: PWAのTurnstileウィジェットの代わりにApp Attestで端末を確認します。確認ダイアログの説明は「ロボットでないこと」ではなく「この端末が正規のアプリか」に置き換え、それ以外の文言・順序・操作はPWAに合わせます。招待コードは `window.prompt` ではなくOSのアラート入力欄です。SimulatorとApp Attest非対応端末では、PWAの汎用エラーではなく理由と端末内機能の継続を表示します。ログアウト後はゲストの当日利用回数を再取得します（PWAは直前の値を残します）。実機のPasskey・App Attest・Associated Domainsは未検証です。
 - 「口座・残高を見る」はPWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」を開きます。戻ると設定の一覧です。
-- 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移っても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
+- 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移しても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
 - お問い合わせは文章のみです。利用者の決定（2026/10）で、iOS版は音声の録音・文字起こしを作らず、設定行の「声でも送れます」と問い合わせ画面の音声の文言・ボタンも表示しません。診断情報は「直前のアプリ動作情報を添付する」を選んだ時だけ、PWAと同じ固定語彙（メモリに最大40件・15分、送信時は直近20件）を添付します。問い合わせ画面内の操作・エラーは添付から除外します。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。

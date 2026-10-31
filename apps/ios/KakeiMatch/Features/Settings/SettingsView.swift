@@ -1,7 +1,7 @@
 import LocalAuthentication
 import SwiftUI
 
-private enum KMSettingsPage {
+private enum KMSettingsPage: Equatable {
     case root
     case theme
     case screenLock
@@ -12,6 +12,7 @@ private enum KMSettingsPage {
     case categories
     case accounts
     case backup
+    case ai
 }
 
 struct SettingsView: View {
@@ -20,8 +21,10 @@ struct SettingsView: View {
     var onBudgetBack: () -> Void = {}
     var onAccountsBack: () -> Void = {}
     var onOpenMoneyForward: () -> Void = {}
+    var onShowHome: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMSettingsModel()
+    @State private var auth = KMNativeAuthModel()
     @State private var page = KMSettingsPage.root
     @AppStorage(KMSettingsPresentation.screenLockEnabledKey) private var screenLockEnabled = false
     @State private var isAuthenticating = false
@@ -29,12 +32,13 @@ struct SettingsView: View {
 
     init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false,
          onBudgetBack: @escaping () -> Void = {}, onAccountsBack: @escaping () -> Void = {},
-         onOpenMoneyForward: @escaping () -> Void = {}) {
+         onOpenMoneyForward: @escaping () -> Void = {}, onShowHome: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
         self.initialAccounts = initialAccounts
         self.onBudgetBack = onBudgetBack
         self.onAccountsBack = onAccountsBack
         self.onOpenMoneyForward = onOpenMoneyForward
+        self.onShowHome = onShowHome
         _page = State(initialValue: initialAccounts ? .accounts : (initialBudgetMonth == nil ? .root : .budget))
     }
 
@@ -53,10 +57,20 @@ struct SettingsView: View {
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
+            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root }, onShowHome: onShowHome)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task { if !model.loaded { await model.load(repositories) } }
+        .task {
+            if !model.loaded { await model.load(repositories) }
+            await auth.refresh()
+        }
+        // The row shows the PWA `#ai-row-value`; reload it after a login or
+        // logout on the account page, not only when Settings is first opened.
+        .onChange(of: page) { _, value in
+            guard value == .root else { return }
+            Task { await auth.refresh() }
+        }
     }
 
     private var settingsRoot: some View {
@@ -68,7 +82,11 @@ struct SettingsView: View {
                 .padding(.bottom, KMSpacing.space2)
                 .accessibilityAddTraits(.isHeader)
 
-            let sections = KMSettingsPresentation.sections(theme: model.settings.theme, screenLockEnabled: screenLockEnabled)
+            let sections = KMSettingsPresentation.sections(
+                theme: model.settings.theme,
+                screenLockEnabled: screenLockEnabled,
+                aiUsageValue: auth.settingsRowValue
+            )
             ForEach(sections) { section in
                 Text(section.title)
                     .font(KMTypography.body(13, weight: .bold))
@@ -129,6 +147,7 @@ struct SettingsView: View {
             case .categories: page = .categories
             case .accounts: page = .accounts
             case .backup: page = .backup
+            case .ai: page = .ai
             case .unimplemented: break
             }
         } label: {
