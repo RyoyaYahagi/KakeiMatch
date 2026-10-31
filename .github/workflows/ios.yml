@@ -52,6 +52,7 @@ jobs:
         id: shards
         run: |
           node --test scripts/shard-ui-tests.test.mjs
+          node --test scripts/visual-regression.test.mjs
           node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} > ui-shards.json
           cat ui-shards.json
           node -e 'const fs = require("node:fs"); const shards = JSON.parse(fs.readFileSync("ui-shards.json", "utf8")); console.log("matrix=" + JSON.stringify(shards.map((_, index) => index)))' >> "$GITHUB_OUTPUT"
@@ -210,6 +211,7 @@ jobs:
       run:
         working-directory: .
     steps:
+      - uses: actions/checkout@v4
       - name: Require every iOS job to succeed
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
@@ -242,6 +244,20 @@ jobs:
                   shutil.copyfile(source, target)
           (output / 'manifest.json').write_text(json.dumps(manifest))
           PY
+      - name: Build PWA visual regression report
+        if: github.event_name != 'pull_request'
+        run: |
+          node apps/ios/scripts/visual-regression.mjs \
+            --ios screenshots \
+            --reference docs/screenshots/migration \
+            --output visual-regression
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-visual-regression
+          path: visual-regression
+          if-no-files-found: error
+          retention-days: 14
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:

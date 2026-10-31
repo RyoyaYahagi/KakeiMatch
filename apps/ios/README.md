@@ -51,6 +51,7 @@ artifact（CIの保存成果物）は次のとおりです。
 | `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
 | `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
 | `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |
+| `ios-visual-regression` | PWA参照画像とiOSスクリーンショットの並列画像・差分画像・`index.html` / `index.md` / `report.json`。mainへのpushと手動実行で作成 | 14日 |
 | `parity-report` | Swift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
 
 成功した実行では、従来どおり `gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` で全PNGと統合manifestを取得できます。失敗した実行のスクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗時も各ジョブのxcresultと取得できた添付を保存します。
@@ -58,6 +59,50 @@ artifact（CIの保存成果物）は次のとおりです。
 DEBUGビルドだけ `KM_UI_TEST_APPEARANCE=light|dark` を受け付け、UIテストでOS設定を変えずに外観を固定します。通常起動とReleaseはシステム設定に従います。
 
 runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載されていることを確認して選定しています。[runner-images (2026/10), macOS 15 / Xcode・Installed Simulators]
+
+## PWA との Visual regression
+
+`scripts/visual-regression.mjs` は、CIが保存したiOSのスクリーンショットと、PWAの参照スクリーンショット `docs/screenshots/migration/<画面>/<状態>-<light|dark>.png` を同じ状態どうしで並べ、差分画像と一覧をartifact `ios-visual-regression` にまとめます。画素一致を合否にはしません。端末サイズ・フォント・OSの時計やsafe area・Liquid Glassの差は意図的に許容し、見比べるための材料を出す仕組みです。[HANDOFF.md 6節](HANDOFF.md)の方針どおり、字形の差は差分率に含まれます。
+
+`ios` jobはmainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）で、4 shardのPNGを統合したあとにこのレポートを作ります。Pull Requestではスクリーンショット専用テストを飛ばすため、レポートも作りません。処理はNodeの標準機能だけで、画像のデコード・拡縮・差分・PNG書き出しは `scripts/visual-regression-png.mjs` にあります。新しいnpm依存はありません。
+
+### 状態の対応づけ
+
+iOS側のXCTAttachment名とPWA参照画像の対応は [`scripts/visual-regression-pairs.json`](scripts/visual-regression-pairs.json) が正本です。キーは添付名から末尾の `-light` / `-dark` を除いたもの、値は `docs/screenshots/migration` からの `<画面>/<状態>` です。たとえば `home-populated-light` は `home/populated` に対応します。
+
+`xcrun xcresulttool export attachments` の `manifest.json` は、添付名を `home-populated-light_0_<UUID>.png` の形で記録します。スクリプトはこの `_0_<UUID>` と拡張子を除いて状態名とテーマを取り出します。拡張子のない添付名（`settings.screen-dark`）は `settings_0_<UUID>.screen-dark` になるため、その形も復元します。表示名がない添付はUUIDのファイル名のままiOSのみとして一覧します。
+
+対応表にないiOSの状態（例: `receipt-warnings`、`records-detail`、`settings-theme`）は「iOSのみ」、対応表はあるが今回の実行で撮れなかった状態は「iOS未取得」、PWAにしかない状態（例: `device-link/initial`、`moneyforward/initial`、`payroll/initial`）は「PWAのみ」として `index.html` / `index.md` に列挙します。状態名を変えたら対応表も更新してください。給与明細の `payroll-initial` はPWAのマスキング画面ではなく確認画面のため、対応表には載せていません。対応先の参照画像が見つからない場合は、誤対応を黙って見逃さずスクリプトが失敗します。
+
+### ローカルでの実行
+
+CIと同じ成果物を得るには、まず全shardのスクリーンショットを取得します。
+
+```sh
+gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-shards
+cd apps/ios
+node scripts/visual-regression.mjs \
+  --ios /tmp/ios-shards/ios-reference-screenshots-shard-0 \
+  --ios /tmp/ios-shards/ios-reference-screenshots-shard-1 \
+  --ios /tmp/ios-shards/ios-reference-screenshots-shard-2 \
+  --ios /tmp/ios-shards/ios-reference-screenshots-shard-3 \
+  --reference ../../docs/screenshots/migration \
+  --output /tmp/ios-visual-regression
+open /tmp/ios-visual-regression/index.html
+```
+
+成功した実行の統合済み成果物を使う場合は `gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` のあと、`--ios /tmp/ios-results` だけを指定します。`--width`（既定390）は比較用に縮小する幅、`--threshold`（既定12）は差分とみなすRGB差の閾値です。出力は次のとおりです。
+
+| パス | 内容 |
+| --- | --- |
+| `index.html` | 比較カード、差分画像、PWAのみ・iOSのみ・iOS未取得の一覧。ブラウザーでそのまま開ける |
+| `index.md` | 同じ内容のMarkdown。PR本文やレビューで使う |
+| `report.json` | 比較結果・差分率・元ファイル・テスト識別子の機械可読な一覧 |
+| `images/*-side-by-side.png` | 左PWA・右iOSの並列画像（幅390に正規化） |
+| `images/*-diff.png` | 差分画像。赤は閾値超え、橙は重なり外。位置ずれも赤になるため合否判定には使わない |
+| `images/reference/` / `images/ios-only/` | PWAのみ・iOSのみの状態の画像 |
+
+PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字幅とは一致しません。差分率はレビューの目安であり、しきい値による失敗判定は行いません。テストは `node --test scripts/visual-regression.test.mjs` で、添付名の復元・対応づけ・PNGのround-trip・差分・レポート生成を確認します。
 
 ## 配置と後続PR
 
