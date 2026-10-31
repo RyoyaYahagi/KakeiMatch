@@ -39,6 +39,8 @@ final class KMReceiptModel {
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var draftTask: Task<Void, Never>?
+    /// Snapshot currently on screen from load/extraction; unchanged values are not re-saved.
+    @ObservationIgnored private var displayedDraft: KMReceiptDraft?
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var api: KMWorkerAPI?
 
@@ -131,6 +133,7 @@ final class KMReceiptModel {
             imageData = try await repositories?.receipts.receiptImage(blobId: image.blobId)
             imageIsSaved = imageData != nil
         }
+        displayedDraft = draftSnapshot
     }
 
     private func applyValues(_ draft: KMReceiptDraft) {
@@ -302,6 +305,7 @@ final class KMReceiptModel {
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
             categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
             reviewed = []; status = nil; error = nil
+            displayedDraft = draftSnapshot
         } catch {
             imageData = nil; imageIsSaved = false
             self.error = error.localizedDescription
@@ -333,7 +337,8 @@ final class KMReceiptModel {
 
     /// PWA local-ui.ts:scheduleDraft — debounce 350 ms; the latest edit wins.
     func scheduleDraftSave() {
-        guard !loading, !saving, !didSave, let receipt, !receipt.id.isEmpty else { return }
+        guard !loading, !saving, !didSave, let receipt, !receipt.id.isEmpty,
+              draftSnapshot != displayedDraft else { return }
         draftTask?.cancel()
         draftTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
@@ -347,6 +352,7 @@ final class KMReceiptModel {
         guard let receipt, let repositories, !didSave, !saving else { return }
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
+            displayedDraft = draftSnapshot
             status = "入力内容を端末に保存しました。"
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
@@ -397,6 +403,7 @@ final class KMReceiptModel {
                     phase = .idle; status = "レシートとして読み取れませんでした。写真を確認するか、手で入力してください。"; return
                 }
                 applyValues(saved)
+                displayedDraft = draftSnapshot
                 phase = .categorizing
                 let learning = KMReceiptPresentation.categoryLearning(
                     merchant: extraction.merchant, itemNames: extraction.items.map(\.name),
@@ -415,6 +422,7 @@ final class KMReceiptModel {
                 }
                 self.receipt = savedWithLearning
                 applyValues(savedWithLearning)
+                displayedDraft = draftSnapshot
                 if !learning.appliedRules.isEmpty { status = "いつもの分類を適用しました。" }
 
                 let itemIndexes = learning.itemIndexesToClassify
@@ -446,6 +454,7 @@ final class KMReceiptModel {
                     guard revision == token else { return }
                     guard let saved = try await repositories.receipts.receipt(id: updated.id) else { throw KMDataError.notFound("レシートを再取得できませんでした。") }
                     self.receipt = saved; applyValues(saved)
+                    displayedDraft = draftSnapshot
                 } catch {
                     guard revision == token else { return }
                     KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
