@@ -22,6 +22,7 @@ struct KMEntryFormView: View {
     @State private var model: KMEntryFormModel
     @State private var sheet: KMEntrySheet?
     @FocusState private var focusedField: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let onPayroll: (() -> Void)?
 
     init(kind: KMEntryKind, onPayroll: (() -> Void)? = nil) {
@@ -191,34 +192,64 @@ struct KMEntryFormView: View {
 
     private func ruledRow<Content: View>(_ label: String, height: CGFloat = KMLayout.entryHeight,
                                          @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: KMSpacing.space3) {
-            Text(label)
-                .font(KMTypography.body(13, weight: .medium))
-                .foregroundStyle(KMColor.muted)
-                .frame(width: KMLayout.entryKeyWidth, alignment: .leading)
-            content().frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    ruledLabel(label)
+                    content().frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: KMSpacing.space3) {
+                    ruledLabel(label).frame(width: KMLayout.entryKeyWidth, alignment: .leading)
+                    content().frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
         }
         .frame(minHeight: height)
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
+    private func ruledLabel(_ label: String) -> some View {
+        Text(label)
+            .font(KMTypography.body(13, weight: .medium))
+            .foregroundStyle(KMColor.muted)
+    }
+
     private var dateRow: some View {
         ruledRow("日付") {
-            HStack(spacing: KMSpacing.space1) {
-                DatePicker("日付", selection: dateBinding, displayedComponents: .date)
-                    .datePickerStyle(.compact)
-                    .labelsHidden()
-                    .environment(\.calendar, KMDate.calendar)
-                    .environment(\.timeZone, KMDate.calendar.timeZone)
-                    .environment(\.locale, Locale(identifier: "ja_JP"))
-                    .accessibilityIdentifier("manual-transaction-date")
-                Spacer(minLength: 0)
-                shortcut("今日", value: model.today, identifier: "entry.date.today")
-                if let yesterday = KMEntryPresentation.shiftedDate(model.today, by: -1) {
-                    shortcut("昨日", value: yesterday, identifier: "entry.date.yesterday")
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                        datePicker
+                        HStack(spacing: KMSpacing.space2) {
+                            shortcut("今日", value: model.today, identifier: "entry.date.today")
+                            if let yesterday = KMEntryPresentation.shiftedDate(model.today, by: -1) {
+                                shortcut("昨日", value: yesterday, identifier: "entry.date.yesterday")
+                            }
+                        }
+                    }
+                } else {
+                    HStack(spacing: KMSpacing.space1) {
+                        datePicker
+                        Spacer(minLength: 0)
+                        shortcut("今日", value: model.today, identifier: "entry.date.today")
+                        if let yesterday = KMEntryPresentation.shiftedDate(model.today, by: -1) {
+                            shortcut("昨日", value: yesterday, identifier: "entry.date.yesterday")
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private var datePicker: some View {
+        DatePicker("日付", selection: dateBinding, displayedComponents: .date)
+            .datePickerStyle(.compact)
+            .labelsHidden()
+            .environment(\.calendar, KMDate.calendar)
+            .environment(\.timeZone, KMDate.calendar.timeZone)
+            .environment(\.locale, Locale(identifier: "ja_JP"))
+            .accessibilityIdentifier("manual-transaction-date")
     }
 
     private var dateBinding: Binding<Date> {
@@ -250,113 +281,132 @@ struct KMEntryFormView: View {
 
     private var categoryRow: some View {
         ruledRow("カテゴリ") {
-            HStack(spacing: KMSpacing.space2) {
-                Text(model.selectedCategory?.name ?? "未選択")
-                    .font(KMTypography.body(16, weight: .medium))
-                    .foregroundStyle(model.selectedCategory == nil ? KMColor.muted : KMColor.text)
-                    .lineLimit(1)
-                if model.categoryId == model.lastUsedCategoryId, model.lastUsedCategoryId != nil {
-                    Text("前回と同じ")
-                        .font(KMTypography.note)
-                        .foregroundStyle(KMColor.muted)
-                        .lineLimit(1)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                        Text(model.selectedCategory?.name ?? "未選択")
+                            .font(KMTypography.body(16, weight: .medium))
+                            .foregroundStyle(model.selectedCategory == nil ? KMColor.muted : KMColor.text)
+                            .lineLimit(2)
+                        HStack(spacing: KMSpacing.space2) {
+                            if model.categoryId == model.lastUsedCategoryId, model.lastUsedCategoryId != nil {
+                                Text("前回と同じ")
+                                    .font(KMTypography.note)
+                                    .foregroundStyle(KMColor.muted)
+                            }
+                            Spacer(minLength: 0)
+                            categorySheetButton
+                        }
+                    }
+                } else {
+                    HStack(spacing: KMSpacing.space2) {
+                        Text(model.selectedCategory?.name ?? "未選択")
+                            .font(KMTypography.body(16, weight: .medium))
+                            .foregroundStyle(model.selectedCategory == nil ? KMColor.muted : KMColor.text)
+                            .lineLimit(1)
+                        if model.categoryId == model.lastUsedCategoryId, model.lastUsedCategoryId != nil {
+                            Text("前回と同じ")
+                                .font(KMTypography.note)
+                                .foregroundStyle(KMColor.muted)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 0)
+                        categorySheetButton
+                    }
                 }
-                Spacer(minLength: 0)
-                Button {
-                    focusedField = nil
-                    model.sheetError = nil
-                    sheet = .category
-                } label: {
-                    Text("すべて ›")
-                        .font(KMTypography.body(14, weight: .bold))
-                        .foregroundStyle(KMColor.primary)
-                        .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("すべてのカテゴリから選ぶ")
-                .accessibilityIdentifier("entry.categorySheet")
             }
         }
+    }
+
+    private var categorySheetButton: some View {
+        Button {
+            focusedField = nil
+            model.sheetError = nil
+            sheet = .category
+        } label: {
+            Text("すべて ›")
+                .font(KMTypography.body(14, weight: .bold))
+                .foregroundStyle(KMColor.primary)
+                .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("すべてのカテゴリから選ぶ")
+        .accessibilityIdentifier("entry.categorySheet")
     }
 
     private var accountRow: some View {
         let label = model.kind == .expense ? "支払元" : model.kind == .income ? "入金先" : "振替元口座"
         return ruledRow(label) {
-            HStack(spacing: KMSpacing.space1) {
-                Button {
-                    focusedField = nil
-                    model.accountFieldForCreation = .source
-                    model.sheetError = nil
-                    sheet = .sourceAccount
-                } label: {
-                    HStack(spacing: KMSpacing.space2) {
-                        Text(model.selectedAccount?.name ?? "選択してください")
-                            .font(KMTypography.body(16, weight: .medium))
-                            .foregroundStyle(model.selectedAccount == nil ? KMColor.muted : KMColor.text)
-                            .lineLimit(1)
-                        KMIcon(name: "chevronDown", size: 16).foregroundStyle(KMColor.muted)
-                    }
-                    .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(label)
-                .accessibilityValue(model.selectedAccount?.name ?? "選択してください")
-                .accessibilityIdentifier("manual-transaction-account")
-                Spacer(minLength: 0)
-                Button("＋ 追加") {
-                    focusedField = nil
-                    model.accountFieldForCreation = .source
-                    model.sheetError = nil
-                    sheet = .addAccount
-                }
-                .font(KMTypography.body(14, weight: .bold))
-                .foregroundStyle(KMColor.primary)
-                .frame(minHeight: KMLayout.minimumHit)
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("entry.addAccount")
-            }
+            accountSelection(name: model.selectedAccount?.name, label: label, field: .source,
+                             selectID: "manual-transaction-account", addID: "entry.addAccount")
         }
     }
 
     private var destinationAccountRow: some View {
         ruledRow("振替先口座") {
-            HStack(spacing: KMSpacing.space1) {
-                Button {
-                    focusedField = nil
-                    model.accountFieldForCreation = .destination
-                    model.sheetError = nil
-                    sheet = .destinationAccount
-                } label: {
-                    HStack(spacing: KMSpacing.space2) {
-                        Text(model.selectedDestinationAccount?.name ?? "選択してください")
-                            .font(KMTypography.body(16, weight: .medium))
-                            .foregroundStyle(model.selectedDestinationAccount == nil ? KMColor.muted : KMColor.text)
-                            .lineLimit(1)
-                        KMIcon(name: "chevronDown", size: 16).foregroundStyle(KMColor.muted)
+            accountSelection(name: model.selectedDestinationAccount?.name, label: "振替先口座", field: .destination,
+                             selectID: "manual-transaction-destination", addID: "entry.addDestinationAccount")
+        }
+    }
+
+    private func accountSelection(name: String?, label: String, field: KMEntryFormModel.AccountField,
+                                  selectID: String, addID: String) -> some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    accountButton(name: name, label: label, field: field, selectID: selectID)
+                    HStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        addAccountButton(field: field, addID: addID)
                     }
-                    .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
-                    .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("振替先口座")
-                .accessibilityValue(model.selectedDestinationAccount?.name ?? "選択してください")
-                .accessibilityIdentifier("manual-transaction-destination")
-                Spacer(minLength: 0)
-                Button("＋ 追加") {
-                    focusedField = nil
-                    model.accountFieldForCreation = .destination
-                    model.sheetError = nil
-                    sheet = .addAccount
+            } else {
+                HStack(spacing: KMSpacing.space1) {
+                    accountButton(name: name, label: label, field: field, selectID: selectID)
+                    Spacer(minLength: 0)
+                    addAccountButton(field: field, addID: addID)
                 }
-                .font(KMTypography.body(14, weight: .bold))
-                .foregroundStyle(KMColor.primary)
-                .frame(minHeight: KMLayout.minimumHit)
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("entry.addDestinationAccount")
             }
         }
+    }
+
+    private func accountButton(name: String?, label: String, field: KMEntryFormModel.AccountField,
+                               selectID: String) -> some View {
+        Button {
+            focusedField = nil
+            model.accountFieldForCreation = field
+            model.sheetError = nil
+            sheet = field == .source ? .sourceAccount : .destinationAccount
+        } label: {
+            HStack(spacing: KMSpacing.space2) {
+                Text(name ?? "選択してください")
+                    .font(KMTypography.body(16, weight: .medium))
+                    .foregroundStyle(name == nil ? KMColor.muted : KMColor.text)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
+                KMIcon(name: "chevronDown", size: 16).foregroundStyle(KMColor.muted)
+            }
+            .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(name ?? "選択してください")
+        .accessibilityIdentifier(selectID)
+    }
+
+    private func addAccountButton(field: KMEntryFormModel.AccountField, addID: String) -> some View {
+        Button("＋ 追加") {
+            focusedField = nil
+            model.accountFieldForCreation = field
+            model.sheetError = nil
+            sheet = .addAccount
+        }
+        .font(KMTypography.body(14, weight: .bold))
+        .foregroundStyle(KMColor.primary)
+        .frame(minHeight: KMLayout.minimumHit)
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(addID)
     }
 
     private var optionalRow: some View {
@@ -365,19 +415,24 @@ struct KMEntryFormView: View {
                 focusedField = nil
                 model.isMemoExpanded.toggle()
             } label: {
-                HStack(spacing: KMSpacing.space3) {
-                    Text(model.kind == .expense ? "時刻・メモ" : "メモ")
-                        .font(KMTypography.body(13, weight: .medium))
-                        .foregroundStyle(KMColor.muted)
-                        .frame(width: KMLayout.entryKeyWidth, alignment: .leading)
-                    Text(optionalSummary)
-                        .font(KMTypography.body(16))
-                        .foregroundStyle(optionalSummary == "任意" ? KMColor.muted : KMColor.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
-                    KMIcon(name: "chevronRight", size: 16)
-                        .foregroundStyle(KMColor.muted)
-                        .rotationEffect(.degrees(model.isMemoExpanded ? 90 : 0))
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                            optionalLabel
+                            HStack(spacing: KMSpacing.space2) {
+                                optionalSummaryText.lineLimit(2)
+                                Spacer(minLength: 0)
+                                optionalChevron
+                            }
+                        }
+                    } else {
+                        HStack(spacing: KMSpacing.space3) {
+                            optionalLabel.frame(width: KMLayout.entryKeyWidth, alignment: .leading)
+                            optionalSummaryText.lineLimit(1)
+                            Spacer(minLength: 0)
+                            optionalChevron
+                        }
+                    }
                 }
                 .frame(minHeight: KMLayout.entryHeight)
                 .contentShape(Rectangle())
@@ -387,21 +442,18 @@ struct KMEntryFormView: View {
             if model.isMemoExpanded {
                 if model.kind == .expense {
                     ruledRow("時刻", height: KMLayout.entryHeight) {
-                        HStack {
-                            DatePicker("時刻", selection: timeBinding, displayedComponents: .hourAndMinute)
-                                .datePickerStyle(.compact)
-                                .labelsHidden()
-                                .environment(\.calendar, KMDate.calendar)
-                                .environment(\.timeZone, KMDate.calendar.timeZone)
-                                .environment(\.locale, Locale(identifier: "ja_JP"))
-                                .accessibilityIdentifier("receipt-time")
-                            Spacer(minLength: 0)
-                            if model.time != nil {
-                                Button("消去") { model.time = nil }
-                                    .font(KMTypography.note)
-                                    .foregroundStyle(KMColor.primary)
-                                    .frame(minHeight: KMLayout.minimumHit)
-                                    .buttonStyle(.plain)
+                        Group {
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                                    timePicker
+                                    if model.time != nil { clearTimeButton }
+                                }
+                            } else {
+                                HStack {
+                                    timePicker
+                                    Spacer(minLength: 0)
+                                    if model.time != nil { clearTimeButton }
+                                }
                             }
                         }
                     }
@@ -418,6 +470,42 @@ struct KMEntryFormView: View {
             }
         }
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
+    }
+
+    private var optionalLabel: some View {
+        Text(model.kind == .expense ? "時刻・メモ" : "メモ")
+            .font(KMTypography.body(13, weight: .medium))
+            .foregroundStyle(KMColor.muted)
+    }
+
+    private var optionalSummaryText: some View {
+        Text(optionalSummary)
+            .font(KMTypography.body(16))
+            .foregroundStyle(optionalSummary == "任意" ? KMColor.muted : KMColor.text)
+    }
+
+    private var optionalChevron: some View {
+        KMIcon(name: "chevronRight", size: 16)
+            .foregroundStyle(KMColor.muted)
+            .rotationEffect(.degrees(model.isMemoExpanded ? 90 : 0))
+    }
+
+    private var timePicker: some View {
+        DatePicker("時刻", selection: timeBinding, displayedComponents: .hourAndMinute)
+            .datePickerStyle(.compact)
+            .labelsHidden()
+            .environment(\.calendar, KMDate.calendar)
+            .environment(\.timeZone, KMDate.calendar.timeZone)
+            .environment(\.locale, Locale(identifier: "ja_JP"))
+            .accessibilityIdentifier("receipt-time")
+    }
+
+    private var clearTimeButton: some View {
+        Button("消去") { model.time = nil }
+            .font(KMTypography.note)
+            .foregroundStyle(KMColor.primary)
+            .frame(minHeight: KMLayout.minimumHit)
+            .buttonStyle(.plain)
     }
 
     private var optionalSummary: String {

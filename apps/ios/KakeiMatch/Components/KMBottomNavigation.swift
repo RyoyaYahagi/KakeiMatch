@@ -64,6 +64,8 @@ struct KMBottomNavigation: View {
             VStack(spacing: 2) {
                 KMIcon(name: tab.icon).padding(.top, 10)
                 Text(tab.label).font(KMTypography.body(12, weight: selection == tab ? .bold : .regular))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             }
             .foregroundStyle(selection == tab ? KMColor.primary : KMColor.muted)
             .frame(maxWidth: .infinity, minHeight: 58, alignment: .top)
