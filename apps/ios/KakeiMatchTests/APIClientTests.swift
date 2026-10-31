@@ -404,16 +404,51 @@ struct APIClientTests {
                 #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "T", count: 43))
                 let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
                 #expect(body["message"] as? String == "synthetic contact")
+                let diagnostic = body["diagnostic"] as? [String: Any]
+                #expect(diagnostic?["version"] as? Int == 1)
+                #expect(diagnostic?["currentScreen"] as? String == "settings")
+                #expect(diagnostic?["network"] as? String == "online")
+                let events = diagnostic?["events"] as? [[String: Any]]
+                #expect(events?.count == 4)
+                #expect(events?[0]["type"] as? String == "screen_open")
+                #expect(events?[1]["action"] as? String == "receipt_ai_started")
+                #expect(events?[2]["errorCode"] as? String == "storage")
+                #expect(events?[3]["online"] as? Bool == true)
+                #expect(events?.allSatisfy { $0["secondsAgo"] as? Int != nil } == true)
                 return .init(body: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#)
             default: throw URLError(.badServerResponse)
             }
         }
         let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        let result = try await api.submitContact(kind: .bug, message: "synthetic contact", flowID: Self.flow)
+        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "settings", network: "online", events: [
+            .init(type: "screen_open", secondsAgo: 5, screen: "home"),
+            .init(type: "action", secondsAgo: 3, screen: "records", action: "receipt_ai_started"),
+            .init(type: "error", secondsAgo: 2, screen: "records", errorCode: "storage"),
+            .init(type: "network", secondsAgo: 1, online: true),
+        ])
+        let result = try await api.submitContact(kind: .bug, message: "synthetic contact", diagnostic: diagnostic, flowID: Self.flow)
         #expect(result.kind == .bug)
         #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
             "/api/native/config", "/api/native/challenge", "/api/native/ai/token", "/api/native/contact"
         ])
+    }
+
+    @Test
+    func contactRejectsAnInvalidDiagnosticBeforeSending() async throws {
+        let store = APITestCredentials()
+        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(accountSession.utf8), key: "session")
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        APIStub.reset { _ in throw URLError(.badServerResponse) }
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "home", network: "online", events: [
+            .init(type: "screen_open", secondsAgo: 1),
+        ])
+        await #expect(throws: KMAPIError.invalidRequest) {
+            _ = try await api.submitContact(kind: .question, message: "synthetic", diagnostic: diagnostic, flowID: Self.flow)
+        }
+        #expect(APIStub.state.withLock { $0.requests.isEmpty })
     }
 
     @Test

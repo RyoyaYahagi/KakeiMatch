@@ -75,10 +75,14 @@ import Observation
         defer { isBusy = false }
         do {
             let before = presentation.matched.count
+            KMContactDiagnosticRecorder.shared.recordAction(.reconciliationRunStarted, screen: .reconciliation)
             _ = try await repositories.reconciliation.runReconciliation(id: UUID().uuidString, at: now(repositories))
             try await reload(repositories)
             runFeedback = KMReconciliationPresentation.runFeedback(before: before, after: presentation.matched.count)
-        } catch { errorMessage = Self.errorText(error) }
+        } catch {
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .reconciliation)
+            errorMessage = Self.errorText(error)
+        }
     }
     func perform(_ action: Action, repositories: KMRepositories?) async {
         guard let repositories, !isBusy, let run else { return }
@@ -104,10 +108,12 @@ import Observation
             case .undo(let id): try await repo.undoSameExpense(id: id, at: at)
             }
             // Decisions invalidate the prepared input; always rerun before offering another decision.
+            KMContactDiagnosticRecorder.shared.recordAction(.reconciliationRunStarted, screen: .reconciliation)
             _ = try await repo.runReconciliation(id: UUID().uuidString, at: at)
             try await reload(repositories)
             runFeedback = nil
         } catch {
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .reconciliation)
             let message = Self.errorText(error)
             // A write can succeed before the follow-up run fails. Read saved failures/decisions back.
             do { try await reload(repositories) }
@@ -120,14 +126,17 @@ import Observation
         isBusy = true; errorMessage = nil
         defer { isBusy = false }
         var saved = false
+        KMContactDiagnosticRecorder.shared.recordAction(.statementImportStarted, screen: .statements)
         do {
             let result = try await repositories.statements.importStatement(data: data, provider: provider, at: now(repositories))
             saved = true
             // Including duplicate-only reimports. Import alone does not update the run.
+            KMContactDiagnosticRecorder.shared.recordAction(.reconciliationRunStarted, screen: .reconciliation)
             _ = try await repositories.reconciliation.runReconciliation(id: UUID().uuidString, at: now(repositories))
             try await reload(repositories)
             message = KMReconciliationPresentation.importFeedback(result); runFeedback = nil
         } catch {
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: saved ? .reconciliation : .statements)
             errorMessage = (saved ? "明細は保存しましたが、照合結果を更新できませんでした。「もう一度照合する」を押してください。 " : "") + Self.errorText(error)
         }
     }

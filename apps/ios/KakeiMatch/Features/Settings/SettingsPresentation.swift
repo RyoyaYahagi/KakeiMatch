@@ -82,7 +82,7 @@ enum KMSettingsPresentation {
             ]),
             KMSettingsSection(title: "アプリ", rows: [
                 .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),
-                .init(id: "settings.contact", title: "お問い合わせ", value: "声でも送れます", destination: .contact),
+                .init(id: "settings.contact", title: "お問い合わせ", destination: .contact),
                 .init(id: "settings.appInfo", title: "アプリ情報", value: "診断・ライセンス"),
             ]),
         ]

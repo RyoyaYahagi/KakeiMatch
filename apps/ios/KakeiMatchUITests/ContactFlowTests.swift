@@ -16,6 +16,8 @@ final class ContactFlowTests: XCTestCase {
             XCTAssertTrue(title.waitForExistence(timeout: 5))
             if !title.isHittable { app.swipeDown() }
             XCTAssertTrue(title.isHittable)
+            XCTAssertTrue(app.buttons["contact-diagnostics-optin"].exists)
+            XCTAssertFalse(app.buttons["contact-record"].exists)
 
             let attachment = XCTAttachment(screenshot: app.screenshot())
             attachment.name = "contact-initial-\(appearance)"
@@ -51,13 +53,18 @@ final class ContactFlowTests: XCTestCase {
         message.tap()
         message.typeText("問い合わせ画面の送信失敗を確認します")
         XCTAssertTrue(send.isEnabled)
+        let diagnostics = app.buttons["contact-diagnostics-optin"]
+        XCTAssertTrue(diagnostics.exists)
+        XCTAssertEqual(diagnostics.value as? String, "オフ")
+        diagnostics.tap()
+        XCTAssertEqual(diagnostics.value as? String, "オン")
         send.tap()
 
         let submissionFinished = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isEnabled == true"), object: send)
         XCTAssertEqual(XCTWaiter.wait(for: [submissionFinished], timeout: 60), .completed)
         let status = app.staticTexts["contact-status"]
         XCTAssertTrue(status.exists)
-        let failurePhrases = ["送信できませんでした", "ログインが必要", "確認できませんでした", "利用できません", "送信が多いため", "短時間に利用"]
+        let failurePhrases = ["送信できませんでした", "この端末では", "ログインが必要", "確認できませんでした", "利用できません", "送信が多いため", "短時間に利用"]
         XCTAssertTrue(failurePhrases.contains { status.label.contains($0) }, status.label)
         XCTAssertEqual(message.value as? String, "問い合わせ画面の送信失敗を確認します")
 

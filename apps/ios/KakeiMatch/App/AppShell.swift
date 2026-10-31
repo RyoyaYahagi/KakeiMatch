@@ -21,6 +21,8 @@ struct AppShell: View {
     @State private var backgroundedAt: Date?
     @State private var isAuthenticatingForUnlock = false
     @State private var screenLockError: String?
+    @State private var networkMonitor = KMNetworkMonitor()
+    @State private var recordedInitialDiagnostic = false
 
     init() {
         _isScreenLocked = State(initialValue:
@@ -142,7 +144,10 @@ struct AppShell: View {
             .presentationBackground(.clear)
         }
         .transaction { if reduceMotion { $0.disablesAnimations = true } }
-        .onChange(of: tab) { _, _ in
+        .onChange(of: tab) { _, newTab in
+            let target = Self.diagnosticTarget(for: newTab)
+            KMContactDiagnosticRecorder.shared.recordAction(target.action, screen: target.screen)
+            KMContactDiagnosticRecorder.shared.recordScreen(target.screen)
             Task { await refreshReviewCount() }
         }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockRequestNotificationName))) { _ in
@@ -168,6 +173,14 @@ struct AppShell: View {
             }
         }
         .task {
+            networkMonitor.start { online in
+                Task { @MainActor in KMContactDiagnosticRecorder.shared.recordNetwork(online) }
+            }
+            if !recordedInitialDiagnostic {
+                recordedInitialDiagnostic = true
+                KMContactDiagnosticRecorder.shared.recordAction(.navigateHome, screen: .home)
+                KMContactDiagnosticRecorder.shared.recordScreen(.home)
+            }
             if screenLockEnabledForShell { lockScreen() }
             await refreshReviewCount()
             await deletionNotice.configure(repositories)
@@ -246,6 +259,16 @@ struct AppShell: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(KMColor.bg.ignoresSafeArea())
         .accessibilityElement(children: .contain)
+    }
+
+    private static func diagnosticTarget(for tab: KMTab)
+        -> (action: KMContactPresentation.DiagnosticAction, screen: KMContactPresentation.DiagnosticScreen) {
+        switch tab {
+        case .home: return (action: .navigateHome, screen: .home)
+        case .records: return (action: .navigateRecords, screen: .records)
+        case .reconciliation: return (action: .navigateReconciliation, screen: .reconciliation)
+        case .settings: return (action: .navigateSettings, screen: .settings)
+        }
     }
 
     private var selectedColorScheme: ColorScheme? {

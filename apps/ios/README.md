@@ -206,7 +206,7 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 - 永続化: 通常起動は `KMSQLiteStore`。全Repositoryは同じprofileを共有し、変更はSQLite transaction内で確定します。取引の削除Undo・レシート登録状態の実遷移は専用APIに接続済みです。複数scene/processのprofile排他は後続です。世代番号で古いsnapshotによる上書きを拒否します。
 - `.kmb` / `.kmib`: `repositories.localStore` の `importBackup(from:)` はmagicでPWA `.kmb` とiOS専用 `.kmib` を振り分けます。`exportNativeBackup()` は一時`.kmib`のURLを返します。どちらも復元後に `returnToPreviousProfile()` で切り戻せます。画面側は利用者確認、共有/Files保存、security-scoped URL、エラー表示、成功後のsnapshot再取得を担当します。`originalArtifact(id:)` はCSV/画像、`importedRecords()` は後続projection用の元記録（現在の編集済み家計簿ではない）です。`.kmib`はiOS同士でのみ復元でき、iOS→PWAの書き出しは提供しません（利用者決定 2026-10-26）。
 - 決定的サービス: 照合の全操作・run入力snapshot・却下・別名・取消履歴、分類観測/上書き、定期設定/処理済み日、予算設定はSQLiteに保存し、再open後も利用できます。`catchUpRecurring(id:dates:through:at:)` は選択日を検証して生成し、処理済み日/登録IDで二重生成を防ぎます。削除した生成取引も自動で作り直しません。定期生成取消・編集行保持付き監査、明細/MoneyForwardの取り込み、口座/カテゴリ管理、照合の共通台帳経路は接続済みです。Actual Schedule/Rule互換取り込み、レシート確認からの学習呼出しは後続です。v1/v2/v3 DBはv4へ移行します。削除印/編集履歴は同じSQLite transaction内のledger-writes singletonに保存します。旧DB/`.kmb` のrun表示は保持しますが、Swiftの入力snapshotがないため判断前に再照合が必要です。
-- API: AI抽出/分類、アカウント、問い合わせのtyped要求/応答と認証は別PR。Worker境界で検証し、秘密鍵を端末へ持たせない。
+- API: AI抽出/分類、アカウントは別PR。問い合わせのtyped要求/応答・認証と、同意時だけ送る診断情報の添付は実装済み。Worker境界で検証し、秘密鍵を端末へ持たせない。
 - 同期・画面ロックの進行状態/操作protocolは、対応サービスができるまで未定義。MoneyForwardは上記 `StatementRepository`、バックアップは `localStore` を使います。空の将来用抽象化を追加していない。Mac側は仮のView用状態を保ち、不足APIをIssue #240へ報告する。
 
 ## 記録一覧の接続範囲
@@ -227,6 +227,7 @@ fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足�
 - 記録一覧以外のタブ内はplaceholderです。ホームの集計・照合・設定の本実装とデータ状態の比較は後続PRです。記録一覧は空状態と種類別の空状態も表示します。
 - 「口座・残高を見る」はPWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」を開きます。戻ると設定の一覧です。
 - 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移っても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
+- お問い合わせは文章のみです。利用者の決定（2026/10）で、iOS版は音声の録音・文字起こしを作らず、設定行の「声でも送れます」と問い合わせ画面の音声の文言・ボタンも表示しません。診断情報は「直前のアプリ動作情報を添付する」を選んだ時だけ、PWAと同じ固定語彙（メモリに最大40件・15分、送信時は直近20件）を添付します。問い合わせ画面内の操作・エラーは添付から除外します。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。
 - 時計・ホームインジケータ・safe areaはネイティブOSのもの。端末サイズが異なるため390pxのPWAスクリーンショットとの画素一致は主張しません。

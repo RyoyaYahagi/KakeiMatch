@@ -303,6 +303,7 @@ final class KMReceiptModel {
         }
         revision = UUID(); let token = revision
         phase = .reading; startedReading = Date(); error = nil; status = nil
+        KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)
         operation = Task {
             do {
                 let client: KMWorkerAPI
@@ -379,12 +380,14 @@ final class KMReceiptModel {
                     self.receipt = saved; applyValues(saved)
                 } catch {
                     guard revision == token else { return }
+                    KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
                     self.error = "カテゴリを提案できませんでした。読み取った内容は編集できます。"
                 }
                 guard revision == token else { return }
                 phase = .idle
             } catch {
                 guard revision == token, !Task.isCancelled else { return }
+                KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
                 if let failure = error as? KMAPIError {
                     phase = .failed(failure)
                     self.error = KMReceiptPresentation.failureMessage(failure)
@@ -417,6 +420,7 @@ final class KMReceiptModel {
     func save() async {
         guard canSave, !saving, !didSave, !isReading, let repositories else { return }
         saving = true; error = nil
+        KMContactDiagnosticRecorder.shared.recordAction(.receiptSaveStarted, screen: .records)
         defer { saving = false }
         await reviewTask?.value
         do {
@@ -467,7 +471,10 @@ final class KMReceiptModel {
             receipt = saved; didSave = true; status = "登録しました。"
             await saveLearning(receiptId: saved.id, fallback: fallback, repositories: repositories,
                 successMessage: "レシートは登録しましたが、カテゴリの学習を保存できませんでした。")
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
+            self.error = error.localizedDescription
+        }
     }
 
     private func saveLearning(receiptId: String, fallback: String, repositories: KMRepositories, successMessage: String) async {
@@ -477,6 +484,10 @@ final class KMReceiptModel {
             availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
         ) else { return }
         do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
-        catch { self.error = "\(successMessage)\(error.localizedDescription)" }
+        catch {
+            // PWA local-ui.ts reports the same failure for both edit and register saves.
+            KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
+            self.error = "\(successMessage)\(error.localizedDescription)"
+        }
     }
 }
