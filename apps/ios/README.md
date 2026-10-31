@@ -152,7 +152,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・選択月内の最近3件をまとめます。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
-`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。分類学習の確認時呼出しはまだ未接続です。Viewで代替エンジンを作らないでください。
+`saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。登録・登録済み編集の保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡します。Viewで代替エンジンを作らないでください。
 
 削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理はshellの `KMDeletionNoticeModel` が持ちます。
 
@@ -216,7 +216,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 未接続・未検証の範囲は次のとおりです。
 
 - 確認待ちは一覧・未登録下書きの削除・「確認する」からレシート登録画面を開く導線を接続しています。
-- 登録済みレシートは基本項目の編集・画像/品目/値引き/分類理由の閲覧を接続しています。品目別カテゴリの編集と給与内訳の表示は未接続です。画像の拡大操作も未接続です。
+- 登録済みレシートは記録詳細の行からレシート編集画面（「支出の記録を編集」）を開き、基本項目・品目別カテゴリ・値引き・税額を編集できます。レシート画像は同画面のプレビューから全画面表示し、タップ位置を中心に2.5倍へ拡大できます。分類理由の閲覧も接続済みです。給与内訳の表示は未接続です。
 - 日付入力は `YYYY-MM-DD` の文字入力です。カテゴリ・口座はOSの選択メニュー、削除確認はOSのダイアログです。支出集計の対象外はOSのスイッチを使います。
 - 実機、Dynamic Type、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Repositoryの単体検証とは区別します。
 
