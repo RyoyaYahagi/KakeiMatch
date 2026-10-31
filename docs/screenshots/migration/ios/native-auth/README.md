@@ -5,10 +5,12 @@
 | iOS の状態 | 画像 | 内容 |
 |---|---|---|
 | 未ログイン・ゲスト利用あり・ライト | [signed-out-light.png](signed-out-light.png) | 今日の利用回数、Passkeyログイン、招待コード登録、家計簿に戻る |
-| ログイン中・ライト | [signed-in-light.png](signed-in-light.png) | 月次利用回数、AI利用の確認、Passkey一覧・追加、ログアウト、Cloud account削除 |
+| ログイン中・ライト | [signed-in-light.png](signed-in-light.png) | 月次利用回数とメーター、AI利用の確認、Passkey欄、ログアウト、Cloud account削除 |
 | 未対応端末・ライト | [unsupported-light.png](unsupported-light.png) | Simulator（App Attest非対応）でログインとAIを出さず、端末内利用の継続を表示 |
 | ゲスト利用・ダーク | [guest-dark.png](guest-dark.png) | ダークテーマの未ログイン表示 |
 
-iOS 画像は XCUITest `NativeAuthFlowTests` が保存した未加工 PNG です。iPhone 17、iOS 26.2、ライト/ダーク指定で取得しました。PWA は 390×844 CSS px の viewport、iOS は 402×874 pt のため、時計・safe area・文字の字形は一致しません。
+iOS 画像は XCUITest `NativeAuthFlowTests` が `KM_UI_TEST_NATIVE_AUTH_STATE` の固定状態で保存した未加工 PNG です。iPhone 17、iOS 26.2、ライト/ダーク指定で取得しました。PWA は 390×844 CSS px の viewport、iOS は 402×874 pt のため、時計・safe area・文字の字形は一致しません。
+
+ログイン中の画像は、未ログイン状態から Passkey ログインしたテスト状態です。テスト用の固定serviceはログイン時に Passkey を追加しないため一覧は空ですが、実装はログイン後に `list-user-passkeys` の結果を表示します（`NativeAuthModelTests` で一覧の読み込みと追加・削除を確認）。
 
 PWA の Turnstile 確認ダイアログに相当する画面は、iOS では App Attest の確認ダイアログになります。Simulator は App Attest 非対応のため、ダイアログの画像は実機での確認課題です。招待コードは `window.prompt` の代わりに OS のアラート入力欄です。
