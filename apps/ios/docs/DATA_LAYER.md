@@ -122,8 +122,8 @@ Home の画面は `TransactionRepository.homeDashboard(month:today:)` を1回だ
 - Actual画面でしか作成できないtransaction/payee rule、categoryの自動学習rule、schedule ruleの高度な条件（可変金額/終了条件/休日調整等）の実行は対象外。[Actual API (26.9.0), accounts/sync / transactions/transaction-rules] KakeiMatchの分類学習とは別物で、通常画面から設定できないため。本PRはこれらが存在するActual家計簿での書き込み結果一致を保証しない。元のruleは取り込みprovenanceに残す。
 - CRDT、同期メッセージ、Actualのsort_order・APIイベント・内部table配置は画面結果に不要なため再現しない。削除済み取引は独自の `ledger-writes` に保存し、active projectionから除く。Actual DBを再生成できるという意味ではない。
 - PWAはActual/IndexedDBの別保存先を更新するのでprocessing/failed intentと再起動回復が必要。iOSは1つのSQLite transactionで成功かrollbackになるため、中間intentの再実行を追加しない。読み戻し不一致・SQL失敗は全体をrollbackする（Actual側だけ更新されたPWAの内部的な途中状態は再現しない）。
-- Actual Schedule/RuleのDB再生成・有効scheduleを含む `.kmb` のprojectionは対象外。既存readerは引き続き明示拒否し、元PWAを保持する。iOS上で作る定期設定は独自SQLiteで実行する。旧portable定期監査は処理済み日として保持するが、旧生成snapshotの取消UIへの投影は未接続。
-- MoneyForwardのPWA既存app-settings履歴はprovenanceに損失なく保持するが、新しいnative移行履歴へのprojectionは未接続。iOSで作った履歴/対応ルールは再open/`.kmib`で維持する。
+- Actual Schedule/RuleのDB再生成・高度な条件（可変金額/終了条件/休日調整/複数条件）の実行は対象外。`.kmb` 取り込みでは、PWAが作成・編集できる基本形（payee/account/date/amountの4条件、`link-schedule`、`set category`、毎月/毎週/毎年・interval 1・endMode never）の有効scheduleだけをnative定期へ投影する。複雑なrule、名前のないschedule、閉口座・非表示カテゴリを参照するscheduleは取り込み全体を明示拒否し、元PWAを保持する。`schedules_next_date` が古い/欠けている場合は、既存の生成取引（`schedule`列または `kakeimatch:schedule:<id>:<date>` のimported ID）を処理済み日として登録し、最後の生成日の翌日以降へ次回日を進める。これにより取り込み直後の `runRecurring` がPWA生成済みの日を二重生成しない。旧portable定期監査は処理済み日として保持するが、旧生成snapshotの取消UIへの投影は未接続。
+- MoneyForwardのPWA `settings:moneyforward-import` は、完了・部分完了・取消途中・取消済みのbatchと対応ルールをnativeの `moneyForwardHistory` / `moneyForwardRules` へ投影する。`planned`/`processing`/`undoing` と `pending`/`importing`/`failed` 行はPWA側で状態が動いているため投影しない。`created` 行でも、PWAのsnapshotのID・imported IDとnativeの取引のimported IDが一致する場合だけ削除対象のsnapshotを保持する。duplicate/excluded、対象取引が消えている行、IDが食い違う行は削除対象を持たないため、`undoMoneyForward` はPWA由来でない取引を消さない。元recordはprovenanceに保持する。
 - 比較テスト担当の `test/ios-pwa-parity` / `KakeiMatchTests/Parity` は変更しない。単体テストは画面接続やPWA実行との総合比較完了を意味しない。
 
 `LedgerWriteTests` は両adapterの同じ入力で登録・編集・再送・衝突・削除Undo・再open・SQLite失敗rollback・v2→v3・native backupを検査する。`ReceiptAllocationTests` は `src/lib/local-receipts.test.ts` の按分入力/期待値を移植し、64bit積を超える金額の端数処理も検査する。支払先規則の再生成は依存導入後 `node apps/ios/scripts/generate-payee-normalization.mjs`。Actualライセンスは `Data/Ledger/ActualLicense.txt` に同梱する。
@@ -178,7 +178,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 
 ## 検証・既知の制約・後続への申し送り
 
-- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→4の作成・1/2/3→4移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/未対応定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。
+- `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→4の作成・1/2/3→4移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/複雑な定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。基本形scheduleの投影・PWA生成済み日の処理済み登録・古い次回日からの二重生成防止・複雑なscheduleの拒否、PWA MoneyForward履歴の投影と作成行だけの取消も、SQLiteとin-memoryの両方で確認する。
 - 共通fixtureはPR #279の合成データ。`synthetic.kmb` には `fixture.json` の11取引に加えて画像付きレシート登録分2,138円があり、12取引・支出26,868円になる。レシートは登録済み11＋空下書き1、明細7、照合一致4/要確認1/記録なし2、予算80,000円を確認する。fixtureの7品目は `.kmb` では確認値に保存されていないため、品目を捏造しない。
 - 通常起動だけpersistentへ注入する。Debug `-UITestFixture` とPreviewは従来のin-memoryで、利用者のDBへ触れない。
 - 閲覧・既存Repositoryの保存/検索/集計/復元はオフライン。AI抽出/分類、Cloud認証、問い合わせは別のAPI境界。ログアウトやアカウント削除からこのDBを消さない。
@@ -186,7 +186,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
 - `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
-- レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projectionは後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
+- レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Ruleの高度な条件の実行は後続。`.kmb` の基本形scheduleと旧PWAのMoneyForward履歴は取り込み時に投影済み。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
 - I/O・検証は現段階でMainActor直列。storeの全操作は `KMSerialQueue` で到着順に直列化し、別sceneの同時要求もエラーにせず待機させる（queueは再入不可）。大容量での実機メモリ/応答性、アプリ強制終了/容量不足は未検証。複数sceneのprofile排他と別プロセス経路の有無は「複数sceneのprofile排他」を参照。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。
 - nativeのraw provenanceは監査/後続projection用。iOS編集後の正本と混同しない。端末からの全削除/原本整理は認証情報と分離して別途実装する。
