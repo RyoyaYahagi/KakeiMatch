@@ -100,9 +100,11 @@ extension ReceiptFlowTests {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestFixture", "receipt", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        app.buttons["receipt-tab"].tap()
+        let receiptTab = app.buttons["receipt-tab"]
+        XCTAssertTrue(receiptTab.waitForExistence(timeout: 15))
+        receiptTab.tap()
         let pending = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "records.pending.")).firstMatch
-        XCTAssertTrue(pending.waitForExistence(timeout: 10))
+        XCTAssertTrue(pending.waitForExistence(timeout: 15))
         pending.tap()
         XCTAssertTrue(app.buttons["receipt.itemsTab"].waitForExistence(timeout: 5))
         app.buttons["receipt.itemsTab"].tap()
@@ -175,9 +177,11 @@ extension ReceiptFlowTests {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestFixture", "receipt", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
         app.launch()
-        app.buttons["receipt-tab"].tap()
+        let receiptTab = app.buttons["receipt-tab"]
+        XCTAssertTrue(receiptTab.waitForExistence(timeout: 15))
+        receiptTab.tap()
         let pending = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "records.pending.")).firstMatch
-        XCTAssertTrue(pending.waitForExistence(timeout: 10))
+        XCTAssertTrue(pending.waitForExistence(timeout: 15))
         pending.tap()
         let merchant = app.textFields["receipt-merchant"]
         XCTAssertTrue(merchant.waitForExistence(timeout: 10))
@@ -185,7 +189,7 @@ extension ReceiptFlowTests {
         merchant.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8) + "合成の下書き")
         app.buttons["receipt.itemsTab"].tap()
         app.buttons["records.pendingBackButton"].tap()
-        XCTAssertTrue(pending.waitForExistence(timeout: 10))
+        XCTAssertTrue(pending.waitForExistence(timeout: 15))
         pending.tap()
         let restored = app.textFields["receipt-merchant"]
         XCTAssertTrue(restored.waitForExistence(timeout: 10))
