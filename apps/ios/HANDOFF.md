@@ -1,6 +1,6 @@
 # Issue #240 iOS移行: Mac への引き継ぎ書
 
-作成: 2026-10-25、更新: 2026-10-29（Mac 側）。Mac 側で画面実装（Phase 3〜5）を進めるための指示書です。
+作成: 2026-10-25、更新: 2026-10-31（Mac 側）。Mac 側で進めた画面実装（Phase 3〜5）の結果と、残っている作業をまとめた引き継ぎ書です。
 担当や実装状態が変わったときは「2. 現在の状態」と「4. Linux 側の作業終了後の実装境界」を更新します。
 
 ## 0. 前提（必ず読む）
@@ -81,13 +81,26 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | Home | `feature/ios-home` | #295 | **Mac** | マージ済み（`be4a1df`） |
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
 | 記録一覧 | `feature/ios-records` | #301 | **Mac** | マージ済み（`a15b0c8`） |
-| 画面13: 給与明細 | `feature/ios-payroll` | #319 | **Mac** | PR作成済み。収入入力導線、AI読取、確認、手取り収入と内訳snapshotの一括保存。レビュー指摘の確認UI・支給日表記・レシート導線の回帰を修正 |
-| 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
+| 設定・テーマ・画面ロック | `feature/ios-settings`, `feature/ios-settings-shell` | #303, #305 | **Mac** | マージ済み（PWA準拠の設定、テーマ、画面ロック） |
+| 明細照合（CSV取り込み・判断履歴） | `feature/ios-reconciliation` | #304 | **Mac** | マージ済み |
+| 手入力（支出・収入・振替） | `feature/ios-entry` | #307 | **Mac** | マージ済み |
+| レシート登録（撮影・AI読み取り・警告確認・台帳登録） | `feature/ios-receipt` | #308 | **Mac** | マージ済み。撮影画像の新規保存と未完成入力の下書き保存は未接続 |
+| 予算 | `feature/ios-budget` | #309 | **Mac** | マージ済み |
+| 問い合わせ | `feature/ios-contact`, `feature/ios-contact-diagnostics` | #310, #320 | **Mac** | マージ済み。同意時の診断情報添付まで接続 |
+| 定期登録（追いつき履歴を含む） | `t3/ios-recurring-registration`, `t3/ios-recurring-catch-up` | #312, #315 | **Mac** | マージ済み |
+| 品目一覧・カテゴリ修正 | `t3/receipt-items-category-correction` | #314 | **Mac** | マージ済み |
+| カテゴリ / 支払元管理 | `t3/category-payment-source-management` | #316 | **Mac** | マージ済み |
+| バックアップ / 復元 | `feature/ios-backup-screen-v2` | #317 | **Mac** | マージ済み（`.kmib` 書き出し、`.kmb` / `.kmib` 復元） |
+| MoneyForward CSV 取り込み | `feature/ios-moneyforward-v2` | #318 | **Mac** | マージ済み |
+| 画面13: 給与明細 | `feature/ios-payroll` | #319 | **Mac** | マージ済み（`e31be35`）。収入入力導線、AI読取、確認、手取り収入と内訳snapshotの一括保存 |
+| 登録済みレシートの品目カテゴリ編集・画像拡大 | `feature/ios-receipt-item-category-edit` | #323 | **Mac** | マージ済み（`bfa5848`） |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
+
+2026-10-31 時点で、記録一覧の口座導線と削除取り消しのタブ横断表示は PR #321、初回の Passkey ログイン・ゲスト開始・ログアウト画面は PR #322 で進行中です（いずれも未マージ）。
 
 ## 3. Mac 側でやること: 画面ごとの PR
 
-進め方は 1 画面 1 PR。`Features/<Name>/<Name>View.swift` の placeholder を置き換える。shell・共通部品を変えたいときは別の小さな PR に分ける。
+進め方は 1 画面 1 PR。`Features/<Name>/<Name>View.swift` を変更する。shell・共通部品を変えたいときは別の小さな PR に分ける。
 
 | 順 | 画面 | 読む PWA ソース（`apps/pwa/src/`） | 参照スクショ |
 | --- | --- | --- | --- |
@@ -141,16 +154,15 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - `readReceipt`は元画像を保持する責任を持たない。画面/Repository側で保存してから呼ぶ。給与は `KMMaskedPayrollImage.prepare` に利用者指定マスクと確認を渡し、同じ画像を見せて同意を取る。送信失敗・画面移動時の給与画像破棄も画面側で行う。contactのflowIdは結果不明時に勝手に再発行しない。
 - 金額は Int（円）。日付は Asia/Tokyo を明示。表示用フォーマットは DesignSystem / Components の既存関数を使い、画面ごとに作らない。
 
-## 5. 実装担当（モデル）の割り振りの目安
+## 5. 実装担当（モデル）の割り振り
 
-- GPT 系は pi（`openai-codex/*`）経由だけで使う。opencode・dsh 経由の GPT / Claude は使わない（利用者指示 2026-10-25）。
-- gpt-6.1-sol: レシート登録、明細照合、記録一覧（インライン編集）、Visual regression の仕組みづくり
-- gpt-6-luna: 定期、予算、マスタ管理、設定、問い合わせ、バックアップ、給与明細、MoneyForward 取り込み、各画面の見た目の微調整
-- luna で足りる作業は luna に任せる（利用者指示 2026-10-26）
+- どのモデルがどの作業を担当するかは、利用者がその都度指示する。固定の割り振りは置かない。
 
 ## 6. 再現できない可能性が高い点（判明しているもの）
 
 - **iOS → PWA 書き出しは提供しない（利用者決定、2026-10-26）。iOS のバックアップは iOS 同士でのみ復元できる。** PWA → iOS は既存の `.kmb` 取り込みを使う。
+
+- **iOS の問い合わせに音声入力（録音・文字起こし）は作らない（利用者決定、2026-10-30）。** 設定行の「声でも送れます」と、問い合わせ画面の音声の文言・ボタンも表示しない。文章での送信だけを提供する。
 
 - `docs/screenshots/migration` の参照スクショは Linux の Chromium で撮影しており、PWA の `--font-body`（-apple-system / Hiragino）と `--font-num`（ui-monospace / SF Mono）が代替フォントで描かれている。iPhone 上の PWA とは字形・字幅が違うので、iOS との比較ではレイアウト・色・余白・文言を見て、字形の差は無視する。Mac では `pnpm --dir apps/pwa screenshots:migration` を Playwright の WebKit で実行し直すと iPhone に近い基準を作れる（Mac 側で最初にやるとよい）
 
