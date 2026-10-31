@@ -2,13 +2,17 @@ import SwiftUI
 
 struct KMButtonStyle: ButtonStyle {
     enum Role { case primary, secondary, text, destructive }
+    /// `full` is the form action width. `intrinsic` keeps PWA settings-panel buttons inline.
+    enum Width { case full, intrinsic }
     let role: Role
+    var width: Width = .full
     @Environment(\.isEnabled) private var enabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(KMTypography.body(role == .primary ? 17 : 16, weight: role == .text ? .medium : .bold))
-            .frame(maxWidth: role == .primary ? .infinity : nil, minHeight: role == .primary ? 52 : KMLayout.minimumHit)
+            .frame(maxWidth: role == .primary && width == .full ? .infinity : nil,
+                   minHeight: role == .primary ? (width == .full ? 52 : KMLayout.minimumHit) : KMLayout.minimumHit)
             .padding(.horizontal, role == .primary ? KMSpacing.space4 : KMSpacing.space2)
             .foregroundStyle(foreground)
             .background(background(pressed: configuration.isPressed))

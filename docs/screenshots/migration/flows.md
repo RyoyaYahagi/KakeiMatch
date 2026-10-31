@@ -85,5 +85,6 @@ fixture 正本: [`test/fixtures/ios-migration/fixture.json`](../../../test/fixtu
 | 同期 | `settings.deviceLink` | 設定→`button("ほかの端末と同期")` |
 | MF移行 | `settings.moneyforward` | バックアップと復元→`button("マネーフォワードから移行")` → `#moneyforward-file` |
 | 給与 | `payroll.open` | 収入→`button("AIで簡単入力")` の filechooser で写真を指定 → `.payroll-mask` |
+| ログイン・利用状況 | `settings.aiUsage` / `nativeAuth.screen` | 設定→`button("ログイン・利用状況")` → `#passkey-login`、`#invite-register`、`#ai-row-value` |
 
 既存E2Eの操作を参照し、実在する selector を grep と実行で確認した。PWA に `#record-tab`、架空の `.reconciliation` コンテナ、共通 identifier と同名の `data-testid` は追加していない。

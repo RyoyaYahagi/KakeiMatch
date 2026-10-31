@@ -34,6 +34,7 @@ struct ReceiptView: View {
     @State private var expandedAdjustmentID: String?
     @State private var categoryTarget: KMReceiptCategoryTarget?
     @FocusState private var focusedField: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(spacing: 0) {
@@ -116,6 +117,9 @@ struct ReceiptView: View {
         } message: {
             Text("もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？")
         }
+        .overlay {
+            if model.needsGuestStart { guestStartDialog }
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
             showsCamera = false; showsPhotos = false; showsImage = false; model.stopWaiting()
         }
@@ -150,6 +154,48 @@ struct ReceiptView: View {
         }
     }
 
+    /// PWA `guest-ai.ts` bot-check dialog. App Attest has no widget to render, so
+    /// the check starts as soon as the dialog appears; "やめる" stays available
+    /// while it runs and only the wording about the check differs from PWA.
+    private var guestStartDialog: some View {
+        ZStack {
+            KMColor.scrim.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { model.cancelGuestStart() }
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                Text(KMNativeAuthPresentation.guestStartTitle)
+                    .font(KMTypography.body(20, weight: .bold))
+                    .foregroundStyle(KMColor.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text(KMNativeAuthPresentation.guestStartMessage)
+                    .font(KMTypography.text)
+                    .foregroundStyle(KMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                // PWA keeps a 65pt widget slot here; App Attest has no UI, so a
+                // spinner occupies the same space while the check runs.
+                ProgressView()
+                    .tint(KMColor.primary)
+                    .frame(maxWidth: .infinity, minHeight: 65)
+                    .accessibilityLabel(KMNativeAuthPresentation.guestStartProgress)
+                Button(KMNativeAuthPresentation.guestStartCancel) { model.cancelGuestStart() }
+                    .buttonStyle(KMButtonStyle(role: .secondary, width: .intrinsic))
+                    .accessibilityIdentifier("receipt.guestStartCancel")
+            }
+            .padding(KMSpacing.space5)
+            .frame(maxWidth: 420, alignment: .leading)
+            .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
+            .overlay {
+                RoundedRectangle(cornerRadius: KMRadius.xl).strokeBorder(KMColor.border, lineWidth: 1)
+            }
+            .padding(.horizontal, KMSpacing.space4)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("receipt.guestStart")
+        }
+        .task { await model.confirmGuestStart() }
+    }
+
     private var saveButton: some View {
         Button { focusedField = nil; Task { await model.save() } } label: {
             Text(model.saving ? (editing ? "保存しています…" : "登録しています…") : (editing ? "変更を保存する" : "登録する"))
@@ -171,7 +217,8 @@ struct ReceiptView: View {
         Button { focusedField = nil; model.pane = pane } label: {
             Text(title).font(KMTypography.body(14, weight: model.pane == pane ? .bold : .medium))
                 .foregroundStyle(model.pane == pane ? KMColor.text : KMColor.muted)
-                .frame(maxWidth: .infinity, minHeight: 36)
+                // Keep the 44pt target while the scaled label grows past 36pt.
+                .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 36)
                 .background(model.pane == pane ? KMColor.surface : .clear, in: RoundedRectangle(cornerRadius: KMRadius.sm))
                 .frame(minHeight: 44)
         }.buttonStyle(.plain).accessibilityIdentifier(identifier)
@@ -252,10 +299,12 @@ struct ReceiptView: View {
                         .accessibilityLabel("店名").accessibilityIdentifier("receipt-merchant").focused($focusedField, equals: "receipt-merchant")
                 }
                 row("日付", field: .purchasedDate, id: "receipt-date") {
-                    DatePicker("日付", selection: dateBinding, displayedComponents: .date).labelsHidden()
-                        .environment(\.timeZone, TimeZone(identifier: "Asia/Tokyo")!).environment(\.locale, Locale(identifier: "ja_JP"))
-                        .accessibilityIdentifier("receipt-date")
-                    Spacer(minLength: 0)
+                    HStack(spacing: 0) {
+                        DatePicker("日付", selection: dateBinding, displayedComponents: .date).labelsHidden()
+                            .environment(\.timeZone, TimeZone(identifier: "Asia/Tokyo")!).environment(\.locale, Locale(identifier: "ja_JP"))
+                            .accessibilityIdentifier("receipt-date")
+                        Spacer(minLength: 0)
+                    }
                 }
                 row("カテゴリ", id: "receipt-category") {
                     if !model.items.isEmpty {
@@ -401,16 +450,35 @@ struct ReceiptView: View {
                 expandedAdjustmentID = nil
                 expandedItemID = expandedItemID == item.id ? nil : item.id
             } label: {
-                HStack(spacing: KMSpacing.space2) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.name.isEmpty ? "品目を入力" : item.name).lineLimit(1)
-                        if model.hasUnreviewedItemWarning(item.id) { Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                            HStack(alignment: .top, spacing: KMSpacing.space2) {
+                                itemTitle(item).lineLimit(2)
+                                Spacer(minLength: KMSpacing.space1)
+                                itemChevron(item)
+                            }
+                            HStack(spacing: KMSpacing.space2) {
+                                itemAmount(item)
+                                Spacer(minLength: 0)
+                                Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
+                            }
+                            if model.hasUnreviewedItemWarning(item.id) {
+                                Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: KMSpacing.space2) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                itemTitle(item).lineLimit(1)
+                                if model.hasUnreviewedItemWarning(item.id) { Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning) }
+                            }
+                            Spacer(minLength: KMSpacing.space1)
+                            itemAmount(item)
+                            Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
+                            itemChevron(item)
+                        }
                     }
-                    Spacer(minLength: KMSpacing.space1)
-                    if let yen = item.amountYen { KMAmount(yen: yen) } else { Text("金額未入力").font(KMTypography.note) }
-                    Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
-                    Image(systemName: expandedItemID == item.id ? "chevron.down" : "chevron.right")
-                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
                 }
                 .font(KMTypography.body(14)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
@@ -462,6 +530,19 @@ struct ReceiptView: View {
         .disabled(model.isReading || model.saving || model.didSave)
     }
 
+    private func itemTitle(_ item: KMReceiptItem) -> some View {
+        Text(item.name.isEmpty ? "品目を入力" : item.name)
+    }
+
+    @ViewBuilder private func itemAmount(_ item: KMReceiptItem) -> some View {
+        if let yen = item.amountYen { KMAmount(yen: yen) } else { Text("金額未入力").font(KMTypography.note) }
+    }
+
+    private func itemChevron(_ item: KMReceiptItem) -> some View {
+        Image(systemName: expandedItemID == item.id ? "chevron.down" : "chevron.right")
+            .font(KMTypography.note).foregroundStyle(KMColor.muted)
+    }
+
     private func adjustmentRow(_ adjustment: KMReceiptAdjustment) -> some View {
         VStack(spacing: 0) {
             Button {
@@ -469,15 +550,29 @@ struct ReceiptView: View {
                 expandedItemID = nil
                 expandedAdjustmentID = expandedAdjustmentID == adjustment.id ? nil : adjustment.id
             } label: {
-                HStack(spacing: KMSpacing.space2) {
-                    Text(adjustment.label.isEmpty ? (model.adjustmentIsAddition(for: adjustment.id) ? "調整" : "値引き") : adjustment.label)
-                        .lineLimit(1)
-                    Spacer(minLength: KMSpacing.space1)
-                    Text(model.adjustmentDisplayAmount(for: adjustment.id)).font(KMTypography.number(14))
-                    Text(model.adjustmentIsAddition(for: adjustment.id) ? "その他の調整" : "値引き")
-                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
-                    Image(systemName: expandedAdjustmentID == adjustment.id ? "chevron.down" : "chevron.right")
-                        .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                            HStack(alignment: .top, spacing: KMSpacing.space2) {
+                                adjustmentTitle(adjustment).lineLimit(2)
+                                Spacer(minLength: KMSpacing.space1)
+                                adjustmentChevron(adjustment)
+                            }
+                            HStack(spacing: KMSpacing.space2) {
+                                Text(model.adjustmentDisplayAmount(for: adjustment.id)).font(KMTypography.number(14))
+                                Spacer(minLength: 0)
+                                adjustmentKindLabel(adjustment)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: KMSpacing.space2) {
+                            adjustmentTitle(adjustment).lineLimit(1)
+                            Spacer(minLength: KMSpacing.space1)
+                            Text(model.adjustmentDisplayAmount(for: adjustment.id)).font(KMTypography.number(14))
+                            adjustmentKindLabel(adjustment)
+                            adjustmentChevron(adjustment)
+                        }
+                    }
                 }
                 .font(KMTypography.body(14)).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 .contentShape(Rectangle())
@@ -518,6 +613,20 @@ struct ReceiptView: View {
             Rectangle().fill(KMColor.border).frame(height: 1)
         }
         .disabled(model.isReading || model.saving || model.didSave)
+    }
+
+    private func adjustmentTitle(_ adjustment: KMReceiptAdjustment) -> some View {
+        Text(adjustment.label.isEmpty ? (model.adjustmentIsAddition(for: adjustment.id) ? "調整" : "値引き") : adjustment.label)
+    }
+
+    private func adjustmentKindLabel(_ adjustment: KMReceiptAdjustment) -> some View {
+        Text(model.adjustmentIsAddition(for: adjustment.id) ? "その他の調整" : "値引き")
+            .font(KMTypography.note).foregroundStyle(KMColor.muted)
+    }
+
+    private func adjustmentChevron(_ adjustment: KMReceiptAdjustment) -> some View {
+        Image(systemName: expandedAdjustmentID == adjustment.id ? "chevron.down" : "chevron.right")
+            .font(KMTypography.note).foregroundStyle(KMColor.muted)
     }
 
     @ViewBuilder private func categoryPicker(for target: KMReceiptCategoryTarget) -> some View {
@@ -595,15 +704,38 @@ struct ReceiptView: View {
     }
 
     private func row<Content: View>(_ title: String, field: KMReceiptExtraction.WarningField? = nil, id: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(spacing: KMSpacing.space3) {
-            Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted).frame(width: 72, alignment: .leading)
-            content()
-            if let field, model.warnings.contains(where: { $0.field == field }) {
-                Text("△ 写真と確認").font(KMTypography.body(11)).foregroundStyle(KMColor.warning)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    HStack(spacing: KMSpacing.space2) {
+                        rowTitle(title)
+                        if let field, model.warnings.contains(where: { $0.field == field }) {
+                            warningMark
+                        }
+                    }
+                    content()
+                }
+            } else {
+                HStack(spacing: KMSpacing.space3) {
+                    rowTitle(title).frame(width: 72, alignment: .leading)
+                    content()
+                    if let field, model.warnings.contains(where: { $0.field == field }) {
+                        warningMark
+                    }
+                }
             }
-        }.disabled(model.isReading && id != "receipt-account")
+        }
+        .disabled(model.isReading && id != "receipt-account")
             .frame(minHeight: title == "金額" ? 64 : 52)
             .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }.id(id)
+    }
+
+    private func rowTitle(_ title: String) -> some View {
+        Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted)
+    }
+
+    private var warningMark: some View {
+        Text("△ 写真と確認").font(KMTypography.body(11)).foregroundStyle(KMColor.warning)
     }
     private func field(_ binding: Binding<String>, review: KMReceiptExtraction.WarningField) -> Binding<String> {
         Binding(get: { binding.wrappedValue }, set: { value in

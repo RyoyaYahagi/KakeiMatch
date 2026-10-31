@@ -13,7 +13,15 @@ protocol KMAppAttesting: Sendable {
 }
 
 struct KMLiveAppAttest: KMAppAttesting {
-    var isSupported: Bool { DCAppAttestService.shared.isSupported }
+    var isSupported: Bool {
+        #if targetEnvironment(simulator)
+        // App Attest has no Simulator implementation. Do not rely on
+        // `isSupported` there and never send an unattestable cloud request.
+        false
+        #else
+        DCAppAttestService.shared.isSupported
+        #endif
+    }
 
     func generateKey() async throws -> String {
         try await withCheckedThrowingContinuation { continuation in

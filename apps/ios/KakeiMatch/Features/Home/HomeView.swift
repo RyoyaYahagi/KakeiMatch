@@ -8,6 +8,7 @@ struct HomeView: View {
     @State private var budgetExpanded = false
     @State private var categoriesExpanded = false
     @State private var errorMessage: String?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var onNavigate: (KMTab) -> Void = { _ in }
     var onOpenBudget: (KMYearMonth) -> Void = { _ in }
 
@@ -53,7 +54,7 @@ struct HomeView: View {
                 .accessibilityLabel("翌月へ").accessibilityIdentifier("home.month.next")
             }
             .buttonStyle(.plain).foregroundStyle(KMColor.text)
-            .frame(height: KMLayout.minimumHit)
+            .frame(minHeight: KMLayout.minimumHit)
             if let repositories, month != KMDate(instant: repositories.referenceDate).yearMonth {
                 Button("当月へ戻る") { selectMonth(KMDate(instant: repositories.referenceDate).yearMonth) }
                     .font(KMTypography.note).foregroundStyle(KMColor.primary)
@@ -73,13 +74,26 @@ struct HomeView: View {
                 Text(KMAmountFormatter.yen(summary.expenseYen))
                     .font(KMTypography.number(42, weight: .bold)).tracking(-1.68)
                     .foregroundStyle(KMColor.text)
+                    .lineLimit(1).minimumScaleFactor(0.5)
                     .accessibilityIdentifier("home.monthly.expense")
             }
-            HStack(spacing: 0) {
-                totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
-                totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
-                    .padding(.leading, KMSpacing.space3)
-                    .overlay(alignment: .leading) { Rectangle().fill(KMColor.border).frame(width: 1) }
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    // Side by side would truncate the balance at AX5; give each
+                    // amount the full content width instead.
+                    VStack(spacing: 0) {
+                        totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
+                        Rectangle().fill(KMColor.border).frame(height: 1)
+                        totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
+                    }
+                } else {
+                    HStack(spacing: 0) {
+                        totalCell(title: "収入", amount: summary.incomeYen, color: KMColor.income, showsPositiveSign: false)
+                        totalCell(title: "収支", amount: summary.balanceYen, color: KMColor.text, showsPositiveSign: true)
+                            .padding(.leading, KMSpacing.space3)
+                            .overlay(alignment: .leading) { Rectangle().fill(KMColor.border).frame(width: 1) }
+                    }
+                }
             }
             .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
@@ -103,14 +117,30 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: KMSpacing.space2) {
                     Button { budgetExpanded.toggle() } label: {
                         VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                            HStack {
-                                Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))").foregroundStyle(KMColor.muted)
-                                Spacer()
-                                Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
-                                    .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
-                                Text("›").foregroundStyle(KMColor.muted)
+                            Group {
+                                if dynamicTypeSize.isAccessibilitySize {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        HStack(spacing: KMSpacing.space2) {
+                                            Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))").foregroundStyle(KMColor.muted)
+                                            Spacer(minLength: 0)
+                                            Text("›").foregroundStyle(KMColor.muted)
+                                        }
+                                        Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
+                                            .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
+                                    }
+                                } else {
+                                    HStack {
+                                        Text("予算 \(KMAmountFormatter.yen(summary.budgetYen))").foregroundStyle(KMColor.muted)
+                                        Spacer()
+                                        Text(summary.remainingYen < 0 ? "超過 \(KMAmountFormatter.yen(-summary.remainingYen))" : "残り \(KMAmountFormatter.yen(summary.remainingYen))")
+                                            .foregroundStyle(summary.remainingYen < 0 ? KMColor.danger : KMColor.muted)
+                                        Text("›").foregroundStyle(KMColor.muted)
+                                    }
+                                }
                             }
                             .font(KMTypography.number(14, weight: .regular))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                             .accessibilityLabel("\(summary.yearMonth.month)月の予算 \(KMAmountFormatter.yen(summary.budgetYen))、使用額 \(KMAmountFormatter.yen(summary.spentYen))、\(summary.remainingYen < 0 ? "超過" : "残り") \(KMAmountFormatter.yen(abs(summary.remainingYen)))")
                             if summary.budgetYen > 0 {
                                 GeometryReader { geometry in
@@ -131,13 +161,27 @@ struct HomeView: View {
                                 .frame(height: 26)
                                 .accessibilityHidden(true)
                                 if let gap = scale.paceDifferenceYen {
-                                    HStack(spacing: 4) {
-                                        Text("1日")
-                                        Spacer(minLength: 0)
-                                        Text("今日\(scale.elapsedDayCount)日 · \(paceText(gap))").lineLimit(1).minimumScaleFactor(0.75)
-                                        Spacer(minLength: 0)
-                                        Text("\(scale.dayCount)日")
-                                    }.font(KMTypography.body(12)).foregroundStyle(KMColor.muted)
+                                    Group {
+                                        if dynamicTypeSize.isAccessibilitySize {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("今日\(scale.elapsedDayCount)日 · \(paceText(gap))")
+                                                HStack(spacing: 4) {
+                                                    Text("1日")
+                                                    Spacer(minLength: 0)
+                                                    Text("\(scale.dayCount)日")
+                                                }
+                                            }
+                                        } else {
+                                            HStack(spacing: 4) {
+                                                Text("1日")
+                                                Spacer(minLength: 0)
+                                                Text("今日\(scale.elapsedDayCount)日 · \(paceText(gap))").lineLimit(1).minimumScaleFactor(0.75)
+                                                Spacer(minLength: 0)
+                                                Text("\(scale.dayCount)日")
+                                            }
+                                        }
+                                    }
+                                    .font(KMTypography.body(12)).foregroundStyle(KMColor.muted)
                                 }
                             }
                         }
@@ -226,19 +270,24 @@ struct HomeView: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
                     ForEach(attention.items) { item in
                         Button { onNavigate(.reconciliation) } label: {
-                            HStack(spacing: KMSpacing.space3) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.merchant).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
-                                    HStack(spacing: KMSpacing.space1) {
-                                        let itemStatus = status(for: item.severity)
-                                        Text(itemStatus.symbol).font(KMTypography.body(11, weight: .black))
-                                            .foregroundStyle(itemStatus.foreground).frame(width: 18, height: 18)
-                                            .background(itemStatus.background, in: Circle())
-                                        Text(item.reason).font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted).lineLimit(1)
+                            Group {
+                                if dynamicTypeSize.isAccessibilitySize {
+                                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                                        Text(item.merchant).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(2)
+                                        reasonLine(item)
+                                        KMAmount(yen: item.amountYen, size: 15)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                } else {
+                                    HStack(spacing: KMSpacing.space3) {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.merchant).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
+                                            reasonLine(item)
+                                        }
+                                        Spacer(minLength: KMSpacing.space2)
+                                        KMAmount(yen: item.amountYen, size: 15)
                                     }
                                 }
-                                Spacer(minLength: KMSpacing.space2)
-                                KMAmount(yen: item.amountYen, size: 15)
                             }
                             .frame(minHeight: 60)
                             .contentShape(Rectangle())
@@ -278,6 +327,17 @@ struct HomeView: View {
                 .frame(minHeight: 44, alignment: .leading)
                 .accessibilityIdentifier("home.matched")
             }
+        }
+    }
+
+    private func reasonLine(_ item: KMHomeAttentionItem) -> some View {
+        let itemStatus = status(for: item.severity)
+        return HStack(spacing: KMSpacing.space1) {
+            Text(itemStatus.symbol).font(KMTypography.body(11, weight: .black))
+                .foregroundStyle(itemStatus.foreground).frame(width: 18, height: 18)
+                .background(itemStatus.background, in: Circle())
+            Text(item.reason).font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted)
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
         }
     }
 
@@ -329,17 +389,25 @@ struct HomeView: View {
             .frame(height: 12).clipShape(Capsule())
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("支出の内訳：" + slices.map { "\($0.name) \($0.percentage)" }.joined(separator: "、"))
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: KMSpacing.space1) {
+            LazyVGrid(columns: categoryColumns, alignment: .leading, spacing: KMSpacing.space1) {
                 ForEach(Array(slices.enumerated()), id: \.offset) { _, slice in
                     HStack(spacing: KMSpacing.space2) {
                         Circle().fill(slice.tone?.foreground ?? KMColor.cOtherSoft).frame(width: 10, height: 10)
-                        Text(slice.name).lineLimit(1).font(KMTypography.body(14))
+                        Text(slice.name).lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1).font(KMTypography.body(14))
                         Spacer(minLength: 0)
                         Text(slice.percentage).font(KMTypography.number(14, weight: .semibold))
                     }.foregroundStyle(KMColor.text)
                 }
             }
         }
+    }
+
+    /// Two PWA columns at the default size; one column when text is large enough
+    /// that category names and percentages would be squeezed.
+    private var categoryColumns: [GridItem] {
+        dynamicTypeSize.isAccessibilitySize
+            ? [GridItem(.flexible())]
+            : [GridItem(.flexible()), GridItem(.flexible())]
     }
 
     private func allCategories(_ rows: [KMHomeCategoryRow]) -> some View {
