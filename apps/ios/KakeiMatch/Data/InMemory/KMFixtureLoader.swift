@@ -118,7 +118,7 @@ struct KMMigrationFixture: Decodable, Sendable {
         }
         if scenario == .payroll {
             let value = fixture.payroll
-            store.payrollValues = [KMPayrollRecord(id: "fixture-payroll", status: .pending,
+            store.payrollValues = [KMPayrollRecord(id: "11111111-1111-4111-8111-111111111113", status: .pending,
                 confirmed: .init(documentKind: .paySlip, employerName: value.employerName, paymentDate: KMDate(instant: fixture.now),
                     payPeriod: value.period, payType: .salary, grossPayYen: value.grossPayYen, netPayYen: value.netPayYen,
                     deductions: .init(totalYen: value.deductionsYen), allowances: [], warnings: []),

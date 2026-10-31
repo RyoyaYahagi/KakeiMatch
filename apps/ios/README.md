@@ -1,6 +1,6 @@
-# KakeiMatch iOS の土台
+# KakeiMatch iOS
 
-Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。カメラと画面からのAPI接続は未実装です。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
+Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseline`（`ae8c9b6`）を正解とします。画面ごとの接続状況は [HANDOFF.md](HANDOFF.md) とこのREADMEの各節を参照してください。記録一覧は検索・詳細・編集・削除/取り消しを接続済みです。給与明細は収入入力から開き、AI読み取り、確認、手取り収入と内訳snapshotの一括保存を接続しています。記録一覧の残件は下の「記録一覧の接続範囲」を参照してください。画面用ドメイン型、Repository protocol、メモリ上のfixture、月次集計を用意しています。通常起動は端末内SQLiteへ永続保存します。PWAの `.kmb` 取り込みと変更前profileへの切り戻しに加え、iOS専用`.kmib`の書き出し・iOS同士の復元をData層に用意しています。設定の「バックアップと復元」画面から `.kmib` の書き出しと `.kmb` / `.kmib` の復元を利用できます。iOSからPWAへの書き出しは提供しません。レシートのカメラ・AI画面接続は未実装です。給与明細の画像は端末に保存せず、既存の `/api/ai/payroll` typed client を使います。APIクライアントの境界は [API_LAYER.md](docs/API_LAYER.md) にあります。PWA / Worker は変更しません。
 
 ## 生成・ビルド・テスト
 
@@ -144,7 +144,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `ReconciliationRepository` | run計算・自動一致、手動一致・取消、候補却下、登録しない、支出/振替登録、失敗の再試行、判断参照、不正利用疑い |
 | `BudgetRepository` | 月次予算集計、設定snapshotの取得/保存。plan変更は `KMMonthlyBudgetSettings` のhelperを利用 |
 | `RecurringRepository` | 定期設定CRUD、過去分のプレビューと選択生成、自動到来分の処理、生成snapshotの履歴・選択削除・未編集分の一括取消（編集行は保持） |
-| `PayrollRepository` | 確認済み給与内訳snapshotの保存/参照（収入への反映はしない） |
+| `PayrollRepository` | 給与内訳snapshotの参照と、手取り収入・snapshotの一括保存 |
 | `CategoryLearningRepository` | `saveCategoryObservation` / `categoryObservations` で確認履歴を保存/参照。レシートID単位で置換し古い確認を無視。ルールは履歴から導出し、上書き・resetも保存 |
 | `SettingsRepository` | テーマ/最終バックアップ時刻のsnapshot |
 
@@ -191,9 +191,9 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `budget-warning` | 同じ取引、全体予算20,000円で4,730円超過 |
 | `receipt` | 同じ家計簿＋未登録の抽出済みレシート/7品目。原本画像は含まない |
 | `reconciliation` | 明細7件からSwiftで計算。要確認1・記録なし2・一致4をTSの固定run/適用済み判断と全値比較 |
-| `payroll` | 同じ家計簿＋給与内訳の確認snapshot。収入への反映前、写真なし |
+| `payroll` | 同じ家計簿＋確認待ち給与内訳snapshot。登録時に手取り収入を一括反映する。写真なし |
 
-`-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。記録一覧はfixtureの取引・日別収支・要確認表示を描画します。他の画面はplaceholderのままです。
+`-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。記録一覧はfixtureの取引・日別収支・要確認表示を描画します。給与明細の確認待ちsnapshotは同fixtureから読み込みます。
 
 同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
 
