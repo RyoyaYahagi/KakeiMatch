@@ -7,6 +7,8 @@ import Foundation
     func transaction(id: String) async throws -> KMTransaction?
     func recordDays(matching query: KMTransactionQuery) async throws -> [KMRecordDay]
     func home(month: KMYearMonth) async throws -> KMHomeSnapshot
+    /// One read for Home: monthly totals/budget/recent rows plus attention, category slices and day scale.
+    func homeDashboard(month: KMYearMonth, today: KMDate) async throws -> KMHomeDashboard
     func saveManual(_ input: KMManualTransactionInput, id: String?) async throws -> KMTransaction
     func saveTransfer(_ input: KMTransferInput, id: String?) async throws -> KMTransaction
     func importExternalTransaction(_ input: KMExternalTransactionInput) async throws -> KMExternalTransactionResult
