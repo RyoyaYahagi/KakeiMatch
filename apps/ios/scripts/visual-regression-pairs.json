@@ -1,0 +1,30 @@
+{
+  "$comment": "iOS の XCTAttachment 名（末尾の -light / -dark を除く）から、PWA の参照スクリーンショット docs/screenshots/migration/<screen>/<state> への対応。状態が同じものだけを載せ、片方しかない状態はレポートで別に一覧する。",
+  "pairs": {
+    "home-empty": "home/empty",
+    "home-populated": "home/populated",
+    "home-budget-warning": "home/budget-warning",
+    "home-attention": "home/attention",
+    "records-populated": "records/populated",
+    "records-search": "records/search",
+    "entry-expense": "entry/expense",
+    "entry-income": "entry/income",
+    "entry-transfer": "entry/transfer",
+    "entry-category": "entry/category-sheet",
+    "entry-recurrence": "entry/recurrence",
+    "receipt-initial": "receipt/initial",
+    "receipt-loading": "receipt/ai-loading",
+    "receipt-result": "receipt/ai-result",
+    "receipt-items-tab": "receipt/items-tab",
+    "reconciliation-empty": "reconciliation/empty",
+    "reconciliation-needs-review": "reconciliation/needs-review",
+    "reconciliation-matched": "reconciliation/matched",
+    "recurring-initial": "recurring/initial",
+    "budget-initial": "budget/initial",
+    "master-categories-initial": "masters/initial",
+    "settings-initial": "settings/initial",
+    "contact-initial": "contact/initial",
+    "backup-initial": "backup/initial",
+    "payroll-initial": "payroll/initial"
+  }
+}
