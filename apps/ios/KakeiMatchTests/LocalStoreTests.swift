@@ -547,10 +547,18 @@ import ZIPFoundation
             "createdAt": "2026-09-29T00:00:00.000Z", "updatedAt": "2026-09-29T00:00:00.000Z", "status": "planned",
             "mappings": ["categories": [String: Any](), "accounts": [String: Any]()], "rows": [[String: Any]](),
         ]
+        let e = String(repeating: "e", count: 64)
+        let undone: [String: Any] = [
+            "id": "pwa-mf-undone", "budgetId": "KakeiMatch-540c268",
+            "createdAt": "2026-09-27T00:00:00.000Z", "updatedAt": "2026-09-27T00:00:00.000Z", "status": "undone",
+            "mappings": ["categories": [String: Any](), "accounts": [String: Any]()],
+            "rows": [["row": row(6, e), "importedId": "moneyforward:\(e)", "status": "undone",
+                "transactionSnapshot": NSNull(), "error": NSNull()]],
+        ]
         return ["version": 1,
             "rules": ["categories": [KMMoneyForwardParser.categoryKey(kind: .expense, major: "食費", minor: "食料品"): ["kind": "new", "name": "食費"]],
                       "accounts": ["合成口座": ["kind": "unset"]]],
-            "batches": [batch, planned]]
+            "batches": [batch, planned, undone]]
     }
 
     @Test func kmbImportsActiveScheduleWithoutRecreatingPostedOccurrences() async throws {
@@ -622,8 +630,12 @@ import ZIPFoundation
         let store = try KMSQLiteStore(directory: directory)
         try await store.importBackup(from: file)
         var history = try await store.moneyForwardHistory()
-        #expect(history.count == 1)
-        let batch = try #require(history.first)
+        #expect(history.count == 2)
+        let batch = try #require(history.first { $0.id == "pwa-mf-batch" })
+        let undoneBatch = try #require(history.first { $0.id == "pwa-mf-undone" })
+        #expect(undoneBatch.status == .undone)
+        #expect(undoneBatch.rows.map(\.status) == [.undone])
+        #expect(undoneBatch.rows.first?.transaction == nil)
         #expect(batch.id == "pwa-mf-batch")
         #expect(batch.status == .completed)
         #expect(batch.rows.count == 4)
@@ -639,11 +651,11 @@ import ZIPFoundation
         #expect(try await store.transaction(id: "mf-created") == nil)
         #expect(try await store.transaction(id: "e9098745-2f4a-4bda-a534-1ca975c40c72") != nil)
         history = try await store.moneyForwardHistory()
-        #expect(history.first?.status == .undone)
+        #expect(history.first { $0.id == "pwa-mf-batch" }?.status == .undone)
         let reopened = try KMSQLiteStore(directory: directory)
         #expect(try await reopened.transaction(id: "mf-created") == nil)
         #expect(try await reopened.transaction(id: "e9098745-2f4a-4bda-a534-1ca975c40c72") != nil)
-        #expect(try await reopened.moneyForwardHistory().first?.status == .undone)
+        #expect(try await reopened.moneyForwardHistory().first { $0.id == "pwa-mf-batch" }?.status == .undone)
     }
 
     @Test func inMemoryMoneyForwardProjectionUndoesOnlyCreatedRows() async throws {
@@ -653,7 +665,9 @@ import ZIPFoundation
         let staging = directory.appendingPathComponent("staging", isDirectory: true)
         try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
         let store = try KMActualImport.project(backup: backup, staging: staging)
-        let batch = try #require(store.masterWriteState.moneyForward.first)
+        #expect(store.masterWriteState.moneyForward.count == 2)
+        let batch = try #require(store.masterWriteState.moneyForward.first { $0.id == "pwa-mf-batch" })
+        #expect(store.masterWriteState.moneyForward.first { $0.id == "pwa-mf-undone" }?.status == .undone)
         #expect(batch.rows.first { $0.importedId == imported }?.transaction?.id == "mf-created")
         #expect(batch.rows.first { $0.importedId == mismatch }?.transaction == nil)
         try await store.undoMoneyForward(id: "pwa-mf-batch", at: Date(timeIntervalSince1970: 1_800_000_000))

@@ -12,7 +12,7 @@ import Foundation
         let schedules = try db.rows("""
             SELECT s.id AS id, s.name AS name, s.rule AS rule, s.posts_transaction AS posts_transaction,
                    s.completed AS completed,
-                   r.stage AS stage, r.conditions_op AS conditions_op,
+                   r.stage AS stage, r.conditions_op AS conditions_op, r.tombstone AS rule_tombstone,
                    r.conditions AS conditions, r.actions AS actions,
                    CASE WHEN nd.local_next_date_ts = nd.base_next_date_ts THEN nd.local_next_date ELSE nd.base_next_date END AS next_date
             FROM schedules s
@@ -27,17 +27,17 @@ import Foundation
         // The native backup encodes dates with millisecond precision. Keep the stored value stable
         // across the import readback instead of failing the whole profile switch on sub-ms precision.
         let processedAt = Date(timeIntervalSince1970: (timestamp.timeIntervalSince1970 * 1000).rounded(.down) / 1000)
-        var names = Set<String>()
+        var ids = Set<String>(), names = Set<String>()
         for row in schedules {
             // Completed schedules cannot generate again; their posted transactions are already projected.
             guard row.int("completed") != 1 else { continue }
             let id = try row.required("id")
-            guard id.utf16.count <= 128 else { throw rejected() }
+            guard id.utf16.count <= 128, ids.insert(id).inserted else { throw rejected() }
             guard let rawName = row.string("name") else { throw rejected() }
             let name = KMJSString.trim(rawName)
             guard !name.isEmpty, name.utf16.count <= 200, names.insert(name).inserted else { throw rejected() }
             guard row.string("stage") == nil, (row.string("conditions_op") ?? "and") == "and",
-                  let conditionsJSON = row.string("conditions"), let actionsJSON = row.string("actions") else { throw rejected() }
+                  row.int("rule_tombstone") != 1, let conditionsJSON = row.string("conditions"), let actionsJSON = row.string("actions") else { throw rejected() }
             let conditions = try objectArray(conditionsJSON), actions = try objectArray(actionsJSON)
             let byField = Dictionary(conditions.compactMap { condition -> (String, [String: Any])? in
                 guard let field = condition["field"] as? String else { return nil }
