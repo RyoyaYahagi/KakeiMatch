@@ -120,6 +120,9 @@ struct ReceiptView: View {
         } message: {
             Text("もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？")
         }
+        .overlay {
+            if model.needsGuestStart { guestStartDialog }
+        }
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
             showsCamera = false; showsPhotos = false; showsImage = false; model.stopWaiting()
         }
@@ -152,6 +155,48 @@ struct ReceiptView: View {
             }
             .presentationBackground(.clear)
         }
+    }
+
+    /// PWA `guest-ai.ts` bot-check dialog. App Attest has no widget to render, so
+    /// the check starts as soon as the dialog appears; "やめる" stays available
+    /// while it runs and only the wording about the check differs from PWA.
+    private var guestStartDialog: some View {
+        ZStack {
+            KMColor.scrim.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { model.cancelGuestStart() }
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                Text(KMNativeAuthPresentation.guestStartTitle)
+                    .font(KMTypography.body(20, weight: .bold))
+                    .foregroundStyle(KMColor.text)
+                    .accessibilityAddTraits(.isHeader)
+                Text(KMNativeAuthPresentation.guestStartMessage)
+                    .font(KMTypography.text)
+                    .foregroundStyle(KMColor.text)
+                    .fixedSize(horizontal: false, vertical: true)
+                // PWA keeps a 65pt widget slot here; App Attest has no UI, so a
+                // spinner occupies the same space while the check runs.
+                ProgressView()
+                    .tint(KMColor.primary)
+                    .frame(maxWidth: .infinity, minHeight: 65)
+                    .accessibilityLabel(KMNativeAuthPresentation.guestStartProgress)
+                Button(KMNativeAuthPresentation.guestStartCancel) { model.cancelGuestStart() }
+                    .buttonStyle(KMButtonStyle(role: .secondary, width: .intrinsic))
+                    .accessibilityIdentifier("receipt.guestStartCancel")
+            }
+            .padding(KMSpacing.space5)
+            .frame(maxWidth: 420, alignment: .leading)
+            .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
+            .overlay {
+                RoundedRectangle(cornerRadius: KMRadius.xl).strokeBorder(KMColor.border, lineWidth: 1)
+            }
+            .padding(.horizontal, KMSpacing.space4)
+            .accessibilityElement(children: .contain)
+            .accessibilityAddTraits(.isModal)
+            .accessibilityIdentifier("receipt.guestStart")
+        }
+        .task { await model.confirmGuestStart() }
     }
 
     private var saveButton: some View {

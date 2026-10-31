@@ -86,7 +86,8 @@ struct AppShell: View {
                                         initialAccounts: settingsAccountsRoute,
                                         onBudgetBack: { budgetRouteMonth = nil },
                                         onAccountsBack: { settingsAccountsRoute = false },
-                                        onOpenMoneyForward: { moneyForwardRoute = true })
+                                        onOpenMoneyForward: { moneyForwardRoute = true },
+                                        onShowHome: { tab = .home })
                                     }
                                 }
                             }

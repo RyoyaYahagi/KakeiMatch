@@ -31,6 +31,8 @@ final class KMReceiptModel {
     var didSave = false
     var error: String?
     var status: String?
+    var needsGuestStart = false
+    var startingGuest = false
     var startedReading = Date()
     /// PWA local-ui.ts: receiptEditor opens an applied receipt as "支出の記録を編集".
     var editing = false
@@ -389,10 +391,7 @@ final class KMReceiptModel {
         operation = Task {
             do {
                 await saveDraft()
-                let client: KMWorkerAPI
-                if let api { client = api } else {
-                    client = KMWorkerAPI(configuration: try KMAPIConfiguration()); api = client
-                }
+                let client = try workerClient()
                 let flow = UUID()
                 let extraction = try await client.readReceipt(image: KMUploadImage(data: imageData, contentType: image.contentType), flowID: flow)
                 try KMReceiptPresentation.validateExtraction(extraction)
@@ -475,6 +474,16 @@ final class KMReceiptModel {
                 guard revision == token, !Task.isCancelled else { return }
                 KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
                 if let failure = error as? KMAPIError {
+                    if failure == .nativeAuthenticationRequired || failure == .authenticationRequired {
+                        // The PWA shows its bot check before the first guest AI
+                        // request. Native replaces Turnstile with App Attest, so the
+                        // same dialog explains the device check before creating the
+                        // guest session.
+                        phase = .idle
+                        self.error = nil
+                        needsGuestStart = true
+                        return
+                    }
                     phase = .failed(failure)
                     self.error = KMReceiptPresentation.failureMessage(failure)
                 } else {
@@ -484,6 +493,49 @@ final class KMReceiptModel {
             }
         }
         return operation
+    }
+
+    /// Native equivalent of the PWA guest bot check: create the guest session
+    /// behind the explanatory dialog, then retry the same saved photo. The
+    /// dialog stays visible until the check finishes, like the Turnstile widget.
+    /// Cancelling leaves the photo and does not start the reading.
+    /// A failure never deletes the receipt image.
+    func confirmGuestStart() async {
+        guard !startingGuest else { return }
+        startingGuest = true
+        defer { startingGuest = false }
+        do {
+            let client = try workerClient()
+            try await client.createNativeGuest()
+            guard needsGuestStart else { return }
+            needsGuestStart = false
+            startReading()
+        } catch let failure as KMAPIError {
+            guard needsGuestStart else { return }
+            needsGuestStart = false
+            phase = .failed(failure)
+            error = KMReceiptPresentation.failureMessage(failure)
+        } catch {
+            guard needsGuestStart else { return }
+            needsGuestStart = false
+            phase = .idle
+            self.error = "AI機能を準備できませんでした。家計簿の利用は続けられます。"
+        }
+    }
+
+    /// PWA bot-check "やめる". The check runs in the background and its result is
+    /// kept for the next attempt, but the reading only starts while the dialog
+    /// is still open.
+    func cancelGuestStart() {
+        needsGuestStart = false
+        status = KMNativeAuthPresentation.guestStartCancelled
+    }
+
+    private func workerClient() throws -> KMWorkerAPI {
+        if let api { return api }
+        let client = KMWorkerAPI(configuration: try KMAPIConfiguration())
+        api = client
+        return client
     }
 
     func stopWaiting() {
