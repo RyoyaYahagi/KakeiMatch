@@ -7,6 +7,7 @@ struct KMRecordDetailView: View {
     @State private var confirmsDeletion = false
     @State private var showsItems = false
     @State private var showsImage = false
+    @State private var showsPayrollBreakdown = false
     @State private var editsReceipt = false
     @State private var editsReceiptItems = false
     @State private var image: UIImage?
@@ -52,6 +53,7 @@ struct KMRecordDetailView: View {
                 .overlay(alignment: .top) { rule }
                 .overlay(alignment: .bottom) { rule }
                 .padding(.bottom, KMSpacing.space4)
+                if let payroll = model.selectedPayroll { payrollDetails(payroll) }
                 if row.kind == .expense && row.amountYen < 0 {
                     Toggle("支出の計算に含めない", isOn: Binding(get: { model.selected?.excludedFromSpending == true }, set: { value in
                         collapse(); Task { await model.setExcluded(value) }
@@ -80,6 +82,7 @@ struct KMRecordDetailView: View {
         .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
             confirmsDeletion = false
         }
+        .onChange(of: model.selected?.id) { _, _ in showsPayrollBreakdown = false }
         .alert("この取引を削除しますか？レシート画像などの原本は残ります。", isPresented: $confirmsDeletion) {
             Button("削除する", role: .destructive) {
                 Task { if let audit = await model.remove() { onDeleted(audit) } }
@@ -189,6 +192,45 @@ struct KMRecordDetailView: View {
                 .focused($focus, equals: id).accessibilityLabel(label).accessibilityIdentifier("records.editor.\(id)")
                 .frame(minHeight: 44)
         }
+    }
+
+    /// PWA `payrollDetails`: a collapsed "給与明細 / 内訳（登録時）" row below the record rows.
+    private func payrollDetails(_ record: KMPayrollRecord) -> some View {
+        let breakdown = KMPayrollPresentation.breakdown(record.confirmed)
+        return VStack(alignment: .leading, spacing: 0) {
+            Button {
+                showsPayrollBreakdown.toggle()
+            } label: {
+                HStack(spacing: KMSpacing.space3) {
+                    Text("給与明細").font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted)
+                        .frame(width: 72, alignment: .leading)
+                    Text("内訳（登録時）").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                    Spacer(minLength: 0)
+                    KMIcon(name: "chevronRight", size: 20).foregroundStyle(KMColor.muted)
+                        .rotationEffect(.degrees(showsPayrollBreakdown ? 90 : 0))
+                }
+                .frame(minHeight: 52)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("給与明細の内訳（登録時）")
+            .accessibilityValue(showsPayrollBreakdown ? "展開中" : "折りたたみ")
+            .accessibilityIdentifier("records.payrollDetails")
+            if showsPayrollBreakdown {
+                VStack(alignment: .leading, spacing: KMSpacing.space4) {
+                    Text(breakdown.notice).font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(Array(breakdown.textLines.enumerated()), id: \.offset) { _, line in
+                        Text(line).font(KMTypography.body(16)).foregroundStyle(KMColor.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.vertical, KMSpacing.space4)
+                .accessibilityIdentifier("records.payrollBreakdown")
+            }
+        }
+        .overlay(alignment: .bottom) { rule }
+        .padding(.bottom, KMSpacing.space3)
     }
 
     @ViewBuilder private func receiptDetails(_ receipt: KMReceipt) -> some View {
