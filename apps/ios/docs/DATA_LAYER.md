@@ -70,6 +70,16 @@ ActualのUUIDとKakeiMatchの参照IDは変更しない。金額は符号付き�
 
 参照元は `src/lib/actual-browser-ledger.ts` のmapping/集計、`local-backup-format.ts` のrecord schema、導入済みActual APIのSQL/view定義。closed口座も残高計算に残す。[PWA (2026/10), Actual adapter] [Actual API (26.9.0), schema / migrate / cloud-storage]
 
+## Home の表示集計
+
+Home の画面は `TransactionRepository.homeDashboard(month:today:)` を1回だけ呼ぶ。戻り値の `KMHomeDashboard` に、月次snapshot（収支・予算・最近3件）、要確認の件数/一致件数/最大3行、カテゴリ内訳、予算の日の目盛りが入る。Viewは値を受け取って描画するだけで、件数・優先順・割合・目盛りを計算しない。既存の `home(month:)` はParity等の呼び出し向けに残し、`homeDashboard` が同じsnapshotに表示用集計を加える。
+
+- 要確認: `KMHomeAttention` が `local-ui.ts` / `home-attention.ts` と同じ優先順（反映未完了→不正利用？→要確認→記録なし）で件数・一致件数・最大3行を作る。runがない場合は取込案内だけを返す。
+- カテゴリ内訳: `KMHomeCategoryBreakdown` が `local-monthly-dashboard.ts` と同じ安定順、上位3件、重複しない色、「その他」、小数1桁の割合を作る。全カテゴリ一覧用の行も同じ関数の割合を使う。金額は整数円、割合のbinary64境界は `KMJSNumber`/`Decimal` で再現する。
+- 日の目盛り: `KMHomeBudgetScale` が月の日数、経過日、予算に対する塗り、目安との差、超過を作る。
+- カテゴリ色の名前/ハッシュ対応は Data の `KMCategoryTone` に置き、SwiftUIの色は `DesignSystem` の extension にする。Data層はSwiftUIへ依存しない。
+- 純関数は `KakeiMatchCoreTests/HomeAggregationTests.swift`、両adapterの取得結果は `KakeiMatchTests/HomeDashboardTests.swift`（in-memory/SQLiteを同じ入力で実行）が検査する。
+
 ## 明細取り込みと照合の呼び出し順
 
 `StatementRepository.importStatement` は原本・取り込み履歴・明細行を保存するAPIであり、照合runを更新しない。PWAも `LocalStatementService.importFile` では保存だけを行い、`apps/pwa/src/local-ui.ts` の送信処理がその後に `reconciliation.run()` を呼ぶ。iOSで「取り込んで照合」を再現する呼び出し側は、`importStatement` の成功後に `ReconciliationRepository.runReconciliation(id:at:)` を明示的に呼ぶ。再取り込みで追加0件でも照合を実行する。

@@ -114,7 +114,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 - `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
 - `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
-- `Data/Aggregation/`: PWAの月次集計・日別グループ。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。
+- `Data/Aggregation/`: PWAの月次集計・日別グループと、Homeの表示用集計（`HomeAggregation.swift`）。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。カテゴリ色の名前/ハッシュ対応は `KMCategoryToneMapping.swift`、色は `DesignSystem` に置きます。
 - `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo・口座/カテゴリ/グループの管理・照合更新。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md) を参照してください。
 - `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/`: TSの決定的サービス。照合採点・判断適用/取消、分類履歴の導出・適用根拠、定期日付/補完計画、予算要約を計算します。両Repository実装で同じ処理を使い、SQLiteでは取引とサービス状態を同じtransactionで保存します。採点のbinary64演算だけは `KMJSNumber` でTSの丸めを再現し、金額は整数円のままです。
 - `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動では使わず、明示的なfixture/Previewだけに使います。
@@ -150,7 +150,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 手入力・振替の登録は `id: nil`、編集は既存IDを渡します。同じimportedIdの同値再送は同じ取引を返し、異値は既存を上書きせずthrowします。手入力編集はinputのimportedIdで既存識別子を置き換えません。cleared/reconciledを保ち、振替編集は入金側IDを渡しても両側を更新します。支払先は操作ごとのPWA/Actual規則で照合しmasterへ保存します。口座残高は読み取り用で、日本時間の今日までを合計します。`accounts(asOf:includeClosed:)` では固定日を渡せます。`createAccount(_:startingBalanceYen:startingDate:)` は日付付き開始残高を残高だけへ計上します。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。残高のある利用終了と、有効な取引行のある完全削除を拒否し、空口座も利用終了→再開できます。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
 
-ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・選択月内の最近3件をまとめます。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
+ホームは `transactions.homeDashboard(month:today:)` の1回の取得で、収支・予算・選択月内の最近3件、要確認の件数/一致件数/最大3行、カテゴリ内訳（帯グラフ用の上位3件＋その他、全カテゴリ一覧の割合）、予算の日の目盛りをまとめて返します。表示用の計算は `Data/Aggregation/HomeAggregation.swift` にあり、Viewは返された値を描画するだけです。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
 `saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。登録・登録済み編集の保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡します。Viewで代替エンジンを作らないでください。
 
@@ -171,8 +171,8 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 @Environment(\.repositories) private var repositories
 // Inside an async load action:
 // guard let repositories else { ... show configuration error ...; return }
-// let month = KMDate(instant: repositories.referenceDate).yearMonth
-// let snapshot = try await repositories.transactions.home(month: month)
+// let today = KMDate(instant: repositories.referenceDate)
+// let dashboard = try await repositories.transactions.homeDashboard(month: today.yearMonth, today: today)
 
 #Preview {
     KMFixturePreview("migration") { HomeView() }

@@ -2,11 +2,7 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(\.repositories) private var repositories
-    @State private var snapshot: KMHomeSnapshot?
-    @State private var attentionItems: [KMHomeAttentionItem] = []
-    @State private var attentionCount = 0
-    @State private var matchedCount = 0
-    @State private var showsImportHint = true
+    @State private var dashboard: KMHomeDashboard?
     @State private var accounts: [String: String] = [:]
     @State private var selectedMonth: KMYearMonth?
     @State private var budgetExpanded = false
@@ -23,12 +19,12 @@ struct HomeView: View {
             if let errorMessage {
                 Text(errorMessage).font(KMTypography.text).foregroundStyle(KMColor.danger)
                     .accessibilityIdentifier("home.error")
-            } else if let snapshot {
-                totals(snapshot.summary)
-                budget(snapshot.budget)
-                attentionSection
-                categoryBreakdown(snapshot.summary)
-                recentRecords(snapshot.recentRecords)
+            } else if let dashboard {
+                totals(dashboard.snapshot.summary)
+                budget(dashboard.snapshot.budget, scale: dashboard.budgetScale)
+                attentionSection(dashboard.attention)
+                categoryBreakdown(dashboard)
+                recentRecords(dashboard.snapshot.recentRecords)
             } else {
                 ProgressView().tint(KMColor.primary).frame(maxWidth: .infinity).padding(.vertical, KMSpacing.space8)
             }
@@ -101,10 +97,9 @@ struct HomeView: View {
         .padding(.vertical, KMSpacing.space2)
     }
 
-    private func budget(_ summary: KMMonthlyBudgetSummary) -> some View {
+    private func budget(_ summary: KMMonthlyBudgetSummary, scale: KMHomeBudgetScale) -> some View {
         Group {
             if summary.budgetConfigured {
-                let scale = KMHomeBudgetScale.make(summary: summary, today: today)
                 VStack(alignment: .leading, spacing: KMSpacing.space2) {
                     Button { budgetExpanded.toggle() } label: {
                         VStack(alignment: .leading, spacing: KMSpacing.space2) {
@@ -209,17 +204,17 @@ struct HomeView: View {
         return "目安より \(KMAmountFormatter.yen(abs(gap))) \(gap > 0 ? "多め" : "少なめ")"
     }
 
-    private var attentionSection: some View {
+    private func attentionSection(_ attention: KMHomeAttention) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            if attentionCount > 0 {
+            if attention.count > 0 {
                 VStack(spacing: 0) {
                     HStack {
                         Text("確認すること").font(KMTypography.body(15, weight: .black)).foregroundStyle(KMColor.text)
                             .accessibilityAddTraits(.isHeader)
-                        Text("\(attentionCount)").font(KMTypography.number(13, weight: .bold))
+                        Text("\(attention.count)").font(KMTypography.number(13, weight: .bold))
                             .foregroundStyle(KMColor.warning).padding(.horizontal, 8).padding(.vertical, 4)
                             .background(KMColor.warningSoft, in: Capsule())
-                            .accessibilityLabel("\(attentionCount)件")
+                            .accessibilityLabel("\(attention.count)件")
                         Spacer()
                         Button { onNavigate(.reconciliation) } label: {
                             Text("照合へ").font(KMTypography.body(14, weight: .medium)).foregroundStyle(KMColor.primary)
@@ -229,15 +224,16 @@ struct HomeView: View {
                     }
                     .frame(minHeight: 48)
                     .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
-                    ForEach(attentionItems) { item in
+                    ForEach(attention.items) { item in
                         Button { onNavigate(.reconciliation) } label: {
                             HStack(spacing: KMSpacing.space3) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(item.merchant).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text).lineLimit(1)
                                     HStack(spacing: KMSpacing.space1) {
-                                        Text(item.status.symbol).font(KMTypography.body(11, weight: .black))
-                                            .foregroundStyle(item.status.foreground).frame(width: 18, height: 18)
-                                            .background(item.status.background, in: Circle())
+                                        let itemStatus = status(for: item.severity)
+                                        Text(itemStatus.symbol).font(KMTypography.body(11, weight: .black))
+                                            .foregroundStyle(itemStatus.foreground).frame(width: 18, height: 18)
+                                            .background(itemStatus.background, in: Circle())
                                         Text(item.reason).font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted).lineLimit(1)
                                     }
                                 }
@@ -249,7 +245,7 @@ struct HomeView: View {
                         }
                         .buttonStyle(.plain)
                         .overlay(alignment: .bottom) {
-                            if item.id != attentionItems.last?.id { Rectangle().fill(KMColor.border).frame(height: 1) }
+                            if item.id != attention.items.last?.id { Rectangle().fill(KMColor.border).frame(height: 1) }
                         }
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("\(item.merchant) · \(item.reason) · \(KMAmountFormatter.yen(item.amountYen))")
@@ -260,7 +256,7 @@ struct HomeView: View {
                 .padding(.vertical, KMSpacing.space1)
                 .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.xl))
                 .overlay(RoundedRectangle(cornerRadius: KMRadius.xl).stroke(KMColor.border, lineWidth: 1))
-            } else if showsImportHint {
+            } else if attention.showsImportHint {
                 Button { onNavigate(.reconciliation) } label: {
                     HStack {
                         Text("明細を取り込んで自動で照合する")
@@ -273,10 +269,10 @@ struct HomeView: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("home.statement-import-hint")
             }
-            if matchedCount > 0 {
+            if attention.matchedCount > 0 {
                 HStack(spacing: KMSpacing.space3) {
                     KMCompletedStamp()
-                    Text("\(matchedCount)件 は一致しています")
+                    Text("\(attention.matchedCount)件 は一致しています")
                         .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                 }
                 .frame(minHeight: 44, alignment: .leading)
@@ -285,12 +281,20 @@ struct HomeView: View {
         }
     }
 
-    private func categoryBreakdown(_ summary: KMMonthlySummary) -> some View {
+    private func status(for severity: KMHomeAttentionSeverity) -> KMStatus {
+        switch severity {
+        case .danger: .danger
+        case .warning: .warning
+        case .missing: .missing
+        }
+    }
+
+    private func categoryBreakdown(_ dashboard: KMHomeDashboard) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Text("支出の内訳").font(KMTypography.body(15, weight: .bold)).foregroundStyle(KMColor.text)
                 .accessibilityAddTraits(.isHeader)
-            categoryContent(summary)
-            if !KMHomeCategoryBreakdown.make(summary).isEmpty { allCategories(summary) }
+            categoryContent(dashboard.snapshot.summary, slices: dashboard.categorySlices)
+            if !dashboard.categorySlices.isEmpty { allCategories(dashboard.categoryRows) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, KMSpacing.space4)
@@ -298,12 +302,11 @@ struct HomeView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
-    @ViewBuilder private func categoryContent(_ summary: KMMonthlySummary) -> some View {
+    @ViewBuilder private func categoryContent(_ summary: KMMonthlySummary, slices: [KMHomeCategorySlice]) -> some View {
         if summary.expenseYen == 0 {
             Text("この月の支出はありません。")
                 .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
         } else {
-            let slices = KMHomeCategoryBreakdown.make(summary)
             if slices.isEmpty {
                 Text("この月は返金・調整だけです。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
             } else {
@@ -339,7 +342,7 @@ struct HomeView: View {
         }
     }
 
-    private func allCategories(_ summary: KMMonthlySummary) -> some View {
+    private func allCategories(_ rows: [KMHomeCategoryRow]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { categoriesExpanded.toggle() } label: {
                 HStack(spacing: KMSpacing.space2) {
@@ -357,18 +360,18 @@ struct HomeView: View {
             .accessibilityIdentifier("home.categories.all")
             .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
             if categoriesExpanded {
-                if summary.categories.contains(where: { $0.amountYen < 0 }) {
+                if rows.contains(where: { $0.amountYen < 0 }) {
                     Text("帯グラフは支出が正のカテゴリの構成です。返金・調整は一覧に表示します。")
                         .font(KMTypography.note).foregroundStyle(KMColor.muted)
                 }
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(summary.categories.enumerated()), id: \.offset) { index, category in
+                    ForEach(Array(rows.enumerated()), id: \.offset) { index, category in
                         let sign = category.amountYen < 0 ? "−" : ""
-                        Text("\(category.categoryName) · \(sign)\(KMAmountFormatter.yen(category.amountYen)) · \(KMHomeCategoryBreakdown.percentage(category.amountYen, total: summary.expenseYen))")
+                        Text("\(category.name) · \(sign)\(KMAmountFormatter.yen(category.amountYen)) · \(category.percentage)")
                             .font(KMTypography.body(15)).foregroundStyle(KMColor.text)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, KMSpacing.space3)
                             .overlay(alignment: .bottom) {
-                                if index < summary.categories.count - 1 { Rectangle().fill(KMColor.border).frame(height: 1) }
+                                if index < rows.count - 1 { Rectangle().fill(KMColor.border).frame(height: 1) }
                             }
                     }
                 }
@@ -428,20 +431,11 @@ struct HomeView: View {
         if selectedMonth == nil { selectedMonth = KMDate(instant: repositories.referenceDate).yearMonth }
         guard let month = selectedMonth else { return }
         do {
-            let data = try await repositories.transactions.home(month: month)
+            let data = try await repositories.transactions.homeDashboard(month: month, today: today)
             let accountRows = try await repositories.accounts.accounts(includeClosed: true)
-            let run = try await repositories.reconciliation.latestRun()
-            let resolutions = try await repositories.reconciliation.resolutions()
-            let suspected = try await repositories.reconciliation.suspectedStatements()
-            let statements = try await repositories.statements.statementTransactions()
             guard month == selectedMonth else { return }
-            snapshot = data
+            dashboard = data
             accounts = Dictionary(uniqueKeysWithValues: accountRows.map { ($0.id, $0.name) })
-            let attention = KMHomeAttention.make(run: run, resolutions: resolutions, suspected: suspected, statements: statements)
-            attentionCount = attention.count
-            matchedCount = attention.matchedCount
-            attentionItems = attention.items
-            showsImportHint = attention.showsImportHint
             errorMessage = nil
         } catch {
             guard !Task.isCancelled, month == selectedMonth else { return }
