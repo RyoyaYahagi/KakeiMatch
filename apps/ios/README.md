@@ -72,7 +72,7 @@ iOS側のXCTAttachment名とPWA参照画像の対応は [`scripts/visual-regress
 
 `xcrun xcresulttool export attachments` の `manifest.json` は、添付名を `home-populated-light_0_<UUID>.png` の形で記録します。スクリプトはこの `_0_<UUID>` と拡張子を除いて状態名とテーマを取り出します。拡張子のない添付名（`settings.screen-dark`）は `settings_0_<UUID>.screen-dark` になるため、その形も復元します。表示名がない添付はUUIDのファイル名のままiOSのみとして一覧します。
 
-対応表にないiOSの状態（例: `receipt-warnings`、`records-detail`、`settings-theme`）は「iOSのみ」、対応表はあるが今回の実行で撮れなかった状態は「iOS未取得」、PWAにしかない状態（例: `device-link/initial`、`moneyforward/initial`）は「PWAのみ」として `index.html` / `index.md` に列挙します。状態名を変えたら対応表も更新してください。対応先の参照画像が見つからない場合は、誤対応を黙って見逃さずスクリプトが失敗します。
+対応表にないiOSの状態（例: `receipt-warnings`、`records-detail`、`settings-theme`）は「iOSのみ」、対応表はあるが今回の実行で撮れなかった状態は「iOS未取得」、PWAにしかない状態（例: `device-link/initial`、`moneyforward/initial`、`payroll/initial`）は「PWAのみ」として `index.html` / `index.md` に列挙します。状態名を変えたら対応表も更新してください。給与明細の `payroll-initial` はPWAのマスキング画面ではなく確認画面のため、対応表には載せていません。対応先の参照画像が見つからない場合は、誤対応を黙って見逃さずスクリプトが失敗します。
 
 ### ローカルでの実行
 

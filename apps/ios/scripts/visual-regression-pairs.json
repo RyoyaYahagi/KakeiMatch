@@ -1,5 +1,5 @@
 {
-  "$comment": "iOS の XCTAttachment 名（末尾の -light / -dark を除く）から、PWA の参照スクリーンショット docs/screenshots/migration/<screen>/<state> への対応。状態が同じものだけを載せ、片方しかない状態はレポートで別に一覧する。",
+  "$comment": "iOS の XCTAttachment 名（末尾の -light / -dark を除く）から、PWA の参照スクリーンショット docs/screenshots/migration/<screen>/<state> への対応。状態が同じものだけを載せ、片方しかない状態はレポートで別に一覧する。給与明細の payroll-initial はPWAの初期（マスキング）ではなく確認画面のため対応づけない。",
   "pairs": {
     "home-empty": "home/empty",
     "home-populated": "home/populated",
@@ -24,7 +24,6 @@
     "master-categories-initial": "masters/initial",
     "settings-initial": "settings/initial",
     "contact-initial": "contact/initial",
-    "backup-initial": "backup/initial",
-    "payroll-initial": "payroll/initial"
+    "backup-initial": "backup/initial"
   }
 }
