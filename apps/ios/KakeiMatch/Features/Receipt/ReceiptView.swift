@@ -149,6 +149,8 @@ struct ReceiptView: View {
     private var guestStartDialog: some View {
         ZStack {
             KMColor.scrim.ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture { model.cancelGuestStart() }
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: KMSpacing.space3) {
                 Text(KMNativeAuthPresentation.guestStartTitle)

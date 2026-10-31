@@ -1,7 +1,7 @@
 import LocalAuthentication
 import SwiftUI
 
-private enum KMSettingsPage {
+private enum KMSettingsPage: Equatable {
     case root
     case theme
     case screenLock
@@ -59,6 +59,12 @@ struct SettingsView: View {
         .task {
             if !model.loaded { await model.load(repositories) }
             await auth.refresh()
+        }
+        // The row shows the PWA `#ai-row-value`; reload it after a login or
+        // logout on the account page, not only when Settings is first opened.
+        .onChange(of: page) { _, value in
+            guard value == .root else { return }
+            Task { await auth.refresh() }
         }
     }
 

@@ -60,8 +60,12 @@ final class NativeAuthFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["passkey-login"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["account-message"].label.contains("ログアウトしました"))
         app.buttons["settings.back"].tap()
-        XCTAssertTrue(app.buttons["settings.aiUsage"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["settings.aiUsage"].label.contains("1日5回まで"))
+        let row = app.buttons["settings.aiUsage"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        // The row reloads the PWA `#ai-row-value` after logout, so wait for the
+        // refreshed guest value instead of reading it once.
+        expectation(for: NSPredicate(format: "label CONTAINS %@", "1日5回まで"), evaluatedWith: row)
+        waitForExpectations(timeout: 5)
         app.buttons["home-tab"].tap()
         XCTAssertTrue(app.otherElements["home.screen"].waitForExistence(timeout: 5))
         app.terminate()
