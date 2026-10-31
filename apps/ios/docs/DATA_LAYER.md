@@ -29,7 +29,7 @@ Application Support/KakeiMatch/
 - `objects` の `master-writes` singleton（v4）：日付付き開始残高/不正行の残高、定期設定監査・生成snapshot/取消結果、MoneyForwardの移行履歴/対応ルール。取引・明細・CSV原本の新規書き込みも同じ世代検査付きtransactionで確定する。
 - `provenance(id,payload)`：検証済みの元 `manifest.json`、`local-data.json`、`actual-budget.zip`。対応済みrecord kindはすべて原形のまま保持する。**現在の家計簿のexportではない**。iOSの編集をここへ逆投影したとは扱わない。
 
-保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本も同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
+保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。COMMIT直前に読み込み時のprofile UUIDが `active.json` の現在値と一致することを再検査し、切り替わっていれば全体をrollbackする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本も同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
 
 DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログイン・API token・画面ロック情報を保存しない。このPRは独自の暗号化やKeychain認証を実装しない。
 
@@ -167,6 +167,15 @@ manifestには生成日時と各entryのpath・size・SHA-256を含める。`hou
 
 iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `.kmb` 取り込みを継続する。PWAへの一方向の移行と、iOS間の保護用バックアップを混同しない。
 
+## 複数sceneのprofile排他
+
+iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicationSupportsMultipleScenes=true` で有効である。アプリのcomposition root（`KakeiMatchApp.init`）がプロセス起動時に `KMSQLiteStore` を1つだけ開き、各sceneは `EnvironmentValues.repositories` で同じ `KMRepositories` を受け取る。sceneごとにstoreや接続を作らない。
+
+- 全Repository操作と `.kmb` / `.kmib` の取り込み・書き出し・`returnToPreviousProfile()` は `KMSerialQueue` で到着順に直列化する。前の操作が `await` 中でも次のsceneは待機し、「家計データを処理中です」のような再入エラーを画面へ出さない。queueは再入不可であり、Repository操作の内側から別のstore操作を呼ばない。
+- 書き込みは読み込み時に取得したprofile UUIDを持ち、`KMStoreDatabase.save` のCOMMIT直前に `active.json` の現在値と一致することを再検査する。一致しなければtransaction全体をrollbackし、`KMDataError.staleProfile`（「別の画面で家計データが切り替わりました。…変更内容は保存されていません。」）を返す。復元で切り替わる前の作業copyが旧profileへ書かれず、旧profileは `returnToPreviousProfile()` 用にそのまま残る。
+- widget・share/notification extension等のtargetとApp Groupは `project.yml` にない。DBはアプリsandboxのApplication Supportにあり、現在の構成で別プロセスから開く経路はない。そのためcross-process用のlock fileや抽象化は追加しない。SQLiteは既存の `busy_timeout`（3秒）と `control.revision` の世代検査を持ち、将来プロセス境界を追加する場合も古いsnapshotはcommitできない。
+- `KMSerialQueueTests` はFIFO待機と失敗時のqueue解放を、`LocalStoreTests` は同一storeへの同時scene書き込みの両立と、profile切替後に旧profileの作業copyが `staleProfile` で拒否され旧DBが無傷であることを検査する。実機での複数ウィンドウ操作、大容量時の待機時間、強制終了は未検証である。
+
 ## 検証・既知の制約・後続への申し送り
 
 - `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→4の作成・1/2/3→4移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/未対応定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。
@@ -178,7 +187,7 @@ iOSバックアップはPWAへ取り込めない。PWAからiOSへは既存の `
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
 - `MasterWriteTests`：両adapterで明細再取込/欠損行回復、全口座imported ID重複、開始残高/未来日cutoff、空口座close→reopen、使用中カテゴリ削除拒否/グループhidden、MoneyForward候補確認/重複/所有取引限定取消、定期自動登録/複数設定の編集保持/独立手入力保持/編集行保持取消/表示名変更後の取消、照合の同一台帳経路/取消/振替対と両口座残高、v3→v4失敗rollback、CSV原本と移行/定期履歴のSQLite失敗rollback/backup復元後の取消を検査する。
 - レシート画像の新規保存、レシート確認時の学習呼出し、Actual Schedule/Rule互換の取り込み、旧PWAのMoneyForward履歴のnative projectionは後続。レシートの台帳登録/編集、取引削除Undoは上記専用APIを使う。
-- I/O・検証は現段階でMainActor直列。busy中の再入要求はエラーとし、自動再試行しない。大容量での実機メモリ/応答性、アプリ強制終了/容量不足、複数scene/process間の排他は未検証。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
+- I/O・検証は現段階でMainActor直列。storeの全操作は `KMSerialQueue` で到着順に直列化し、別sceneの同時要求もエラーにせず待機させる（queueは再入不可）。大容量での実機メモリ/応答性、アプリ強制終了/容量不足は未検証。複数sceneのprofile排他と別プロセス経路の有無は「複数sceneのprofile排他」を参照。API/同期の統合前に専用I/O actorと家計簿lockを導入する。UIのprogressだけで非同期化済みとしない。
 - backupUIはエラーを表示し、復元成功後は全snapshotを再取得する。端末間同期はこのprofile切替を使い、受信全体hash・session所有権・元version・利用者同意を上位で検証する。JSONやSQLだけを直接上書きしない。
 - nativeのraw provenanceは監査/後続projection用。iOS編集後の正本と混同しない。端末からの全削除/原本整理は認証情報と分離して別途実装する。
 
