@@ -86,6 +86,7 @@ import Foundation
             categories: try values("categories", KMCategory.self), groups: try values("groups", KMCategoryGroup.self),
             receipts: try values("receipts", KMReceipt.self), budgetId: settings.budgetId)
         store.payeeValues = try values("payees", KMPayee.self)
+        store.receiptDraftValues = Dictionary(uniqueKeysWithValues: try values("receipt-drafts", KMLocalRecord<KMReceiptDraft>.self).map { ($0.id, $0) })
         store.importValues = try values("imports", KMLocalRecord<KMStatementImport>.self)
         store.statementValues = try values("statements", KMStatementTransaction.self)
         store.runValues = try values("runs", KMReconciliationRun.self)
@@ -107,9 +108,12 @@ import Foundation
         return store
     }
     private func put<T: Encodable>(_ collection: String, _ values: [T]) throws {
-        for (index, value) in values.enumerated() {
+        try putKeyed(collection, values.enumerated().map { (String($0.offset), $0.element) })
+    }
+    private func putKeyed<T: Encodable>(_ collection: String, _ values: [(String, T)]) throws {
+        for (index, entry) in values.enumerated() {
             try sql.execute("INSERT INTO objects(collection,id,ordinal,json) VALUES(?,?,?,?)",
-                [.text(collection), .text(String(index)), .integer(index), .blob(try KMJSON.encoder().encode(value))])
+                [.text(collection), .text(entry.0), .integer(index), .blob(try KMJSON.encoder().encode(entry.1))])
         }
     }
     /// Commit the entire multi-repository change or nothing. No published in-memory mutation precedes COMMIT.
@@ -124,7 +128,9 @@ import Foundation
             try sql.execute("DELETE FROM objects")
             try put("transactions", store.transactionValues); try put("accounts", store.accountValues)
             try put("categories", store.categoryValues); try put("groups", store.groupValues); try put("payees", store.payeeValues)
-            try put("receipts", store.receiptValues); try put("imports", store.importValues); try put("statements", store.statementValues)
+            try put("receipts", store.receiptValues)
+            try putKeyed("receipt-drafts", store.receiptDraftValues.sorted { $0.key < $1.key }.map { ($0.key, $0.value) })
+            try put("imports", store.importValues); try put("statements", store.statementValues)
             try put("runs", store.runValues); try put("resolutions", store.resolutionValues); try put("suspected", store.suspectedValues)
             try put("recurring", store.recurringValues); try put("payroll", store.payrollValues)
             try put("rules", store.ruleValues); try put("rule-overrides", store.ruleOverrides)

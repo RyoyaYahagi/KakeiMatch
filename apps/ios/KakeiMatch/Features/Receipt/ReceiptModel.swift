@@ -35,9 +35,10 @@ final class KMReceiptModel {
     /// PWA local-ui.ts: receiptEditor opens an applied receipt as "支出の記録を編集".
     var editing = false
     @ObservationIgnored private var requiresExistingReceipt = false
-    @ObservationIgnored private var repositories: KMRepositories?
+    @ObservationIgnored private(set) var repositories: KMRepositories?
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
+    @ObservationIgnored private var draftTask: Task<Void, Never>?
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var api: KMWorkerAPI?
 
@@ -68,6 +69,13 @@ final class KMReceiptModel {
     }
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
+    /// PWA local-ui.ts:read — the unfinished form, raw text included, saved after a short delay.
+    var draftSnapshot: KMReceiptDraft {
+        .init(merchant: merchant, purchasedDate: date, purchasedTime: time.isEmpty ? nil : time,
+              totalAmountText: amount, categoryId: categoryId, accountId: accountId,
+              items: items, adjustments: adjustments, taxAmountText: tax,
+              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded)
+    }
 
     func load(_ repositories: KMRepositories?, receiptID: String?, editing: Bool = false) async {
         guard loading else { return }
@@ -110,15 +118,34 @@ final class KMReceiptModel {
     }
     #endif
 
-    private func display(_ receipt: KMReceipt) async throws {
+    func display(_ receipt: KMReceipt) async throws {
         if let extraction = receipt.extraction { try KMReceiptPresentation.validateExtraction(extraction) }
         self.receipt = receipt
         reviewed = receipt.reviewedWarnings ?? []
         applyValues(receipt)
+        // PWA prefers a useful unfinished draft over confirmed/extracted values on reopen.
+        if let draft = try await repositories?.receipts.receiptDraft(receiptId: receipt.id), draft.isUseful {
+            applyValues(draft)
+        }
         if let image = receipt.image {
             imageData = try await repositories?.receipts.receiptImage(blobId: image.blobId)
             imageIsSaved = imageData != nil
         }
+    }
+
+    private func applyValues(_ draft: KMReceiptDraft) {
+        merchant = draft.merchant
+        amount = draft.totalAmountText
+        if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
+        time = draft.purchasedTime ?? ""
+        tax = draft.taxAmountText
+        memo = draft.memo ?? ""
+        excluded = draft.excludedFromSpending
+        categoryId = draft.categoryId
+        accountId = draft.accountId
+        items = draft.items
+        adjustments = draft.adjustments
+        adjustmentIsAddition = Dictionary(uniqueKeysWithValues: adjustments.map { ($0.id, $0.amountYen > 0) })
     }
 
     private func applyValues(_ receipt: KMReceipt) {
@@ -259,17 +286,26 @@ final class KMReceiptModel {
         adjustmentIsAddition.removeValue(forKey: adjustmentId)
     }
 
-    func selectImage(_ data: Data, contentType: String) {
+    /// PWA local-ui.ts:saveImage — save the original before any AI read, then edit that receipt.
+    func selectImage(_ data: Data, contentType: String) async {
         stopWaiting()
-        guard data.count <= 10 * 1024 * 1024, KMUploadImage.matches(data, contentType: contentType), UIImage(data: data) != nil else {
-            error = "10 MiB以下のJPEG・PNG・WebP画像を選んでください。"; return
+        guard let repositories else { error = "家計簿を読み込めません。アプリを開き直してください。"; return }
+        if let current = receipt, current.registration.status != .pending || current.registration.actualTransactionId != nil {
+            error = "登録済みのレシート画像は変更できません。"; return
         }
-        guard receipt?.image == nil else {
-            error = "撮り直した写真を保存できないため、元のレシート画像と入力内容を保っています。手で入力して続けられます。"; return
+        do {
+            let saved = try await repositories.receipts.saveReceiptImage(data: data, contentType: contentType,
+                replacingReceiptId: receipt?.id, at: now)
+            receipt = saved
+            imageData = data; imageIsSaved = true
+            applyValues(saved)
+            // PWA replaces a pending receipt and opens a fresh editor for the new photo.
+            categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
+            reviewed = []; status = nil; error = nil
+        } catch {
+            imageData = nil; imageIsSaved = false
+            self.error = error.localizedDescription
         }
-        imageData = data; imageIsSaved = false
-        error = "写真を端末に保存できませんでした。手で入力して続けられます。"
-        // ReceiptRepository has no image creation operation. Do not invent a blob ID or send unsaved bytes.
     }
 
     func review(_ warning: KMReceiptPresentation.Warning) async {
@@ -295,17 +331,49 @@ final class KMReceiptModel {
         for warning in warnings.filter({ $0.field == field }) { await review(warning) }
     }
 
+    /// PWA local-ui.ts:scheduleDraft — debounce 350 ms; the latest edit wins.
+    func scheduleDraftSave() {
+        guard !loading, !saving, !didSave, let receipt, !receipt.id.isEmpty else { return }
+        draftTask?.cancel()
+        draftTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            await self?.saveDraft()
+        }
+    }
+
+    /// Writes the current form to the draft record. A deleted pending receipt is not recreated.
+    func saveDraft() async {
+        guard let receipt, let repositories, !didSave, !saving else { return }
+        do {
+            try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
+            status = "入力内容を端末に保存しました。"
+        } catch let failure as KMDataError {
+            // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
+            if case .notFound = failure { status = "この確認待ちレシートは削除されています。画面を開き直してください。" }
+            else { error = failure.localizedDescription }
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    func flushDraft() async {
+        draftTask?.cancel(); draftTask = nil
+        await saveDraft()
+    }
+
     @discardableResult
     func startReading() -> Task<Void, Never>? {
         guard !isReading, !saving, !didSave else { return nil }
         guard imageIsSaved, let imageData, let image = receipt?.image else {
-            error = "写真を端末に保存できないため、読み取りを開始できません。手で入力して続けられます。"; return nil
+            error = "先にレシートの写真を選んでください。手で入力して続けられます。"; return nil
         }
         revision = UUID(); let token = revision
         phase = .reading; startedReading = Date(); error = nil; status = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)
         operation = Task {
             do {
+                await saveDraft()
                 let client: KMWorkerAPI
                 if let api { client = api } else {
                     client = KMWorkerAPI(configuration: try KMAPIConfiguration()); api = client
@@ -419,6 +487,9 @@ final class KMReceiptModel {
 
     func save() async {
         guard canSave, !saving, !didSave, !isReading, let repositories else { return }
+        // Keep the latest edit before validation/registration; failed saves leave this draft for retry.
+        await flushDraft()
+        draftTask?.cancel(); draftTask = nil
         saving = true; error = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptSaveStarted, screen: .records)
         defer { saving = false }

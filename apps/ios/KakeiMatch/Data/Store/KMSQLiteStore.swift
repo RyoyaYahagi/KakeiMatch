@@ -186,14 +186,17 @@ import Foundation
             var recurring: [KMRecurringTransaction]; var rules: [KMCategoryLearningRule]
             var suspected: [KMSuspectedStatement]; var overrides: [KMCategoryRuleOverride]; var settings: KMAppSettings
             var ledgerWrites: KMLedgerWriteState; var serviceState: KMServiceState; var masterWrites: KMMasterWriteState
+            var drafts: [KMLocalRecord<KMReceiptDraft>]
         }
         let encoder = KMJSON.encoder(); encoder.outputFormatting = [.sortedKeys]
         return try encoder.encode(Snapshot(transactions: store.transactionValues, accounts: store.accountValues, categories: store.categoryValues,
-            groups: store.groupValues, receipts: store.receiptValues, statements: store.statementValues, imports: store.importValues,
+            groups: store.groupValues, receipts: store.receiptValues,
+            statements: store.statementValues, imports: store.importValues,
             runs: store.runValues, resolutions: store.resolutionValues, payees: store.payeeValues, budget: store.monthlySettings,
             nativeBudgets: store.nativeBudgets, payroll: store.payrollValues, recurring: store.recurringValues, rules: store.ruleValues,
             suspected: store.suspectedValues, overrides: store.ruleOverrides, settings: store.settingsValue,
-            ledgerWrites: store.ledgerWriteState, serviceState: store.serviceState, masterWrites: store.masterWriteState))
+            ledgerWrites: store.ledgerWriteState, serviceState: store.serviceState, masterWrites: store.masterWriteState,
+            drafts: store.receiptDraftValues.sorted { $0.key < $1.key }.map(\.value)))
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] { try await access { try await $0.transactions(matching: query) } }
@@ -245,6 +248,14 @@ import Foundation
     func receipt(id: String) async throws -> KMReceipt? { try await access { try await $0.receipt(id: id) } }
     func saveReceipt(_ receipt: KMReceipt) async throws { try await access(true) { try await $0.saveReceipt(receipt) } }
     func receiptImage(blobId: String) async throws -> Data? { try await access { try await $0.receiptImage(blobId: blobId) } }
+    func saveReceiptImage(data: Data, contentType: String, replacingReceiptId: String?, at timestamp: Date) async throws -> KMReceipt {
+        try await access(true) { try await $0.saveReceiptImage(data: data, contentType: contentType, replacingReceiptId: replacingReceiptId, at: timestamp) }
+    }
+    func receiptDraft(receiptId: String) async throws -> KMReceiptDraft? { try await access { try await $0.receiptDraft(receiptId: receiptId) } }
+    func saveReceiptDraft(_ draft: KMReceiptDraft, receiptId: String, at timestamp: Date) async throws {
+        try await access(true) { try await $0.saveReceiptDraft(draft, receiptId: receiptId, at: timestamp) }
+    }
+    func deleteReceiptDraft(receiptId: String) async throws { try await access(true) { try await $0.deleteReceiptDraft(receiptId: receiptId) } }
     func deleteReceipt(id: String) async throws { try await access(true) { try await $0.deleteReceipt(id: id) } }
     func statementImports() async throws -> [KMLocalRecord<KMStatementImport>] { try await access { try await $0.statementImports() } }
     func statementTransactions() async throws -> [KMStatementTransaction] { try await access { try await $0.statementTransactions() } }

@@ -64,9 +64,22 @@ extension ReceiptRepository {
     /// Draft/confirmed snapshot storage only; this does not extract, classify or post to the ledger.
     func saveReceipt(_ receipt: KMReceipt) async throws
     func receiptImage(blobId: String) async throws -> Data?
+    /// Validates the declared content type against the bytes and stores the original image with a
+    /// new pending receipt in one commit. A replaced pending receipt loses its image and draft.
+    func saveReceiptImage(data: Data, contentType: String, replacingReceiptId: String?, at timestamp: Date) async throws -> KMReceipt
+    /// Unfinished editor input, never the confirmed registration value.
+    func receiptDraft(receiptId: String) async throws -> KMReceiptDraft?
+    func saveReceiptDraft(_ draft: KMReceiptDraft, receiptId: String, at timestamp: Date) async throws
+    func deleteReceiptDraft(receiptId: String) async throws
     func deleteReceipt(id: String) async throws
     func registerReceipt(id: String, at timestamp: Date) async throws -> KMReceipt
     func editReceipt(id: String, value: KMConfirmedReceipt, expectedUpdatedAt: Date, at timestamp: Date) async throws -> KMReceipt
+}
+
+@MainActor extension ReceiptRepository {
+    func saveReceiptImage(data: Data, contentType: String, at timestamp: Date) async throws -> KMReceipt {
+        try await saveReceiptImage(data: data, contentType: contentType, replacingReceiptId: nil, at: timestamp)
+    }
 }
 
 @MainActor protocol StatementRepository {

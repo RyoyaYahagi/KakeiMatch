@@ -168,3 +168,28 @@ extension ReceiptFlowTests {
         app.terminate()
     }
 }
+
+extension ReceiptFlowTests {
+    @MainActor func testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["-UITestFixture", "receipt", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launch()
+        app.buttons["receipt-tab"].tap()
+        let pending = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "records.pending.")).firstMatch
+        XCTAssertTrue(pending.waitForExistence(timeout: 10))
+        pending.tap()
+        let merchant = app.textFields["receipt-merchant"]
+        XCTAssertTrue(merchant.waitForExistence(timeout: 10))
+        merchant.tap()
+        merchant.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: 8) + "合成の下書き")
+        app.buttons["receipt.itemsTab"].tap()
+        app.buttons["records.pendingBackButton"].tap()
+        XCTAssertTrue(pending.waitForExistence(timeout: 10))
+        pending.tap()
+        let restored = app.textFields["receipt-merchant"]
+        XCTAssertTrue(restored.waitForExistence(timeout: 10))
+        XCTAssertEqual(restored.value as? String, "合成の下書き")
+        app.terminate()
+    }
+}
