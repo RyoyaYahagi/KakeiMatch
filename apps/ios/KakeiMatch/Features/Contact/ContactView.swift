@@ -10,6 +10,8 @@ struct ContactView: View {
     @State private var sentResult: KMContactResult?
     @State private var flowID: UUID?
     @State private var flowKey: String?
+    @State private var attachDiagnostics = false
+    @State private var diagnosticContext: KMContactDiagnosticContext?
 
     private var validation: KMContactPresentation.Validation {
         KMContactPresentation.validation(kind: kind, message: message)
@@ -40,7 +42,7 @@ struct ContactView: View {
             }
             .overlay(alignment: .bottom) { rule.padding(.bottom, -KMSpacing.space2) }
 
-            Text("音声の文字起こしにはGoogleを利用します。送信内容はKakeiMatchの運用担当者が確認できる内部Inboxに保存され、GitHubへ公開されません。内容を確認した後、必要な場合だけ開発用に加工してIssueを作成します。氏名や家計情報は入力しないでください。")
+            Text("送信内容はKakeiMatchの運用担当者が確認できる内部Inboxに保存され、GitHubへ公開されません。内容を確認した後、必要な場合だけ開発用に加工してIssueを作成します。氏名や家計情報は入力しないでください。")
                 .font(KMTypography.body(14))
                 .foregroundStyle(KMColor.text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -100,15 +102,6 @@ struct ContactView: View {
                     .accessibilityIdentifier("contact-count")
             }
 
-            Button {} label: {
-                Text("音声を録音")
-                    .frame(maxWidth: .infinity, minHeight: KMLayout.minimumHit)
-            }
-            .buttonStyle(KMButtonStyle(role: .secondary))
-            .disabled(true)
-            .accessibilityHint("音声の録音はまだ利用できません。文章を入力してください。")
-            .accessibilityIdentifier("contact-record")
-
             diagnosticNotice
 
             if let statusMessage {
@@ -143,30 +136,37 @@ struct ContactView: View {
     }
 
     private var diagnosticNotice: some View {
-        HStack(alignment: .top, spacing: KMSpacing.space3) {
-            Image(systemName: "square")
-                .font(.system(size: 23, weight: .regular))
-                .foregroundStyle(KMColor.muted)
-                .padding(.top, 2)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                Text("直前のアプリ動作情報を添付する")
-                    .font(KMTypography.body(16, weight: .bold))
-                    .foregroundStyle(KMColor.text)
-                Text("画面名・操作種別・安全なエラーコード・オンライン状態だけを使います。入力内容、金額、店名、レシートや明細の内容は含みません。")
-                    .font(KMTypography.body(14))
-                    .foregroundStyle(KMColor.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("診断情報の添付はまだ利用できません。")
-                    .font(KMTypography.note)
-                    .foregroundStyle(KMColor.muted)
+        Button {
+            attachDiagnostics.toggle()
+            diagnosticContext = nil
+        } label: {
+            HStack(alignment: .top, spacing: KMSpacing.space3) {
+                Image(systemName: attachDiagnostics ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 23, weight: .regular))
+                    .foregroundStyle(attachDiagnostics ? KMColor.primary : KMColor.muted)
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    Text("直前のアプリ動作情報を添付する")
+                        .font(KMTypography.body(15, weight: .bold))
+                        .foregroundStyle(KMColor.text)
+                    Text("画面名・操作種別・安全なエラーコード・オンライン状態だけを使います。入力内容、金額、店名、レシートや明細の内容は含みません。")
+                        .font(KMTypography.body(14))
+                        .foregroundStyle(KMColor.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
+            .padding(KMSpacing.space3)
+            .frame(maxWidth: .infinity, minHeight: KMLayout.minimumHit, alignment: .leading)
+            .background(KMColor.sunken, in: RoundedRectangle(cornerRadius: KMRadius.lg))
+            .contentShape(Rectangle())
         }
-        .padding(KMSpacing.space3)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(KMColor.sunken, in: RoundedRectangle(cornerRadius: KMRadius.xl))
-        .accessibilityElement(children: .combine)
+        .buttonStyle(.plain)
+        .disabled(isSubmitting)
+        .accessibilityLabel("直前のアプリ動作情報を添付する")
+        .accessibilityValue(attachDiagnostics ? "オン" : "オフ")
+        .accessibilityAddTraits(attachDiagnostics ? [.isSelected] : [])
         .accessibilityIdentifier("contact-diagnostics-optin")
     }
 
@@ -234,6 +234,11 @@ struct ContactView: View {
             flowKey = key
         }
         guard let flowID else { return }
+        let recorder = KMContactDiagnosticRecorder.shared
+        if attachDiagnostics, diagnosticContext == nil {
+            diagnosticContext = recorder.snapshot()
+        }
+        recorder.recordAction(.contactSubmitStarted, screen: .contact)
         isSubmitting = true
         statusMessage = "お問い合わせを送信しています…"
         Task {
@@ -241,10 +246,13 @@ struct ContactView: View {
             do {
                 let configuration = try KMAPIConfiguration()
                 let api = KMWorkerAPI(configuration: configuration)
-                let response = try await api.submitContact(kind: kind.apiKind, message: message, flowID: flowID)
+                let response = try await api.submitContact(kind: kind.apiKind, message: message,
+                                                           diagnostic: attachDiagnostics ? diagnosticContext : nil,
+                                                           flowID: flowID)
                 sentResult = response
                 statusMessage = "お問い合わせを内部Inboxへ送りました。"
             } catch {
+                recorder.recordFailure(error, screen: .contact)
                 statusMessage = KMContactPresentation.failureMessage(for: error)
             }
         }

@@ -41,6 +41,24 @@ enum KMAPIShapes {
     static let guestConfig: KMAPIShape = .object(["guestAvailable": .boolean, "turnstileSiteKey": .nullable(.text(max: 2048))])
     static let guestCreated: KMAPIShape = .object(["guestSecret": .text(min: 43, max: 43)])
     static let contactResult: KMAPIShape = .object(["feedbackId": .text(max: 128), "kind": .values(["bug", "improvement", "question"]), "reply": .text(max: 2000), "issueUrl": .null])
+    static let contactDiagnostic: KMAPIShape = .object([
+        "version": .integer(min: 1, max: 1),
+        "currentScreen": .values(KMContactPresentation.diagnosticScreens),
+        "network": .values(["online", "offline"]),
+        "events": .array(.object([
+            "type": .values(["screen_open", "action", "error", "network"]),
+            "secondsAgo": .integer(max: KMContactPresentation.maximumDiagnosticAgeSeconds),
+            "screen": .values(KMContactPresentation.diagnosticScreens),
+            "action": .values(KMContactPresentation.safeActions),
+            "errorCode": .values(KMContactPresentation.safeErrorCodes),
+            "online": .boolean,
+        ], optional: ["screen", "action", "errorCode", "online"]), max: KMContactPresentation.maximumDiagnosticEvents),
+    ])
+    static let contactRequest: KMAPIShape = .object([
+        "flowId": .text(max: 36), "kind": .values(["bug", "improvement", "question"]),
+        "message": .text(max: 4_000), "originalMessage": .text(max: 4_000),
+        "diagnostic": contactDiagnostic,
+    ], optional: ["originalMessage", "diagnostic"])
     static let categoryOptions: KMAPIShape = .array(.object(["id": .text(max: 128), "name": .text(max: 100)]), max: 100)
     static let categoryRequest: KMAPIShape = .object([
         "flowId": .text(max: 36), "categories": categoryOptions,
