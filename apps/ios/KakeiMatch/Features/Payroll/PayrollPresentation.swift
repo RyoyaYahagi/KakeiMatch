@@ -1,11 +1,68 @@
 import Foundation
 
+/// PWA `payrollDetails` の表示内容。登録時に確認した snapshot をそのまま並べる。
+struct KMPayrollBreakdown: Equatable, Sendable {
+    struct Line: Equatable, Sendable {
+        var label: String
+        var value: String
+    }
+
+    var notice: String
+    var amountLines: [Line]
+    var payPeriod: String
+    var allowanceLines: [Line]
+
+    /// PWA と同じ1行1項目の文言。総支給額・控除・対象期間・支給項目の順。
+    var textLines: [String] {
+        amountLines.map { "\($0.label)：\($0.value)" }
+            + ["対象期間：\(payPeriod)"]
+            + allowanceLines.map { "\($0.label)：\($0.value)" }
+    }
+}
+
 enum KMPayrollPresentation {
     static let deductionFields: [(key: String, label: String)] = [
         ("incomeTaxYen", "所得税"), ("residentTaxYen", "住民税"), ("healthInsuranceYen", "健康保険"),
         ("pensionYen", "厚生年金"), ("employmentInsuranceYen", "雇用保険"),
         ("otherYen", "その他控除"), ("totalYen", "控除合計")
     ]
+
+    static let breakdownNotice = "登録時に確認した内訳です。取引の編集後も元の内訳を保持し、削除の取り消しに備えて残します。"
+
+    /// TS: apps/pwa/src/payroll-ui.ts — payrollDetails
+    static func breakdown(_ value: KMPayrollRecord.Confirmed) -> KMPayrollBreakdown {
+        var amounts = [KMPayrollBreakdown.Line(label: "総支給額", value: amountText(value.grossPayYen))]
+        for field in deductionFields {
+            amounts.append(.init(label: field.label, value: amountText(deductionAmount(field.key, value.deductions))))
+        }
+        return .init(
+            notice: breakdownNotice,
+            amountLines: amounts,
+            payPeriod: "\(value.payPeriod ?? "未記載") / \(payTypeLabel(value.payType))",
+            allowanceLines: value.allowances.map { .init(label: $0.name, value: amountText($0.amountYen)) }
+        )
+    }
+
+    static func payTypeLabel(_ payType: KMPayrollRecord.Confirmed.PayType) -> String {
+        switch payType {
+        case .salary: "給与"
+        case .bonus: "賞与"
+        case .other: "その他"
+        }
+    }
+
+    private static func deductionAmount(_ key: String, _ value: KMPayrollRecord.Deductions) -> Int? {
+        switch key {
+        case "incomeTaxYen": value.incomeTaxYen
+        case "residentTaxYen": value.residentTaxYen
+        case "healthInsuranceYen": value.healthInsuranceYen
+        case "pensionYen": value.pensionYen
+        case "employmentInsuranceYen": value.employmentInsuranceYen
+        case "otherYen": value.otherYen
+        case "totalYen": value.totalYen
+        default: nil
+        }
+    }
 
     static func amountText(_ amount: Int?) -> String {
         guard let amount else { return "未記載" }
