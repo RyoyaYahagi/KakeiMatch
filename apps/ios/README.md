@@ -193,6 +193,8 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `reconciliation` | 明細7件からSwiftで計算。要確認1・記録なし2・一致4をTSの固定run/適用済み判断と全値比較 |
 | `payroll` | 同じ家計簿＋確認待ち給与内訳snapshot。登録時に手取り収入を一括反映する。写真なし |
 
+fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足して進めます。削除のUndoなど10秒の期限を、記録画面とshellの通知で同じ起点から計算するためです。
+
 `-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。記録一覧はfixtureの取引・日別収支・要確認表示を描画します。給与明細の確認待ちsnapshotは同fixtureから読み込みます。
 
 同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
