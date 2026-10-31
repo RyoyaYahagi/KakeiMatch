@@ -67,6 +67,7 @@ let package = Package(
                 "App/KMAppSettingsPreferences.swift",
                 "App/ReconciliationBadgeCount.swift",
                 "Core/KMAmountFormatter.swift",
+                "Core/KMDeletionUndoPolicy.swift",
                 "Core/KMReceiptPresentation.swift",
                 "Data/Aggregation/BudgetAggregation.swift",
                 "Data/Aggregation/HomeAggregation.swift",

@@ -16,7 +16,9 @@ private enum KMSettingsPage {
 
 struct SettingsView: View {
     var initialBudgetMonth: KMYearMonth? = nil
+    var initialAccounts = false
     var onBudgetBack: () -> Void = {}
+    var onAccountsBack: () -> Void = {}
     var onOpenMoneyForward: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @State private var model = KMSettingsModel()
@@ -25,11 +27,15 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
 
-    init(initialBudgetMonth: KMYearMonth? = nil, onBudgetBack: @escaping () -> Void = {}, onOpenMoneyForward: @escaping () -> Void = {}) {
+    init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false,
+         onBudgetBack: @escaping () -> Void = {}, onAccountsBack: @escaping () -> Void = {},
+         onOpenMoneyForward: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
+        self.initialAccounts = initialAccounts
         self.onBudgetBack = onBudgetBack
+        self.onAccountsBack = onAccountsBack
         self.onOpenMoneyForward = onOpenMoneyForward
-        _page = State(initialValue: initialBudgetMonth == nil ? .root : .budget)
+        _page = State(initialValue: initialAccounts ? .accounts : (initialBudgetMonth == nil ? .root : .budget))
     }
 
     var body: some View {
@@ -43,7 +49,7 @@ struct SettingsView: View {
             case .contact: ContactView(onBackToSettings: { page = .root })
             case .categoryRules: KMMasterManagementView(initialPage: .rules, onBack: { page = .root })
             case .categories: KMMasterManagementView(initialPage: .categories, onBack: { page = .root })
-            case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root })
+            case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root; onAccountsBack() })
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
