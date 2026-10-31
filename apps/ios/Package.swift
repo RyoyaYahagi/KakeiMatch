@@ -100,8 +100,10 @@ let package = Package(
                 "Features/Contact/ContactPresentation.swift",
                 "Features/ManualEntry/EntryPresentation.swift",
                 "Features/MoneyForward/MoneyForwardPresentation.swift",
+                "Features/Payroll/PayrollPresentation.swift",
                 "Features/Reconciliation/ReconciliationPresentation.swift",
                 "Features/Settings/SettingsPresentation.swift",
+                "Features/Settings/NativeAuthPresentation.swift",
                 "Data/Statements/StatementImportResult.swift",
             ]
         ),

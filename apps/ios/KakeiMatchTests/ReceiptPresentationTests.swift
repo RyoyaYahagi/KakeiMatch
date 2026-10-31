@@ -31,6 +31,7 @@ struct ReceiptPresentationTests {
         #expect(!KMReceiptPresentation.retryable(.rateLimited))
         #expect(!KMReceiptPresentation.retryable(.invalidRequest))
         #expect(KMReceiptPresentation.failureMessage(.nativeUnsupported).contains("手で入力"))
+        #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
     }
 }
 
@@ -169,17 +170,18 @@ private final class ReceiptCredentials: KMCloudCredentialStore, Sendable {
 }
 
 extension ReceiptModelTests {
-    private func readingModel(response: String, native: Bool = false) async throws -> (KMReceiptModel, KMRepositories) {
+    private func readingModel(response: String, native: Bool = false, guest: Bool = true,
+                              attest: any KMAppAttesting = ReceiptUnsupportedAttest()) async throws -> (KMReceiptModel, KMRepositories) {
         ReceiptHTTPStub.body.withLock { $0 = response }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
-        if native {
-            let guest = "{\"sessionToken\":\"" + String(repeating: "a", count: 43) + "\",\"expiresAt\":1800000600}"
-            credentials.write(Data(guest.utf8), key: "guest")
+        if native && guest {
+            let value = "{\"sessionToken\":\"" + String(repeating: "a", count: 43) + "\",\"expiresAt\":1800000600}"
+            credentials.write(Data(value.utf8), key: "guest")
         }
         let api = KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!, originPolicy: native ? .native : .existingWorkerCompatibility),
-                              session: URLSession(configuration: configuration), credentials: credentials, appAttest: ReceiptUnsupportedAttest(),
+                              session: URLSession(configuration: configuration), credentials: credentials, appAttest: attest,
                               now: { Date(timeIntervalSince1970: 1_800_000_000) })
         let repositories = try KMFixtureLoader.load(named: "receipt")
         var receipt = try #require(try await repositories.receipts.receipts().first)
@@ -227,6 +229,13 @@ extension ReceiptModelTests {
     }
 }
 
+private struct ReceiptSupportedAttest: KMAppAttesting {
+    var isSupported: Bool { true }
+    func generateKey() async throws -> String { "c3ludGhldGlj" }
+    func attest(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x01]) }
+    func assertion(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x02]) }
+}
+
 private struct ReceiptUnsupportedAttest: KMAppAttesting {
     var isSupported: Bool { false }
     func generateKey() async throws -> String { throw KMAPIError.nativeUnsupported }
@@ -235,6 +244,21 @@ private struct ReceiptUnsupportedAttest: KMAppAttesting {
 }
 
 extension ReceiptModelTests {
+    @Test func firstGuestReadingWaitsForTheNativeCheckDialog() async throws {
+        let (model, _) = try await readingModel(response: "{}", native: true, guest: false, attest: ReceiptSupportedAttest())
+        await model.startReading()?.value
+        // Same gate as the PWA bot-check dialog: no guest exists yet, so the
+        // reading stops and asks before anything is sent.
+        #expect(model.needsGuestStart)
+        #expect(model.phase == .idle)
+        #expect(model.error == nil)
+        #expect(model.receipt != nil)
+        model.cancelGuestStart()
+        #expect(!model.needsGuestStart)
+        #expect(model.status == KMNativeAuthPresentation.guestStartCancelled)
+        #expect(model.receipt != nil)
+    }
+
     @Test func unsupportedCloudStillAllowsManualRegistration() async throws {
         let (model, repositories) = try await readingModel(response: "{}", native: true)
         await model.startReading()?.value

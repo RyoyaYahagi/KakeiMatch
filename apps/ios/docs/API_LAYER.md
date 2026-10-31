@@ -30,7 +30,11 @@ let api = KMWorkerAPI(configuration: config)
 | Passkey | `POST /api/native/passkey/options` のBetter Auth optionsからcanonicalな32-byte challengeを復号し、明示された `rpId` または `rp.id` が接続hostと一致する場合だけ `ASAuthorizationPlatformPublicKeyCredentialProvider` へ渡す。RP IDをhostへ補完しない。招待登録はcontextを渡し、Passkey追加（contextなし）はNative account sessionで認証する。登録では `user.id`、認証では存在する `allowCredentials` も復号して渡す。platform requestはuser verificationをrequiredにする。verify時のApp Attest hashはoptions.challenge bytesのSHA-256。Workerだけがchallenge状態を保持し、端末Cookie jarは使わない |
 | その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。signout・account deleteではaccount sessionとAI tokenを消し、guest session・家計データは保持 |
 
-SimulatorまたはApp Attest非対応端末はnativeクラウド認証・AI利用を行いません。ローカル家計機能は別境界なので継続します。Fake adapterでのテスト成功はAppleサービス・実端末・実Workerの成功を意味しません。`project.yml`はTeam IDを含まず、`KM_DEVELOPMENT_TEAM` は署名環境から指定します。`KM_APP_ATTEST_ENVIRONMENT` はbuild configurationごとの既定値を持ち、Debugは `development`、Releaseは `production` です。`KM_NATIVE_HOST` は `kakeimatch.yhgry.workers.dev` が既定値で、アプリの `KMNativeAPIHost` と `webcredentials:` entitlementの両方へ同じbuild settingを渡します。preview buildではこの値をpreview hostへ上書きし、previewのAPI URLとAssociated Domainsを一緒に切り替えます。本番entitlementのままpreview URLだけを指定してはいけません。`KMAPIConfiguration` はアプリbundleの `KMNativeAPIHost` を既定接続URLに使い、値が欠損・不正なら初期化を失敗させます。テスト等の明示URL注入以外にhost discoveryやproduction hostへのfallbackを行いません。Workerのconfig応答で `rpId == 接続host` を検査し、不一致は拒否します。previewは本番と異なるRP ID / Keychain serviceを使います。
+画面との接続は `Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` です。`KMNativeAuthService` は `KMWorkerAPI` の必要最小限の操作だけをprotocolにし、テストはstubを注入します。設定の「ログイン・利用状況」は `nativeConfiguration` → `accountSession` → usage/passkey の順に読み、未ログインならguest usage、ログイン中ならaccount usageとPasskey一覧を表示します。`signInWithPasskey`・`registerPasskey(context:)`・`addPasskey`・`signOut`・`deleteAccount` は成功後にsnapshotを取り直します。ログアウトと本人削除はaccount sessionとAI tokenだけを消し、guest sessionと家計データを消しません。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続けます。
+
+未ログインでAIを使う最初のレシート読み取りは、token取得が `nativeAuthenticationRequired` で止まった時に確認ダイアログを出し、`createNativeGuest()` の後に同じ写真の読み取りを再開します。これはPWAのTurnstile確認に相当するゲートで、キャンセル・失敗でも画像と手入力は保持します。ゲスト作成の日次上限はWorkerが決め、端末は結果だけを表示します。
+
+SimulatorまたはApp Attest非対応端末はnativeクラウド認証・AI利用を行いません。ローカル家計機能は別境界なので継続します。Fake adapterでのテスト成功はAppleサービス・実端末・実Workerの成功を意味しません。`project.yml`はTeam IDを含まず、`KM_DEVELOPMENT_TEAM` は署名環境から指定します。`KM_APP_ATTEST_ENVIRONMENT` はbuild configurationごとの既定値を持ち、Debugは `development`、Releaseは `production` です。`KM_NATIVE_HOST` は `kakeimatch.yhgry.workers.dev` が既定値で、アプリの `KMNativeAPIHost` と `webcredentials:` entitlementの両方へ同じbuild settingを渡します。preview buildではこの値をpreview hostへ上書きし、previewのAPI URLとAssociated Domainsを一緒に切り替えます。本番entitlementのままpreview URLだけを指定してはいけません。`KMAPIConfiguration` はアプリbundleの `KMNativeAPIHost` を既定接続URLに使い、値が欠損・不正なら初期化を失敗させます。Xcodeの `INFOPLIST_KEY_` は既知のキーしか生成plistへ反映しないため、`project.yml` の `postBuildScripts` が署名前に `$(KM_NATIVE_HOST)` を `KMNativeAPIHost` として注入します。テスト等の明示URL注入以外にhost discoveryやproduction hostへのfallbackを行いません。Workerのconfig応答で `rpId == 接続host` を検査し、不一致は拒否します。previewは本番と異なるRP ID / Keychain serviceを使います。
 
 Apple公式資料では、Passkey用platform providerの役割とRP ID指定、App Attestの端末側鍵生成・attestation/assertion、Associated Domainsのwebcredentials entitlementが定義されています。実装は公式APIの責務に留め、server-side検証を端末で代替しません。[Apple Passkeys: `ASAuthorizationPlatformPublicKeyCredentialProvider` / “Supporting passkeys”; Apple DeviceCheck: `DCAppAttestService` / “Establishing your app’s integrity”; Apple Xcode: “Supporting associated domains”]
 
@@ -78,6 +82,23 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 - **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSも同じrecorderを `Features/Contact/ContactDiagnosticRecorder.swift` に持ち、40件・15分・contact除外・明示同意の条件と、画面名・操作種別・安全なエラーコード・オンライン状態・相対秒だけの固定語彙を揃えた。iOSは送信前に同じschemaで自己検証し、未知キー・未知値・欠けた項目を含む診断情報は送らない。native gatewayはbodyを変えず `/api/contact` へ転送し、Workerが同じschemaで再検証する。任意文字列JSONを受ける代用品は作らない。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts; 実装: ContactPresentation.swift / KMWorkerAPI.swift]
 
 すべての応答はJSON Content-Type・1 MiB上限・形の検証を経てCodableへdecodeする。未知キー、未知enum、欠けたnullable必須キー、整数円の小数・負値・JS安全整数超過、実在しない日付、範囲外indexを正常値として返さない。Receiptの日付はWorkerの簡易正規表現より厳しく暦日を検証する。欠損を空値に置換しない。[実装: KMAPIValidation.swift / KMAPIShapes.swift]
+
+### AI応答のschema照合（2026/10 監査）
+
+Geminiのレシート、Jevの分類、Geminiの給与明細について、PWA/Worker側のschema（`src/lib/receipt-extraction.ts`、`workers/ai-gateway/src/worker.ts`、`workers/ai-gateway/src/payroll-schema.ts`）とiOSの `KMAPIShapes` を項目ごとに突き合わせた。**追加が必要な検証は見つからなかった。** 下表の項目はすべてAPI境界で拒否し、`KMAPIError.invalidResponse` として呼び出し側の保存・表示処理へ渡さない。合成した不正fixtureは `KakeiMatchTests/APIClientTests.swift` の `aiResponsesRejectNestedUnknownKeysMissingRequiredNullsAndReferenceViolations`、`jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory`、`rejectsRangesMissingNullsAndUnknownEnums` で固定する。
+
+| 観点 | レシート (`/api/ai/gemini`) | Jev分類 (`/api/ai/jev`・`category-suggestion`) | 給与明細 (`/api/ai/payroll`) |
+| --- | --- | --- | --- |
+| 未知キー | 全objectで拒否（`KMAPIShapes.receipt`） | answerは`type`/`choice`/`confidence`/`probabilities`の4キー完全一致。responseは`model`/`answers`のみ | 全objectで拒否（`KMAPIShapes.payroll`） |
+| nullと欠落 | nullableでもキー必須。省略可は`adjustments`と要素の`quantity`/`unitPriceYen`/`targetItemIndex`/`index`のみ | `type`/`choice`/`confidence`/`probabilities`の欠落と、要求外・欠けた回答キーを拒否 | nullableでもキー必須。`deductions`の7キー、`allowances[].amountYen`、`warnings[].field`の欠落を拒否 |
+| 型 | object/array/string/number/boolとenum。日付・時刻は文字列 | `type=choice`、`model`は非空string、確率・confidenceはnumber | enumは`documentKind`/`payType`/warningのfield・code。日付は文字列 |
+| 範囲 | 金額は0…JS安全整数、`quantity>0`、`HH:MM`、実在する暦日 | confidence・確率は0…1、確率和は1±0.02、`choice`は最大確率 | 金額は0…JS安全整数、`payrollText`は1…120、実在する暦日、NFKC後の個人識別情報を拒否 |
+| 整数円 | `Decimal`で整数判定し、±9,007,199,254,740,991に制限 | 該当なし | 同左 |
+| ID参照 | `targetItemIndex`はitems内、warningの`index`は対象のitems/adjustments内 | 回答キーは要求キーと一致、`choice`と確率キーは候補IDのみ。`category-suggestion`の`categoryId`はnullか候補内 | 該当なし |
+| 件数上限 | items・adjustments・warningsは各100 | answers・probabilitiesは100、候補は1…100 | allowances・warningsは各30 |
+| PWA/Workerとの差 | Workerが行う日付・時刻・quantity 0の正規化は行わず、不正として拒否する（厳しい側） | 同等。提案値の0.75以上・2位との差0.15以上も同じ | 同等 |
+
+`classify` は上表に加えて、`answers` のキー集合が要求した`category`/`item_N`と一致すること、各確率キーが要求候補のID集合と一致することを検証する。`ReceiptModel` の `invalidAndNonReceiptResponsesDoNotReplaceManualInput` は、不正応答で手入力や保存済み抽出が置き換わらないことを合成fixtureで確認する。
 
 ## 認証・有効期限・エラー
 
@@ -132,11 +153,11 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 ## 検証と未実装
 
-`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。実Worker、Apple App Attest、実Passkey、Gemini/Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
+`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。AI応答はレシート・Jev・給与明細それぞれの未知キー、nullable必須キーの欠落、型・範囲、整数円、ID参照、件数上限を合成fixtureで拒否することを確認する。実Worker、Apple App Attest、実Passkey、Gemini/Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
 
 CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 
-未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのPasskeyおよびApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音/カメラUI、APIとRepositoryの接続。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
+未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのPasskeyおよびApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。ログイン・利用状況とレシートのゲスト確認はstubとXCUITestで検証し、実端末のPasskey・AASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
 
 ## 参照資料
 
