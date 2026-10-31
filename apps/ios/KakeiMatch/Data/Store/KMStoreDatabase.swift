@@ -113,7 +113,9 @@ import Foundation
         }
     }
     /// Commit the entire multi-repository change or nothing. No published in-memory mutation precedes COMMIT.
-    func save(_ store: KMInMemoryStore) throws {
+    /// `ifActive` is checked inside the transaction, immediately before COMMIT, so a working copy
+    /// read before a profile switch cannot land in the superseded household database.
+    func save(_ store: KMInMemoryStore, ifActive: (() throws -> Bool)? = nil) throws {
         var nextRevision = 0
         try sql.transaction {
             let current = try revision()
@@ -141,6 +143,7 @@ import Foundation
                 let id = try row.required("id")
                 if store.imageValues[id] == nil { try sql.execute("DELETE FROM artifacts WHERE id=?", [.text(id)]) }
             }
+            if let ifActive, try !ifActive() { throw KMDataError.staleProfile }
         }
         loadedRevision = nextRevision
     }

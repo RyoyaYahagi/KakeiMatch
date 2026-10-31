@@ -63,11 +63,12 @@ struct KMYearMonth: RawRepresentable, Codable, Hashable, Comparable, Sendable, C
 
 // Swift boundary errors; no TS serialized equivalent (repository/service failures).
 enum KMDataError: Error, Equatable, LocalizedError, Sendable {
-    case invalidData(String), amountOverflow, notFound(String), unsupported(String)
+    case invalidData(String), amountOverflow, notFound(String), unsupported(String), staleProfile
     var errorDescription: String? {
         switch self {
         case .invalidData(let message), .notFound(let message), .unsupported(let message): message
         case .amountOverflow: "金額を安全に計算できません。"
+        case .staleProfile: "別の画面で家計データが切り替わりました。再読み込みしてから操作してください。変更内容は保存されていません。"
         }
     }
 }
