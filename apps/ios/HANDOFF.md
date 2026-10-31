@@ -82,7 +82,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
 | 記録一覧 | `feature/ios-records` | #301 | **Mac** | マージ済み（`a15b0c8`） |
 | 画面13: 給与明細 | `feature/ios-payroll` | #319 | **Mac** | PR作成済み。収入入力導線、AI読取、確認、手取り収入と内訳snapshotの一括保存。レビュー指摘の確認UI・支給日表記・レシート導線の回帰を修正 |
-| 画面10: 設定（ログイン・利用状況） | `feature/ios-native-auth-ui` | #PRNUM | **Mac** | PR作成済み。初回Passkeyログイン・招待登録・Passkey追加/削除・ゲスト開始・AI利用回数・ログアウト・Cloud account削除。実機のPasskey/App Attestは未検証 |
+| 画面10: 設定（ログイン・利用状況） | `feature/ios-native-auth-ui` | #322 | **Mac** | PR作成済み。初回Passkeyログイン・招待登録・Passkey追加/削除・ゲスト開始・AI利用回数・ログアウト・Cloud account削除。実機のPasskey/App Attestは未検証 |
 | 各画面（3 節） | 画面ごと | 画面ごと | **Mac** | 未着手 |
 | Visual regression（PWA と iOS のスクショ比較・差分 artifact） | 未作成 | 未作成 | **Mac** | 未着手 |
 
