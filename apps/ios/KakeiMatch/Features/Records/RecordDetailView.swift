@@ -200,8 +200,9 @@ struct KMRecordDetailView: View {
             } label: {
                 HStack(spacing: KMSpacing.space3) {
                     Text("給与明細").font(KMTypography.body(13, weight: .medium)).foregroundStyle(KMColor.muted)
-                    Spacer(minLength: 0)
+                        .frame(width: 72, alignment: .leading)
                     Text("内訳（登録時）").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                    Spacer(minLength: 0)
                     KMIcon(name: "chevronRight", size: 20).foregroundStyle(KMColor.muted)
                         .rotationEffect(.degrees(showsPayrollBreakdown ? 90 : 0))
                 }
@@ -213,7 +214,7 @@ struct KMRecordDetailView: View {
             .accessibilityValue(showsPayrollBreakdown ? "展開中" : "折りたたみ")
             .accessibilityIdentifier("records.payrollDetails")
             if showsPayrollBreakdown {
-                VStack(alignment: .leading, spacing: KMSpacing.space3) {
+                VStack(alignment: .leading, spacing: KMSpacing.space4) {
                     Text(breakdown.notice).font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                         .fixedSize(horizontal: false, vertical: true)
                     ForEach(Array(breakdown.textLines.enumerated()), id: \.offset) { _, line in
@@ -221,7 +222,7 @@ struct KMRecordDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(.vertical, KMSpacing.space3)
+                .padding(.vertical, KMSpacing.space4)
                 .accessibilityIdentifier("records.payrollBreakdown")
             }
         }
