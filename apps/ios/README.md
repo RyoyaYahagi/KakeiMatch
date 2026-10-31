@@ -6,7 +6,7 @@ Issue #240 の Phase 1・2。`apps/pwa` の baseline `pwa-swift-migration-baseli
 
 macOS / Xcode 26以上 / XcodeGen 2.44.1以上を使います。CIと揃える場合はXcode 26.2、iPhone 17 / iOS 26.2を選びます。
 
-ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。Simulator上で `KakeiMatchTests` の全suiteを実行するときは `--all` を指定してください。既定で除外するバックアップテストは `--all` で含められます。全体の成否はCIで判断します。
+ローカルでは対象を指定して `scripts/test-local.sh --only KakeiMatchTests/HomePresentationTests` を実行します。`--only` は複数指定でき、`--skip`、`--device <simulator udid>`、`--derived-data <path>`、`--no-build` も使えます。`--all` を指定すると、`--only` がない場合にscheme内の全テストを実行します。バックアップ・`.kmb` 取り込み系のテストも通常どおり実行対象です。全体の成否はCIで判断します。ローカルSimulatorでJavaScriptCoreごと落ちた事象は [docs/LOCAL_SIMULATOR_JSC.md](docs/LOCAL_SIMULATOR_JSC.md) に記録しています。
 
 FoundationまたはCryptoKitだけで動く計算ロジックは、リポジトリrootで `swift test --package-path apps/ios` を実行します。iOS Simulatorの起動は不要です。Packageのdeployment targetはmacOS 15です。
 
@@ -106,8 +106,8 @@ PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字�
 
 ## 配置と後続PR
 
-- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、通常タブの本文ScrollViewを管理。通常タブの画面ViewはVStack等で本文を返します。手入力とレシートは各入力ViewがScrollView・左右16pt・固定の登録ボタンを持ちます。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。通常タブの左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。
-- `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除/取り消しをRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。
+- `App/AppShell.swift`: 4タブと追加シート、入力の戻り先、通常タブの本文ScrollViewを管理。通常タブの画面ViewはVStack等で本文を返します。手入力とレシートは各入力ViewがScrollView・左右16pt・固定の登録ボタンを持ちます。標準TabView / NavigationStack / List / Formによるナビ・余白の再解釈はしません。通常タブの左右16pt・本文下32ptをshellが持ち、縦向きiPhoneではOSの上safe areaがPWAの `max(16px, safe-area-inset-top)` を満たすため16ptを重ねて足しません。下部ナビは本文と別に64pt＋OS下safe areaです。削除の取り消し通知はshellの `KMDeletionNoticeModel` が持ち、タブを移ってもPWAと同じ10秒の期限まで表示します。
+- `Features/Records/`: 記録一覧・全期間検索・詳細・編集・削除をRepositoryへ接続しています。画面内の表示状態は `RecordsModel.swift`、表示用の純関数は `RecordsPresentation.swift`、検索と詳細は専用Viewへ分けています。「口座・残高を見る」は設定の支払元・口座画面へ遷移します。
 - `Features/{Home,Reconciliation,Settings}/<Name>View.swift`: 同名Viewを保って中身を置き換えます。shellの変更は別PRで行います。
 - `Features/{ManualEntry,Income,Transfer}`: 実装済みの `KMEntryFormView` を共有します。入力画面がScrollView・左右余白・固定の登録ボタンを持ちます。
 - `Features/Receipt`: 撮影/写真選択、全体/品目表示、警告確認、既存画像のAI読み取りと台帳登録。画像新規保存・品目編集等の不足は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
@@ -127,7 +127,7 @@ PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字�
 | `KMInputRow(label:value:identifier:hint:isAmount:error:)` | 入力Binding・検証結果。フォーカスの下線を部品が描く |
 | `KMSegmentedControl(options:selection:identifier:)` | 安定したoption IDと選択Binding |
 | `KMBottomSheet(title:isPresented:content:)` | 透明な `.fullScreenCover` 内に置く。OSがモーダルのフォーカスを隔離し、部品がPWA形状・scrim・内容に合った高さを描く。外側タップ、ヘッダ/つまみの80pt超の下スワイプで閉じる |
-| `KMToast(message:actionTitle:action:)` | Undoの期限（PWAでは10秒）・処理はfeature側。部品は表示のみ |
+| `KMToast(message:actionTitle:trailingMessage:isBusy:action:)` | Undoの期限（PWAでは10秒）・処理はshellの `KMDeletionNoticeModel` が持つ。部品は表示のみ |
 | `KMBanner(status:title:detail:actionTitle:action:)` | 失敗理由と再試行操作を渡す |
 
 ### Token対応
@@ -159,7 +159,7 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 - `Data/Domain/`: 取引・口座・カテゴリ/グループ・支払先・レシート/品目/警告・明細・照合run/結果/判断・定期・予算・給与・分類学習・設定。各型のコメントに対応するTS型/スキーマの場所があります。
 - `Data/Repositories/Repositories.swift`: 画面が依存するprotocol。下の一覧を参照してください。
-- `Data/Aggregation/`: PWAの月次集計・日別グループ。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。
+- `Data/Aggregation/`: PWAの月次集計・日別グループと、Homeの表示用集計（`HomeAggregation.swift`）。予算集計は `Data/Budget/MonthlyBudgetService.swift` に委譲します。カテゴリ色の名前/ハッシュ対応は `KMCategoryToneMapping.swift`、色は `DesignSystem` に置きます。
 - `Data/Ledger/`: 手入力・支払先master・振替対・レシート登録/分割編集・削除/10秒Undo・口座/カテゴリ/グループの管理・照合更新。すべて既存のsnapshot/SQLite世代検査を共有します。画面上の意味論とActual内部の対象外は [DATA_LAYER.md「書き込みの意味論」](docs/DATA_LAYER.md) を参照してください。
 - `Data/{Reconciliation,CategoryLearning,Recurring,Budget}/`: TSの決定的サービス。照合採点・判断適用/取消、分類履歴の導出・適用根拠、定期日付/補完計画、予算要約を計算します。両Repository実装で同じ処理を使い、SQLiteでは取引とサービス状態を同じtransactionで保存します。採点のbinary64演算だけは `KMJSNumber` でTSの丸めを再現し、金額は整数円のままです。
 - `Data/InMemory/`: 全protocolを共有する `KMInMemoryStore` と `KMFixtureLoader`。プロセス終了で全変更が消えます。通常起動では使わず、明示的なfixture/Previewだけに使います。
@@ -195,11 +195,11 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 手入力・振替の登録は `id: nil`、編集は既存IDを渡します。同じimportedIdの同値再送は同じ取引を返し、異値は既存を上書きせずthrowします。手入力編集はinputのimportedIdで既存識別子を置き換えません。cleared/reconciledを保ち、振替編集は入金側IDを渡しても両側を更新します。支払先は操作ごとのPWA/Actual規則で照合しmasterへ保存します。口座残高は読み取り用で、日本時間の今日までを合計します。`accounts(asOf:includeClosed:)` では固定日を渡せます。`createAccount(_:startingBalanceYen:startingDate:)` は日付付き開始残高を残高だけへ計上します。`saveAccount` は名称・種類・利用終了等だけを変更し、残高を直接上書きしません。残高のある利用終了と、有効な取引行のある完全削除を拒否し、空口座も利用終了→再開できます。振替は両口座の残高に反映し、一覧は出金側を1行だけ返します。検索は `KMTransactionQuery`、全履歴検索では `limit: nil`、記録一覧は `recordDays(matching:)` を使います（PWA同様、最近100件を取ってから種類で絞ります）。
 
-ホームは `transactions.home(month:)` の `KMHomeSnapshot` に収支・カテゴリ内訳・予算・選択月内の最近3件をまとめます。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
+ホームは `transactions.homeDashboard(month:today:)` の1回の取得で、収支・予算・選択月内の最近3件、要確認の件数/一致件数/最大3行、カテゴリ内訳（帯グラフ用の上位3件＋その他、全カテゴリ一覧の割合）、予算の日の目盛りをまとめて返します。表示用の計算は `Data/Aggregation/HomeAggregation.swift` にあり、Viewは返された値を描画するだけです。記録一覧は日付降順・同日ID降順、検索は日付降順・同日ID昇順というPWAの違いも保持します。PWAと同様、月次集計は金額の符号で収支を分類し、振替/予算対象外口座/削除済み/開始残高/不正行と支出対象外を除きます。返金の単独正額は収入、分割子行の正額はカテゴリ支出と相殺します。日別見出しは種類で絞った後に集計し、振替と対象外の行も一覧には残します。カテゴリ使用回数は分割の同一カテゴリを1記録につき1回、振替は0回として数えます。
 
 `saveReceipt` / `saveResolution` / `savePayrollRecord` はサービスが作ったsnapshotの保存契約です。写真のAI抽出、家計簿への登録、照合判断の適用/取消を実行するAPIではありません。照合の計算・適用/取消は別の `ReconciliationRepository` 操作を使います。手動判断・組の拒否・不正利用？の設定後はPWAと同じく以前のrunが古くなるため、再照合してから次の操作を行います。通常取引APIによる分割/レシート編集はthrowします。レシートの登録は `receipts.registerReceipt(id:at:)`、編集は `editReceipt(id:value:expectedUpdatedAt:at:)` を呼びます。品目・値引き・税の配分と親子の組み替えはサービス内で行います。`saveReceipt`で登録済みsnapshotを直接置換せず、編集前に読み込んだupdatedAtを渡してください。画像ありの0円支出も扱います。登録・登録済み編集の保存後は `KMCategoryLearningService.observation` を `categoryLearning.saveCategoryObservation` へ渡します。Viewで代替エンジンを作らないでください。
 
-削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理は画面側です。
+削除は `transactions.deleteTransaction(id:expected:at:)` が `KMTransactionDeletion` を返します。expectedは任意の古さ検査用root＋振替peer（分割子はroot.splits内）です。`transactionDeletions()` は再起動後も履歴を返し、`undoTransactionDeletion(id:at:)` は削除履歴IDで10秒未満の取り消しを行います。従来の `deleteTransaction(id:)` も削除印を使いますが、Undo用のIDと期限が必要な画面は戻り値のあるAPIを使ってください。取引・対・親子・関連レシートを一括で消し、Undoは同じIDを復元します。画像/品目/確認値は残します。toastの表示と期限管理はshellの `KMDeletionNoticeModel` が持ちます。
 
 ### 明細・移行・マスタ・定期の保存
 
@@ -216,8 +216,8 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 @Environment(\.repositories) private var repositories
 // Inside an async load action:
 // guard let repositories else { ... show configuration error ...; return }
-// let month = KMDate(instant: repositories.referenceDate).yearMonth
-// let snapshot = try await repositories.transactions.home(month: month)
+// let today = KMDate(instant: repositories.referenceDate)
+// let dashboard = try await repositories.transactions.homeDashboard(month: today.yearMonth, today: today)
 
 #Preview {
     KMFixturePreview("migration") { HomeView() }
@@ -238,6 +238,8 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 | `reconciliation` | 明細7件からSwiftで計算。要確認1・記録なし2・一致4をTSの固定run/適用済み判断と全値比較 |
 | `payroll` | 同じ家計簿＋確認待ち給与内訳snapshot。登録時に手取り収入を一括反映する。写真なし |
 
+fixture中の時刻は `KMFixtureClock` が `referenceDate` に実時間を足して進めます。削除のUndoなど10秒の期限を、記録画面とshellの通知で同じ起点から計算するためです。
+
 `-UITestFixture` はDebugだけ有効です。指定がない場合はApplication SupportのSQLiteを開きます。不明な名前/欠落/不正JSONはエラーを表示して起動を止め、空データへ黙って置き換えません。`referenceDate` はfixtureの `2026-10-14T03:30:00Z` なので、画面の「今日」「今月」に実時計を使わないでください。記録一覧はfixtureの取引・日別収支・要確認表示を描画します。給与明細の確認待ちsnapshotは同fixtureから読み込みます。
 
 同梱 `Data/InMemory/Fixtures/migration.json` はPR #279の `test/fixtures/ios-migration/fixture.json`（取得SHA `7daf6a839914131f3615d1ba339ee60e75f1fd55`）とJSON値が一致します。XcodeGenのアプリsources配下のJSONはresourceに含まれます。名前参照を安定したfixture IDに変換し、PWAが初期生成する基本カテゴリも補います。Actualが生成したUUIDそのものは再現しません。#279更新時は再fetchして形と内容を合わせてください。
@@ -254,20 +256,22 @@ CSS px → SwiftUI ptは1:1です。元ファイルは `apps/pwa/src/style.css` 
 
 ## 記録一覧の接続範囲
 
-`RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。
+`RecordsFlowTests` は種類の切り替え、スーパーみどりの検索（2件・合計−¥5,700）、詳細、メモ編集、保存、削除と取り消し、検索条件を保った復帰、口座・残高への導線、別タブでも残る取り消し表示を検査します。`RecordsPresentationTests` は日付表示・表示文言・検索条件の検証・合計を、`RecordsModelTests` はRepositoryへの保存と再取得、失敗時の入力保持、振替対の削除/取り消しを検査します。`DeletionNoticeTests` は削除から10秒の期限、起動時の復元、二重タップ、失敗時の再試行です。
+
+記録一覧の「口座・残高を見る」は、PWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」へ遷移します。削除の取り消し表示は `KMDeletionNoticeModel` がshellで保持し、タブを移っても期限まで表示します。起動時は再起動前に削除した記録のうち、まだ取り消せる最新のものを表示します。
 
 未接続・未検証の範囲は次のとおりです。
 
-- 「口座・残高を見る」は口座画面への共通遷移がないため表示しません。shellと口座画面の別PRで接続します。
 - 確認待ちは一覧・未登録下書きの削除・「確認する」からレシート登録画面を開く導線を接続しています。
 - 登録済みレシートは記録詳細の行からレシート編集画面（「支出の記録を編集」）を開き、基本項目・品目別カテゴリ・値引き・税額を編集できます。レシート画像は同画面のプレビューから全画面表示し、タップ位置を中心に2.5倍へ拡大できます。分類理由の閲覧も接続済みです。給与内訳の表示は未接続です。
 - 日付入力は `YYYY-MM-DD` の文字入力です。カテゴリ・口座はOSの選択メニュー、削除確認はOSのダイアログです。支出集計の対象外はOSのスイッチを使います。
-- 削除の取り消し表示は記録画面が残っている間だけです。別タブでも残す共通の通知表示はshellの別PRが必要です。
 - 実機、Dynamic Type、VoiceOverによる手動操作、横向き、永続DBの画面経由の再起動復元は未検証です。Repositoryの単体検証とは区別します。
 
 ## PWAとの差分・検証範囲
 
 - 記録一覧以外のタブ内はplaceholderです。ホームの集計・照合・設定の本実装とデータ状態の比較は後続PRです。記録一覧は空状態と種類別の空状態も表示します。
+- 「口座・残高を見る」はPWAと同じく種類の絞り込み直下に置き、設定タブの「支払元・口座」を開きます。戻ると設定の一覧です。
+- 削除の取り消し表示はshellの上端に置き、PWAの `.deletion-toast` と同じ文言・10秒の期限で、タブを移っても残します。取り消し失敗の理由はPWAの `#message` に当たる行へ出し、タブ切替で消します。取り消し成功後の「削除を取り消しました。」はPWAと同じくタブを移っても残ります。処理中はボタンを無効にするため、連打しても復元は1回です（PWAは2回目がエラー表示）。
 - お問い合わせは文章のみです。利用者の決定（2026/10）で、iOS版は音声の録音・文字起こしを作らず、設定行の「声でも送れます」と問い合わせ画面の音声の文言・ボタンも表示しません。診断情報は「直前のアプリ動作情報を添付する」を選んだ時だけ、PWAと同じ固定語彙（メモリに最大40件・15分、送信時は直近20件）を添付します。問い合わせ画面内の操作・エラーは添付から除外します。
 - 下部ナビ・FAB・シート・toast/bannerの枠だけは指定されたLiquid Glassを使用。透明度、反射、影はPWAの不透明な面と異なりOS依存です。`.glassEffect(_:in:)` / `.tint(_:)` / `.interactive(_:)` はApple公式資料でiOS 26導入を確認しています。[Apple SwiftUI (2026/10), glassEffect / Glass]
 - シートの出入りは透明なネイティブモーダルhostのアニメーションです。PWAの0.2秒のCSSアニメーションとは異なります。視差効果を減らす設定では停止します。背後のページは見たまま保持し、操作とアクセシビリティのフォーカスをOS側で遮断します。

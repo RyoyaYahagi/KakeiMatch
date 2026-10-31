@@ -81,6 +81,11 @@ import Foundation
         let summary = try monthly(month)
         return KMHomeSnapshot(summary: summary, budget: try await budgetSummary(month: month), recentRecords: Array(orderedTransactions().filter { $0.date.yearMonth == month }.prefix(3)))
     }
+    func homeDashboard(month: KMYearMonth, today: KMDate) async throws -> KMHomeDashboard {
+        KMHomeAggregation.make(snapshot: try await home(month: month), run: try await latestRun(),
+            resolutions: try await resolutions(), suspected: try await suspectedStatements(),
+            statements: try await statementTransactions(), today: today)
+    }
     private func orderedTransactions(recentOrder: Bool = true, includeIncomingTransfers: Bool = false) -> [KMTransaction] {
         // PWA recent rows tie-break by ID descending; search results use ID ascending.
         transactionValues.filter { includeIncomingTransfers || $0.kind != .transfer || $0.amountYen < 0 }.sorted {

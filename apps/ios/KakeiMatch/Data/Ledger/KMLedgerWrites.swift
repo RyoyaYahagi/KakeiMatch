@@ -289,7 +289,7 @@ import Foundation
                 || resolution.receiptId.map { key in linked.contains { $0.id == key } } == true)
         }) else { throw KMDataError.invalidData("登録や照合の変更結果を先に確認してください。") }
         let audit = KMTransactionDeletion(id: UUID().uuidString, transactions: rows, receipts: linked,
-            deletedAt: timestamp, undoUntil: timestamp.addingTimeInterval(10))
+            deletedAt: timestamp, undoUntil: KMDeletionUndoPolicy.undoUntil(deletedAt: timestamp))
         ledgerWriteState.tombstones += rows.map { .init(transaction: $0) }
         ledgerWriteState.deletions.append(audit)
         transactionValues.removeAll { ids.contains($0.id) }
