@@ -15,6 +15,14 @@ final class NativeAuthFlowTests: XCTestCase {
         return app
     }
 
+    /// The account screen fills its labels after a refresh, so wait for the
+    /// expected copy instead of reading a label while it still shows the
+    /// loading state.
+    @MainActor private func waitForLabel(_ element: XCUIElement, contains text: String, timeout: TimeInterval = 5) {
+        expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: element)
+        waitForExpectations(timeout: timeout)
+    }
+
     @MainActor private func capture(_ app: XCUIApplication, _ name: String) {
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "native-auth-" + name
@@ -28,8 +36,8 @@ final class NativeAuthFlowTests: XCTestCase {
         // unsupported device. The screen must not attempt a cloud request.
         let app = launch("light")
         XCTAssertTrue(app.staticTexts["account-status"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["usage-summary"].label.contains("クラウドのログインとAI機能を利用できません"))
-        XCTAssertTrue(app.staticTexts["usage-summary"].label.contains("家計簿の閲覧や編集"))
+        waitForLabel(app.staticTexts["usage-summary"], contains: "クラウドのログインとAI機能を利用できません")
+        waitForLabel(app.staticTexts["usage-summary"], contains: "家計簿の閲覧や編集")
         XCTAssertFalse(app.buttons["passkey-login"].exists)
         XCTAssertFalse(app.buttons["invite-register"].exists)
         capture(app, "unsupported-light")
@@ -45,20 +53,20 @@ final class NativeAuthFlowTests: XCTestCase {
         continueAfterFailure = false
         let app = launch("light", authState: "signedOut")
         XCTAssertTrue(app.buttons["passkey-login"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["usage-summary"].label.contains("ログインしなくても"))
-        XCTAssertTrue(app.staticTexts["account-status"].label.contains("未ログイン"))
+        waitForLabel(app.staticTexts["usage-summary"], contains: "ログインしなくても")
+        waitForLabel(app.staticTexts["account-status"], contains: "未ログイン")
         capture(app, "signed-out-light")
 
         app.buttons["passkey-login"].tap()
         XCTAssertTrue(app.buttons["logout"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["usage-summary"].label.contains("今月の読み取り 3 / 10回 · Free"))
-        XCTAssertTrue(app.staticTexts["account-status"].label.contains("ログイン中：テスト利用者"))
+        waitForLabel(app.staticTexts["usage-summary"], contains: "今月の読み取り 3 / 10回 · Free")
+        waitForLabel(app.staticTexts["account-status"], contains: "ログイン中：テスト利用者")
         XCTAssertTrue(app.staticTexts["passkey-list"].exists || app.otherElements["passkey-list"].exists)
         capture(app, "signed-in-light")
 
         app.buttons["logout"].tap()
         XCTAssertTrue(app.buttons["passkey-login"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["account-message"].label.contains("ログアウトしました"))
+        waitForLabel(app.staticTexts["account-message"], contains: "ログアウトしました")
         app.buttons["settings.back"].tap()
         let row = app.buttons["settings.aiUsage"]
         XCTAssertTrue(row.waitForExistence(timeout: 5))
@@ -75,7 +83,7 @@ final class NativeAuthFlowTests: XCTestCase {
         continueAfterFailure = false
         let app = launch("dark", authState: "guest")
         XCTAssertTrue(app.staticTexts["usage-summary"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["usage-summary"].label.contains("今日のAI読み取り 2 / 5回 · 登録なし"))
+        waitForLabel(app.staticTexts["usage-summary"], contains: "今日のAI読み取り 2 / 5回 · 登録なし")
         XCTAssertTrue(app.buttons["passkey-login"].exists)
         capture(app, "guest-dark")
         app.terminate()

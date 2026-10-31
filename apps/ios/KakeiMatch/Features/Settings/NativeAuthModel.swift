@@ -28,7 +28,11 @@ final class KMNativeAuthModel {
 
     var accountStatus: String {
         switch phase {
-        case .unavailable, .loading:
+        case .loading:
+            // PWA leaves `#account-status` empty until the session check settles;
+            // showing the failure copy while loading would flash a false error.
+            return ""
+        case .unavailable:
             return KMNativeAuthPresentation.unavailableStatus
         case .signedOut, .signedIn:
             return KMNativeAuthPresentation.accountStatus(isSignedIn: phase == .signedIn, name: accountName)
