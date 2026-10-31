@@ -27,14 +27,13 @@ final class KMRecordsModel {
     var message: String?
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var revision = 0
-    @ObservationIgnored private let started = ProcessInfo.processInfo.systemUptime
 
     var pending: [KMReceipt] { receipts.filter { $0.registration.status != .applied && $0.registration.status != .deleted } }
     var changed: Bool { draft != originalDraft }
     var canEdit: Bool { selectedReceipt != nil || selected?.isSplit != true }
     var now: Date {
         guard let repositories, repositories.fixtureName != nil else { return Date() }
-        return repositories.referenceDate.addingTimeInterval(ProcessInfo.processInfo.systemUptime - started)
+        return KMFixtureClock.now(reference: repositories.referenceDate)
     }
 
     func configure(_ repositories: KMRepositories?) async {

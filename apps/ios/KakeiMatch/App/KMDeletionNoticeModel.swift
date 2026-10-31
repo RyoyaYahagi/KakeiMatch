@@ -26,8 +26,10 @@ final class KMDeletionNoticeModel {
     func configure(_ repositories: KMRepositories?) async {
         self.repositories = repositories
         guard let repositories else { return }
-        if let fixtureClock = makeFixtureClock(repositories) {
-            clock = fixtureClock
+        // One clock origin across screens keeps the 10-second window in fixture runs.
+        if repositories.fixtureName != nil {
+            let reference = repositories.referenceDate
+            clock = { KMFixtureClock.now(reference: reference) }
         }
         await restoreLatest()
     }
@@ -91,13 +93,6 @@ final class KMDeletionNoticeModel {
     /// A tab switch clears PWA's `#message` but leaves `.deletion-toast` alone.
     func clearTransientStatus() {
         failure = nil
-    }
-
-    private func makeFixtureClock(_ repositories: KMRepositories) -> (() -> Date)? {
-        guard repositories.fixtureName != nil else { return nil }
-        let started = ProcessInfo.processInfo.systemUptime
-        let reference = repositories.referenceDate
-        return { reference.addingTimeInterval(ProcessInfo.processInfo.systemUptime - started) }
     }
 }
 
