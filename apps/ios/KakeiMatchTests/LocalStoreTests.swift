@@ -457,7 +457,7 @@ import ZIPFoundation
 
     /// Adds one PWA-shaped monthly schedule and four already-posted occurrences to the synthetic
     /// Actual DB. The rule/action JSON matches what `createRecurringSchedule` + category rule write.
-    private func scheduledBackup(in directory: URL, nextDate: Int, complex: Bool = false) throws -> URL {
+    private func scheduledBackup(in directory: URL, nextDate: Int, complex: Bool = false, posted: Bool = true) throws -> URL {
         let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
         let editDirectory = directory.appendingPathComponent("schedule-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: editDirectory, withIntermediateDirectories: true)
@@ -476,11 +476,13 @@ import ZIPFoundation
                 try db.execute("INSERT INTO schedules(id,rule,posts_transaction,completed,tombstone,name) VALUES('schedule-1','schedule-rule-1',1,0,0,'合成家賃')")
                 try db.execute("INSERT INTO schedules_next_date(id,schedule_id,local_next_date,local_next_date_ts,base_next_date,base_next_date_ts,tombstone) VALUES('nd-1','schedule-1',?,1,?,1,0)",
                     [.integer(nextDate), .integer(nextDate)])
-                for day in [20260715, 20260815, 20260915, 20261015] {
-                    let raw = String(format: "%04d-%02d-%02d", day / 10000, day / 100 % 100, day % 100)
-                    try db.execute("INSERT INTO transactions(id,acct,date,amount,category,description,financial_id,schedule,cleared) VALUES(?,?,?,?,?,?,?,?,1)", [
-                        .text("sched-\(raw)"), .text(account), .integer(day), .integer(-50000), .text(category), .text(payee),
-                        .text("kakeimatch:schedule:schedule-1:\(raw)"), .text("schedule-1")])
+                if posted {
+                    for day in [20260715, 20260815, 20260915, 20261015] {
+                        let raw = String(format: "%04d-%02d-%02d", day / 10000, day / 100 % 100, day % 100)
+                        try db.execute("INSERT INTO transactions(id,acct,date,amount,category,description,financial_id,schedule,cleared) VALUES(?,?,?,?,?,?,?,?,1)", [
+                            .text("sched-\(raw)"), .text(account), .integer(day), .integer(-50000), .text(category), .text(payee),
+                            .text("kakeimatch:schedule:schedule-1:\(raw)"), .text("schedule-1")])
+                    }
                 }
             }
         })
@@ -599,6 +601,20 @@ import ZIPFoundation
         let after = try await store.transactions(matching: .init(limit: nil))
         #expect(after.count == before.count)
         #expect(after.filter { $0.importedId?.hasPrefix("kakeimatch:schedule:schedule-1:") == true }.count == 4)
+    }
+
+    @Test func kmbSchedulePostsMissingDueOccurrences() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let file = try scheduledBackup(in: directory, nextDate: 20260715, posted: false)
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.importBackup(from: file)
+        let before = try await store.transactions(matching: .init(limit: nil))
+        try await store.runRecurring(through: KMDate("2026-10-20"), at: Date(timeIntervalSince1970: 1_800_000_000))
+        let generated = try await store.transactions(matching: .init(limit: nil))
+            .filter { $0.importedId?.hasPrefix("kakeimatch:schedule:schedule-1:") == true }
+        #expect(generated.count == 4)
+        #expect(try generated.map(\.date).sorted() == [KMDate("2026-07-15"), KMDate("2026-08-15"), KMDate("2026-09-15"), KMDate("2026-10-15")])
+        #expect(try await store.transactions(matching: .init(limit: nil)).count == before.count + 4)
     }
 
     @Test func inMemoryScheduleProjectionSkipsPostedOccurrences() async throws {
