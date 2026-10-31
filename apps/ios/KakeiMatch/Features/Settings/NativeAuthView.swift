@@ -68,10 +68,15 @@ struct KMNativeAuthView: View {
         } message: { passkey in
             Text("\(passkey.name ?? "このPasskey")を削除しますか？")
         }
-        .confirmationDialog("Cloud accountを削除しますか？", isPresented: $showsDeleteConfirm, titleVisibility: .visible) {
+        .alert("Cloud accountを削除しますか？", isPresented: $showsDeleteConfirm) {
             Button("削除する", role: .destructive) {
                 deleteTyping = ""
-                showsDeleteTyping = true
+                // PWA asks for the typed phrase in a second prompt. Present it
+                // after the first alert finishes dismissing so it is not dropped.
+                Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    showsDeleteTyping = true
+                }
             }
             Button("キャンセル", role: .cancel) {}
         } message: {
