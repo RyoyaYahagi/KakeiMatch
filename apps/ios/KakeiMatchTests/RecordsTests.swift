@@ -112,6 +112,17 @@ struct RecordsPresentationTests {
         #expect(try await repo.transactions.transaction(id: row.id)?.memo == "合成の編集メモ")
     }
 
+    @Test func recreatedFixtureModelKeepsTheSharedClockOrigin() async throws {
+        let repo = try KMFixtureLoader.load(named: "reconciliation")
+        let first = KMRecordsModel(); await first.configure(repo)
+        let firstNow = first.now
+        // タブを離れると RecordsModel は作り直される。fixture の基準時刻を作り直しごとに
+        // 決め直すと、shell の削除通知より時計が遅れ、10秒の取り消し期限が縮む。
+        try await Task.sleep(for: .milliseconds(200))
+        let second = KMRecordsModel(); await second.configure(repo)
+        #expect(second.now.timeIntervalSince(firstNow) >= 0.1)
+    }
+
     @Test func failedSaveRetainsDraftAndPendingIsNotCountedAsLedger() async throws {
         let repo = try KMFixtureLoader.load(named: "receipt")
         let model = KMRecordsModel(); await model.configure(repo)
