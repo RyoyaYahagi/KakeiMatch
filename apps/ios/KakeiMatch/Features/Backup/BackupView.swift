@@ -323,4 +323,6 @@ struct KMBackupView: View {
     }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("migration") { KMBackupView(onBack: {}) } }
+#endif

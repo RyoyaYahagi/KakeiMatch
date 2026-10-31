@@ -348,4 +348,6 @@ struct SettingsView: View {
     }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("migration") { SettingsView() } }
+#endif

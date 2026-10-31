@@ -758,4 +758,6 @@ struct ManualEntryView: View {
     var body: some View { KMEntryFormView(kind: .expense) }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("migration") { KMEntryFormView(kind: .expense) } }
+#endif

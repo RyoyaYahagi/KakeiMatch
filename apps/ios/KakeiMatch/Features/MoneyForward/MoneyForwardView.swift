@@ -582,4 +582,6 @@ struct KMMoneyForwardView: View {
     }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("migration") { KMMoneyForwardView(onBack: {}) } }
+#endif

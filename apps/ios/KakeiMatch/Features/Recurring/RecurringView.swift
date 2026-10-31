@@ -464,4 +464,6 @@ struct KMRecurringView: View {
     }
 }
 
+#if DEBUG
 #Preview { KMFixturePreview("migration") { SettingsView() } }
+#endif
