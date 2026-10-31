@@ -159,6 +159,7 @@ struct ReconciliationSlip: View {
     let statement: KMStatementTransaction
     var record: Record?
     var stamped = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         VStack(spacing: 0) {
             part(title: "カード明細", source: KMStatementDownload.label(statement.provider), date: statement.usedDate,
@@ -195,15 +196,29 @@ struct ReconciliationSlip: View {
         }.padding(.trailing, stamped ? 64 : 0).padding(.horizontal, 16).padding(.vertical, 12)
     }
     private func field(_ title: String, value: String, numeric: Bool = false, same: Bool = false, differs: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted).frame(width: 46, alignment: .leading)
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(value).font(numeric ? KMTypography.number(title == "金額" ? 18 : 16, weight: .bold) : KMTypography.body(16, weight: .medium))
-                    .foregroundStyle(differs ? KMColor.warning : KMColor.text)
-                    .padding(.horizontal, differs ? 8 : 0)
-                    .background(differs ? KMColor.warningSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
-                if same { Text("同じ").font(KMTypography.body(12)).foregroundStyle(KMColor.muted) }
-            }.frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted)
+                    valueLine(value, numeric: numeric, same: same, differs: differs, size: title == "金額" ? 18 : 16)
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(title).font(KMTypography.note).foregroundStyle(KMColor.muted).frame(width: 46, alignment: .leading)
+                    valueLine(value, numeric: numeric, same: same, differs: differs, size: title == "金額" ? 18 : 16)
+                }
+            }
         }
     }
+
+    private func valueLine(_ value: String, numeric: Bool, same: Bool, differs: Bool, size: CGFloat) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(value).font(numeric ? KMTypography.number(size, weight: .bold) : KMTypography.body(16, weight: .medium))
+                .foregroundStyle(differs ? KMColor.warning : KMColor.text)
+                .padding(.horizontal, differs ? 8 : 0)
+                .background(differs ? KMColor.warningSoft : .clear, in: RoundedRectangle(cornerRadius: 10))
+            if same { Text("同じ").font(KMTypography.body(12)).foregroundStyle(KMColor.muted) }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
 }

@@ -1,6 +1,6 @@
 # iOS アプリのクラウド認証境界（Issue #240）
 
-この文書は `/api/native/*` の実装仕様です。通常の家計操作は端末内で完結し、クラウド認証へ依存させません。本番への公開・migration 適用・署名済みアプリの実機確認は、このPRでは行いません。**Worker と PWA 配信にも変更があるため、利用者の確認後にだけマージします。**
+この文書は `/api/native/*` の実装仕様と、iOS アプリの認証画面（#322）の接続範囲です。通常の家計操作は端末内で完結し、クラウド認証へ依存させません。本番への公開・migration 適用・署名済みアプリの実機確認は、この文書更新の対象外です。Worker 側の契約と endpoint は変更しません。
 
 ## 1. 境界と採用方針
 
@@ -12,7 +12,7 @@
 
 ### 設定不足・非対応端末
 
-全設定がそろうまで、ネイティブAPIは `503 not_configured`、config は `available:false`、AASA は404です。Team ID を推測して有効にしません。App Attest 非対応端末・Simulator ではネイティブのクラウド機能を使えません。ダミー証明、自己申告、Origin 偽装、無検証のゲスト作成へ切り替えません。手入力・端末内閲覧は継続できます。既存PWAの Turnstile 経路は独立して残ります。
+全設定がそろうまで、ネイティブAPIは `503 not_configured`、config は `available:false`、AASA は404です。Team ID を推測して有効にしません。App Attest 非対応端末・Simulator ではネイティブのクラウド機能を使えません。ダミー証明、自己申告、Origin 偽装、無検証のゲスト作成へ切り替えません。手入力と端末内の閲覧・編集は継続できます。既存PWAの Turnstile 経路は独立して残ります。
 
 Apple は `isSupported` の確認と、非対応時のサービス設計の分岐を求めています。本実装では安全側にクラウド機能を無効にする方針を採用します。[Apple Integrity (2026/10), Check for availability]
 
@@ -148,7 +148,7 @@ userまたは背後のBetter Auth session削除は外部キーでnative session 
 | `NATIVE_APP_ORIGIN` | 本番は `https://kakeimatch.yhgry.workers.dev`。request originと `CLOUD_ACCOUNT_ORIGIN` に完全一致 |
 | `NATIVE_APP_RP_ID` | 上記hostに完全一致。本番は `kakeimatch.yhgry.workers.dev` |
 | `NATIVE_APP_ATTEST_ENVIRONMENT` | `production` / `development`。本番hostでdevelopmentは拒否 |
-| iOS build setting `KM_NATIVE_HOST` | 既定は `kakeimatch.yhgry.workers.dev`。アプリの `KMNativeAPIHost` と `webcredentials:` entitlementへ同じhostを渡す。previewではpreview hostへ上書きし、API URLとAssociated Domainsを同時に切り替える。本番entitlementのままpreview URLだけを指定しない |
+| iOS build setting `KM_NATIVE_HOST` | 既定は `kakeimatch.yhgry.workers.dev`。`project.yml` の `postBuildScripts` が署名前に `$(KM_NATIVE_HOST)` を `KMNativeAPIHost` として生成plistへ注入し、`webcredentials:` entitlementへも同じhostを渡す。Xcodeの `INFOPLIST_KEY_` はcustom keyを生成plistへ反映しないため使わない。previewではpreview hostへ上書きし、API URLとAssociated Domainsを同時に切り替える。本番entitlementのままpreview URLだけを指定しない |
 | iOS build setting `KM_APP_ATTEST_ENVIRONMENT` | Debugは `development`、Releaseは `production` を既定値にする。`KM_DEVELOPMENT_TEAM` は外部署名環境から受け取り、sourceへ置かない |
 
 `KMAPIConfiguration` はbundleの `KMNativeAPIHost` から既定のHTTPS API URLを作ります。値が欠損・不正なら初期化を失敗させ、production hostへfallbackしません。hostの自動発見やpreview fallbackは行いません。テスト等では明示URLを注入できますが、署名済みpreview buildでは `KM_NATIVE_HOST` とAssociated Domainsの値を合わせてください。Worker `/api/native/config` の `rpId` もそのURL hostと一致必須です。
@@ -183,14 +183,58 @@ previewは別host・RP・D1・AASA・Keychain serviceを使い、合成データ
 4. Xcodeの署名Teamを外部設定から指定し、Associated DomainsとApp Attest capabilityを対象App ID / provisioning profileで有効にします。Debugのdevelopment鍵を本番へ向けません。TestFlight / App Storeのproduction環境も確認します。
 5. 本番build変数に `NATIVE_APP_*` を登録します。previewには `PREVIEW_NATIVE_APP_*` を登録し、本番資格情報を使いません。秘密情報は既存のCloudflare Secret bindingのままです。
 6. PRの `ci`・AI Gateway・iOS CI成功と検証差分を確認し、利用者がマージします。通常の本番公開はmainマージ後のWorkers Buildsに任せます。このPR担当はdeployしません。
-7. 公開後、AASAのHTTPS直200・JSON・redirectなしを確認します。署名済み実機でPWA登録済みPasskeyのログイン、招待登録、追加/削除、guest作成、token更新、logout/recovery/delete後の拒否を合成データで確認します。両経路で日次枠・費用停止も確認します。
-8. App Attest非対応端末の拒否、オフライン手入力、資格情報と家計バックアップの分離、再インストール後の鍵再作成を確認します。AASAのCDN反映も待って確認します。
+7. 公開後、AASAのHTTPS直200・JSON・redirectなしを確認します。署名済み実機で、設定の「ログイン・利用状況」からPWA登録済みPasskeyのログイン、招待登録、追加/削除、ログアウト、Cloud account削除を合成データで確認します。レシートのゲスト確認からguest作成・token更新も確認し、両経路で日次枠・費用停止を確認します。
+8. App Attest非対応端末でログイン・AIの操作が出ず、要求も送られないこと、オフラインの手入力、資格情報と家計バックアップの分離、再インストール後の鍵再作成を確認します。AASAのCDN反映も待って確認します。
 
-## 9. 検証の範囲と残件
+## 9. iOS の認証画面（#322）
 
-Workerの暗号テストは実行時に生成する合成証明書・鍵を使います。HTTP/D1テストは期限切れ、replay、環境/設定不一致、失効、route/audience分離と旧Webの拒否を検査します。Swift TestingはURLProtocol / Passkey / App Attestのstubで順序と保存・拒否を検査します。CI成功はAppleサーバー・実機・本番D1での成功を意味しません。
+`apps/ios/KakeiMatch/Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` が、設定の「ログイン・利用状況」を `/api/native/*` へ接続します。画面は家計 Repository を読まず、ログインできない状態でも端末内の家計簿の閲覧・編集を止めません。API の契約・endpoint は3節のままです。
 
-未検証: 正しいTeam/App ID、署名済み実機のAssociated Domains、App Attestの本物の証明書・assertion、PWA既存Passkeyのネイティブ共有とorigin実値、TestFlightの環境、実provider・本番費用制限・本番migration・AASA CDN反映。認証UIと家計サービスへの接続はAPI層とは別の作業です。
+### 入口と状態
+
+入口は設定 →「写真の読み取り」→「ログイン・利用状況」です。一覧の行の右には PWA の `#ai-row-value` と同じ利用回数を出し、ログイン・ログアウト後に設定一覧へ戻った時に取り直します。
+
+| 状態 | 表示と操作 |
+| --- | --- |
+| 読み込み中 | アカウント状態は空。利用回数は「利用状況を読み込んでいます…」 |
+| 未ログイン | 「未ログインです。」、ゲストの当日利用回数とメーター、Passkeyログイン、招待コード登録、家計簿に戻る。初回でゲストセッションがない時は回数の代わりに1日5回の説明を出す |
+| ログイン中 | 利用者名、プラン別の今月の利用回数とメーター、AI利用の確認、Passkeyの一覧・追加・削除、ログアウト、Cloud account削除 |
+| 接続不可 | App Attest 非対応（Simulatorを含む）、Worker未設定、通信失敗を区別して理由を出す。ログインとAIの操作は出さず、端末内の家計簿を続けられることを書く |
+
+- Passkeyログインと招待コード登録の成功後は、利用状況とPasskey一覧を取り直し、続けてアカウントのAI tokenを取得します。失敗時は再試行を促す文言を出し、画面と端末内データは保持します。
+- 招待コードはOSのアラート入力欄で受け取ります（PWAの`window.prompt`に相当）。前後の空白を除き、空でない4 KiB以下だけを送ります。
+- Passkey削除は確認アラートを出してから実行します。Cloud account削除は確認アラートの後に「アカウントを削除」の入力をもう一度求め、一致した時だけ実行します。文言と入力語はPWAと同じです。
+- ログアウトとCloud account削除は端末の家計簿・レシート・明細・照合記録を消しません。削除後も端末内データを閲覧・バックアップできることを画面に書きます。
+- 利用状況の取得やAI tokenの取得でセッション切れを検出した時は未ログイン表示へ戻し、「Passkeyで再度ログインしてください」と伝えます。AI token取得だけが失敗した時は、家計簿の利用は続けられることを伝えます。
+
+### レシート読み取り前のゲスト確認
+
+未ログインでAIを使う最初のレシート読み取りでは、AI tokenの取得が `nativeAuthenticationRequired` または `authenticationRequired` で止まった時に「確認しています」ダイアログを出します。PWAのTurnstileウィジェットの代わりにApp Attestで端末を確認するため、説明は「この端末が正規のアプリか」に置き換え、表示直後にゲストセッションの作成を始めます。
+
+- 作成に成功するとダイアログを閉じ、同じ写真の読み取りを続けます。ゲストセッションが有効な間は、以降の読み取りで確認を出しません。
+- 「やめる」、作成失敗、通信失敗でも画像と手入力は保持します。キャンセル時は写真が残っていることを伝え、失敗時は理由を出します。
+- ゲストの作成数とAI利用回数の上限はサーバーが判定します。端末は結果だけを表示し、上限を回避する再作成をしません。
+
+### 端末・ビルド設定
+
+Simulator は `KMLiveAppAttest.isSupported` が常に `false` を返します。認証画面は、`KMWorkerAPI` の生成時に1回読んだ `appAttestSupported` が false ならネイティブ要求を送らず、接続不可の表示に切り替えます。App Attest 非対応の実機も同じ扱いです。画面は「この端末ではクラウドのログインとAI機能を利用できません」と出し、家計簿の閲覧・編集は続けられます。
+
+`project.yml` は `INFOPLIST_KEY_KMNativeAPIHost` を使わず、`postBuildScripts` で署名前に `$(KM_NATIVE_HOST)` を `KMNativeAPIHost` として生成plistへ注入します。Xcodeの `INFOPLIST_KEY_` は既知のキーしか反映しないためです。Debugは `KM_APP_ATTEST_ENVIRONMENT=development`、Releaseは `production` の既定値を変えません。previewは6節のとおり、hostとAssociated Domainsを同時に切り替えます。
+
+### PWA との差分
+
+- Turnstile の代わりに App Attest を使うため、確認ダイアログの説明は「この端末が正規のアプリか」に変わります。ウィジェットがないので、同じ位置に進捗表示を置き、表示直後に確認を始めます。
+- 招待コードは `window.prompt` ではなくOSのアラート入力欄です。
+- Simulator / App Attest非対応端末は、PWAの汎用エラーではなく理由と端末内機能の継続を表示します。
+- ログアウト後にゲストの当日利用回数を取り直します（PWAは直前のアカウント値が残ります）。
+
+画面の確認は `KMNativeAuthModel` のstubとXCUITestの固定状態で行います。実Worker、実機のPasskey、App Attest、AASA、Keychainは未検証です（10節）。
+
+## 10. 検証の範囲と残件
+
+Workerの暗号テストは実行時に生成する合成証明書・鍵を使います。HTTP/D1テストは期限切れ、replay、環境/設定不一致、失効、route/audience分離と旧Webの拒否を検査します。Swift TestingはURLProtocol / Passkey / App Attestのstubで順序と保存・拒否を検査します。画面は `KMNativeAuthModel` のstubとXCUITestのDebug専用状態で、未ログイン・ログイン中・App Attest非対応の表示と操作を検査します。CI成功はAppleサーバー・実機・本番D1での成功を意味しません。
+
+未検証: 正しいTeam/App ID、署名済み実機のAssociated Domains、App Attestの本物の証明書・assertion、PWA既存Passkeyのネイティブ共有とorigin実値、TestFlightの環境、実provider・本番費用制限・本番migration・AASA CDN反映。iOSの認証画面についても、実Worker通信、実機のPasskey（ログイン・招待登録・追加・削除）、App Attest、AASA、署名済みentitlement、実Keychain、実機のVoiceOver・Dynamic Type・横向き、実機でのゲスト確認ダイアログは未検証です。PWAには「ログイン・利用状況」の基準画像がないため、画像比較はPWAソースとiOSの実画面で行いました。
 
 ## 参照資料
 
