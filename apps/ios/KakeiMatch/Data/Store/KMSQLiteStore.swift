@@ -2,12 +2,18 @@ import Foundation
 
 /// Device-local repository facade. Each write uses a disposable domain working copy and publishes only
 /// after a SQLite transaction succeeds. The in-memory adapter remains available for previews/fixtures.
+///
+/// All scenes receive the same instance from the app composition root. Store operations take one
+/// process-wide turn at a time (queued in request order), so a second scene waits for the first
+/// scene's commit instead of failing with a transient "busy" error. A write also re-checks the
+/// active-profile pointer before COMMIT: a working copy read from a profile that has since been
+/// replaced is rolled back rather than written to the superseded database.
 @MainActor final class KMSQLiteStore: TransactionRepository, AccountRepository, CategoryRepository, PayeeRepository,
     ReceiptRepository, StatementRepository, ReconciliationRepository, BudgetRepository, RecurringRepository,
     PayrollRepository, CategoryLearningRepository, SettingsRepository {
     struct ProfilePointer: Codable { var current: UUID; var previous: UUID? }
     let directory: URL
-    private var busy = false
+    private let queue = KMSerialQueue()
     private var pointerURL: URL { directory.appendingPathComponent("active.json") }
     static func openDefault() throws -> KMSQLiteStore {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
@@ -32,79 +38,92 @@ import Foundation
     private func publish(_ pointer: ProfilePointer) throws {
         try KMJSON.encoder().encode(pointer).write(to: pointerURL, options: .atomic)
     }
-    private func database() throws -> KMStoreDatabase {
-        let path = profileDirectory(try profile().current).appendingPathComponent("household.sqlite")
+    private func database(profileId: UUID? = nil) throws -> KMStoreDatabase {
+        let path = profileDirectory(try profileId ?? profile().current).appendingPathComponent("household.sqlite")
         guard FileManager.default.fileExists(atPath: path.path) else { throw KMDataError.notFound("有効な家計簿がありません。保存済みデータを削除しないでください。") }
         return try KMStoreDatabase(url: path)
     }
+    /// MainActor already serializes synchronous work, but an `await` inside an operation can hand
+    /// the actor to another scene. The queue keeps that second scene waiting in arrival order.
+    /// Never call a store method from inside an operation body; this lock is not reentrant.
+    private func serialized<T>(_ operation: @MainActor () async throws -> T) async throws -> T {
+        try await queue.run(operation)
+    }
     private func access<T>(_ writing: Bool = false, _ action: (KMInMemoryStore) async throws -> T) async throws -> T {
-        guard !busy else { throw KMDataError.invalidData("家計データを処理中です。完了後に再試行してください。") }
-        busy = true; defer { busy = false }
-        let db = try database(), working = try db.load()
-        let value = try await action(working)
-        if writing { try db.save(working) }
-        return value
+        try await serialized {
+            let profileId = try profile().current
+            let db = try database(profileId: profileId), working = try db.load()
+            let value = try await action(working)
+            if writing {
+                // The pointer is the profile boundary. If another connection switched profiles,
+                // this working copy belongs to the superseded household and must not commit.
+                try db.save(working, ifActive: { try self.profile().current == profileId })
+            }
+            return value
+        }
     }
     /// No merging: validate into a new profile, verify persisted bytes, then atomically replace one pointer.
     /// Both the old profile and its credentials-independent household remain available for undo.
     func importBackup(from url: URL) async throws {
-        guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
-        busy = true; defer { busy = false }
-        let file = try Data(contentsOf: url, options: [.mappedIfSafe])
-        let magic = Data(file.prefix(8))
-        if magic == KMNativeBackup.magic {
-            let backup = try KMNativeBackup.read(url: url)
-            try importNativeBackup(backup)
-            return
-        }
-        guard magic == Data("KMATCHB1".utf8) else { throw KMPortableBackup.invalid() }
-        let backup = try KMPortableBackup.read(url: url)
-        let old = try profile(), id = UUID(), target = profileDirectory(id)
-        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
-        do {
-            let working = try KMActualImport.project(backup: backup, staging: target)
-            // Appearance is device-local, not imported household data.
-            working.settingsValue.theme = try database().load().settingsValue.theme
-            let db = try KMStoreDatabase(url: target.appendingPathComponent("household.sqlite"))
-            try db.saveArtifacts(backup.artifacts)
-            try db.save(working)
-            try db.preserve("actual-budget.zip", data: backup.actualZIP)
-            try db.preserve("local-data.json", data: backup.localJSON)
-            try db.preserve("manifest.json", data: backup.manifestJSON)
-            // Full object and raw-byte readback before publication; hashes are verified by the reader too.
-            let readback = try db.load()
-            guard try fingerprint(working) == fingerprint(readback), working.serviceState == readback.serviceState else { throw KMDataError.invalidData("復元した記録の読み戻しに失敗しました。") }
-            for artifact in backup.artifacts {
-                guard try db.original(artifact.metadata.id) == artifact.data else { throw KMDataError.invalidData("復元した原本の読み戻しに失敗しました。") }
+        try await serialized {
+            let file = try Data(contentsOf: url, options: [.mappedIfSafe])
+            let magic = Data(file.prefix(8))
+            if magic == KMNativeBackup.magic {
+                let backup = try KMNativeBackup.read(url: url)
+                try importNativeBackup(backup)
+                return
             }
-            try publish(ProfilePointer(current: id, previous: old.current))
-        } catch { try cleanup(target, after: error) }
+            guard magic == Data("KMATCHB1".utf8) else { throw KMPortableBackup.invalid() }
+            let backup = try KMPortableBackup.read(url: url)
+            let old = try profile(), id = UUID(), target = profileDirectory(id)
+            try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+            do {
+                let working = try KMActualImport.project(backup: backup, staging: target)
+                // Appearance is device-local, not imported household data.
+                working.settingsValue.theme = try database(profileId: old.current).load().settingsValue.theme
+                let db = try KMStoreDatabase(url: target.appendingPathComponent("household.sqlite"))
+                try db.saveArtifacts(backup.artifacts)
+                try db.save(working)
+                try db.preserve("actual-budget.zip", data: backup.actualZIP)
+                try db.preserve("local-data.json", data: backup.localJSON)
+                try db.preserve("manifest.json", data: backup.manifestJSON)
+                // Full object and raw-byte readback before publication; hashes are verified by the reader too.
+                let readback = try db.load()
+                guard try fingerprint(working) == fingerprint(readback), working.serviceState == readback.serviceState else { throw KMDataError.invalidData("復元した記録の読み戻しに失敗しました。") }
+                for artifact in backup.artifacts {
+                    guard try db.original(artifact.metadata.id) == artifact.data else { throw KMDataError.invalidData("復元した原本の読み戻しに失敗しました。") }
+                }
+                try publish(ProfilePointer(current: id, previous: old.current))
+            } catch { try cleanup(target, after: error) }
+        }
     }
     /// Creates a complete native-only backup in a temporary .kmib file and returns its URL.
     /// Export time means generation completed; the caller still owns saving/sharing the file.
     func exportNativeBackup() async throws -> URL {
-        guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
-        busy = true; defer { busy = false }
-        let timestamp = Date()
-        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: false)
-        defer { try? FileManager.default.removeItem(at: tempDirectory) }
-        let snapshotURL = tempDirectory.appendingPathComponent("snapshot.sqlite")
-        try database().snapshot(to: snapshotURL)
-        let snapshot = try Data(contentsOf: snapshotURL, options: [.mappedIfSafe])
-        let artifacts = try KMStoreDatabase(url: snapshotURL).artifacts()
-        let archive = try KMNativeBackup.package(database: snapshot, artifacts: artifacts, exportedAt: timestamp)
-        let output = FileManager.default.temporaryDirectory.appendingPathComponent("KakeiMatch-\(UUID().uuidString).kmib")
-        try archive.write(to: output, options: .atomic)
-        do {
-            let current = try database().load()
-            current.settingsValue.lastExportAt = timestamp
-            try database().save(current)
-        } catch {
-            try FileManager.default.removeItem(at: output)
-            throw error
+        try await serialized {
+            let profileId = try profile().current
+            let timestamp = Date()
+            let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+            try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: tempDirectory) }
+            let snapshotURL = tempDirectory.appendingPathComponent("snapshot.sqlite")
+            try database(profileId: profileId).snapshot(to: snapshotURL)
+            let snapshot = try Data(contentsOf: snapshotURL, options: [.mappedIfSafe])
+            let artifacts = try KMStoreDatabase(url: snapshotURL).artifacts()
+            let archive = try KMNativeBackup.package(database: snapshot, artifacts: artifacts, exportedAt: timestamp)
+            let output = FileManager.default.temporaryDirectory.appendingPathComponent("KakeiMatch-\(UUID().uuidString).kmib")
+            try archive.write(to: output, options: .atomic)
+            do {
+                let db = try database(profileId: profileId)
+                let current = try db.load()
+                current.settingsValue.lastExportAt = timestamp
+                try db.save(current, ifActive: { try self.profile().current == profileId })
+            } catch {
+                try FileManager.default.removeItem(at: output)
+                throw error
+            }
+            return output
         }
-        return output
     }
 
     private func importNativeBackup(_ backup: KMNativeBackupContents) throws {
@@ -149,19 +168,22 @@ import Foundation
         }
         return String(data: Data(bytes), encoding: .utf8)
     }
-    func returnToPreviousProfile() throws {
-        guard !busy else { throw KMDataError.invalidData("家計データを処理中です。") }
-        let value = try profile()
-        guard let previous = value.previous else { throw KMDataError.notFound("変更前の家計簿がありません。") }
-        let path = profileDirectory(previous).appendingPathComponent("household.sqlite")
-        guard FileManager.default.fileExists(atPath: path.path) else { throw KMDataError.notFound("変更前の家計簿が見つかりません。") }
-        let previousDB = try KMStoreDatabase(url: path), previousStore = try previousDB.load()
-        let theme = try database().load().settingsValue.theme
-        if previousStore.settingsValue.theme != theme {
-            previousStore.settingsValue.theme = theme
-            try previousDB.save(previousStore)
+    /// Profile switches take the same turn as repository operations, so no scene can write
+    /// through a connection opened before the pointer moves.
+    func returnToPreviousProfile() async throws {
+        try await serialized {
+            let value = try profile()
+            guard let previous = value.previous else { throw KMDataError.notFound("変更前の家計簿がありません。") }
+            let path = profileDirectory(previous).appendingPathComponent("household.sqlite")
+            guard FileManager.default.fileExists(atPath: path.path) else { throw KMDataError.notFound("変更前の家計簿が見つかりません。") }
+            let previousDB = try KMStoreDatabase(url: path), previousStore = try previousDB.load()
+            let theme = try database(profileId: value.current).load().settingsValue.theme
+            if previousStore.settingsValue.theme != theme {
+                previousStore.settingsValue.theme = theme
+                try previousDB.save(previousStore)
+            }
+            try publish(ProfilePointer(current: previous, previous: value.current))
         }
-        try publish(ProfilePointer(current: previous, previous: value.current))
     }
     /// CSVs and images are accessible by portable blob ID, never by an archive-supplied filesystem path.
     func originalArtifact(id: String) throws -> Data? { try database().original(id) }

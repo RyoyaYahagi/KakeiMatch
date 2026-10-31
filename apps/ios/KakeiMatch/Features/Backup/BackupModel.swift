@@ -90,7 +90,7 @@ final class KMBackupModel {
         previousStatus = nil
         defer { isWorking = false }
         do {
-            try store.returnToPreviousProfile()
+            try await store.returnToPreviousProfile()
             lastExportAt = (try? await repositories.settings.settings())?.lastExportAt
             canRestorePrevious = hasPreviousProfile(repositories)
             previousStatus = KMBackupPresentation.previousRestored
