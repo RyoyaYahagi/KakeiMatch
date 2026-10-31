@@ -100,12 +100,27 @@ struct RecordsPresentationTests {
         #expect(model.error == nil && !model.changed)
         let saved = try #require(try await repo.transactions.transaction(id: row.id))
         #expect(saved.memo == "合成の編集メモ" && saved.amountYen == -1200 && saved.id == row.id)
-        await model.remove()
-        #expect(model.error == nil && model.page == .list && model.deletion != nil)
+        _ = await model.remove()
+        #expect(model.error == nil && model.page == .list)
         #expect(try await repo.transactions.transaction(id: row.id) == nil)
-        await model.undo()
-        #expect(model.error == nil && model.deletion == nil)
+        let notice = KMDeletionNoticeModel()
+        await notice.configure(repo)
+        #expect(notice.deletion != nil)
+        #expect(await notice.undo())
+        #expect(notice.deletion == nil)
+        #expect(notice.status == KMDeletionNoticeText.restored)
         #expect(try await repo.transactions.transaction(id: row.id)?.memo == "合成の編集メモ")
+    }
+
+    @Test func recreatedFixtureModelKeepsTheSharedClockOrigin() async throws {
+        let repo = try KMFixtureLoader.load(named: "reconciliation")
+        let first = KMRecordsModel(); await first.configure(repo)
+        let firstNow = first.now
+        // タブを離れると RecordsModel は作り直される。fixture の基準時刻を作り直しごとに
+        // 決め直すと、shell の削除通知より時計が遅れ、10秒の取り消し期限が縮む。
+        try await Task.sleep(for: .milliseconds(200))
+        let second = KMRecordsModel(); await second.configure(repo)
+        #expect(second.now.timeIntervalSince(firstNow) >= 0.1)
     }
 
     @Test func failedSaveRetainsDraftAndPendingIsNotCountedAsLedger() async throws {
@@ -127,8 +142,9 @@ struct RecordsPresentationTests {
         let model = KMRecordsModel(); await model.configure(repo); await model.open(transfer)
         model.draft?.amount = "2000"; await model.save()
         #expect(model.error == nil && model.selected?.amountYen == -2000)
-        await model.remove(); #expect(model.error == nil && model.deletion?.transactions.count == 2)
-        await model.undo(); #expect(model.error == nil)
+        let audit = await model.remove(); #expect(model.error == nil && audit?.transactions.count == 2)
+        let notice = KMDeletionNoticeModel(); await notice.configure(repo)
+        #expect(await notice.undo()); #expect(model.error == nil)
         #expect(try await repo.transactions.transaction(id: transfer.id)?.amountYen == -2000)
     }
 }

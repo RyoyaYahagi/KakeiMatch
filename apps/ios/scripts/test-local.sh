@@ -11,7 +11,7 @@ Options:
   --device <simulator-udid>
                           Use this available iPhone simulator.
   --derived-data <path>   Use this DerivedData directory.
-  --all                   Allow all tests and include locally unstable backup tests.
+  --all                   Run every test in the scheme when no --only is given.
   --no-build              Run test-without-building only.
   -h, --help              Show this help.
 
@@ -117,24 +117,17 @@ common_args=(
 )
 
 test_args=()
-for identifier in "${only_tests[@]}"; do
-  test_args+=("-only-testing:${identifier}")
-done
-
-if [[ "$all_tests" != true ]]; then
-  # Xcode 27.1 on local macOS crashes in JavaScriptCore from KMBackupSchema.validate
-  # while running these backup tests. They pass in CI on Xcode 26.2.
-  # Every LocalStoreTests case goes through backup import/export, and crash
-  # reports from 2026-10-28 show at least nine of them failing, so skip the suite.
-  skip_tests+=(
-    'KakeiMatchTests/ParityTests'
-    'KakeiMatchTests/LocalStoreTests'
-  )
+if ((${#only_tests[@]} > 0)); then
+  for identifier in "${only_tests[@]}"; do
+    test_args+=("-only-testing:${identifier}")
+  done
 fi
 
-for identifier in "${skip_tests[@]}"; do
-  test_args+=("-skip-testing:${identifier}")
-done
+if ((${#skip_tests[@]} > 0)); then
+  for identifier in "${skip_tests[@]}"; do
+    test_args+=("-skip-testing:${identifier}")
+  done
+fi
 
 printf 'Simulator UDID: %s\nDerivedData: %s\nResult bundle: %s\n' "$device_id" "$derived_data" "$result_bundle"
 
@@ -143,7 +136,9 @@ if [[ "$no_build" != true ]]; then
 fi
 
 set +e
-xcodebuild "${common_args[@]}" "${test_args[@]}" -resultBundlePath "$result_bundle" \
+# Bash 3.2 (the system bash on macOS) treats an empty array expansion as unbound
+# under `set -u`, so expand test_args only when it has entries.
+xcodebuild "${common_args[@]}" ${test_args[@]+"${test_args[@]}"} -resultBundlePath "$result_bundle" \
   CODE_SIGNING_ALLOWED=NO test-without-building
 status=$?
 set -e

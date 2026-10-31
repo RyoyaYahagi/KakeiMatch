@@ -1,16 +1,21 @@
 import Foundation
 
-struct KMHomeAttentionItem: Identifiable, Equatable {
+/// PWA local-ui.ts reconciliationState/homeAttentionItems + home-attention.ts.
+/// No repository access or View state: preserves source ordering within each priority.
+struct KMHomeAttentionItem: Identifiable, Equatable, Sendable {
     var id: String
     var merchant: String
     var amountYen: Int
-    var status: KMStatus
+    var severity: KMHomeAttentionSeverity
     var reason: String
 }
 
-/// PWA local-ui.ts reconciliationState/homeAttentionItems + home-attention.ts.
-/// No repository access or View state: preserves source ordering within each priority.
-struct KMHomeAttention: Equatable {
+/// Screen status is mapped from this in HomeView; Data-layer aggregation stays SwiftUI-free.
+enum KMHomeAttentionSeverity: String, Equatable, Sendable {
+    case danger, warning, missing
+}
+
+struct KMHomeAttention: Equatable, Sendable {
     var count: Int
     var matchedCount: Int
     var showsImportHint: Bool
@@ -32,12 +37,12 @@ struct KMHomeAttention: Equatable {
             let row = byId[decision.statementId]
             items.append(.init(id: "failed.\(decision.id)", merchant: row?.merchant ?? "保存済みの照合",
                                amountYen: row?.amountYen ?? decision.statementAmountYen,
-                               status: .danger, reason: "反映できませんでした"))
+                               severity: .danger, reason: "反映できませんでした"))
         }
         for flag in suspected {
             guard let row = byId[flag.statementId] else { continue }
             items.append(.init(id: "suspected.\(row.id)", merchant: row.merchant, amountYen: row.amountYen,
-                               status: .warning, reason: "不正利用？として確認待ち"))
+                               severity: .warning, reason: "不正利用？として確認待ち"))
         }
         for result in pending where result.status == .needsReview {
             guard let row = byId[result.statementTransactionId] else { continue }
@@ -49,12 +54,12 @@ struct KMHomeAttention: Equatable {
             } else if let candidate = candidates.first, candidate.dateDistanceDays != 0 {
                 reason = "日付が\(candidate.dateDistanceDays)日ずれています"
             } else { reason = "内容を確認してください" }
-            items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen, status: .warning, reason: reason))
+            items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen, severity: .warning, reason: reason))
         }
         for result in pending where result.status != .needsReview {
             guard let row = byId[result.statementTransactionId] else { continue }
             items.append(.init(id: row.id, merchant: row.merchant, amountYen: row.amountYen,
-                               status: .missing, reason: "記録が見つかりません"))
+                               severity: .missing, reason: "記録が見つかりません"))
         }
         return Self(count: pending.count + failed.count + suspected.count,
                     matchedCount: resolutions.filter { $0.resolution == .sameExpense && $0.status == .applied && $0.undoRequestedAt == nil }.count,
@@ -63,7 +68,7 @@ struct KMHomeAttention: Equatable {
 }
 
 /// Presentation-only day scale; totals remain integer yen from repositories.
-struct KMHomeBudgetScale: Equatable {
+struct KMHomeBudgetScale: Equatable, Sendable {
     var dayCount: Int
     var filledDayCount: Int
     var elapsedDayCount: Int
@@ -93,7 +98,7 @@ struct KMHomeBudgetScale: Equatable {
     }
 }
 
-struct KMHomeCategorySlice: Equatable {
+struct KMHomeCategorySlice: Equatable, Sendable {
     var name: String
     var amountYen: Int
     /// nil is PWA tone-rest (other-soft), not the foreground of tone-other.
@@ -138,5 +143,37 @@ enum KMHomeCategoryBreakdown {
         let value = NSDecimalNumber(decimal: rounded).intValue
         let negative = (amount < 0) != (total < 0)
         return "\(negative ? "-" : "")\(abs(value) / 10).\(abs(value) % 10)%"
+    }
+}
+
+/// One row of the expanded "all categories" list; order follows the monthly summary.
+struct KMHomeCategoryRow: Equatable, Sendable {
+    var name: String
+    var amountYen: Int
+    var percentage: String
+}
+
+/// Every value Home renders after the repository's one read: monthly totals, budget,
+/// recent rows, attention counts/rows, category breakdown and the budget day scale.
+struct KMHomeDashboard: Equatable, Sendable {
+    var snapshot: KMHomeSnapshot
+    var attention: KMHomeAttention
+    var categorySlices: [KMHomeCategorySlice]
+    var categoryRows: [KMHomeCategoryRow]
+    var budgetScale: KMHomeBudgetScale
+}
+
+enum KMHomeAggregation {
+    static func make(snapshot: KMHomeSnapshot, run: KMReconciliationRun?,
+                     resolutions: [KMReconciliationResolution], suspected: [KMSuspectedStatement],
+                     statements: [KMStatementTransaction], today: KMDate) -> KMHomeDashboard {
+        KMHomeDashboard(snapshot: snapshot,
+                        attention: KMHomeAttention.make(run: run, resolutions: resolutions, suspected: suspected, statements: statements),
+                        categorySlices: KMHomeCategoryBreakdown.make(snapshot.summary),
+                        categoryRows: snapshot.summary.categories.map {
+                            KMHomeCategoryRow(name: $0.categoryName, amountYen: $0.amountYen,
+                                              percentage: KMHomeCategoryBreakdown.percentage($0.amountYen, total: snapshot.summary.expenseYen))
+                        },
+                        budgetScale: KMHomeBudgetScale.make(summary: snapshot.budget, today: today))
     }
 }
