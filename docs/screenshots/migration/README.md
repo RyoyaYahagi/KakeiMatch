@@ -2,6 +2,8 @@
 
 Issue #240 Phase 0。PWA を正解実装とし、**27状態・light/dark 各1枚、合計54枚**を保存する。依頼された状態の未撮影はない。iOS の画面を新たに設計する資料ではない。
 
+iOS の CI スクリーンショットとこの参照画像を同じ状態どうしで並べるレポートは、[`apps/ios/README.md` の「PWA との Visual regression」](../../../apps/ios/README.md#pwa-との-visual-regression) を参照する。状態名の対応は `apps/ios/scripts/visual-regression-pairs.json` が正本で、ここではPWA側の状態名を変えない。
+
 ## 再生成
 
 リポジトリ直下で依存をインストールし、別のターミナルで `pnpm --dir apps/pwa exec vite --host 127.0.0.1 --port 5173` を起動する。合成データ専用のローカル環境だけを指定する。
