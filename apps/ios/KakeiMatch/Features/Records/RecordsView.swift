@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct RecordsView: View {
+    var refreshToken = 0
+    var onOpenAccounts: () -> Void = {}
+    var onDeleted: (KMTransactionDeletion) -> Void = { _ in }
     @Environment(\.repositories) private var repositories
     @State private var model = KMRecordsModel()
     @State private var pendingToDelete: KMReceipt?
@@ -13,18 +16,14 @@ struct RecordsView: View {
                     action: model.page == .list ? { Task { await model.reload() } } : nil)
                     .padding(.bottom, KMSpacing.space3)
             }
-            if model.deletion != nil {
-                KMToast(message: "削除しました。10秒以内なら元に戻せます。", actionTitle: "元に戻す") {
-                    Task { await model.undo() }
-                }.padding(.bottom, KMSpacing.space3)
-            } else if let message = model.message {
+            if let message = model.message {
                 Text(message).font(KMTypography.note).foregroundStyle(KMColor.muted)
                     .accessibilityIdentifier("records.message").padding(.vertical, KMSpacing.space2)
             }
             switch model.page {
             case .list: list
             case .search: KMRecordsSearchView(model: model)
-            case .detail: KMRecordDetailView(model: model)
+            case .detail: KMRecordDetailView(model: model, onDeleted: onDeleted)
             case .pending: EmptyView()
             }
         }
@@ -32,6 +31,7 @@ struct RecordsView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("records.screen")
         .task { await model.configure(repositories) }
+        .onChange(of: refreshToken) { _, _ in Task { await model.reload() } }
         .fullScreenCover(isPresented: Binding(get: { model.page == .pending }, set: { if !$0 { Task { await model.showList() } } })) {
             pendingDetail.background(KMColor.bg)
         }
@@ -65,7 +65,23 @@ struct RecordsView: View {
                 selection: Binding(get: { model.filter.rawValue }, set: { model.filter = KMRecordsFilter(rawValue: $0) ?? .all }), identifier: "records.filter")
                 .disabled(model.busy)
                 .onChange(of: model.filter) { _, _ in Task { await model.reload() } }
-            // Account management is a separate screen. No dead link into the placeholder settings shell.
+            // PWA records-list places the balance link directly under the kind filter.
+            Button(action: onOpenAccounts) {
+                HStack(spacing: KMSpacing.space2) {
+                    KMIcon(name: "wallet", size: 20)
+                    Text("口座・残高を見る").font(KMTypography.body(16, weight: .medium))
+                    Spacer(minLength: 0)
+                    KMIcon(name: "chevronRight", size: 16)
+                }
+                .foregroundStyle(KMColor.primary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .padding(.horizontal, KMSpacing.space1)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("records.accounts")
+            .padding(.vertical, KMSpacing.space2)
+            .disabled(model.busy)
             if model.busy && !model.loaded { ProgressView("記録を読み込んでいます。").padding(.vertical, KMSpacing.space6) }
             if !model.pending.isEmpty {
                 VStack(alignment: .leading, spacing: 0) {
