@@ -71,6 +71,48 @@ final class RecordsFlowTests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor private func openAppliedPayroll(_ appearance: String) -> XCUIApplication {
+        let app = launch(appearance, fixture: "payroll")
+        app.buttons["records.filter.income"].tap()
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-006"].waitForExistence(timeout: 5))
+        app.buttons["records.row.fixture-transaction-006"].tap()
+        XCTAssertTrue(app.buttons["records.payrollDetails"].waitForExistence(timeout: 5))
+        return app
+    }
+
+    @MainActor func testPayrollBreakdownInIncomeRecordDetail() {
+        continueAfterFailure = false
+        let app = openAppliedPayroll("light")
+        let details = app.buttons["records.payrollDetails"]
+        XCTAssertEqual(details.label, "給与明細の内訳（登録時）")
+        XCTAssertEqual(details.value as? String, "折りたたみ")
+        XCTAssertFalse(app.staticTexts["総支給額：¥310,000"].exists)
+        details.tap()
+        XCTAssertEqual(details.value as? String, "展開中")
+        XCTAssertTrue(app.staticTexts["登録時に確認した内訳です。取引の編集後も元の内訳を保持し、削除の取り消しに備えて残します。"].waitForExistence(timeout: 5))
+        for line in [
+            "総支給額：¥310,000", "所得税：¥8,000", "住民税：¥10,000", "健康保険：¥15,000",
+            "厚生年金：¥27,000", "雇用保険：¥2,000", "その他控除：未記載", "控除合計：¥62,000",
+            "対象期間：2026年9月 / 給与", "通勤手当：¥10,000", "住宅手当：未記載",
+        ] {
+            XCTAssertTrue(app.staticTexts[line].exists, line)
+        }
+        app.terminate()
+    }
+
+    @MainActor private func capturePayrollBreakdown(_ appearance: String, name: String) {
+        continueAfterFailure = false
+        let app = openAppliedPayroll(appearance)
+        app.buttons["records.payrollDetails"].tap()
+        app.swipeUp()
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+        app.terminate()
+    }
+
+    @MainActor func testPayrollBreakdownLightScreenshot() { capturePayrollBreakdown("light", name: "records-payroll-breakdown-light") }
+    @MainActor func testPayrollBreakdownDarkScreenshot() { capturePayrollBreakdown("dark", name: "records-payroll-breakdown-dark") }
+
     @MainActor func testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts() {
         continueAfterFailure = false
         let app = launch("light")

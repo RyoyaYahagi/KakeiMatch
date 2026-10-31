@@ -151,12 +151,25 @@ struct KMMigrationFixture: Decodable, Sendable {
         }
         if scenario == .payroll {
             let value = fixture.payroll
+            let incomeCategory = categories.first { $0.isIncome }!.id
+            let bankAccount = accounts.first { $0.accountType == .bank }!.id
             store.payrollValues = [KMPayrollRecord(id: "11111111-1111-4111-8111-111111111113", status: .pending,
                 confirmed: .init(documentKind: .paySlip, employerName: value.employerName, paymentDate: KMDate(instant: fixture.now),
                     payPeriod: value.period, payType: .salary, grossPayYen: value.grossPayYen, netPayYen: value.netPayYen,
                     deductions: .init(totalYen: value.deductionsYen), allowances: [], warnings: []),
-                categoryId: categories.first { $0.isIncome }!.id, accountId: accounts.first { $0.accountType == .bank }!.id,
-                extractionModel: "synthetic-fixture", promptVersion: "fixture-v1", createdAt: fixture.now, updatedAt: fixture.now)]
+                categoryId: incomeCategory, accountId: bankAccount,
+                extractionModel: "synthetic-fixture", promptVersion: "fixture-v1", createdAt: fixture.now, updatedAt: fixture.now),
+                // 登録済みの収入記録に結び付いた内訳。記録詳細の表示を合成状態で固定する。
+                KMPayrollRecord(id: "11111111-1111-4111-8111-111111111112", actualTransactionId: "fixture-transaction-006", status: .applied,
+                    confirmed: .init(documentKind: .paySlip, employerName: "みどり製作所（テスト専用）",
+                        paymentDate: KMDate(rawValue: "2026-10-10"), payPeriod: "2026年9月", payType: .salary,
+                        grossPayYen: 310_000, netPayYen: 248_000,
+                        deductions: .init(incomeTaxYen: 8_000, residentTaxYen: 10_000, healthInsuranceYen: 15_000,
+                            pensionYen: 27_000, employmentInsuranceYen: 2_000, otherYen: nil, totalYen: 62_000),
+                        allowances: [.init(name: "通勤手当", amountYen: 10_000), .init(name: "住宅手当", amountYen: nil)],
+                        warnings: []),
+                    categoryId: incomeCategory, accountId: bankAccount,
+                    extractionModel: "synthetic-fixture", promptVersion: "fixture-v1", createdAt: fixture.now, updatedAt: fixture.now)]
         }
         return store
     }
