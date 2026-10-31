@@ -31,8 +31,10 @@ struct KMPortableRecord: Sendable {
     private static var cachedContext: JSContext?
     private static var cachedBundleURL: URL?
 
-    /// One JSVirtualMachine is enough: the bundled program is stateless, and creating a context per
-    /// import re-parses the ~470 KiB validator and leaves many JSC heaps behind.
+    /// One JSVirtualMachine is enough: the bundled program is stateless. Creating a context per
+    /// import also re-parsed the ~470 KiB validator and triggered a JSC SIGSEGV in
+    /// JSRopeString::resolveToBuffer on the local iOS 26.2 Simulator.
+    /// See docs/LOCAL_SIMULATOR_JSC.md.
     private static func context(for bundle: Bundle) throws -> JSContext {
         let bundleURL = bundle.bundleURL
         if let cachedContext, cachedBundleURL == bundleURL { return cachedContext }
