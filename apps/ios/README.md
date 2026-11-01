@@ -60,6 +60,18 @@ DEBUGビルドだけ `KM_UI_TEST_APPEARANCE=light|dark` を受け付け、UIテ�
 
 runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載されていることを確認して選定しています。[runner-images (2026/10), macOS 15 / Xcode・Installed Simulators]
 
+### TestFlightへの送信
+
+Macで `scripts/testflight.sh` を実行すると、今checkoutしているコードをReleaseでarchiveし、App Store Connect用に書き出してTestFlightへ送信します。マージ前のbranchからも送れます。ビルド番号は既定でUTCの `YYYYMMDDHHMM` なので、手で上げる必要はありません。
+
+```sh
+export KM_DEVELOPMENT_TEAM=<Team ID> ASC_KEY_ID=<API key ID> ASC_ISSUER_ID=<Issuer ID>
+apps/ios/scripts/testflight.sh             # 送信まで
+apps/ios/scripts/testflight.sh --no-upload # ipaの書き出しまで
+```
+
+API keyの `.p8` は `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` に置きます。`project.yml` で `ITSAppUsesNonExemptEncryption = NO`（OS標準の暗号だけを使う）を宣言しているので、App Store Connectの処理（通常5〜15分）が終われば輸出コンプライアンスの回答なしで内部テスターへ配られます。PRのCIはDebugだけをビルドするため、Releaseでしか起きない失敗はこのスクリプトで見つかります。
+
 ## PWA との Visual regression
 
 `scripts/visual-regression.mjs` は、CIが保存したiOSのスクリーンショットと、PWAの参照スクリーンショット `docs/screenshots/migration/<画面>/<状態>-<light|dark>.png` を同じ状態どうしで並べ、差分画像と一覧をartifact `ios-visual-regression` にまとめます。画素一致を合否にはしません。端末サイズ・フォント・OSの時計やsafe area・Liquid Glassの差は意図的に許容し、見比べるための材料を出す仕組みです。[HANDOFF.md 6節](HANDOFF.md)の方針どおり、字形の差は差分率に含まれます。
