@@ -21,7 +21,7 @@ import SQLite3
     }
     init(url: URL, readOnly: Bool = false) throws {
         let flags = (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_NOFOLLOW
-        guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK else {
+        guard sqlite3_open_v2(Self.openPath(url), &handle, flags, nil) == SQLITE_OK else {
             if let handle { sqlite3_close(handle) }; handle = nil
             throw KMDataError.invalidData("端末DBを開けません。保存済みデータは削除しないでください。")
         }
@@ -32,6 +32,21 @@ import SQLite3
             try execute("PRAGMA trusted_schema=OFF")
             if readOnly { try execute("PRAGMA query_only=ON") }
         } catch { sqlite3_close(handle); handle = nil; throw error }
+    }
+    /// `SQLITE_OPEN_NOFOLLOW` refuses to open a database when *any* path component is a symbolic
+    /// link, not only the last one. On device, Application Support resolves through `/var`, itself a
+    /// symbolic link to `/private/var`, so the parent directory is resolved before opening.
+    ///
+    /// Only the parent is resolved: the final component is passed through untouched, so NOFOLLOW
+    /// still refuses a database file that was swapped for a symbolic link. `realpath(3)` is used
+    /// because `URL.resolvingSymlinksInPath()` leaves the `/var` spelling in place on Darwin.
+    private static func openPath(_ url: URL) -> String {
+        let parent = url.deletingLastPathComponent()
+        guard parent.path != "/", !parent.path.isEmpty else { return url.path }
+        var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
+        guard realpath(parent.path, &buffer) != nil else { return url.path }
+        let resolved = URL(fileURLWithPath: String(cString: buffer), isDirectory: true)
+        return resolved.appendingPathComponent(url.lastPathComponent).path
     }
     deinit { if let handle { sqlite3_close(handle) } }
     func execute(_ sql: String, _ bindings: [Value] = []) throws { _ = try rows(sql, bindings) }
