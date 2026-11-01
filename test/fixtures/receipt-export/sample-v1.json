@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "source": "kakeimatch-ios",
+  "sentAt": "2026-11-01T12:00:00Z",
+  "filter": {
+    "categoryIds": ["synthetic-category-food"],
+    "categories": [{ "id": "synthetic-category-food", "name": "食費" }]
+  },
+  "receipts": [
+    {
+      "id": "synthetic-receipt-1",
+      "merchant": "合成スーパー",
+      "purchasedDate": "2026-10-31",
+      "purchasedTime": "18:30",
+      "totalAmountYen": 1530,
+      "taxAmountYen": 113,
+      "categoryId": "synthetic-category-food",
+      "items": [
+        { "id": "synthetic-item-1", "name": "合成牛乳", "amountYen": 500, "quantity": 2, "unitPriceYen": 250, "categoryId": "synthetic-category-food" },
+        { "id": "synthetic-item-2", "name": "合成たまご", "amountYen": 280, "categoryId": "synthetic-category-food" },
+        { "id": "synthetic-item-3", "name": "合成バナナ", "amountYen": 150, "quantity": 1.5, "categoryId": "synthetic-category-food" }
+      ],
+      "adjustments": [
+        { "id": "synthetic-adjustment-1", "label": "値引き", "amountYen": -100, "targetItemId": "synthetic-item-1" },
+        { "id": "synthetic-adjustment-2", "label": "クーポン", "amountYen": -30 }
+      ]
+    },
+    {
+      "id": "synthetic-receipt-2",
+      "merchant": "合成ベーカリー",
+      "purchasedDate": "2026-11-01",
+      "totalAmountYen": 420,
+      "categoryId": "synthetic-category-food",
+      "items": [],
+      "adjustments": []
+    }
+  ]
+}

@@ -124,6 +124,7 @@ PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字�
 - `Features/{ManualEntry,Income,Transfer}`: 実装済みの `KMEntryFormView` を共有します。入力画面がScrollView・左右余白・固定の登録ボタンを持ちます。
 - `Features/Receipt`: 撮影/写真選択と原本の新規保存、全体/品目表示、警告確認、AI読み取りと台帳登録、品目カテゴリの編集、未完成入力の下書き復元。残る差分は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
+- `Features/ReceiptExport`: 設定の「献立エージェント連携」。オプトインで、登録済みレシートの食費品目だけを利用者の送信先へ送ります。仕様は [RECEIPT_EXPORT.md](docs/RECEIPT_EXPORT.md) を参照してください。
 - `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` / `.kmib` の読み書き。使い方と実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
 - `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIconはPWAの `public/icon.svg` から角のマスクを外して1024pxで生成しています。再生成はworkspace依存をインストール後に `node apps/ios/scripts/render-app-icon.mjs`（必要なら `PWA_BROWSER_PATH` を指定）。PWAファイルは変更しません。
 
