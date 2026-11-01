@@ -43,6 +43,9 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        # Only OS-provided encryption (HTTPS, Passkey, App Attest). The owner approved
+        # declaring it exempt, so TestFlight builds do not wait for the export question.
+        INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
       configs:
         Debug:
           KM_APP_ATTEST_ENVIRONMENT: development
