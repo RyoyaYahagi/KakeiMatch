@@ -50,6 +50,7 @@ let package = Package(
                 "Features/MoneyForward/MoneyForwardModel.swift",
                 "Features/MoneyForward/MoneyForwardView.swift",
                 "Features/Receipt",
+                "Features/ReceiptExport",
                 "Features/Reconciliation/ReconciliationImporter.swift",
                 "Features/Reconciliation/ReconciliationModel.swift",
                 "Features/Reconciliation/ReconciliationReviewBody.swift",

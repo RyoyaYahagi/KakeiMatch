@@ -19,6 +19,28 @@ final class SettingsFlowTests: XCTestCase {
         add(attachment)
     }
 
+    /// Opt-in export stays off and cannot send until the user enables it. No network request is made.
+    @MainActor func testReceiptExportPageIsOffByDefaultAndCannotSend() {
+        continueAfterFailure = false
+        let app = launch("light")
+        let row = app.buttons["settings.receiptExport"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        if !row.isHittable { app.swipeUp() }
+        XCTAssertTrue(row.label.contains("オフ"))
+        row.tap()
+
+        XCTAssertTrue(app.staticTexts["receiptExport.title"].waitForExistence(timeout: 5))
+        let toggle = app.switches["receiptExport.enabled"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertEqual(toggle.value as? String, "0")
+        let send = app.buttons["receiptExport.sendNow"]
+        if !send.isHittable { app.swipeUp() }
+        XCTAssertTrue(send.exists)
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertEqual(app.staticTexts["receiptExport.status"].label, "まだ送信していません。")
+        capture(app, "receipt-export-light")
+    }
+
     @MainActor func testThemeSelectionAndScreenLockSettingsNavigation() {
         continueAfterFailure = false
         let app = launch("light")
