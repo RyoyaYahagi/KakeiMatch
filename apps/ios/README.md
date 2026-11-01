@@ -35,11 +35,21 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、残りのSwift Testingと4つのUIテストshardを並列実行します。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
+[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、残りのSwift Testingと最大4つのUIテストshardを並列実行します。別の `release-build` jobが署名なしでReleaseをビルドし、Releaseでしか起きないコンパイルエラーをPRで見つけます。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
-UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることを、ビルドジョブと各shardで検査します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
+UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることをビルドジョブで検査し、その割り当て（`ui-shards.json`）をテスト成果物と一緒に各shardへ渡します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
 
-Pull Requestでは、画面を開いて参照スクリーンショットを撮るだけのテスト（`shard-ui-tests.mjs` の `screenshotOnly`）を飛ばします。mainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）では全テストを実行し、統合した `ios-reference-screenshots` を作ります。スクリーンショット専用のテストを追加・改名したら `screenshotOnly` も直してください。一覧に存在しないテスト名があるとビルドジョブが失敗します。
+Pull Requestでは、変更したファイルに関係するUIテストだけを実行します。起動とタブ移動の確認（`smokeClasses`）は常に実行し、加えて次のものを選びます。
+
+| 変更したファイル | 実行するUIテスト |
+|---|---|
+| `KakeiMatch/Features/<画面>/` | その画面の `accessibilityIdentifier` を使うテストクラス。使うクラスがなければ全件 |
+| `KakeiMatchUITests/<クラス>.swift` | そのクラス。テストクラスを含まない共通ファイルなら全件 |
+| `KakeiMatch/{Data,API,Core}/`、`KakeiMatchTests/`、`KakeiMatchCoreTests/`、`test/fixtures/ios-parity/` | 追加なし（unit testは常に全件実行） |
+| `*.md`、`scripts/testflight.sh` | 追加なし（これだけの変更ではiOS CI自体が動かない） |
+| 上記以外（`App/`、`Components/`、`DesignSystem/`、`project.yml`、`scripts/`、`ios.yml` など） | 全件 |
+
+選んだテストが少なければshardも減らします（1 shardあたり約5分）。画面をまたぐ影響の取りこぼしは、mainへのpushで全件を実行して見つけます。また、画面を開いて参照スクリーンショットを撮るだけのテスト（`shard-ui-tests.mjs` の `screenshotOnly`）もPull Requestでは飛ばします。mainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）では全テストを実行し、統合した `ios-reference-screenshots` を作ります。スクリーンショット専用のテストを追加・改名したら `screenshotOnly` も直してください。一覧に存在しないテスト名があるとビルドジョブが失敗します。
 
 artifact（CIの保存成果物）は次のとおりです。
 
@@ -70,7 +80,7 @@ apps/ios/scripts/testflight.sh             # 送信まで
 apps/ios/scripts/testflight.sh --no-upload # ipaの書き出しまで
 ```
 
-API keyの `.p8` は `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` に置きます。`project.yml` で `ITSAppUsesNonExemptEncryption = NO`（OS標準の暗号だけを使う）を宣言しているので、App Store Connectの処理（通常5〜15分）が終われば輸出コンプライアンスの回答なしで内部テスターへ配られます。PRのCIはDebugだけをビルドするため、Releaseでしか起きない失敗はこのスクリプトで見つかります。
+API keyの `.p8` は `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` に置きます。`project.yml` で `ITSAppUsesNonExemptEncryption = NO`（OS標準の暗号だけを使う）を宣言しているので、App Store Connectの処理（通常5〜15分）が終われば輸出コンプライアンスの回答なしで内部テスターへ配られます。PRのCIは署名なしのReleaseビルドまで確認します。署名・書き出し・App Store Connectの受け付け条件で起きる失敗は、このスクリプトで見つかります。
 
 ## PWA との Visual regression
 
