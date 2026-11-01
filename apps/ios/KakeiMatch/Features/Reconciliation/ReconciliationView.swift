@@ -10,6 +10,7 @@ struct ReconciliationView: View {
     @State private var expandedRows: Set<String> = []
     @State private var confirmation: Confirmation?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private struct Confirmation: Identifiable {
         let id = UUID()
@@ -133,6 +134,8 @@ struct ReconciliationView: View {
                 HStack(spacing: 4) { KMIcon(name: status == .warning ? "warning" : status == .missing ? "unmatched" : "check", size: 16); Text(label).font(KMTypography.body(13, weight: .bold)) }
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text(String(count)).font(KMTypography.number(26, weight: .bold))
+                        .contentTransition(.numericText(value: Double(count)))
+                        .animation(KMMotion.animation(reduceMotion), value: count)
                     Text("件").font(KMTypography.body(14, weight: .medium))
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
@@ -181,6 +184,8 @@ struct ReconciliationView: View {
                 }
                 rule
             }.id("reconciliation-pending").accessibilityElement(children: .contain).accessibilityIdentifier("reconciliation-pending")
+                // A decided statement leaves the list; the rows below close the gap instead of jumping.
+                .animation(KMMotion.animation(reduceMotion), value: model.presentation.pending.map(\.id))
         } else if model.presentation.isClear {
             KMStatusLabel(status: .success, message: "確認が必要な明細はありません")
                 .padding(16).frame(maxWidth: .infinity, alignment: .leading)

@@ -22,6 +22,8 @@ struct KMEntryFormView: View {
     @State private var model: KMEntryFormModel
     @State private var sheet: KMEntrySheet?
     @FocusState private var focusedField: String?
+    /// Counts saves that ended in an error, so the same message shakes again on the next attempt.
+    @State private var failedSaves = 0
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let onPayroll: (() -> Void)?
 
@@ -70,6 +72,17 @@ struct KMEntryFormView: View {
                         Text("! \(error)")
                             .font(KMTypography.note)
                             .foregroundStyle(KMColor.danger)
+                            // One small shake points at the reason; the text itself carries the meaning.
+                            .keyframeAnimator(initialValue: CGFloat.zero, trigger: failedSaves) { content, offset in
+                                content.offset(x: reduceMotion ? 0 : offset)
+                            } keyframes: { _ in
+                                KeyframeTrack {
+                                    CubicKeyframe(-4, duration: 0.06)
+                                    CubicKeyframe(3, duration: 0.08)
+                                    CubicKeyframe(-1, duration: 0.05)
+                                    CubicKeyframe(0, duration: 0.05)
+                                }
+                            }
                             .accessibilityIdentifier("entry.error")
                     }
                     if let status = model.status {
@@ -80,7 +93,10 @@ struct KMEntryFormView: View {
                     }
                     Button {
                         focusedField = nil
-                        Task { await model.save() }
+                        Task {
+                            await model.save()
+                            if model.error != nil { failedSaves += 1 }
+                        }
                     } label: {
                         Text(model.didSave ? "登録しました" : model.busy ? "登録しています…" : "登録する")
                             .font(KMTypography.body(17, weight: .bold))
@@ -88,6 +104,7 @@ struct KMEntryFormView: View {
                     }
                     .buttonStyle(KMButtonStyle(role: .primary))
                     .accessibilityIdentifier("entry.saveButton")
+                    .sensoryFeedback(.error, trigger: failedSaves)
                     .disabled(model.busy || model.didSave)
                 }
                 .padding(.horizontal, KMSpacing.space4)

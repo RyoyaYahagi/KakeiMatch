@@ -35,6 +35,7 @@ struct ReceiptView: View {
     @State private var categoryTarget: KMReceiptCategoryTarget?
     @FocusState private var focusedField: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -241,8 +242,13 @@ struct ReceiptView: View {
                             .overlay(alignment: .bottomTrailing) {
                                 Image(systemName: "magnifyingglass").padding(8).background(KMColor.surface, in: Circle()).padding(8)
                             }
+                            .overlay { if model.isReading { KMScanBand() } }
                             .overlay(alignment: .topTrailing) {
-                                if model.isReading { Text("読み取り中").font(KMTypography.note).padding(8).background(KMColor.primarySoft, in: Capsule()).padding(8) }
+                                if model.isReading {
+                                    Text("読み取り中").font(KMTypography.body(12, weight: .bold)).foregroundStyle(KMColor.bg)
+                                        .padding(.vertical, 2).padding(.horizontal, KMSpacing.space3)
+                                        .background(KMColor.text, in: Capsule()).padding(KMSpacing.space2)
+                                }
                             }
                             .clipShape(RoundedRectangle(cornerRadius: KMRadius.md))
                             .contentShape(Rectangle())
@@ -363,17 +369,18 @@ struct ReceiptView: View {
     private var progress: some View {
         TimelineView(.periodic(from: model.startedReading, by: 1)) { timeline in
             VStack(alignment: .leading, spacing: 0) {
-                progressRow(model.imageIsSaved ? "✓" : "!", model.imageIsSaved ? "写真を保存しました" : "写真はまだ保存されていません", note: model.imageIsSaved ? "この端末に。読み取れなくても消えません" : "手で入力して続けられます")
-                progressRow(isFailed ? "!" : model.phase == .categorizing ? "✓" : "○",
+                progressRow(model.imageIsSaved ? .done : .failed, model.imageIsSaved ? "写真を保存しました" : "写真はまだ保存されていません", note: model.imageIsSaved ? "この端末に。読み取れなくても消えません" : "手で入力して続けられます")
+                progressRow(isFailed ? .failed : model.phase == .categorizing ? .done : .now,
                     isFailed ? "読み取れませんでした" : model.phase == .categorizing ? "文字を読み取りました" : "文字を読み取っています",
                     note: isFailed ? (model.imageIsSaved ? "写真は残っています" : "入力した内容はそのままです") : model.phase == .reading ? KMReceiptPresentation.readingNote(elapsed: timeline.date.timeIntervalSince(model.startedReading)) : "")
-                progressRow(model.phase == .categorizing ? "○" : "◌", model.phase == .categorizing ? "品目をカテゴリに分けています" : "品目をカテゴリに分けます", note: "")
+                progressRow(model.phase == .categorizing ? .now : .todo, model.phase == .categorizing ? "品目をカテゴリに分けています" : "品目をカテゴリに分けます", note: "")
             }
+            .animation(KMMotion.animation(reduceMotion), value: model.phase == .categorizing)
         }.accessibilityIdentifier("receipt.readingProgress")
     }
-    private func progressRow(_ mark: String, _ title: String, note: String) -> some View {
+    private func progressRow(_ mark: KMStepMark.Phase, _ title: String, note: String) -> some View {
         HStack(alignment: .top, spacing: KMSpacing.space3) {
-            Text(mark).foregroundStyle(KMColor.primary).frame(width: 22)
+            KMStepMark(phase: mark)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(KMTypography.body(14)); if !note.isEmpty { Text(note).font(KMTypography.note).foregroundStyle(KMColor.muted) }
             }
@@ -451,8 +458,10 @@ struct ReceiptView: View {
         VStack(spacing: 0) {
             Button {
                 focusedField = nil
-                expandedAdjustmentID = nil
-                expandedItemID = expandedItemID == item.id ? nil : item.id
+                KMMotion.perform(reduceMotion) {
+                    expandedAdjustmentID = nil
+                    expandedItemID = expandedItemID == item.id ? nil : item.id
+                }
             } label: {
                 Group {
                     if dynamicTypeSize.isAccessibilitySize {
@@ -528,6 +537,7 @@ struct ReceiptView: View {
                     .accessibilityIdentifier("receipt.item.delete.\(item.id)")
                 }
                 .padding(.leading, KMSpacing.space3)
+                .transition(.opacity)
             }
             Rectangle().fill(KMColor.border).frame(height: 1)
         }
@@ -543,16 +553,19 @@ struct ReceiptView: View {
     }
 
     private func itemChevron(_ item: KMReceiptItem) -> some View {
-        Image(systemName: expandedItemID == item.id ? "chevron.down" : "chevron.right")
+        Image(systemName: "chevron.right")
             .font(KMTypography.note).foregroundStyle(KMColor.muted)
+            .rotationEffect(.degrees(expandedItemID == item.id ? 90 : 0))
     }
 
     private func adjustmentRow(_ adjustment: KMReceiptAdjustment) -> some View {
         VStack(spacing: 0) {
             Button {
                 focusedField = nil
-                expandedItemID = nil
-                expandedAdjustmentID = expandedAdjustmentID == adjustment.id ? nil : adjustment.id
+                KMMotion.perform(reduceMotion) {
+                    expandedItemID = nil
+                    expandedAdjustmentID = expandedAdjustmentID == adjustment.id ? nil : adjustment.id
+                }
             } label: {
                 Group {
                     if dynamicTypeSize.isAccessibilitySize {
@@ -613,6 +626,7 @@ struct ReceiptView: View {
                     .accessibilityIdentifier("receipt.adjustment.delete.\(adjustment.id)")
                 }
                 .padding(.leading, KMSpacing.space3)
+                .transition(.opacity)
             }
             Rectangle().fill(KMColor.border).frame(height: 1)
         }
@@ -629,8 +643,9 @@ struct ReceiptView: View {
     }
 
     private func adjustmentChevron(_ adjustment: KMReceiptAdjustment) -> some View {
-        Image(systemName: expandedAdjustmentID == adjustment.id ? "chevron.down" : "chevron.right")
+        Image(systemName: "chevron.right")
             .font(KMTypography.note).foregroundStyle(KMColor.muted)
+            .rotationEffect(.degrees(expandedAdjustmentID == adjustment.id ? 90 : 0))
     }
 
     @ViewBuilder private func categoryPicker(for target: KMReceiptCategoryTarget) -> some View {
@@ -717,12 +732,12 @@ struct ReceiptView: View {
                             warningMark
                         }
                     }
-                    content()
+                    pendingValue(id: id, content: content)
                 }
             } else {
                 HStack(spacing: KMSpacing.space3) {
                     rowTitle(title).frame(width: 72, alignment: .leading)
-                    content()
+                    pendingValue(id: id, content: content)
                     if let field, model.warnings.contains(where: { $0.field == field }) {
                         warningMark
                     }
@@ -732,6 +747,16 @@ struct ReceiptView: View {
         .disabled(model.isReading && id != "receipt-account")
             .frame(minHeight: title == "金額" ? 64 : 52)
             .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }.id(id)
+    }
+
+    /// PWA input.ai-pending: the fields AI fills show a shining band instead of stale values while it reads.
+    private static let aiFilledRows: Set<String> = ["receipt-amount", "receipt-merchant", "receipt-date"]
+    private func pendingValue<Content: View>(id: String, @ViewBuilder content: () -> Content) -> some View {
+        let pending = model.isReading && Self.aiFilledRows.contains(id)
+        return content()
+            .opacity(pending ? 0 : 1)
+            .overlay(alignment: .leading) { if pending { KMPendingBand().transition(.opacity) } }
+            .animation(KMMotion.animation(reduceMotion), value: pending)
     }
 
     private func rowTitle(_ title: String) -> some View {
