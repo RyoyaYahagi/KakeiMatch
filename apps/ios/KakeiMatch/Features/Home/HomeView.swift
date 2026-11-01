@@ -9,6 +9,7 @@ struct HomeView: View {
     @State private var categoriesExpanded = false
     @State private var errorMessage: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var onNavigate: (KMTab) -> Void = { _ in }
     var onOpenBudget: (KMYearMonth) -> Void = { _ in }
 
@@ -74,6 +75,9 @@ struct HomeView: View {
                 Text(KMAmountFormatter.yen(summary.expenseYen))
                     .font(KMTypography.number(42, weight: .bold)).tracking(-1.68)
                     .foregroundStyle(KMColor.text)
+                    // Only the digits that changed roll in; the monospaced digits keep their places.
+                    .contentTransition(.numericText(value: Double(summary.expenseYen)))
+                    .animation(KMMotion.animation(reduceMotion), value: summary.expenseYen)
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .accessibilityIdentifier("home.monthly.expense")
             }
@@ -159,6 +163,7 @@ struct HomeView: View {
                                     }
                                 }
                                 .frame(height: 26)
+                                .animation(KMMotion.animation(reduceMotion), value: summary.spentYen)
                                 .accessibilityHidden(true)
                                 if let gap = scale.paceDifferenceYen {
                                     Group {
