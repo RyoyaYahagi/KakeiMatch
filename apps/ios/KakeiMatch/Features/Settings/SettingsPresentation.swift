@@ -13,6 +13,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case accounts
         case backup
         case ai
+        case receiptExport
     }
 
     let id: String
@@ -64,7 +65,8 @@ enum KMSettingsPresentation {
         return current - exported >= backupReminderAge
     }
 
-    static func sections(theme: KMThemePreference, screenLockEnabled: Bool, aiUsageValue: String? = nil) -> [KMSettingsSection] {
+    static func sections(theme: KMThemePreference, screenLockEnabled: Bool, aiUsageValue: String? = nil,
+                         receiptExportEnabled: Bool = false) -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
@@ -80,6 +82,11 @@ enum KMSettingsPresentation {
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [
                 .init(id: "settings.aiUsage", title: "ログイン・利用状況", value: aiUsageValue, destination: .ai),
+            ]),
+            // iOS-only: no PWA counterpart (the PWA is out of scope for receipt export).
+            KMSettingsSection(title: "連携", rows: [
+                .init(id: "settings.receiptExport", title: KMReceiptExportPresentation.title,
+                      value: KMReceiptExportPresentation.rowValue(isEnabled: receiptExportEnabled), destination: .receiptExport),
             ]),
             KMSettingsSection(title: "アプリ", rows: [
                 .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),

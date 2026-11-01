@@ -171,6 +171,7 @@ struct AppShell: View {
                 }
                 backgroundedAt = nil
                 Task { await refreshReviewCount() }
+                Task { await sendPendingReceiptExport() }
             }
         }
         .task {
@@ -185,7 +186,15 @@ struct AppShell: View {
             if screenLockEnabledForShell { lockScreen() }
             await refreshReviewCount()
             await deletionNotice.configure(repositories)
+            await sendPendingReceiptExport()
         }
+    }
+
+    /// Opt-in receipt export on launch and foreground return. Does nothing while disabled.
+    /// Fixture launches (UI tests, previews) never send synthetic data.
+    private func sendPendingReceiptExport() async {
+        guard let repositories, repositories.fixtureName == nil else { return }
+        await KMReceiptExportService.live.run(receipts: repositories.receipts, categories: repositories.categories)
     }
 
     /// PWA keeps the deletion notice above the tab content, so it remains while tabs change.

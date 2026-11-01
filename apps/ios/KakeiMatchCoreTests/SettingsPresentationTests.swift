@@ -5,21 +5,23 @@ import Testing
 struct SettingsPresentationTests {
     @Test func settingRowsKeepPWAOrderAndExcludeDeviceSync() {
         let sections = KMSettingsPresentation.sections(theme: .system, screenLockEnabled: false)
-        #expect(sections.map(\.title) == ["家計簿", "データ", "写真の読み取り", "アプリ"])
+        // "連携" is iOS-only (receipt export); the other sections keep the PWA order.
+        #expect(sections.map(\.title) == ["家計簿", "データ", "写真の読み取り", "連携", "アプリ"])
         #expect(sections.map { $0.rows.map(\.title) } == [
             ["分類ルール", "カテゴリ", "支払元", "予算設定", "定期登録"],
             ["バックアップと復元", "画面ロック", "原本の整理・全削除"],
             ["ログイン・利用状況"],
+            ["献立エージェント連携"],
             ["外観", "お問い合わせ", "アプリ情報"],
         ])
         #expect(!sections.flatMap(\.rows).contains { $0.title.contains("同期") })
         #expect(sections[1].rows[1].value == "オフ")
-        #expect(sections[3].rows[0].value == "システム")
+        #expect(sections[4].rows[0].value == "システム")
         #expect(sections[1].rows[2].isDestructive)
-        #expect(sections[3].rows[1].destination == .contact)
+        #expect(sections[4].rows[1].destination == .contact)
         #expect(sections[2].rows[0].destination == .ai)
         #expect(sections[2].rows[0].value == nil)
-        #expect(sections[3].rows[1].value == nil)
+        #expect(sections[4].rows[1].value == nil)
     }
 
     @Test func themeAndScreenLockLabelsMatchPWAStateMeaning() {
