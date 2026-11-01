@@ -93,6 +93,7 @@ let package = Package(
                 "Data/MoneyForward/MoneyForwardParser.swift",
                 "Data/Reconciliation/JSNumber.swift",
                 "Data/Reconciliation/JSString.swift",
+                "Data/ReceiptExport/KMReceiptExport.swift",
                 "Data/Reconciliation/ReconciliationEngine.swift",
                 "Data/Recurring/RecurringScheduleService.swift",
                 "Data/Statements/StatementParser.swift",
