@@ -40,6 +40,9 @@ jobs:
       shards: ${{ steps.shards.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A pull request checks out its merge commit; the first parent is the base branch.
+          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
       # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
       # https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
       # build-for-testing only needs the destination, not a booted device.
@@ -53,7 +56,14 @@ jobs:
         run: |
           node --test scripts/shard-ui-tests.test.mjs
           node --test scripts/visual-regression.test.mjs
-          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} > ui-shards.json
+          # Pull requests run the UI tests for the changed paths; main and manual runs run all.
+          changed=()
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed-paths.txt"
+            cat "$RUNNER_TEMP/changed-paths.txt"
+            changed=(--changed "$RUNNER_TEMP/changed-paths.txt")
+          fi
+          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} "${changed[@]}" > ui-shards.json
           cat ui-shards.json
           node -e 'const fs = require("node:fs"); const shards = JSON.parse(fs.readFileSync("ui-shards.json", "utf8")); console.log("matrix=" + JSON.stringify(shards.map((_, index) => index)))' >> "$GITHUB_OUTPUT"
       - name: Generate Xcode project
@@ -77,7 +87,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: ios-test-products
-          path: apps/ios/test-products.tar.gz
+          path: |
+            apps/ios/test-products.tar.gz
+            apps/ios/ui-shards.json
           compression-level: 0
           retention-days: 1
       - name: Upload build results
@@ -159,7 +171,7 @@ jobs:
         run: |
           mkdir -p DerivedData/Build
           tar -xzf test-products.tar.gz -C DerivedData/Build
-          node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" "$SHARD_INDEX" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} > shard-tests.txt
+          node -e 'const shards = JSON.parse(require("node:fs").readFileSync("ui-shards.json", "utf8")); console.log(shards[Number(process.env.SHARD_INDEX)].tests.join("\n"))' > shard-tests.txt
           cat shard-tests.txt
       - name: Wait for simulator and set reference appearance
         run: bash scripts/ci-simulator.sh wait
@@ -202,9 +214,30 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # Pull request tests run Debug only; catch Release-only compile errors before TestFlight.
+  release-build:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode
+        run: bash scripts/ci-simulator.sh select
+      - name: Generate Xcode project
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
+            -o "$RUNNER_TEMP/xcodegen.zip"
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/xcodegen.zip" "$RUNNER_TEMP/xcodegen-release"
+          "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" generate
+      - name: Build Release for devices without signing
+        run: |
+          xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Release \
+            -destination 'generic/platform=iOS' -derivedDataPath DerivedData build CODE_SIGNING_ALLOWED=NO
+
   ios:
     if: always()
-    needs: [build, swift-testing, ui-tests]
+    needs: [build, swift-testing, ui-tests, release-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     defaults:
