@@ -176,9 +176,10 @@ struct ReceiptExportPlanTests {
         #expect(grown.pending.first?.items.map(\.id) == ["item-1", "item-2"])
 
         // Every food item moved to another category: no longer eligible; its sent hash is forgotten.
-        value.confirmedValue?.items = value.confirmedValue?.items?.map { item in
+        let movedItems = value.confirmedValue?.items?.map { item in
             var item = item; item.categoryId = daily.id; return item
         }
+        value.confirmedValue?.items = movedItems
         let removed = try KMReceiptExportPlan.make(receipts: [value], categoryIds: foodOnly, sentHashes: grown.hashes)
         #expect(removed.pending.isEmpty)
         #expect(removed.noLongerEligible == ["receipt-1"])
@@ -222,7 +223,8 @@ struct ReceiptExportPresentationTests {
         #expect(KMReceiptExportPresentation.statusText(network)
             == "! 11/1 21:00 50件を送信しました。送信先に接続できませんでした。未送信の5件は次回送ります。")
         #expect(KMReceiptExportPresentation.isFailure(auth))
-        #expect(!KMReceiptExportPresentation.isFailure(.init(outcome: .nothingToSend, attemptedAt: at)))
+        let nothing = KMReceiptExportStatus(outcome: .nothingToSend, attemptedAt: at)
+        #expect(KMReceiptExportPresentation.isFailure(nothing) == false)
     }
 
     @Test func settingsRowAppearsInLinkSectionWithOnOffValue() {
