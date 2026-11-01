@@ -6,6 +6,9 @@ on:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
       - '.github/workflows/ios.yml'
+      # Docs and the TestFlight upload script do not affect the app build or tests.
+      - '!apps/ios/**/*.md'
+      - '!apps/ios/scripts/testflight.sh'
   # Screenshot-only UI tests run here, not on every pull request.
   # Run the workflow manually on a branch to get its reference screenshots.
   push:
@@ -14,6 +17,9 @@ on:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
       - '.github/workflows/ios.yml'
+      # Docs and the TestFlight upload script do not affect the app build or tests.
+      - '!apps/ios/**/*.md'
+      - '!apps/ios/scripts/testflight.sh'
   workflow_dispatch:
 
 permissions:
