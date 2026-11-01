@@ -40,6 +40,33 @@ import ZIPFoundation
         try await store.deleteTransaction(id: row.id)
         #expect(try await reopened.transactions(matching: .init()).isEmpty)
     }
+    /// iOS returns Application Support through `/var`, itself a symbolic link to `/private/var`.
+    /// SQLite's NOFOLLOW refuses *any* symlinked path component, so the store must resolve only the
+    /// parent directory before opening; this failed on device while simulator/macOS tests passed.
+    @Test func opensStoreThroughSymlinkedDirectoryAndPersists() async throws {
+        let base = try temporary(); defer { try? FileManager.default.removeItem(at: base) }
+        let real = base.appendingPathComponent("real", isDirectory: true)
+        try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+        let link = base.appendingPathComponent("link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: real.path)
+        let directory = link.appendingPathComponent("KakeiMatch", isDirectory: true)
+        let store = try KMSQLiteStore(directory: directory), row = try await seed(store)
+        #expect(FileManager.default.fileExists(atPath: real.appendingPathComponent("KakeiMatch/active.json").path))
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.transaction(id: row.id) == row)
+        #expect(try await reopened.accounts().first?.balanceYen == -100)
+    }
+    /// Resolving the parent must not weaken NOFOLLOW: a database file swapped for a symbolic link
+    /// is still refused, so a profile that has been redirected elsewhere is never opened.
+    @Test func rejectsProfileDatabaseThatIsASymbolicLink() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        let database = directory.appendingPathComponent(try store.profile().current.uuidString).appendingPathComponent("household.sqlite")
+        let moved = directory.appendingPathComponent("moved.sqlite")
+        try FileManager.default.moveItem(at: database, to: moved)
+        try FileManager.default.createSymbolicLink(atPath: database.path, withDestinationPath: moved.path)
+        #expect(throws: (any Error).self) { try KMSQLiteStore(directory: directory) }
+    }
     @Test func migrationZeroToFourAndFutureVersionAreNonDestructive() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("v0.sqlite")
