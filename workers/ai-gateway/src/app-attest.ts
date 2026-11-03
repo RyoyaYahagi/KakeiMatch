@@ -7,6 +7,23 @@ type AttestInput = { attestation: string; keyId: string; clientDataHash: Uint8Ar
 type AssertionInput = { assertion: string; publicKey: string; clientDataHash: Uint8Array; config: AppAttestConfig; counter: number };
 type Bytes = Uint8Array;
 
+/**
+ * Assertion failure reason plus the non-secret authenticatorData flags byte.
+ * Callers may log the flags for diagnosis; they must never log the assertion,
+ * key ID, challenge, public key, session, or user identity.
+ */
+export class AppAttestAssertionError extends Error {
+  readonly reason: string;
+  readonly flags?: number;
+
+  constructor(reason: string, flags?: number) {
+    super(reason);
+    this.name = 'AppAttestAssertionError';
+    this.reason = reason;
+    this.flags = flags;
+  }
+}
+
 // Public trust anchor, not a secret. Downloaded 2026-10-26 from:
 // https://www.apple.com/certificateauthority/Apple_App_Attestation_Root_CA.pem
 // SHA-256: 1C:B9:82:3B:A2:8B:A6:AD:2D:33:A0:06:94:1D:E2:AE:4F:51:3E:F1:D4:E8:31:B9:F7:E0:FA:7B:62:42:C9:32
@@ -54,11 +71,12 @@ function validateExtensions(value: unknown, config: AppAttestConfig) {
 function authData(input: Bytes, config: AppAttestConfig, requireCredential: boolean) {
   if (input.length < 37 || input.length > 4096) throw new Error('invalid_auth_data');
   const flags = input[32];
-  // App Attest is not a user-verification ceremony. Only AT and ED flags apply.
-  if (flags & ~0xc0 || Boolean(flags & 0x40) !== requireCredential) throw new Error('invalid_auth_flags');
   const appHash = input.slice(0, 32);
   const counter = new DataView(input.buffer, input.byteOffset + 33, 4).getUint32(0, false);
   if (requireCredential) {
+    // App Attest is not a user-verification ceremony. Only AT and ED flags apply
+    // to the attestation's attested credential.
+    if (flags & ~0xc0 || !(flags & 0x40)) throw new Error('invalid_auth_flags');
     if (input.length < 87) throw new Error('missing_attested_credential');
     const aaguid = config.environment === 'production' ? cat(utf8.encode('appattest'), new Uint8Array(7)) : utf8.encode('appattestdevelop');
     if (!equal(input.slice(37, 53), aaguid)) throw new Error('wrong_environment');
@@ -69,8 +87,17 @@ function authData(input: Bytes, config: AppAttestConfig, requireCredential: bool
     if (flags & 0x80) validateExtensions(trailing[1], config);
     return { appHash, counter, credentialId: input.slice(55, 55 + length), cose: trailing[0] };
   }
-  if (flags & 0x80) validateExtensions(decoder.decode(input.slice(37)), config);
-  else if (input.length !== 37) throw new Error('invalid_auth_trailing_data');
+  // Apple's assertion verification procedure (Validating apps that connect to
+  // your server) has no flag requirement. The byte after rpIdHash is the
+  // WebAuthn flags field, but App Attest assertions are a simplified structure
+  // and may carry bits that are not meaningful for WebAuthn ceremonies.
+  // Extensions, when present, are therefore identified by the bytes themselves:
+  // exactly 37 bytes means no trailing data; anything longer must be the
+  // signed CBOR extension dictionary whose values Apple still requires us to
+  // verify. Relying on ED (0x80) here would reject valid assertions when Apple
+  // omits or reuses flags that the documented procedure never defines.
+  if (input.length === 37) return { appHash, counter };
+  validateExtensions(decoder.decode(input.slice(37)), config);
   return { appHash, counter };
 }
 async function verifyChain(encoded: unknown, anchor: string | Uint8Array | undefined, now: Date) {
@@ -132,18 +159,29 @@ export async function verifyAttestation(input: AttestInput, testTrustAnchor?: st
   return { publicKey: b64encode(spki), receipt: b64encode(receipt) };
 }
 export async function verifyAssertion(input: AssertionInput): Promise<{ counter: number }> {
-  configValid(input.config);
-  if (input.clientDataHash.length !== 32 || !Number.isSafeInteger(input.counter) || input.counter < 0 || input.counter > 0xffffffff) throw new Error('invalid_input');
-  const outer = map(decoder.decode(b64(input.assertion, 10000))); exactKeys(outer, ['authenticatorData', 'signature']);
-  const auth = bytes(outer.get('authenticatorData')), signature = bytes(outer.get('signature'));
-  const parsed = authData(auth, input.config, false);
-  if (!equal(parsed.appHash, await sha(utf8.encode(input.config.appId))) || parsed.counter <= input.counter) throw new Error('invalid_assertion_counter_or_app');
-  const key = await crypto.subtle.importKey('spki', ab(b64(input.publicKey, 1024)), ec, false, ['verify']);
-  if (signature.length < 8 || signature.length > 72) throw new Error('invalid_assertion_signature');
-  const webSignature = signatureFormatter.toWebSignature(ec, ab(signature));
-  if (!webSignature || !equal(new Uint8Array(signatureFormatter.toAsnSignature(ec, webSignature)!), signature)) throw new Error('noncanonical_signature');
-  // Apple signs nonce=SHA256(authenticatorData || clientDataHash). WebCrypto's
-  // ECDSA SHA-256 hashes its input: pass the composite, not the already-hashed nonce.
-  if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, webSignature, ab(cat(auth, input.clientDataHash)))) throw new Error('invalid_assertion_signature');
-  return { counter: parsed.counter };
+  // The flags byte is a diagnostic value only; never include assertion, key,
+  // challenge, public key, or identity material in the error.
+  let flags: number | undefined;
+  try {
+    configValid(input.config);
+    if (input.clientDataHash.length !== 32 || !Number.isSafeInteger(input.counter) || input.counter < 0 || input.counter > 0xffffffff) throw new Error('invalid_input');
+    const outer = map(decoder.decode(b64(input.assertion, 10000))); exactKeys(outer, ['authenticatorData', 'signature']);
+    const auth = bytes(outer.get('authenticatorData')), signature = bytes(outer.get('signature'));
+    if (auth.length >= 37) flags = auth[32];
+    const parsed = authData(auth, input.config, false);
+    if (!equal(parsed.appHash, await sha(utf8.encode(input.config.appId))) || parsed.counter <= input.counter) throw new Error('invalid_assertion_counter_or_app');
+    const key = await crypto.subtle.importKey('spki', ab(b64(input.publicKey, 1024)), ec, false, ['verify']);
+    if (signature.length < 8 || signature.length > 72) throw new Error('invalid_assertion_signature');
+    const webSignature = signatureFormatter.toWebSignature(ec, ab(signature));
+    if (!webSignature || !equal(new Uint8Array(signatureFormatter.toAsnSignature(ec, webSignature)!), signature)) throw new Error('noncanonical_signature');
+    // Apple signs nonce=SHA256(authenticatorData || clientDataHash). WebCrypto's
+    // ECDSA SHA-256 hashes its input: pass the composite, not the already-hashed nonce.
+    if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, webSignature, ab(cat(auth, input.clientDataHash)))) throw new Error('invalid_assertion_signature');
+    return { counter: parsed.counter };
+  } catch (error) {
+    if (error instanceof AppAttestAssertionError) throw error;
+    const message = error instanceof Error ? error.message : '';
+    const reason = /^[a-z_]+$/.test(message) ? message : 'unknown';
+    throw new AppAttestAssertionError(reason, flags);
+  }
 }

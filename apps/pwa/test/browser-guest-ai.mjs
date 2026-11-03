@@ -79,9 +79,16 @@ try {
   await page.reload(); await page.getByText('今月の支出', { exact: false }).first().waitFor();
   geminiStatus = 429;
   await readReceipt();
-  await page.getByText('今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。手で入力して続けられます。', { exact: true }).waitFor();
-  assert.equal(calls.created, 1);
+  // The guest limit is not a photo problem: name it, show the reason, and offer the account screen.
+  await page.getByText('! AIの読み取り回数の上限です', { exact: true }).waitFor();
+  const quotaMessage = page.locator('.reading-failure p').filter({ hasText: '今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。手で入力して続けられます。' });
+  await quotaMessage.waitFor();
+  assert.match(await quotaMessage.textContent(), /ログインすると回数の制限なく使えることがあります。設定からログインできます。/);
+  assert.ok(await page.getByRole('button', { name: 'アカウントを確認する', exact: true }).isVisible());
+  assert.equal(await page.getByText('ぼやけや反射があれば撮り直してください。', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '撮り直す', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'もう一度読み取る', exact: true }).count(), 0);
+  assert.equal(calls.created, 1);
   await page.keyboard.press('Escape');
 
   // Settings show today's count.

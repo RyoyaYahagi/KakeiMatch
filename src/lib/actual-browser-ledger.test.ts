@@ -200,7 +200,7 @@ function fixture(initialBudgets: Array<{ id: string; name: string }> = [], accou
     deleteCategory: vi.fn(async (id: string) => { categories.splice(categories.findIndex(c => c.id === id), 1); }),
     createAccount: vi.fn(async (input: { name: string; closed: boolean }) => { accounts.push({ id: "new-account", ...input }); return "new-account"; }),
     updateAccount: vi.fn(async (id: string, changes: Record<string, unknown>) => { Object.assign(accounts.find(a => a.id === id)!, changes); }),
-    getAccountBalance: vi.fn<(id: string) => Promise<number>>().mockResolvedValue(0),
+    getAccountBalance: vi.fn<(id: string, cutoff?: Date) => Promise<number>>().mockResolvedValue(0),
     closeAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = true; }),
     reopenAccount: vi.fn(async (id: string) => { accounts.find(a => a.id === id)!.closed = false; }),
     deleteAccount: vi.fn(async (id: string) => { accounts.splice(accounts.findIndex(a => a.id === id), 1); }),
@@ -940,15 +940,22 @@ describe("Actual browser ledger", () => {
     expect(rows.map(r => r.id)).toEqual(initialIds);
   });
 
-  it("returns signed balances for every account, including closed accounts, using Actual's default cutoff", async () => {
-    const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
-    api.getAccountBalance.mockImplementation(async id => id === "cash" ? -1200 : id === "bank" ? 5000 : -45);
-    await expect(ledger.getAccountBalances()).resolves.toEqual([
-      { id: "cash", name: "現金", closed: false, accountType: "other", balanceYen: -1200 },
-      { id: "bank", name: "銀行", closed: false, accountType: "other", balanceYen: 5000 },
-      { id: "closed", name: "旧口座", closed: true, accountType: "other", balanceYen: -45 },
-    ]);
-    expect(api.getAccountBalance.mock.calls).toEqual([["cash"], ["bank"], ["closed"]]);
+  it("returns signed balances for every account, including closed accounts, as of the app's Tokyo day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-09-30T20:00:00Z")); // Already 2026-10-01 in Asia/Tokyo.
+    try {
+      const { ledger, api } = fixture([{ id: "budget", name: "Local" }]);
+      api.getAccountBalance.mockImplementation(async id => id === "cash" ? -1200 : id === "bank" ? 5000 : -45);
+      await expect(ledger.getAccountBalances()).resolves.toEqual([
+        { id: "cash", name: "現金", closed: false, accountType: "other", balanceYen: -1200 },
+        { id: "bank", name: "銀行", closed: false, accountType: "other", balanceYen: 5000 },
+        { id: "closed", name: "旧口座", closed: true, accountType: "other", balanceYen: -45 },
+      ]);
+      const cutoff = new Date(2026, 9, 1, 12);
+      expect(api.getAccountBalance.mock.calls).toEqual([["cash", cutoff], ["bank", cutoff], ["closed", cutoff]]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects unsafe balance values and surfaces provider failures", async () => {
