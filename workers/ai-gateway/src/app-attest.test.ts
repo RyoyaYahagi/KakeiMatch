@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decode, encode } from 'cbor-x';
-import { verifyAssertion, verifyAttestation } from './app-attest';
+import { verifyAssertion, verifyAttestation, AppAttestAssertionError } from './app-attest';
 import {
   appAttestTestConfig,
   buildAssertionFixture,
@@ -189,12 +189,54 @@ describe('App Attest assertion verification', () => {
     await expect(verifyAssertion({ ...fixture.input, config: otherConfig(fixture.input.config) })).rejects.toThrow();
   });
 
-  it('rejects authenticatorData with a zero counter or a non-assertion flag', async () => {
+  it('rejects a zero counter', async () => {
     const zeroCounter = await buildAssertionFixture({ counter: 0 });
-    await expect(verifyAssertion(zeroCounter.input)).rejects.toThrow();
+    await expect(verifyAssertion(zeroCounter.input)).rejects.toThrow('invalid_assertion_counter_or_app');
+  });
 
-    const invalidFlags = await buildAssertionFixture({ flags: 0x40 });
-    await expect(verifyAssertion(invalidFlags.input)).rejects.toThrow();
+  it.each([0x01, 0x04, 0x05, 0x40, 0x41])('accepts assertion authenticatorData flags 0x%s', async flags => {
+    // Apple's assertion verification procedure has no flags requirement, so
+    // WebAuthn UP/UV/AT bits must not reject a valid App Attest assertion.
+    const fixture = await buildAssertionFixture({ flags });
+    await expect(verifyAssertion(fixture.input)).resolves.toEqual({ counter: 1 });
+  });
+
+  it.each([0x00, 0x40])('validates signed extension data when it is present (flags 0x%s)', async flags => {
+    const fixture = await buildAssertionFixture({ flags, includeExtensions: true });
+    await expect(verifyAssertion(fixture.input)).resolves.toEqual({ counter: 1 });
+  });
+
+  it('rejects invalid signed extension data even when ED is not set', async () => {
+    const fixture = await buildAssertionFixture({ includeExtensions: true, validationCategory: 0 });
+    await expect(verifyAssertion(fixture.input)).rejects.toThrow('invalid_validation_category');
+  });
+
+  it('rejects a validly shaped authenticatorData whose trailing bytes are not extensions', async () => {
+    const fixture = await buildAssertionFixture();
+    const object = decode(fromB64(fixture.input.assertion)) as { authenticatorData: Uint8Array; signature: Uint8Array };
+    const authenticatorData = new Uint8Array([...object.authenticatorData, 0xff]);
+    const assertion = b64(encode({ ...object, authenticatorData }));
+    await expect(verifyAssertion({ ...fixture.input, assertion })).rejects.toBeInstanceOf(AppAttestAssertionError);
+  });
+
+  it('reports the non-secret flags byte on assertion failure', async () => {
+    const fixture = await buildAssertionFixture({ flags: 0x45 });
+    const differentHash = fixture.input.clientDataHash.slice();
+    differentHash[0] ^= 1;
+    const error = await verifyAssertion({ ...fixture.input, clientDataHash: differentHash }).catch(value => value);
+    expect(error).toBeInstanceOf(AppAttestAssertionError);
+    expect(error).toMatchObject({ name: 'AppAttestAssertionError', reason: 'invalid_assertion_signature', flags: 0x45 });
+    expect(JSON.stringify(error)).not.toContain(fixture.input.publicKey);
+    expect(JSON.stringify(error)).not.toContain(fixture.input.assertion);
+  });
+
+  it('omits flags when authenticatorData is too short to contain them', async () => {
+    const fixture = await buildAssertionFixture();
+    const assertion = b64(encode({ authenticatorData: new Uint8Array(36), signature: new Uint8Array(8) }));
+    const error = await verifyAssertion({ ...fixture.input, assertion }).catch(value => value);
+    expect(error).toBeInstanceOf(AppAttestAssertionError);
+    expect(error).toMatchObject({ reason: 'invalid_auth_data' });
+    expect(error.flags).toBeUndefined();
   });
 
   it('rejects a structurally invalid assertion payload', async () => {

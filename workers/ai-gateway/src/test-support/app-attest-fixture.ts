@@ -292,6 +292,9 @@ export interface AssertionFixtureOptions {
   rpId?: string;
   counter?: number;
   flags?: number;
+  includeExtensions?: boolean;
+  validationCategory?: number;
+  bundleVersion?: string;
 }
 
 export interface AssertionFixture {
@@ -310,10 +313,17 @@ export async function buildAssertionFixture(options: AssertionFixtureOptions = {
   const clientDataHash = options.clientDataHash?.slice() ?? new Uint8Array(32).fill(0x6b);
   const counter = options.counter ?? 1;
   const keyPair = await generateEcKeyPair('P-256');
+  const extensions = options.includeExtensions
+    ? encode({
+        apple_validation_category_01: uint32LE(options.validationCategory ?? (config.environment === 'development' ? 3 : 4)),
+        apple_bundle_version_01: options.bundleVersion ?? '1',
+      })
+    : new Uint8Array();
   const authenticatorData = concat(
     await sha256(encoder.encode(options.rpId ?? config.appId)),
     Uint8Array.of(options.flags ?? 0),
     uint32BE(counter),
+    extensions,
   );
   // WebCrypto hashes the complete message once using SHA-256; this must not be pre-hashed.
   const signature = rawEcdsaToDer(new Uint8Array(await crypto.subtle.sign(
