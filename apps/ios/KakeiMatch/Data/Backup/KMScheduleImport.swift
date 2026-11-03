@@ -41,7 +41,7 @@ import Foundation
             let conditions = try objectArray(conditionsJSON), actions = try objectArray(actionsJSON)
             let byField = Dictionary(conditions.compactMap { condition -> (String, [String: Any])? in
                 guard let field = condition["field"] as? String else { return nil }
-                return (field, condition)
+                return (publicField(field), condition)
             }, uniquingKeysWith: { first, _ in first })
             guard conditions.count == 4, byField.count == 4,
                   let payee = byField["payee"], payee["op"] as? String == "is", payee["value"] is String,
@@ -122,6 +122,17 @@ import Foundation
             for (day, importedId) in consumed.sorted(by: { $0.key < $1.key }) {
                 store.serviceState.occurrences.append(.init(scheduleId: id, date: day, importedId: importedId, processedAt: processedAt))
             }
+        }
+    }
+
+    /// Actual writes rule JSON with its internal transaction column names (`description` for the
+    /// payee, `acct` for the account); its own API maps them back to the public names on read.
+    /// Raw SQLite reads must do the same, or every PWA-created schedule looks foreign.
+    private static func publicField(_ field: String) -> String {
+        switch field {
+        case "description": "payee"
+        case "acct": "account"
+        default: field
         }
     }
 
