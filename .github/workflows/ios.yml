@@ -107,58 +107,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  swift-testing:
-    needs: build
-    runs-on: macos-15
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode and start simulator in background
-        run: bash scripts/ci-simulator.sh start
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios-test-products
-          path: apps/ios
-      - name: Unpack test products
-        run: |
-          mkdir -p DerivedData/Build
-          tar -xzf test-products.tar.gz -C DerivedData/Build
-      - name: Wait for simulator and set reference appearance
-        run: bash scripts/ci-simulator.sh wait
-      - name: Swift Testing
-        run: |
-          xctestruns=(DerivedData/Build/Products/*.xctestrun)
-          test "${#xctestruns[@]}" -eq 1
-          xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
-            -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
-            -only-testing:KakeiMatchTests test-without-building
-      - name: Generate parity report
-        if: always()
-        run: |
-          xcrun xcresulttool export attachments --path UnitTests.xcresult --output-path parity-attachments
-          node --test scripts/collect-parity-report.test.mjs
-          node scripts/collect-parity-report.mjs parity-attachments parity-report.json
-      - name: Upload parity report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: parity-report
-          path: apps/ios/parity-report.json
-          if-no-files-found: warn
-          retention-days: 14
-      - name: Upload unit test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-test-results
-          path: apps/ios/UnitTests.xcresult
-          if-no-files-found: warn
-          retention-days: 14
-
+  # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
+  # waited for another macOS runner and booted another simulator for about two minutes of tests.
   ui-tests:
     needs: build
     runs-on: macos-15
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -181,7 +135,40 @@ jobs:
           cat shard-tests.txt
       - name: Wait for simulator and set reference appearance
         run: bash scripts/ci-simulator.sh wait
+      - name: Swift Testing
+        id: unit-tests
+        if: matrix.shard == 0
+        run: |
+          xctestruns=(DerivedData/Build/Products/*.xctestrun)
+          test "${#xctestruns[@]}" -eq 1
+          xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
+            -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
+            -only-testing:KakeiMatchTests test-without-building
+      - name: Generate parity report
+        if: always() && matrix.shard == 0
+        run: |
+          xcrun xcresulttool export attachments --path UnitTests.xcresult --output-path parity-attachments
+          node --test scripts/collect-parity-report.test.mjs
+          node scripts/collect-parity-report.mjs parity-attachments parity-report.json
+      - name: Upload parity report
+        if: always() && matrix.shard == 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: apps/ios/parity-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Upload unit test results
+        if: always() && matrix.shard == 0
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: apps/ios/UnitTests.xcresult
+          if-no-files-found: warn
+          retention-days: 14
+      # Still run the UI tests when only the unit tests failed, so one run reports both.
       - name: XCUITest and screenshots
+        if: success() || steps.unit-tests.outcome == 'failure'
         run: |
           test_args=()
           while IFS= read -r test_name; do
@@ -243,7 +230,7 @@ jobs:
 
   ios:
     if: always()
-    needs: [build, swift-testing, ui-tests, release-build]
+    needs: [build, ui-tests, release-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     defaults:
