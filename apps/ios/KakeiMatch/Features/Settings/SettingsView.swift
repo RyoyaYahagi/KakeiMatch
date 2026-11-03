@@ -13,6 +13,7 @@ private enum KMSettingsPage: Equatable {
     case accounts
     case backup
     case ai
+    case receiptExport
 }
 
 struct SettingsView: View {
@@ -29,6 +30,7 @@ struct SettingsView: View {
     @AppStorage(KMSettingsPresentation.screenLockEnabledKey) private var screenLockEnabled = false
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
+    @State private var receiptExportEnabled = false
 
     init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false,
          onBudgetBack: @escaping () -> Void = {}, onAccountsBack: @escaping () -> Void = {},
@@ -58,17 +60,20 @@ struct SettingsView: View {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
             case .ai: KMNativeAuthView(model: auth, onBack: { page = .root }, onShowHome: onShowHome)
+            case .receiptExport: KMReceiptExportView(onBack: { page = .root })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .task {
             if !model.loaded { await model.load(repositories) }
+            refreshReceiptExportEnabled()
             await auth.refresh()
         }
         // The row shows the PWA `#ai-row-value`; reload it after a login or
         // logout on the account page, not only when Settings is first opened.
         .onChange(of: page) { _, value in
             guard value == .root else { return }
+            refreshReceiptExportEnabled()
             Task { await auth.refresh() }
         }
     }
@@ -85,7 +90,8 @@ struct SettingsView: View {
             let sections = KMSettingsPresentation.sections(
                 theme: model.settings.theme,
                 screenLockEnabled: screenLockEnabled,
-                aiUsageValue: auth.settingsRowValue
+                aiUsageValue: auth.settingsRowValue,
+                receiptExportEnabled: receiptExportEnabled
             )
             ForEach(sections) { section in
                 Text(section.title)
@@ -148,6 +154,7 @@ struct SettingsView: View {
             case .accounts: page = .accounts
             case .backup: page = .backup
             case .ai: page = .ai
+            case .receiptExport: page = .receiptExport
             case .unimplemented: break
             }
         } label: {
@@ -177,6 +184,11 @@ struct SettingsView: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier(row.id)
         .accessibilityHint(row.destination == .unimplemented ? "移動先は別の画面の実装待ちです。" : "")
+    }
+
+    /// A read failure shows "オフ" here; the sub-page reports the error itself.
+    private func refreshReceiptExportEnabled() {
+        receiptExportEnabled = (try? KMReceiptExportService.live.state().settings.isEnabled) ?? false
     }
 
     private var themePage: some View {
