@@ -304,7 +304,18 @@ export async function handleNativeRequest(request: Request, env: NativeEnv, opti
         method: 'POST', headers: await internalHeaders(request, config, env, session, ceremony.verification_cookie),
         body: JSON.stringify({ response: input.response, name: input.name, createSession: true }),
       }), env as AccountEnv);
-      if (!response.ok) return json(response.status, { error: 'passkey_failed' });
+      if (!response.ok) {
+        // Record only Better Auth's short error code/message. Never log the
+        // WebAuthn assertion, credential ID, challenge, session, or user.
+        let detail: { code?: string; message?: string } = {};
+        try {
+          const parsed = JSON.parse(await response.text()) as { code?: unknown; message?: unknown };
+          if (typeof parsed.code === 'string' && parsed.code.length <= 64) detail.code = parsed.code;
+          if (typeof parsed.message === 'string') detail.message = parsed.message.slice(0, 160);
+        } catch { /* non-JSON error body */ }
+        console.warn('native_passkey_verify_failed', { status: response.status, ...detail });
+        return json(response.status, { error: 'passkey_failed' });
+      }
       const verified = await response.json() as { session?: { id?: unknown; userId?: unknown; expiresAt?: unknown }; user?: { id?: unknown } };
       const user = verified.user?.id; const auth = verified.session;
       if (typeof user !== 'string' || typeof auth?.id !== 'string' || auth.userId !== user || typeof auth.expiresAt !== 'string') throw new Error('missing_verified_session');
