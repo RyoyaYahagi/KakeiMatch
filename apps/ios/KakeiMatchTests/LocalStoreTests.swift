@@ -527,7 +527,9 @@ import ZIPFoundation
     }
 
     /// Adds one PWA-shaped monthly schedule and four already-posted occurrences to the synthetic
-    /// Actual DB. The rule/action JSON matches what `createRecurringSchedule` + category rule write.
+    /// Actual DB. The rule/action JSON matches what `createRecurringSchedule` + category rule write,
+    /// including Actual's internal condition field names (`description` = payee, `acct` = account)
+    /// as stored in the `rules` table.
     private func scheduledBackup(in directory: URL, nextDate: Int, complex: Bool = false, posted: Bool = true) throws -> URL {
         let bytes = try Data(contentsOf: fixture("synthetic", "kmb"))
         let editDirectory = directory.appendingPathComponent("schedule-\(UUID().uuidString)", isDirectory: true)
@@ -540,7 +542,7 @@ import ZIPFoundation
                 let date = complex
                     ? #"{"frequency":"monthly","interval":1,"start":"2026-07-15","endMode":"never","patterns":[{"type":"day","value":15}]}"#
                     : #"{"frequency":"monthly","interval":1,"start":"2026-07-15","endMode":"never"}"#
-                let conditions = #"[{"field":"payee","op":"is","value":"\#(payee)"},{"field":"account","op":"is","value":"\#(account)"},{"field":"date","op":"isapprox","value":\#(date)},{"field":"amount","op":"is","value":-50000}]"#
+                let conditions = #"[{"op":"is","field":"description","value":"\#(payee)"},{"op":"is","field":"acct","value":"\#(account)"},{"field":"date","op":"isapprox","value":\#(date)},{"field":"amount","op":"is","value":-50000}]"#
                 let actions = #"[{"op":"link-schedule","value":"schedule-1"},{"field":"category","op":"set","value":"\#(category)"}]"#
                 try db.execute("INSERT INTO rules(id,stage,conditions,actions,tombstone,conditions_op) VALUES('schedule-rule-1',NULL,?,?,0,'and')",
                     [.text(conditions), .text(actions)])

@@ -35,7 +35,7 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、残りのSwift Testingと最大4つのUIテストshardを並列実行します。別の `release-build` jobが署名なしでReleaseをビルドし、Releaseでしか起きないコンパイルエラーをPRで見つけます。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
+[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、最大4つのUIテストshardを並列実行します。Simulatorで動かすSwift Testing（`KakeiMatchTests`）はshard 0がUIテストの前に同じシミュレーターで実行します。別ジョブにするとmacOS runnerの空き待ちとシミュレーターの起動がもう1回ずつ増えるためです。unit testだけが失敗した場合もUIテストは実行します。別の `release-build` jobが署名なしでReleaseをビルドし、Releaseでしか起きないコンパイルエラーをPRで見つけます。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
 UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることをビルドジョブで検査し、その割り当て（`ui-shards.json`）をテスト成果物と一緒に各shardへ渡します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
 
@@ -57,7 +57,7 @@ artifact（CIの保存成果物）は次のとおりです。
 | --- | --- | --- |
 | `ios-test-products` | 実行権限・シンボリックリンクを維持した `DerivedData/Build/Products` のtar。`.xctestrun` とアプリ・テストバンドルを含む | 1日 |
 | `ios-build-results` | `Build.xcresult` | 14日 |
-| `ios-test-results` | Simulatorで実行したSwift Testingの `UnitTests.xcresult` | 14日 |
+| `ios-test-results` | shard 0がSimulatorで実行したSwift Testingの `UnitTests.xcresult` | 14日 |
 | `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
 | `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
 | `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |

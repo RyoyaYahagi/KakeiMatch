@@ -57,6 +57,25 @@ export type ActualSearchTransaction = {
 
 const dateSchema = z.iso.date();
 const idSchema = z.string().min(1).max(128);
+const APP_TIME_ZONE = "Asia/Tokyo";
+
+/**
+ * Account balances must use the app's calendar day, not the Actual Worker's clock.
+ * Playwright's page clock does not reach the Worker, and a device outside Japan can
+ * already be on a different calendar day than Asia/Tokyo.
+ */
+function appToday(now: Date = new Date()): string {
+  if (!Number.isFinite(now.getTime())) throw new Error("Invalid date.");
+  return new Intl.DateTimeFormat("en-CA", { timeZone: APP_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+/** A local-noon Date keeps the intended calendar day when the Actual Worker formats it in its own timezone. */
+function balanceCutoff(today: string): Date {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today);
+  if (!match) throw new Error("Invalid calendar date.");
+  return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 12);
+}
+
 const accountTypeSchema = z.enum(["bank", "credit_card", "cash", "other"]);
 const budgetCategorySchema = z.object({ id: idSchema, budgeted: z.number().int().safe() }).passthrough();
 const manualTransactionSchema = z.object({
@@ -869,7 +888,7 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
   const accountUsage = async (api: ActualApi, id: string) => {
     await requireAccount(api, id);
     const [rows, balanceYen] = await Promise.all([
-      api.getTransactions(id, "0001-01-01", "9999-12-31"), api.getAccountBalance(id),
+      api.getTransactions(id, "0001-01-01", "9999-12-31"), api.getAccountBalance(id, balanceCutoff(appToday())),
     ]);
     if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
     return { transactionCount: rows.length, balanceYen };
@@ -1495,8 +1514,9 @@ export function createActualBrowserLedger(options: ActualBrowserLedgerOptions): 
     getAccountBalances() {
       return withBudget(async api => {
         const accounts = await accountRows(api);
+        const cutoff = balanceCutoff(appToday());
         return Promise.all(accounts.map(async account => {
-          const balanceYen = await api.getAccountBalance(account.id);
+          const balanceYen = await api.getAccountBalance(account.id, cutoff);
           if (!Number.isSafeInteger(balanceYen)) throw new ActualBrowserUnavailableError("invalid_data");
           return { ...account, balanceYen };
         }));

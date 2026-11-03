@@ -2,9 +2,12 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to a synthetic local preview.');
 const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-const context = await browser.newContext({ viewport: { width: 375, height: 812 } });
+const context = await browser.newContext({ viewport: { width: 375, height: 812 }, timezoneId: 'Asia/Tokyo' });
 await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
-const page = await context.newPage(); page.setDefaultTimeout(15000); const errors = []; page.on('pageerror', error => errors.push(error.message));
+const page = await context.newPage(); page.setDefaultTimeout(15000);
+// The payroll below is dated 2026-10-25 and the home summary shows the current month.
+await page.clock.setFixedTime(new Date('2026-10-25T03:00:00Z'));
+const errors = []; page.on('pageerror', error => errors.push(error.message));
 let fail = false; let payload;
 const extraction = { documentKind: 'pay_slip', employerName: 'Synthetic Employer', paymentDate: null, payPeriod: '2026年10月分', payType: 'salary',
   grossPayYen: 340000, netPayYen: 260000, deductions: { incomeTaxYen: 9000, residentTaxYen: null, healthInsuranceYen: 20000, pensionYen: 40000, employmentInsuranceYen: 3000, otherYen: 8000, totalYen: 80000 },
