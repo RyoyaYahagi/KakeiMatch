@@ -25,12 +25,14 @@ extension KMReceiptPresentation {
     }
 
     /// The heading, reason and next steps for a failed read. PWA codes come from
-    /// `KMAPIError.pwaCode`; the two iOS-only codes map to PWA's quota and
-    /// image-too-large failures so the wording stays the same.
+    /// `KMAPIError.pwaCode`; the iOS-only codes map to PWA's quota and
+    /// image-too-large failures so the wording stays the same. PWA safeError also
+    /// reports account_session_required as auth_required.
     static func readingFailure(_ error: KMAPIError, guest: Bool = false) -> ReadingFailure {
         let code = switch error {
         case .guestLimitReached: "quota"
         case .invalidRequest: "image_too_large"
+        case .nativeAuthenticationRequired: "auth_required"
         default: error.pwaCode
         }
         return readingFailure(code: code, message: failureMessage(error, isGuest: guest), guest: guest)
