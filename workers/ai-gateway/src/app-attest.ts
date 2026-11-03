@@ -188,9 +188,12 @@ export async function verifyAssertion(input: AssertionInput): Promise<{ counter:
     if (signature.length < 8 || signature.length > 72) throw new Error('invalid_assertion_signature');
     const webSignature = signatureFormatter.toWebSignature(ec, ab(signature));
     if (!webSignature || !equal(new Uint8Array(signatureFormatter.toAsnSignature(ec, webSignature)!), signature)) throw new Error('noncanonical_signature');
-    // Apple signs nonce=SHA256(authenticatorData || clientDataHash). WebCrypto's
-    // ECDSA SHA-256 hashes its input: pass the composite, not the already-hashed nonce.
-    if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, webSignature, ab(cat(auth, input.clientDataHash)))) throw new Error('invalid_assertion_signature');
+    // Apple signs the nonce=SHA256(authenticatorData || clientDataHash) as a
+    // message: the device's ES256 implementation hashes it once more, so the
+    // digest is SHA256(nonce). WebCrypto's ECDSA SHA-256 also hashes its input,
+    // so pass the 32-byte nonce, not the composite.
+    const nonce = await sha(cat(auth, input.clientDataHash));
+    if (!await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, key, webSignature, ab(nonce))) throw new Error('invalid_assertion_signature');
     return { counter: parsed.counter };
   } catch (error) {
     if (error instanceof AppAttestAssertionError) throw error;

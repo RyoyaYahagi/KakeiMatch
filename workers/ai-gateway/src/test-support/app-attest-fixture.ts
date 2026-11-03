@@ -326,10 +326,13 @@ export async function buildAssertionFixture(options: AssertionFixtureOptions = {
     extensions,
   );
   // WebCrypto hashes the complete message once using SHA-256; this must not be pre-hashed.
+  // The device signs the nonce as a message, so ES256 hashes it once more:
+  // signature = ECDSA-SHA256(SHA256(authenticatorData || clientDataHash)).
+  const nonce = await sha256(concat(authenticatorData, clientDataHash));
   const signature = rawEcdsaToDer(new Uint8Array(await crypto.subtle.sign(
     { name: 'ECDSA', hash: 'SHA-256' },
     keyPair.privateKey,
-    arrayBuffer(concat(authenticatorData, clientDataHash)),
+    arrayBuffer(nonce),
   )));
   const publicKeySPKI = new Uint8Array(await crypto.subtle.exportKey('spki', keyPair.publicKey));
   const assertion = encode({ authenticatorData, signature });
