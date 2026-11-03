@@ -18,8 +18,10 @@ private enum KMSettingsPage: Equatable {
 struct SettingsView: View {
     var initialBudgetMonth: KMYearMonth? = nil
     var initialAccounts = false
+    var initialAI = false
     var onBudgetBack: () -> Void = {}
     var onAccountsBack: () -> Void = {}
+    var onAIBack: () -> Void = {}
     var onOpenMoneyForward: () -> Void = {}
     var onShowHome: () -> Void = {}
     @Environment(\.repositories) private var repositories
@@ -30,16 +32,21 @@ struct SettingsView: View {
     @State private var isAuthenticating = false
     @State private var screenLockMessage: String?
 
-    init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false,
+    init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false, initialAI: Bool = false,
          onBudgetBack: @escaping () -> Void = {}, onAccountsBack: @escaping () -> Void = {},
+         onAIBack: @escaping () -> Void = {},
          onOpenMoneyForward: @escaping () -> Void = {}, onShowHome: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
         self.initialAccounts = initialAccounts
+        self.initialAI = initialAI
         self.onBudgetBack = onBudgetBack
         self.onAccountsBack = onAccountsBack
+        self.onAIBack = onAIBack
         self.onOpenMoneyForward = onOpenMoneyForward
         self.onShowHome = onShowHome
-        _page = State(initialValue: initialAccounts ? .accounts : (initialBudgetMonth == nil ? .root : .budget))
+        let initialPage: KMSettingsPage = initialAccounts ? .accounts : initialAI ? .ai
+            : (initialBudgetMonth == nil ? .root : .budget)
+        _page = State(initialValue: initialPage)
     }
 
     var body: some View {
@@ -57,7 +64,7 @@ struct SettingsView: View {
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
-            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root }, onShowHome: onShowHome)
+            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root; onAIBack() }, onShowHome: onShowHome)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

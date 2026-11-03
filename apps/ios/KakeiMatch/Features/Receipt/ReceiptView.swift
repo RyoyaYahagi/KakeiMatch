@@ -22,6 +22,8 @@ struct ReceiptView: View {
     /// The tapped detail row decides the first pane (category -> items).
     var initialPane: String? = nil
     var onSaved: (() -> Void)? = nil
+    /// Opens Settings > ログイン・利用状況. Supplied only where the shell can change tabs.
+    var onOpenAccount: (() -> Void)? = nil
     @Environment(\.repositories) private var repositories
     @State private var model = KMReceiptModel()
     @State private var photo: PhotosPickerItem?
@@ -110,7 +112,10 @@ struct ReceiptView: View {
             switch phase {
             case .reading: message = "文字を読み取っています"
             case .categorizing: message = "品目をカテゴリに分けています"
-            case .failed: message = "写真から読み取れませんでした。手で入力して続けられます。"
+            case .failed(let failure):
+                let view = KMReceiptPresentation.readingFailure(failure, guest: model.failedAsGuest)
+                let title = view.title.hasPrefix("! ") ? String(view.title.dropFirst(2)) : view.title
+                message = "\(title)。\(view.message)"
             case .idle: message = model.status ?? "入力できます"
             }
             UIAccessibility.post(notification: .announcement, argument: message)
@@ -264,10 +269,18 @@ struct ReceiptView: View {
                     .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                 if model.isReading || isFailed { progress }
                 if case .failed(let failure) = model.phase {
+                    let view = KMReceiptPresentation.readingFailure(failure, guest: model.failedAsGuest)
                     VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                        Text("! 写真から読み取れませんでした").bold().foregroundStyle(KMColor.danger)
-                        Text("ぼやけや反射があれば撮り直してください。")
-                        Button("撮り直す") { openCamera() }
+                        Text(view.title).bold().foregroundStyle(KMColor.danger)
+                            .accessibilityIdentifier("receipt.failureTitle")
+                        Text(view.message).fixedSize(horizontal: false, vertical: true)
+                        if view.photoProblem {
+                            Button("撮り直す") { openCamera() }.accessibilityIdentifier("receipt.retakeButton")
+                        }
+                        if view.accountAction, let onOpenAccount {
+                            Button("アカウントを確認する") { onOpenAccount() }
+                                .accessibilityIdentifier("receipt.accountButton")
+                        }
                         if !KMReceiptPresentation.retryable(failure) {
                             Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
                                 .accessibilityIdentifier("receipt.manualButton")

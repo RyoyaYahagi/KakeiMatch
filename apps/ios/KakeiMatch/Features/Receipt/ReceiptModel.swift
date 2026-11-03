@@ -33,6 +33,8 @@ final class KMReceiptModel {
     var status: String?
     var needsGuestStart = false
     var startingGuest = false
+    /// Whether the failed read used the guest identity, so the band can add the sign-in hint.
+    var failedAsGuest = false
     var startedReading = Date()
     /// PWA local-ui.ts: receiptEditor opens an applied receipt as "支出の記録を編集".
     var editing = false
@@ -381,6 +383,7 @@ final class KMReceiptModel {
         // PWA local-receipts.ts: over 6 MiB the original stays saved but is never sent to AI.
         guard imageData.count <= 6 * 1024 * 1024 else {
             revision = UUID(); operation?.cancel()
+            failedAsGuest = false
             phase = .failed(.invalidRequest)
             error = "レシート画像は端末に保存しました。AIで読み取る場合は6 MiB以下の画像を選び直してください。"
             return nil
@@ -484,8 +487,11 @@ final class KMReceiptModel {
                         needsGuestStart = true
                         return
                     }
+                    let guest = await isGuestReading()
+                    guard revision == token, !Task.isCancelled else { return }
+                    failedAsGuest = guest
                     phase = .failed(failure)
-                    self.error = KMReceiptPresentation.failureMessage(failure)
+                    self.error = KMReceiptPresentation.failureMessage(failure, isGuest: guest)
                 } else {
                     phase = .idle
                     self.error = error.localizedDescription
@@ -513,6 +519,7 @@ final class KMReceiptModel {
         } catch let failure as KMAPIError {
             guard needsGuestStart else { return }
             needsGuestStart = false
+            failedAsGuest = false
             phase = .failed(failure)
             error = KMReceiptPresentation.failureMessage(failure)
         } catch {
@@ -521,6 +528,10 @@ final class KMReceiptModel {
             phase = .idle
             self.error = "AI機能を準備できませんでした。家計簿の利用は続けられます。"
         }
+    }
+
+    private func isGuestReading() async -> Bool {
+        (await api?.isGuest()) ?? false
     }
 
     /// PWA bot-check "やめる". The check runs in the background and its result is
