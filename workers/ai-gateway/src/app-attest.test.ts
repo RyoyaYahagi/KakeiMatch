@@ -211,6 +211,23 @@ describe('App Attest assertion verification', () => {
     await expect(verifyAssertion(fixture.input)).rejects.toThrow('invalid_validation_category');
   });
 
+  it.each(['202611031045', '0.1.0', '0.1.0.202611031045'])('accepts bundle version %s', async bundleVersion => {
+    // testflight.sh stamps CFBundleVersion as YYYYMMDDHHMM (12 digits), so a
+    // component of the signed version is longer than a semantic-version number.
+    const fixture = await buildAssertionFixture({ includeExtensions: true, bundleVersion });
+    await expect(verifyAssertion(fixture.input)).resolves.toEqual({ counter: 1 });
+  });
+
+  it('accepts a bundle version carried as a CBOR byte string', async () => {
+    const fixture = await buildAssertionFixture({ includeExtensions: true, bundleVersion: new TextEncoder().encode('1.0') });
+    await expect(verifyAssertion(fixture.input)).resolves.toEqual({ counter: 1 });
+  });
+
+  it.each(['', '1.0 beta', 'v1'])('rejects bundle version %j', async bundleVersion => {
+    const fixture = await buildAssertionFixture({ includeExtensions: true, bundleVersion });
+    await expect(verifyAssertion(fixture.input)).rejects.toThrow('invalid_bundle_version');
+  });
+
   it('rejects a validly shaped authenticatorData whose trailing bytes are not extensions', async () => {
     const fixture = await buildAssertionFixture();
     const object = decode(fromB64(fixture.input.assertion)) as { authenticatorData: Uint8Array; signature: Uint8Array };
