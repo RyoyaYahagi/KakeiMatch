@@ -110,7 +110,13 @@ async function checkAssertion(db: Db, config: Config, challenge: Challenge, asse
   try {
     const { verifyAssertion } = await import('./app-attest');
     verified = await verifyAssertion({ assertion, publicKey: registered.public_key, clientDataHash: await hash(decode(challenge.challenge)), config, counter: registered.counter });
-  } catch { return null; }
+  } catch (error) {
+    // Log only App Attest reason codes, never the assertion, key, challenge, or identities.
+    const message = error instanceof Error ? error.message : '';
+    const reason = /^[a-z_]+$/.test(message) ? message : 'unknown';
+    console.warn('native_app_attest_assertion_failed', { reason });
+    return null;
+  }
   // Compare-and-swap prevents concurrent assertions from reusing a counter.
   const update = await db.prepare(`UPDATE native_app_keys SET counter=? WHERE key_id=? AND counter=? AND revoked_at IS NULL`)
     .bind(verified.counter, registered.key_id, registered.counter).run();

@@ -276,6 +276,34 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect((await run('/api/native/ai/usage', undefined, headers)).status).toBe(401);
   });
 
+  it('logs only a safe App Attest assertion failure reason code', async () => {
+    await registerKey();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const reasonChallenge = await (await issueChallenge('guest')).json() as { challengeId: string };
+      assertion.mockRejectedValueOnce(new Error('invalid_auth_flags'));
+      const rejected = await run('/api/native/guest', { challengeId: reasonChallenge.challengeId, keyId, assertion: 'synthetic-secret-assertion' });
+      expect(rejected.status).toBe(403);
+      expect(await rejected.json()).toEqual({ error: 'invalid_proof' });
+
+      const unknownChallenge = await (await issueChallenge('guest')).json() as { challengeId: string };
+      assertion.mockRejectedValueOnce(new Error(`signature failed for ${keyId}: ${secret}`));
+      expect((await run('/api/native/guest', { challengeId: unknownChallenge.challengeId, keyId, assertion: 'synthetic-secret-assertion' })).status).toBe(403);
+
+      expect(warn.mock.calls).toEqual([
+        ['native_app_attest_assertion_failed', { reason: 'invalid_auth_flags' }],
+        ['native_app_attest_assertion_failed', { reason: 'unknown' }],
+      ]);
+      const logged = JSON.stringify(warn.mock.calls);
+      expect(logged).not.toContain(keyId);
+      expect(logged).not.toContain(secret);
+      expect(logged).not.toContain('synthetic-secret-assertion');
+      expect(logged).not.toContain(reasonChallenge.challengeId);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('retains guest daily-five and address-twenty quotas through the actual native AI dispatch path', async () => {
     await registerKey();
     const session = await (await guestLogin()).json() as { sessionToken: string };
