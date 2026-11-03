@@ -109,7 +109,7 @@ export interface AttestationFixtureOptions {
   coseKey?: Map<number, unknown>;
   includeExtensions?: boolean;
   validationCategory?: number;
-  bundleVersion?: string;
+  bundleVersion?: string | Uint8Array;
   nonceValue?: Bytes;
   malformedNonceDER?: boolean;
   corruptLeafCertificateDER?: boolean;
@@ -294,7 +294,7 @@ export interface AssertionFixtureOptions {
   flags?: number;
   includeExtensions?: boolean;
   validationCategory?: number;
-  bundleVersion?: string;
+  bundleVersion?: string | Uint8Array;
 }
 
 export interface AssertionFixture {

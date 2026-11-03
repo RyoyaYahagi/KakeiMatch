@@ -57,16 +57,30 @@ function nonceOctet(data: Bytes): Bytes {
   if (data.length !== 38 || !equal(data.slice(0, 6), Uint8Array.of(0x30, 0x24, 0xa1, 0x22, 0x04, 0x20))) throw new Error('invalid_nonce_der');
   return data.slice(6);
 }
+function textValue(value: unknown): string {
+  // Apple documents apple_bundle_version_01 as a String. Accept a CBOR byte
+  // string holding the same UTF-8 text as well, because rejecting a valid
+  // signed assertion over the encoding of a diagnostic value is worse than
+  // decoding it.
+  if (typeof value === 'string') return value;
+  if (value instanceof Uint8Array && value.length > 0 && value.length <= 64) {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(value); } catch { throw new Error('invalid_bundle_version'); }
+  }
+  throw new Error('invalid_bundle_version');
+}
 function validateExtensions(value: unknown, config: AppAttestConfig) {
   const ext = map(value);
   const categoryBytes = bytes(ext.get('apple_validation_category_01'));
-  const version = ext.get('apple_bundle_version_01');
   if (categoryBytes.length !== 4) throw new Error('invalid_validation_category');
   const category = new DataView(categoryBytes.buffer, categoryBytes.byteOffset, 4).getUint32(0, true);
   const allowed = config.environment === 'development' ? [3] : [2, 4, 5];
   if (!allowed.includes(category)) throw new Error('invalid_validation_category');
   // No minimum-version rollout policy yet; validate the signed version, never use it as identity.
-  if (typeof version !== 'string' || !/^\d{1,10}(?:\.\d{1,10}){0,2}$/.test(version)) throw new Error('invalid_bundle_version');
+  // CFBundleVersion is usually a 12-digit build stamp (YYYYMMDDHHMM, see
+  // apps/ios/scripts/testflight.sh), so one component is not limited to a
+  // semantic-version-sized number.
+  const version = textValue(ext.get('apple_bundle_version_01'));
+  if (version.length > 64 || !/^\d{1,20}(?:\.\d{1,20}){0,4}$/.test(version)) throw new Error('invalid_bundle_version');
 }
 function authData(input: Bytes, config: AppAttestConfig, requireCredential: boolean) {
   if (input.length < 37 || input.length > 4096) throw new Error('invalid_auth_data');
