@@ -10,7 +10,7 @@ const errors = []; page.on('pageerror', error => errors.push(error.message));
 // Hold each AI answer so the test can look at the screen while it waits.
 const held = {};
 // Later scenarios answer at once; failNext makes the next read fail like a dropped connection.
-let autoRelease = false, failNext = false;
+let autoRelease = false, failNext = false, invalidNext = false;
 const hold = name => autoRelease ? Promise.resolve() : new Promise(resolve => { held[name] = resolve; });
 let geminiSeen, jevSeen;
 const geminiArrived = new Promise(resolve => { geminiSeen = resolve; });
@@ -19,6 +19,7 @@ await context.route('**/api/ai/token', route => route.fulfill({ json: { token: '
 await context.route('**/api/ai/gemini', async route => {
   const released = hold('gemini'); geminiSeen(); await released;
   if (failNext) { failNext = false; await route.fulfill({ status: 503, json: { error: 'provider_unavailable' } }); return; }
+  if (invalidNext) { invalidNext = false; await route.fulfill({ json: { documentKind: 'receipt' } }); return; }
   await route.fulfill({ json: { documentKind: 'receipt', merchant: 'Synthetic Reading Shop', purchasedDate: '2026-10-04', purchasedTime: null, totalAmountYen: 640, taxAmountYen: null, items: [{ name: 'Synthetic Bread', amountYen: 640 }], warnings: [] } });
 });
 await context.route('**/api/ai/jev', async route => {
@@ -96,14 +97,26 @@ try {
   await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic-retry.png', mimeType: 'image/png', buffer: photo });
   await click('AIで読み取る');
   await page.locator('.reading-step.is-failed').filter({ hasText: '読み取れませんでした' }).waitFor();
-  await page.getByText('ぼやけや反射があれば撮り直してください。', { exact: true }).waitFor();
-  assert.ok(await page.getByRole('button', { name: '撮り直す', exact: true }).isVisible());
+  // A paused AI is not a photo problem: name the cause, show the reason, and do not ask for a retake.
+  await page.getByText('! 今はAIで読み取れません', { exact: true }).waitFor();
+  await page.getByText('AI機能は一時的に利用できません。レシート画像と入力内容は端末に残っています。手入力で登録できます。時間をおいて再度お試しください。', { exact: true }).waitFor();
+  assert.equal(await page.getByText('ぼやけや反射があれば撮り直してください。', { exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: '撮り直す', exact: true }).count(), 0);
   assert.ok(await page.locator('.form-actions button[type=submit]').isHidden());
   if (process.env.PWA_RECEIPT_AI_FAILED_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_AI_FAILED_SCREENSHOT_PATH });
   await click('もう一度読み取る');
   await page.waitForFunction(() => document.querySelector('#receipt-merchant')?.value === 'Synthetic Reading Shop');
   assert.equal(await page.locator('.reading-failure:not([hidden])').count(), 0);
   assert.ok(await page.locator('.form-actions button[type=submit]').isVisible());
+
+  // A failure the photo can cause (here an AI answer that cannot be read) keeps the retake advice.
+  invalidNext = true;
+  await page.locator('#receipt-tab').click(); await click('記録を追加');
+  await page.locator('#record-sheet input[type=file]').first().setInputFiles({ name: 'synthetic-invalid.png', mimeType: 'image/png', buffer: photo });
+  await click('AIで読み取る');
+  await page.locator('.reading-failure-title').filter({ hasText: '! 写真から読み取れませんでした' }).waitFor();
+  await page.getByText('ぼやけや反射があれば撮り直してください。', { exact: true }).waitFor();
+  assert.ok(await page.getByRole('button', { name: '撮り直す', exact: true }).isVisible());
 
   // Stopping the wait leaves the form to be filled by hand.
   await page.locator('#receipt-tab').click(); await click('記録を追加');
