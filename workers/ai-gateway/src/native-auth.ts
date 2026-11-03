@@ -107,14 +107,24 @@ async function checkAssertion(db: Db, config: Config, challenge: Challenge, asse
   const registered = await key(db, challenge.key_id, config);
   if (!registered) return null;
   let verified;
+  let appAttest: typeof import('./app-attest');
   try {
-    const { verifyAssertion } = await import('./app-attest');
-    verified = await verifyAssertion({ assertion, publicKey: registered.public_key, clientDataHash: await hash(decode(challenge.challenge)), config, counter: registered.counter });
+    appAttest = await import('./app-attest');
+  } catch {
+    console.warn('native_app_attest_assertion_failed', { reason: 'unknown' });
+    return null;
+  }
+  try {
+    verified = await appAttest.verifyAssertion({ assertion, publicKey: registered.public_key, clientDataHash: await hash(decode(challenge.challenge)), config, counter: registered.counter });
   } catch (error) {
-    // Log only App Attest reason codes, never the assertion, key, challenge, or identities.
+    // Log only the App Attest reason code and the non-secret authData flags
+    // byte. Never log the assertion, key, challenge, token, or identity.
     const message = error instanceof Error ? error.message : '';
     const reason = /^[a-z_]+$/.test(message) ? message : 'unknown';
-    console.warn('native_app_attest_assertion_failed', { reason });
+    const flags = typeof appAttest.AppAttestAssertionError === 'function' && error instanceof appAttest.AppAttestAssertionError
+      ? error.flags
+      : undefined;
+    console.warn('native_app_attest_assertion_failed', flags === undefined ? { reason } : { reason, flags });
     return null;
   }
   // Compare-and-swap prevents concurrent assertions from reusing a counter.

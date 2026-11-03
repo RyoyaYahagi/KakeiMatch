@@ -3,16 +3,22 @@ import { DatabaseSync } from 'node:sqlite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sqliteD1 } from './test-support/sqlite-d1';
 import type { NativeEnv } from './native-auth';
+import { AppAttestAssertionError } from './app-attest';
 import { handleRequest as handleWebRequest } from './worker';
 import { reserveFlow, dayKey, type FlowLimits } from './receipt-ai-usage';
 import { addressDayMac } from './guest-ai';
 
-const attest = vi.fn(async ({ attestation }: { attestation: string }) => {
-  if (attestation === 'bad') throw new Error('synthetic_invalid_attestation');
-  return { publicKey: 'synthetic-public-key', receipt: 'synthetic-receipt' };
+const { attest, assertion } = vi.hoisted(() => ({
+  attest: vi.fn(async ({ attestation }: { attestation: string }) => {
+    if (attestation === 'bad') throw new Error('synthetic_invalid_attestation');
+    return { publicKey: 'synthetic-public-key', receipt: 'synthetic-receipt' };
+  }),
+  assertion: vi.fn(async ({ counter }: { counter: number }) => ({ counter: counter + 1 })),
+}));
+vi.mock('./app-attest', async importOriginal => {
+  const actual = await importOriginal<typeof import('./app-attest')>();
+  return { ...actual, verifyAttestation: attest, verifyAssertion: assertion };
 });
-const assertion = vi.fn(async ({ counter }: { counter: number }) => ({ counter: counter + 1 }));
-vi.mock('./app-attest', () => ({ verifyAttestation: attest, verifyAssertion: assertion }));
 
 const origin = 'https://native.example.test';
 const teamId = 'ABCDE12345';
@@ -276,12 +282,12 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect((await run('/api/native/ai/usage', undefined, headers)).status).toBe(401);
   });
 
-  it('logs only a safe App Attest assertion failure reason code', async () => {
+  it('logs only a safe App Attest assertion failure reason code and flags byte', async () => {
     await registerKey();
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       const reasonChallenge = await (await issueChallenge('guest')).json() as { challengeId: string };
-      assertion.mockRejectedValueOnce(new Error('invalid_auth_flags'));
+      assertion.mockRejectedValueOnce(new AppAttestAssertionError('invalid_assertion_signature', 0x45));
       const rejected = await run('/api/native/guest', { challengeId: reasonChallenge.challengeId, keyId, assertion: 'synthetic-secret-assertion' });
       expect(rejected.status).toBe(403);
       expect(await rejected.json()).toEqual({ error: 'invalid_proof' });
@@ -291,7 +297,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
       expect((await run('/api/native/guest', { challengeId: unknownChallenge.challengeId, keyId, assertion: 'synthetic-secret-assertion' })).status).toBe(403);
 
       expect(warn.mock.calls).toEqual([
-        ['native_app_attest_assertion_failed', { reason: 'invalid_auth_flags' }],
+        ['native_app_attest_assertion_failed', { reason: 'invalid_assertion_signature', flags: 0x45 }],
         ['native_app_attest_assertion_failed', { reason: 'unknown' }],
       ]);
       const logged = JSON.stringify(warn.mock.calls);

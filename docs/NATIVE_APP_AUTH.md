@@ -120,7 +120,8 @@ Appleの公開手順に従って、CBORの形を検証し、Apple App Attestatio
 - `rpIdHash == SHA256(設定済みApp ID)`。RPのWeb domain hashとApp AttestのApp ID hashを混同しない。
 - 初回counterは0。環境別AAGUIDは `appattestdevelop` または `appattest` + 7 zero bytes。登録環境と運用環境が一致する。
 - assertionの署名は登録済み公開鍵で検証する。counterは前回を超え、D1の比較更新でも競合がない。challengeの期限・用途・一度限り使用も独立して検証する。
-- EDフラグ付きの新しいauthenticator extensionでは、`apple_validation_category_01` を4 bytesのlittle-endian整数として検証する。developmentは3、productionは2（TestFlight）・4（App Store）・5（Enterprise / ad-hoc）だけを受理する。`apple_bundle_version_01` は数字とドットによる1〜3要素の版番号に限定する。最低版の強制はまだ行わない。EDなしの旧形式も構造を検証して受理し、ED付きで欠損・不正な値は拒否する。
+- attestationのEDフラグ付きauthenticator extensionでは、`apple_validation_category_01` を4 bytesのlittle-endian整数として検証する。developmentは3、productionは2（TestFlight）・4（App Store）・5（Enterprise / ad-hoc）だけを受理する。`apple_bundle_version_01` は数字とドットによる1〜3要素の版番号に限定する。最低版の強制はまだ行わない。EDなしの旧形式も構造を検証して受理し、ED付きで欠損・不正な値は拒否する。
+- assertionはAppleの検証手順（Verify the assertion）にflagsの要件がないため、flagsバイトを受理条件にしない。authenticatorDataが37 bytesなら末尾データなし、37 bytesを超えるなら署名対象のCBOR extension辞書として同じextension値を検証し、不正なら拒否する。EDビットの有無でextensionの有無を判定しない。
 
 App Attestは本人認証の代わりではありません。account本人はPasskeyが決め、guestはその鍵に固定します。App Attest自体も中継・正規端末の不正使用を完全には防ぎません。日次利用枠・address制限・全体費用停止は外しません。Apple fraud metricの照会・receiptの独立した解析は今回実装しません。receiptは検証済みattestationの付随bytesとして保存するだけで、課金許可やrisk判定には使いません。Appleはreceiptの独立検証とrisk metricによる追加評価も説明しています。この未実装は実機公開前の追加評価対象です。[Apple Validation (2026/10), Receipt / fraud assessment; Apple Integrity (2026/10)]
 
