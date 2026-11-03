@@ -33,6 +33,39 @@ struct ReceiptPresentationTests {
         #expect(KMReceiptPresentation.failureMessage(.nativeUnsupported).contains("手で入力"))
         #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
     }
+
+    @Test func failureViewMapsAPIErrorsToThePWACodes() {
+        let guestQuota = KMReceiptPresentation.readingFailure(.quotaExceeded, guest: true)
+        #expect(guestQuota.title == "! AIの読み取り回数の上限です")
+        #expect(guestQuota.message.contains("手で入力して続けられます。"))
+        #expect(guestQuota.message.contains("ログインすると回数の制限なく使えることがあります。設定からログインできます。"))
+        #expect(guestQuota.accountAction && !guestQuota.photoProblem)
+        #expect(!guestQuota.message.contains("ぼやけや反射"))
+
+        let accountQuota = KMReceiptPresentation.readingFailure(.quotaExceeded)
+        #expect(accountQuota.message == "AI利用上限に達しました。手動で入力できます。")
+        #expect(!accountQuota.accountAction)
+
+        // The photo is blamed only for failures the photo can cause: two iOS codes
+        // stand in for PWA's invalid_image / image_too_large.
+        #expect(KMReceiptPresentation.readingFailure(.invalidResponse).photoProblem)
+        #expect(KMReceiptPresentation.readingFailure(.invalidResponse).title == "! 写真から読み取れませんでした")
+        #expect(KMReceiptPresentation.readingFailure(.invalidRequest).photoProblem)
+
+        #expect(KMReceiptPresentation.readingFailure(.authenticationRequired).title == "! ログインが必要です")
+        #expect(KMReceiptPresentation.readingFailure(.nativeAuthenticationRequired).title == "! ログインが必要です")
+        for failure in [KMAPIError.rateLimited, .network, .providerUnavailable, .providerTimeout,
+                        .aiTemporarilyPaused, .notConfigured] {
+            let view = KMReceiptPresentation.readingFailure(failure)
+            #expect(view.title == "! 今はAIで読み取れません")
+            #expect(!view.photoProblem)
+        }
+        // PWA safeError maps the guest-creation limit to quota.
+        #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).title == "! AIの読み取り回数の上限です")
+        #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).accountAction)
+        #expect(KMReceiptPresentation.readingFailure(.nativeUnsupported).title == "! 読み取れませんでした")
+        #expect(!KMReceiptPresentation.readingFailure(.nativeUnsupported).accountAction)
+    }
 }
 
 @Suite(.serialized) @MainActor struct ReceiptModelTests {

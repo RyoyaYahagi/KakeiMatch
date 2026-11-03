@@ -43,6 +43,9 @@ actor KMWorkerAPI {
 
     func currentIdentity() -> Identity? { cachedToken?.identity }
 
+    /// The identity of the last AI request. Used to word a failure, never for authorization.
+    func isGuest() -> Bool { cachedToken?.identity == .guest }
+
     private struct NativeChallenge: Decodable {
         let challengeId: UUID
         let challenge: String

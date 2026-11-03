@@ -105,4 +105,67 @@ struct ReceiptPresentationTests {
         #expect(warnings[2].message == "画像の内容と照らし合わせてください。")
         #expect(KMReceiptPresentation.warnings(value, reviewed: [0, 1, 2, 3]).isEmpty)
     }
+
+    @Test func readingFailureBlamesThePhotoOnlyWhenItCanBeTheCause() {
+        for code in ["invalid_image", "invalid_ai_response", "image_too_large", "image_missing", "image_required"] {
+            let view = KMReceiptPresentation.readingFailure(code: code, message: "読み取れませんでした。")
+            #expect(view.title == "! 写真から読み取れませんでした")
+            #expect(view.message == "ぼやけや反射があれば撮り直してください。")
+            #expect(view.photoProblem)
+            #expect(!view.accountAction)
+        }
+    }
+
+    @Test func readingFailureNamesTheLimitWithoutTheRetakeAdvice() {
+        let view = KMReceiptPresentation.readingFailure(code: "quota",
+            message: "今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。")
+        #expect(view.title == "! AIの読み取り回数の上限です")
+        #expect(view.message == "今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。")
+        #expect(!view.photoProblem)
+        #expect(!view.message.contains("ぼやけや反射"))
+        #expect(!view.accountAction)
+    }
+
+    @Test func readingFailureAddsTheSignInHintWhenAGuestReachesTheLimit() {
+        let view = KMReceiptPresentation.readingFailure(code: "quota",
+            message: "今日のAI読み取り（登録なしで1日5回）を使い切りました。", guest: true)
+        #expect(view.title == "! AIの読み取り回数の上限です")
+        #expect(view.message.contains("今日のAI読み取り（登録なしで1日5回）を使い切りました。"))
+        #expect(view.message.contains("ログインすると回数の制限なく使えることがあります。設定からログインできます。"))
+        #expect(!view.photoProblem)
+        #expect(view.accountAction)
+        let account = KMReceiptPresentation.readingFailure(code: "quota", message: "AI利用上限に達しました。", guest: false)
+        #expect(!account.message.contains("ログインすると回数"))
+        #expect(!account.accountAction)
+    }
+
+    @Test func readingFailureGivesSignInPauseAndUnknownFailuresTheirOwnHeading() {
+        let cases: [(code: String, title: String)] = [
+            ("auth_required", "! ログインが必要です"),
+            ("rate_limited", "! 今はAIで読み取れません"),
+            ("offline_or_unavailable", "! 今はAIで読み取れません"),
+            ("not_configured", "! 今はAIで読み取れません"),
+            ("unavailable", "! 今はAIで読み取れません"),
+            ("unexpected", "! 読み取れませんでした"),
+        ]
+        for value in cases {
+            let view = KMReceiptPresentation.readingFailure(code: value.code, message: "あとで再度お試しください。")
+            #expect(view.title == value.title)
+            #expect(view.message == "あとで再度お試しください。")
+            #expect(!view.photoProblem)
+        }
+        #expect(KMReceiptPresentation.readingFailure(code: "auth_required", message: "サインインしてください。").accountAction)
+        #expect(!KMReceiptPresentation.readingFailure(code: "offline_or_unavailable", message: "通信できません。").accountAction)
+        // A cancelled bot check is not a sign-in problem.
+        let cancelled = KMReceiptPresentation.readingFailure(code: "auth_required",
+            message: "確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。")
+        #expect(cancelled.title == "! 読み取りを中止しました")
+        #expect(!cancelled.accountAction)
+    }
+
+    @Test func readingFailureNeverShowsAnEmptyOrForeignMessageAlone() {
+        let view = KMReceiptPresentation.readingFailure(code: "unexpected", message: "Something went wrong")
+        #expect(view.title == "! 読み取れませんでした")
+        #expect(view.message == "処理できませんでした。通信状態を確認して、もう一度お試しください。")
+    }
 }

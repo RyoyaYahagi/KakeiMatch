@@ -7,6 +7,7 @@ struct AppShell: View {
     @State private var entry: KMEntryDestination? = nil
     @State private var budgetRouteMonth: KMYearMonth?
     @State private var settingsAccountsRoute = false
+    @State private var settingsAIRoute = false
     @State private var recordsRefreshToken = 0
     @State private var deletionNotice = KMDeletionNoticeModel()
     @State private var moneyForwardRoute = false
@@ -84,8 +85,10 @@ struct AppShell: View {
                                     case .reconciliation: ReconciliationView()
                                     case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth,
                                         initialAccounts: settingsAccountsRoute,
+                                        initialAI: settingsAIRoute,
                                         onBudgetBack: { budgetRouteMonth = nil },
                                         onAccountsBack: { settingsAccountsRoute = false },
+                                        onAIBack: { settingsAIRoute = false },
                                         onOpenMoneyForward: { moneyForwardRoute = true },
                                         onShowHome: { tab = .home })
                                     }
@@ -112,7 +115,7 @@ struct AppShell: View {
                     }
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
-                    if destination != .settings { settingsAccountsRoute = false }
+                    if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
                     deletionNotice.clearTransientStatus()
                     tab = destination
                     entry = nil // Reselecting the current tab also leaves an entry, like PWA.
@@ -391,7 +394,9 @@ struct AppShell: View {
     @ViewBuilder private func entryScreen(_ destination: KMEntryDestination) -> some View {
         switch destination {
         case .receipt, .photo:
-            ReceiptView(source: destination, onSaved: { entry = nil; tab = .records })
+            ReceiptView(source: destination,
+                onSaved: { entry = nil; tab = .records },
+                onOpenAccount: { entry = nil; settingsAccountsRoute = false; settingsAIRoute = true; tab = .settings })
         case .expense: ManualEntryView()
         case .income: IncomeView(onPayroll: { entry = .payroll })
         case .transfer: TransferView()
