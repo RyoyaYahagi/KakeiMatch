@@ -307,7 +307,7 @@ export async function handleNativeRequest(request: Request, env: NativeEnv, opti
       if (!response.ok) {
         // Record only Better Auth's short error code/message. Never log the
         // WebAuthn assertion, credential ID, challenge, session, or user.
-        let detail: { code?: string; message?: string } = {};
+        const detail: { code?: string; message?: string } = {};
         try {
           const parsed = JSON.parse(await response.text()) as { code?: unknown; message?: unknown };
           if (typeof parsed.code === 'string' && parsed.code.length <= 64) detail.code = parsed.code;
