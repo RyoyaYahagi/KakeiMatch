@@ -154,7 +154,22 @@ function createAuth(env: AccountEnv, originUrl: URL, native = false) {
   const rpID = originUrl.hostname;
   return betterAuth({
     appName: "KakeiMatch",
-    ...(native ? { logger: { disabled: true } } : {}),
+    // Native callers are server-to-server, so Better Auth's default request
+    // logging stays off. Error-level logs are kept (message plus the error's
+    // own message only) because a rejected Passkey otherwise reports just
+    // `AUTHENTICATION_FAILED`; no credential, assertion, or session is logged.
+    ...(native ? {
+      logger: {
+        level: "error" as const,
+        log(level: string, message: string, ...args: unknown[]) {
+          const detail = args
+            .map(value => value instanceof Error ? value.message : typeof value === "string" ? value : "")
+            .filter(Boolean)
+            .join(" | ");
+          console.error("native_better_auth_error", { level, message: message.slice(0, 120), detail: detail.slice(0, 160) });
+        },
+      },
+    } : {}),
     baseURL: origin,
     secret: authSecret(env),
     database: env.ACCOUNT_DB as never,
