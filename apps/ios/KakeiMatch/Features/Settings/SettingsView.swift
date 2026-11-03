@@ -78,6 +78,11 @@ struct SettingsView: View {
             guard value == .root else { return }
             Task { await auth.refresh() }
         }
+        // A receipt can open the account page while Settings is already on screen;
+        // the initial page passed to init would not be applied a second time.
+        .onChange(of: initialAI) { _, ai in
+            if ai { page = .ai }
+        }
     }
 
     private var settingsRoot: some View {
