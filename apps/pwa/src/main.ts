@@ -286,10 +286,57 @@ const LOGIN_ERROR_HINTS: Record<string, string> = {
   INVALID_CONTEXT: '招待コードを確認できませんでした。',
   PREVIOUSLY_REGISTERED: 'このPasskeyは登録済みです。',
 };
+type BrowserPasskeyOutcome = { credentialObtained: boolean; errorName: string | null };
+/**
+ * Better Auth reports most browser failures as AUTH_CANCELLED and drops the cause, so a
+ * failed Face ID and a failed send after it look the same. Watch the browser calls for the
+ * duration of one ceremony and keep only the error name (never the credential or message).
+ */
+async function watchBrowserPasskey<T>(action: () => Promise<T>): Promise<{ value: T; outcome: BrowserPasskeyOutcome }> {
+  const outcome: BrowserPasskeyOutcome = { credentialObtained: false, errorName: null };
+  const container = navigator.credentials;
+  const originalFetch = window.fetch;
+  const watched = <A extends unknown[], R>(call: (...args: A) => Promise<R>, credential: boolean) => async (...args: A): Promise<R> => {
+    try {
+      const value = await call(...args);
+      if (credential && value) outcome.credentialObtained = true;
+      return value;
+    } catch (error) {
+      outcome.errorName = error instanceof Error ? error.name : 'UnknownError';
+      throw error;
+    }
+  };
+  const patched = container ? { get: container.get, create: container.create } : null;
+  if (container && patched) {
+    container.get = watched(patched.get.bind(container), true);
+    container.create = watched(patched.create.bind(container), true);
+  }
+  window.fetch = watched(originalFetch.bind(window), false);
+  try {
+    return { value: await action(), outcome };
+  } finally {
+    window.fetch = originalFetch;
+    if (container && patched) { container.get = patched.get; container.create = patched.create; }
+  }
+}
+function attachBrowserOutcome(error: unknown, outcome: BrowserPasskeyOutcome): unknown {
+  return error && typeof error === 'object' ? { ...error, browserOutcome: outcome } : error;
+}
+function browserOutcomeDetail(error: unknown): string {
+  const outcome = error && typeof error === 'object' ? (error as { browserOutcome?: BrowserPasskeyOutcome }).browserOutcome : undefined;
+  if (!outcome) return '';
+  if (outcome.errorName && !outcome.credentialObtained) return `端末のPasskeyの確認で止まりました（詳細: ${outcome.errorName}）。`;
+  if (outcome.credentialObtained) return `端末での確認のあと、サーバーへの送信で止まりました${outcome.errorName ? `（詳細: ${outcome.errorName}）` : ''}。`;
+  return '';
+}
 function loginFailureDetail(error: unknown): string {
   const code = error && typeof error === 'object' && typeof (error as { code?: unknown }).code === 'string' ? (error as { code: string }).code : '';
+  const browser = browserOutcomeDetail(error);
+  // AUTH_CANCELLED hides the browser cause; show where it stopped instead of "cancelled".
+  if (browser && ['AUTH_CANCELLED', 'ERROR_CANCELLED', 'UNKNOWN_ERROR', 'ERROR_PASSTHROUGH_SEE_CAUSE_PROPERTY'].includes(code.toUpperCase())) return browser;
   const hint = LOGIN_ERROR_HINTS[code.toUpperCase()];
   if (hint) return hint;
+  if (browser) return browser;
   const message = error instanceof Error ? error.message
     : error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string' ? (error as { message: string }).message : '';
   // A Japanese message can be shown as-is; a raw English message is replaced by the stage sentence.
@@ -423,10 +470,11 @@ loginButton.addEventListener('click', () => {
   loginButton.disabled = true;
   accountMessage.textContent = 'Passkeyを確認しています…';
   void (async () => {
-    const result = await authClient.signIn.passkey();
+    const { value: result, outcome } = await watchBrowserPasskey(() => authClient.signIn.passkey());
     if (result.error) {
-      recordLoginFailure('passkey', result.error);
-      accountMessage.textContent = describeLoginFailure('passkey', result.error);
+      const error = attachBrowserOutcome(result.error, outcome);
+      recordLoginFailure('passkey', error);
+      accountMessage.textContent = describeLoginFailure('passkey', error);
       return;
     }
     try {
@@ -454,10 +502,11 @@ inviteButton.addEventListener('click', () => {
   inviteButton.disabled = true;
   accountMessage.textContent = 'Passkeyを登録しています…';
   void (async () => {
-    const result = await authClient.passkey.addPasskey({ name: 'この端末', context: token, createSession: true });
+    const { value: result, outcome } = await watchBrowserPasskey(() => authClient.passkey.addPasskey({ name: 'この端末', context: token, createSession: true }));
     if (result.error) {
-      recordLoginFailure('invite', result.error);
-      accountMessage.textContent = describeLoginFailure('invite', result.error);
+      const error = attachBrowserOutcome(result.error, outcome);
+      recordLoginFailure('invite', error);
+      accountMessage.textContent = describeLoginFailure('invite', error);
       return;
     }
     try {
@@ -487,8 +536,13 @@ manualButton.addEventListener('click', () => {
 
 addPasskeyButton.addEventListener('click', () => {
   addPasskeyButton.disabled = true;
-  void authClient.passkey.addPasskey({ name: '追加のPasskey' }).then(result => {
-    if (result.error) throw new Error(result.error.message);
+  void watchBrowserPasskey(() => authClient.passkey.addPasskey({ name: '追加のPasskey' })).then(({ value: result, outcome }) => {
+    if (result.error) {
+      const error = attachBrowserOutcome(result.error, outcome);
+      recordLoginFailure('passkey', error);
+      accountMessage.textContent = `Passkeyを追加できませんでした。${loginFailureDetail(error)}`;
+      return;
+    }
     accountMessage.textContent = 'Passkeyを追加しました。';
     return renderPasskeys();
   }).catch(() => { accountMessage.textContent = 'Passkeyを追加できませんでした。'; })
