@@ -18,7 +18,7 @@
 4. ロジックにSwift Testing、導線にXCUITestを追加する。合成データだけで状態を固定する。
 5. `project.yml` から生成し、アプリをbuildしてunit・UI testを実行する。LinuxではmacOS CIで実行結果を確認する。
    - Foundation/CryptoKitだけで動き、SwiftUI/UIKit、SQLite、JavaScriptCore、API adapterに依存しない計算テストは、リポジトリrootで `swift test --package-path apps/ios` を実行します。これはmacOS 15以上で動き、iOS Simulatorを起動しません。`KakeiMatchCoreTests` に移したsuiteは `KakeiMatchTests` に重ねて置きません。
-   - UIテストのCI割り当ては自動です。テストを追加・改名したら `node --test scripts/shard-ui-tests.test.mjs` で全テストが1回ずつ割り当てられることを確認します。スクリーンショットを撮るだけのテストは `scripts/shard-ui-tests.mjs` の `screenshotOnly` に入れます。PRのCIでは飛ばされます。
+   - UIテストのCI割り当ては自動です。テストを追加・改名したら `node --test scripts/shard-ui-tests.test.mjs` で全テストが1回ずつ割り当てられることを確認します。スクリーンショットを撮るだけのテストは `scripts/shard-ui-tests.mjs` の `screenshotOnly` に入れます。PRのCIでは飛ばされます。PRのCIは変更したファイルに関係するUIテストだけを実行します（対応は `README.md` の「生成・ビルド・テスト」）。新しい画面フォルダには、UIテストが参照する `accessibilityIdentifier` を付けてください。付いていないと、そのフォルダの変更で全件が走ります。
    - ローカル検証では `scripts/test-local.sh --only <テスト識別子>` で対象を絞ります。全体の成否はCIで判断します。
 6. PRのCIはスクリーンショット専用のテストを飛ばすので、作業branchで `gh workflow run ios.yml --ref <branch>` を実行する。その実行のスクリーンショットを `README.md` の「生成・ビルド・テスト」にあるコマンドで全shardからダウンロードし、同じ状態のPWAと見比べる。ライト・ダーク、safe area、44pt以上のタップ領域、長い文字、横はみ出し、色以外の状態表示も点検する。
 7. PR本文にPWAとの差分をすべて列挙する。未実装、OS固有で再現できないもの、その代替、未検証のものを区別する。build成功の推測で完了としない。
