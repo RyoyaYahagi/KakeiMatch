@@ -10,6 +10,17 @@ overrides:
   undici@>=7.0.0 <7.30.1: 7.30.1
   zod@>=4.0.0 <4.6.6: 4.6.6
   handlebars@<4.7.10: 4.7.10
+  '@peculiar/asn1-schema': 2.11.1
+  '@peculiar/asn1-android': 2.11.1
+  '@peculiar/asn1-cms': 2.11.1
+  '@peculiar/asn1-csr': 2.11.1
+  '@peculiar/asn1-ecc': 2.11.1
+  '@peculiar/asn1-pfx': 2.11.1
+  '@peculiar/asn1-pkcs8': 2.11.1
+  '@peculiar/asn1-pkcs9': 2.11.1
+  '@peculiar/asn1-rsa': 2.11.1
+  '@peculiar/asn1-x509': 2.11.1
+  '@peculiar/asn1-x509-attr': 2.11.1
 
 importers:
 
@@ -46,6 +57,9 @@ importers:
       '@peculiar/x509':
         specifier: 1.14.3
         version: 1.14.3
+      '@simplewebauthn/server':
+        specifier: 13.3.3
+        version: 13.3.3
       '@types/better-sqlite3':
         specifier: ^7.6.13
         version: 7.6.13
@@ -1324,8 +1338,8 @@ packages:
   '@oxc-project/types@0.151.0':
     resolution: {integrity: sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==}
 
-  '@peculiar/asn1-android@2.10.0':
-    resolution: {integrity: sha512-IHKdYL5MRW76DOQCv2HSE/vUMOf2jqH4E7yhtQYe/xx+RxpPiXfkUdhex0N4/s5crsnXCGftRNzy4RJn1s6CZA==}
+  '@peculiar/asn1-android@2.11.1':
+    resolution: {integrity: sha512-AuUBRDNdWrgtnuJGXARa0Xdtq6OAD8GqezDQz6Qka7kyynMo9fzkcrtpBEHuX984uEB570BrhMZfJfkUDfpQfw==}
     engines: {node: '>=14'}
 
   '@peculiar/asn1-cms@2.11.1':
@@ -1334,10 +1348,6 @@ packages:
 
   '@peculiar/asn1-csr@2.11.1':
     resolution: {integrity: sha512-KVfbXaKng8886/tOPG55t5K1XkTkGbR4amjIJzytXWobFU5nZgw/sKnSpa1hxP17nUSsrOF/7Mt9WUYeyLsi6Q==}
-    engines: {node: '>=14'}
-
-  '@peculiar/asn1-ecc@2.10.0':
-    resolution: {integrity: sha512-GFd3iOjFrWX+QWH2R2dO5QSJyyRGv9CIBKtRlGlPNCvb2RvmCbBDexe91MJgV76c69d998Xsa+CvuQ98seoiPg==}
     engines: {node: '>=14'}
 
   '@peculiar/asn1-ecc@2.11.1':
@@ -1356,16 +1366,8 @@ packages:
     resolution: {integrity: sha512-OHFkTg8D2zYafILqFE4KPbqX8srpvd3diGDc2h2cduumawc765mOHGcuFMGvLWlL2bbCMWMmMSCtlXptsOuiPA==}
     engines: {node: '>=14'}
 
-  '@peculiar/asn1-rsa@2.10.0':
-    resolution: {integrity: sha512-4Jvmwlh3gZAhNZ4/u7JSyLuce9hofOFZ4o3PYKAccCImGnyaT5CMym/ATgvAvqpOYFNW531oPZvJlEBhJy9VfA==}
-    engines: {node: '>=14'}
-
   '@peculiar/asn1-rsa@2.11.1':
     resolution: {integrity: sha512-6KwKGjulF489CpidZqkogNgLj6oGzgC4BL2FClM8PuJQ4t5NqT4q4a6A4vrSxBIBhMnL8hGYkLOpbVw0Vq38Tw==}
-    engines: {node: '>=14'}
-
-  '@peculiar/asn1-schema@2.10.0':
-    resolution: {integrity: sha512-GhokD41lV4gQrrLYm3wCkHfBOnJrnhDMgt4XeMW8gzfE1UdJqIuSwsE+ggf82XBjUXRJylcm+KIGQFa4utIVLw==}
     engines: {node: '>=14'}
 
   '@peculiar/asn1-schema@2.11.1':
@@ -1374,10 +1376,6 @@ packages:
 
   '@peculiar/asn1-x509-attr@2.11.1':
     resolution: {integrity: sha512-n7RKFrbTzt8pGBlZ90kmKEn1qsLTTyw7lrvHMK0xsA42kQugPk/GXYpNbEcl7DkkdVsU/one5UX7KQPfxLj8vQ==}
-    engines: {node: '>=14'}
-
-  '@peculiar/asn1-x509@2.10.0':
-    resolution: {integrity: sha512-ucNVg8+ANveTpMN3fy9lA2alryONdXc2A4cEG2hMniWbvQt+YOZoe8BI80YYNO8FBcuDY1qbDQ4uQGQVraHxGA==}
     engines: {node: '>=14'}
 
   '@peculiar/asn1-x509@2.11.1':
@@ -4619,7 +4617,7 @@ snapshots:
 
   '@oxc-project/types@0.151.0': {}
 
-  '@peculiar/asn1-android@2.10.0':
+  '@peculiar/asn1-android@2.11.1':
     dependencies:
       '@peculiar/asn1-schema': 2.11.1
       asn1js: 3.0.10
@@ -4634,13 +4632,6 @@ snapshots:
       tslib: 2.8.1
 
   '@peculiar/asn1-csr@2.11.1':
-    dependencies:
-      '@peculiar/asn1-schema': 2.11.1
-      '@peculiar/asn1-x509': 2.11.1
-      asn1js: 3.0.10
-      tslib: 2.8.1
-
-  '@peculiar/asn1-ecc@2.10.0':
     dependencies:
       '@peculiar/asn1-schema': 2.11.1
       '@peculiar/asn1-x509': 2.11.1
@@ -4681,23 +4672,10 @@ snapshots:
       asn1js: 3.0.10
       tslib: 2.8.1
 
-  '@peculiar/asn1-rsa@2.10.0':
-    dependencies:
-      '@peculiar/asn1-schema': 2.11.1
-      '@peculiar/asn1-x509': 2.11.1
-      asn1js: 3.0.10
-      tslib: 2.8.1
-
   '@peculiar/asn1-rsa@2.11.1':
     dependencies:
       '@peculiar/asn1-schema': 2.11.1
       '@peculiar/asn1-x509': 2.11.1
-      asn1js: 3.0.10
-      tslib: 2.8.1
-
-  '@peculiar/asn1-schema@2.10.0':
-    dependencies:
-      '@peculiar/utils': 2.0.3
       asn1js: 3.0.10
       tslib: 2.8.1
 
@@ -4711,13 +4689,6 @@ snapshots:
     dependencies:
       '@peculiar/asn1-schema': 2.11.1
       '@peculiar/asn1-x509': 2.11.1
-      asn1js: 3.0.10
-      tslib: 2.8.1
-
-  '@peculiar/asn1-x509@2.10.0':
-    dependencies:
-      '@peculiar/asn1-schema': 2.11.1
-      '@peculiar/utils': 2.0.3
       asn1js: 3.0.10
       tslib: 2.8.1
 
@@ -4841,11 +4812,11 @@ snapshots:
     dependencies:
       '@hexagon/base64': 1.1.28
       '@levischuck/tiny-cbor': 0.2.11
-      '@peculiar/asn1-android': 2.10.0
-      '@peculiar/asn1-ecc': 2.10.0
-      '@peculiar/asn1-rsa': 2.10.0
-      '@peculiar/asn1-schema': 2.10.0
-      '@peculiar/asn1-x509': 2.10.0
+      '@peculiar/asn1-android': 2.11.1
+      '@peculiar/asn1-ecc': 2.11.1
+      '@peculiar/asn1-rsa': 2.11.1
+      '@peculiar/asn1-schema': 2.11.1
+      '@peculiar/asn1-x509': 2.11.1
       '@peculiar/x509': 1.14.3
 
   '@sindresorhus/is@7.2.0': {}
