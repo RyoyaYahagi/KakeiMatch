@@ -22,6 +22,8 @@ import { categoryChoices, categoryRow, lastUsedCategory } from './category-picke
 import { icon } from './ui-icons';
 import { describeReceiptWarnings, type ReceiptWarningTarget } from './receipt-warnings';
 import { createReadingProgress } from './receipt-reading-progress';
+import { describeReadingFailure } from './receipt-reading-failure';
+import { currentAiIdentity } from './ai-auth';
 import { openReceiptImage } from './receipt-image-viewer';
 import { LocalTransactionDeletionService } from './local-transaction-deletions';
 import { showManualTransactionEditor, type TransactionEditField } from './local-transaction-ui';
@@ -748,12 +750,15 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
         if (!abandoned) finish();
       } catch (error) {
         if (abandoned) return;
-        report(error);
+        // The band below carries the reason, so only the diagnostic record is kept here.
+        if (!(error instanceof StaleScreenError)) recordDiagnosticFailure(error);
         finish(true); progress.fail(); aiButton.hidden = true;
         // docs/UX.md 読み取り中: say what failed and what to do next; try again first when it may work.
+        const view = describeReadingFailure(error, { guest: currentAiIdentity() === 'guest' });
         const retakeButton = button('撮り直す', () => retake.click()); retakeButton.prepend(icon('camera'));
-        failure.append(text('p', '! 写真から読み取れませんでした', 'reading-failure-title'), text('p', 'ぼやけや反射があれば撮り直してください。'), retakeButton);
-        if (error instanceof Error && /アカウント|ログイン|認証|サインイン/.test(error.message)) failure.append(button('アカウントを確認する', options.openAccount));
+        failure.append(text('p', view.title, 'reading-failure-title'), text('p', view.message));
+        if (view.photoProblem) failure.append(retakeButton);
+        if (view.accountAction) failure.append(button('アカウントを確認する', options.openAccount));
         failure.hidden = false;
         if (retryable(error)) {
           const retry = button('もう一度読み取る', async () => { clearFailure(); await readPhoto(); }, false);
