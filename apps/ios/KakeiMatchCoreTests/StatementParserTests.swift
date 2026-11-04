@@ -3,6 +3,33 @@ import Testing
 @testable import KakeiMatchCore
 
 struct StatementParserTests {
+    @Test func rakutenNewSignsAnnotationsAndCancellationSection() {
+        let headers = rakutenHeader.split(separator: ",").map(String.init)
+        let normal = ["2026/09/01", "人工店舗", "本人", "1回払い", "1200", "0", "1200", "1200", "1200", "0", "*"]
+        let annotation = ["", "現地利用額 １０．００ 変換レート １２０．００円"] + Array(repeating: "", count: 9)
+        let blank = Array(repeating: "", count: 11)
+        let section = ["■ご利用キャンセルなど"] + Array(repeating: "", count: 10)
+        let cancel = ["2026/09/02", "人工別店舗", "本人", "1回", "800", "0", "800", "800", "800", "0", ""]
+        let result = KMStatementParser.parse(data: csv([headers, normal, annotation, blank, section, cancel]), provider: .rakutenCard)
+        #expect(result.fatalErrors.isEmpty)
+        #expect(result.transactions.map(\.merchant) == ["人工店舗"])
+        #expect(result.excludedRows.map(\.rowNumber) == [3, 4, 5])
+        #expect(result.needsReviewRows == [.init(rowNumber: 6, reason: "返金・取消の可能性があります")])
+    }
+
+    @Test func rakutenUnknownSignsAndPopulatedAnnotationsStillRequireReview() {
+        let headers = rakutenHeader.split(separator: ",").map(String.init)
+        var normal = ["2026/09/01", "人工店舗", "本人", "1回払い", "1200", "0", "1200", "1200", "1200", "0", "?"]
+        let unknown = KMStatementParser.parse(data: csv([headers, normal]), provider: .rakutenCard)
+        #expect(unknown.transactions.isEmpty)
+        #expect(unknown.needsReviewRows.first?.reason == "通常購入の形式ではありません")
+        normal[10] = "*"
+        var annotation = ["", "現地利用額 10.00 変換レート 120.00円"] + Array(repeating: "", count: 9)
+        annotation[4] = "500"
+        let populated = KMStatementParser.parse(data: csv([headers, normal, annotation]), provider: .rakutenCard)
+        #expect(populated.transactions.isEmpty)
+        #expect(populated.needsReviewRows.map(\.rowNumber) == [2, 3])
+    }
     private let paypayHeader = "利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日"
     private let rakutenHeader = "利用日,利用店名・商品名,利用者,支払方法,利用金額,手数料/利息,支払総額,9月支払金額,当月請求額,10月繰越残高,新規サイン"
     private func data(_ text: String) -> Data { Data(text.utf8) }

@@ -168,13 +168,24 @@ enum KMStatementParser {
         if body.contains(where: { $0.count != template.count }) { return empty("unsupported_layout", encoding, rows: body.count, signature: signature) }
         if body.contains(where: { $0.contains(where: { $0.utf16.count > maxFieldLength }) }) { return empty("limit_exceeded", encoding, rows: body.count, signature: signature) }
         var out = KMStatementParseResult(totalRows: body.count, encoding: encoding, headerSignature: signature); var ordinals: [String: Int] = [:]; var prior: (row: Int, fingerprint: String)?
+        var inCancellationSection = false
         func addReview(_ row: Int, _ reason: String, continuation: Bool) {
             if continuation, let p = prior, p.row == row - 1 { out.transactions.removeAll { $0.sourceFingerprint == p.fingerprint && $0.duplicateOrdinal == (ordinals[p.fingerprint] ?? 1) }; ordinals[p.fingerprint] = max((ordinals[p.fingerprint] ?? 1) - 1, 0); out.needsReviewRows.append(rowIssue(p.row, "複数行明細の可能性があるため確認してください")) }
             out.needsReviewRows.append(rowIssue(row, reason)); prior = nil
         }
         for (i, r) in body.enumerated() {
             let n = i + 2
-            if twelve && r.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { out.excludedRows.append(rowIssue(n, "non_expense")); prior = nil; continue }
+            if r.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) { out.excludedRows.append(rowIssue(n, "non_expense")); prior = nil; continue }
+            if r[0].trimmingCharacters(in: .whitespacesAndNewlines) == "■ご利用キャンセルなど" && r.dropFirst().allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                out.excludedRows.append(rowIssue(n, "non_expense")); prior = nil; inCancellationSection = true; continue
+            }
+            if inCancellationSection { addReview(n, "返金・取消の可能性があります", continuation: false); continue }
+            let annotation = r[1].precomposedStringWithCompatibilityMapping.trimmingCharacters(in: .whitespacesAndNewlines)
+            if prior?.row == n - 1 && r[0].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+                annotation.range(of: #"^現地利用額\s*\d+(?:\.\d+)?\s*変換レート\s*\d+(?:\.\d+)?円$"#, options: .regularExpression) != nil &&
+                r.dropFirst(2).allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                out.excludedRows.append(rowIssue(n, "non_expense")); prior = nil; continue
+            }
             let rawDate = r[0], merchant = r[1], method = r[3], rawAmount = r[4]; let monthly = r[twelve ? 8 : 7], current = r[twelve ? 9 : 8], carry = r[twelve ? 10 : 9], newSign = twelve ? "" : r[10], future = twelve ? r[11] : ""
             let d = date(rawDate), amount = yen(rawAmount), missing = [r[6], monthly, current].contains { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             let continuation = rawDate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || merchant.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!twelve && missing)
@@ -187,7 +198,7 @@ enum KMStatementParser {
             else if amount == nil || amount! <= 0 { reason = "利用金額を確認できません" }
             else if others.contains(where: { $0 == nil }) { reason = "支払金額欄を確認できません" }
             else if twelve && r[7].range(of: #"^(?:[1-9]|1[0-2])月$"#, options: .regularExpression) == nil { reason = "支払月を確認できません" }
-            else if (yen(r[5]) ?? 0) > 0 || !newSign.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (yen(future) ?? 0) > 0 { reason = "通常購入の形式ではありません" }
+            else if (yen(r[5]) ?? 0) > 0 || !["", "*"].contains(newSign.trimmingCharacters(in: .whitespacesAndNewlines)) || (yen(future) ?? 0) > 0 { reason = "通常購入の形式ではありません" }
             else if missing { reason = "複数行明細または部分行の可能性があります" }
             if let reason { addReview(n, reason, continuation: continuation); continue }
             let fp = fingerprint(["rakuten_card", "purchase", d!, merchant, String(amount!), method]); ordinals[fp, default: 0] += 1
