@@ -24,19 +24,20 @@ const groups = [
     tests: suites('contact', 'diagnostics') },
 ];
 
-function isIos(file) {
-  return file.startsWith('apps/ios/') || file === '.github/workflows/ios.yml';
+function isPwaIndependent(file) {
+  return file.startsWith('apps/ios/') || file === '.github/workflows/ios.yml' ||
+    file === '.github/workflows/ci.yml' || file === 'scripts/testflight.test.mjs';
 }
 
 function hasNoBrowserImpact(file) {
-  return isIos(file) || file.endsWith('.md') || file.startsWith('docs/') ||
+  return isPwaIndependent(file) || file.endsWith('.md') || file.startsWith('docs/') ||
     /^src\/.*\.test\.ts$/.test(file);
 }
 
 export function selectChecks(files, { full = false } = {}) {
   const all = reason => ({ skipPwa: false, e2e: [...allSuites], reason });
   if (full || files.length === 0) return all('手動実行・差分取得失敗・空の差分は全件');
-  if (files.every(isIos)) return { skipPwa: true, e2e: [], reason: 'iOSのみ' };
+  if (files.every(isPwaIndependent)) return { skipPwa: true, e2e: [], reason: 'iOS・対象CIファイルのみ' };
   const selected = new Set();
   const pwaPackage = JSON.parse(readFileSync(new URL('../apps/pwa/package.json', import.meta.url), 'utf8'));
   for (const file of files) {

@@ -47,6 +47,10 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/select-ci-tests.mjs
+      - name: Validate TestFlight upload script
+        run: |
+          bash -n apps/ios/scripts/testflight.sh
+          node --test scripts/testflight.test.mjs
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm install --frozen-lockfile
       - if: steps.changes.outputs.skip_pwa != 'true'

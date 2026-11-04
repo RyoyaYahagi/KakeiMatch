@@ -22,7 +22,7 @@ test('shared parser wrapper also covers MoneyForward hashing', () => {
 test('unknown paths, shared modules, dependency and workflow changes run all suites', () => {
   for (const file of ['apps/pwa/src/main.ts', 'apps/pwa/src/local-ui.ts', 'src/lib/local-data.ts',
     'apps/pwa/src/new-feature.ts', 'apps/pwa/src/style.css', 'pnpm-lock.yaml',
-    'apps/pwa/package.json', '.github/workflows/ci.yml', 'scripts/select-ci-tests.mjs',
+    'apps/pwa/package.json', '.github/workflows/new-ci.yml', 'scripts/select-ci-tests.mjs',
     'apps/pwa/test/browser-helpers.mjs']) {
     assert.deepEqual(selectChecks([file]).e2e, allSuites, file);
   }
@@ -63,4 +63,16 @@ test('configured full suite has unique executable package scripts and contains a
   const pkg = JSON.parse(readFileSync(new URL('../apps/pwa/package.json', import.meta.url), 'utf8'));
   assert.equal(new Set(allSuites).size, allSuites.length);
   for (const suite of allSuites) assert.match(pkg.scripts[suite], /^node test\/browser-[\w-]+\.mjs$/);
+});
+
+test('TestFlight and CI-only changes preserve main PWA skip policy', () => {
+  const files = ['apps/ios/scripts/testflight.sh', 'scripts/testflight.test.mjs', '.github/workflows/ci.yml'];
+  const result = selectChecks(files);
+  assert.equal(result.skipPwa, true);
+  assert.deepEqual(result.e2e, []);
+  const mixed = selectChecks([...files, 'apps/pwa/src/payroll-ui.ts']);
+  assert.equal(mixed.skipPwa, false);
+  assert.ok(mixed.e2e.includes('test:payroll-e2e'));
+  assert.ok(mixed.e2e.length < allSuites.length);
+  assert.deepEqual(selectChecks(files, { full: true }).e2e, allSuites);
 });
