@@ -32,6 +32,10 @@ Application Support/KakeiMatch/
 
 保存時には使い捨ての作業用snapshotを変更し、`BEGIN IMMEDIATE` → 全collection更新 → `COMMIT` とする。COMMIT直前に読み込み時のprofile UUIDが `active.json` の現在値と一致することを再検査し、切り替わっていれば全体をrollbackする。失敗時はrollbackし、画面に成功を返さない。原本のない記録は残す。下書きレシートの削除では対応する原本と未完成入力の下書きも同じtransactionで削除する。SQLやファイルの例外は上位へ返す。SQLiteエラー本文や家計値はログへ出さない。
 
+読み取りは、現在のprofileの`KMInMemoryStore`と`control.revision`をメモリに保持し、revisionが一致する間はSQLiteを開き直さずそのsnapshotから返す。読み取りにも作業用copyを渡すため、Repository操作がpublished snapshotを書き換えることはない。書き込みはcopyを変更し、COMMITが成功したときだけcacheを差し替える。失敗時は元のsnapshotを保持する。`active.json`のprofile切替（`.kmb`取り込み、`.kmib`復元、変更前profileへの切り戻し）と、別scene・別接続の保存でrevisionが食い違った場合はcacheを捨てて読み直す。`KMSerialQueue`とCOMMIT直前のprofile検査はcache利用時も同じように適用する。
+
+`artifacts`のpayloadはsnapshot読み込みでは取得せず、IDの集合だけを保持する。レシート画像の表示・AI送信・backupは必要になった時点で`original(_:)`相当のAPIからID指定で読む。保存時の不要artifact削除は、payloadを読んだかどうかではなく、読み込み時に保持したID・新規保存したID・削除したIDの集合で判定する。そのため、画像を一覧読み込みしていないsnapshotから下書きレシートを削除しても、他の既存画像やCSV原本を巻き込まない。
+
 DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログイン・API token・画面ロック情報を保存しない。このPRは独自の暗号化やKeychain認証を実装しない。
 
 ### 版と移行

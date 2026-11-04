@@ -1,13 +1,15 @@
 import Foundation
 
-/// Device-local repository facade. Each write uses a disposable domain working copy and publishes only
-/// after a SQLite transaction succeeds. The in-memory adapter remains available for previews/fixtures.
+/// Device-local repository facade. Reads reuse one published snapshot per active profile; a write
+/// changes a disposable copy and publishes it only after a SQLite transaction succeeds. The in-memory
+/// adapter remains available for previews/fixtures.
 ///
 /// All scenes receive the same instance from the app composition root. Store operations take one
 /// process-wide turn at a time (queued in request order), so a second scene waits for the first
 /// scene's commit instead of failing with a transient "busy" error. A write also re-checks the
 /// active-profile pointer before COMMIT: a working copy read from a profile that has since been
-/// replaced is rolled back rather than written to the superseded database.
+/// replaced is rolled back rather than written to the superseded database. A profile switch or a
+/// revision committed by another connection discards the cached snapshot before the next read.
 @MainActor final class KMSQLiteStore: TransactionRepository, AccountRepository, CategoryRepository, PayeeRepository,
     ReceiptRepository, StatementRepository, ReconciliationRepository, BudgetRepository, RecurringRepository,
     PayrollRepository, CategoryLearningRepository, SettingsRepository {
@@ -15,6 +17,12 @@ import Foundation
     let directory: URL
     private let queue = KMSerialQueue()
     private var pointerURL: URL { directory.appendingPathComponent("active.json") }
+    // One published snapshot per active profile. Reads reuse it instead of reopening SQLite and
+    // decoding every collection; writes mutate a copy and replace it only after COMMIT succeeds.
+    private var cachedProfileId: UUID?
+    private var cachedDatabase: KMStoreDatabase?
+    private var cachedStore: KMInMemoryStore?
+    private var cachedRevision: Int?
     static func openDefault() throws -> KMSQLiteStore {
         let base = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         return try KMSQLiteStore(directory: base.appendingPathComponent("KakeiMatch", isDirectory: true))
@@ -31,7 +39,10 @@ import Foundation
                 try publish(ProfilePointer(current: id, previous: nil))
             } catch { try cleanup(target, after: error) }
         }
-        _ = try database().load()
+        let profileId = try profile().current
+        let db = try database(profileId: profileId), store = try db.load()
+        guard let revision = db.loadedRevision else { throw KMDataError.invalidData("端末DBの世代番号を確認できません。") }
+        cachedProfileId = profileId; cachedDatabase = db; cachedStore = store; cachedRevision = revision
     }
     func profile() throws -> ProfilePointer { try KMJSON.decoder().decode(ProfilePointer.self, from: Data(contentsOf: pointerURL)) }
     private func profileDirectory(_ id: UUID) -> URL { directory.appendingPathComponent(id.uuidString, isDirectory: true) }
@@ -49,15 +60,34 @@ import Foundation
     private func serialized<T>(_ operation: @MainActor () async throws -> T) async throws -> T {
         try await queue.run(operation)
     }
+    private func discardCache() {
+        cachedProfileId = nil; cachedDatabase = nil; cachedStore = nil; cachedRevision = nil
+    }
+    /// Return the published snapshot for `profileId`, reloading when the profile changed or another
+    /// connection committed a newer revision. The caller must use a working copy before mutating.
+    private func cachedSnapshot(profileId: UUID) throws -> (db: KMStoreDatabase, store: KMInMemoryStore, revision: Int) {
+        if let db = cachedDatabase, cachedProfileId == profileId, let store = cachedStore, let revision = cachedRevision {
+            if try db.revision() == revision { return (db, store, revision) }
+            discardCache()
+        }
+        let db = try database(profileId: profileId), store = try db.load()
+        guard let revision = db.loadedRevision else { throw KMDataError.invalidData("端末DBの世代番号を確認できません。") }
+        cachedProfileId = profileId; cachedDatabase = db; cachedStore = store; cachedRevision = revision
+        return (db, store, revision)
+    }
     private func access<T>(_ writing: Bool = false, _ action: (KMInMemoryStore) async throws -> T) async throws -> T {
         try await serialized {
             let profileId = try profile().current
-            let db = try database(profileId: profileId), working = try db.load()
+            let (db, base, revision) = try cachedSnapshot(profileId: profileId)
+            // Reads get their own copy too: a repository method can never leak a mutation into the
+            // published snapshot. Copy-on-write makes this cheap compared with decoding SQLite rows.
+            let working = base.operationCopy()
             let value = try await action(working)
             if writing {
                 // The pointer is the profile boundary. If another connection switched profiles,
                 // this working copy belongs to the superseded household and must not commit.
-                try db.save(working, ifActive: { try self.profile().current == profileId })
+                let next = try db.save(working, expectedRevision: revision, ifActive: { try self.profile().current == profileId })
+                cachedProfileId = profileId; cachedDatabase = db; cachedStore = working; cachedRevision = next
             }
             return value
         }
@@ -66,6 +96,8 @@ import Foundation
     /// Both the old profile and its credentials-independent household remain available for undo.
     func importBackup(from url: URL) async throws {
         try await serialized {
+            // The active pointer may move; never serve the previous profile from cache afterwards.
+            defer { discardCache() }
             let file = try Data(contentsOf: url, options: [.mappedIfSafe])
             let magic = Data(file.prefix(8))
             if magic == KMNativeBackup.magic {
@@ -101,6 +133,8 @@ import Foundation
     /// Export time means generation completed; the caller still owns saving/sharing the file.
     func exportNativeBackup() async throws -> URL {
         try await serialized {
+            // Export records the export time in SQLite, so the cached settings are superseded.
+            defer { discardCache() }
             let profileId = try profile().current
             let timestamp = Date()
             let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -172,6 +206,8 @@ import Foundation
     /// through a connection opened before the pointer moves.
     func returnToPreviousProfile() async throws {
         try await serialized {
+            // The pointer moves back to the previous household; reload it on the next read.
+            defer { discardCache() }
             let value = try profile()
             guard let previous = value.previous else { throw KMDataError.notFound("変更前の家計簿がありません。") }
             let path = profileDirectory(previous).appendingPathComponent("household.sqlite")
@@ -269,7 +305,10 @@ import Foundation
     func receipts() async throws -> [KMReceipt] { try await access { try await $0.receipts() } }
     func receipt(id: String) async throws -> KMReceipt? { try await access { try await $0.receipt(id: id) } }
     func saveReceipt(_ receipt: KMReceipt) async throws { try await access(true) { try await $0.saveReceipt(receipt) } }
-    func receiptImage(blobId: String) async throws -> Data? { try await access { try await $0.receiptImage(blobId: blobId) } }
+    /// Images are read by portable blob ID on demand; the published snapshot holds IDs only.
+    func receiptImage(blobId: String) async throws -> Data? {
+        try await serialized { try database().original(blobId) }
+    }
     func saveReceiptImage(data: Data, contentType: String, replacingReceiptId: String?, at timestamp: Date) async throws -> KMReceipt {
         try await access(true) { try await $0.saveReceiptImage(data: data, contentType: contentType, replacingReceiptId: replacingReceiptId, at: timestamp) }
     }

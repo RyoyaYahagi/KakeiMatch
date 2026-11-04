@@ -4,7 +4,8 @@ import Foundation
 /// Original portable records and artifacts are retained losslessly, independently of projections.
 @MainActor final class KMStoreDatabase {
     let sql: KMSQLite
-    private var loadedRevision: Int?
+    /// Revision read by the latest `load()`; `save` compares it unless the caller passes one.
+    private(set) var loadedRevision: Int?
     init(url: URL) throws {
         sql = try KMSQLite(url: url)
         let version = try sql.rows("PRAGMA user_version").first?.int("user_version") ?? -1
@@ -74,7 +75,7 @@ import Foundation
         let rows = try values(collection, T.self)
         guard rows.count == 1, let value = rows.first else { throw KMDataError.invalidData("端末DBの設定が欠けています。") }; return value
     }
-    private func revision() throws -> Int {
+    func revision() throws -> Int {
         guard let value = try sql.rows("SELECT revision FROM control WHERE id=1").first?.int("revision"), value >= 0 else { throw KMDataError.invalidData("端末DBの世代番号が不正です。") }; return value
     }
     func load() throws -> KMInMemoryStore { try sql.transaction { try loadSnapshot() } }
@@ -102,9 +103,9 @@ import Foundation
         store.settingsValue = try singleton("settings", KMAppSettings.self)
         store.monthlySettings = settings
         store.nativeBudgets = try singleton("native-budgets", [String: [String: Int]].self)
-        for row in try sql.rows("SELECT id,payload FROM artifacts") {
-            store.imageValues[try row.required("id")] = row.data("payload")
-        }
+        // Receipt images and CSV originals are read by ID only when a screen, AI send, or backup
+        // needs them. Decoding every payload here made each read open the whole household.
+        store.artifactIds = Set(try sql.rows("SELECT id FROM artifacts").map { try $0.required("id") })
         return store
     }
     private func put<T: Encodable>(_ collection: String, _ values: [T]) throws {
@@ -117,13 +118,19 @@ import Foundation
         }
     }
     /// Commit the entire multi-repository change or nothing. No published in-memory mutation precedes COMMIT.
+    /// `expectedRevision` defaults to the revision read by `load()`; a cache passes its own revision so a
+    /// write from another connection is rejected instead of overwriting it.
     /// `ifActive` is checked inside the transaction, immediately before COMMIT, so a working copy
     /// read before a profile switch cannot land in the superseded household database.
-    func save(_ store: KMInMemoryStore, ifActive: (() throws -> Bool)? = nil) throws {
+    @discardableResult
+    func save(_ store: KMInMemoryStore, expectedRevision: Int? = nil, ifActive: (() throws -> Bool)? = nil) throws -> Int {
         var nextRevision = 0
+        var committedArtifactIds: Set<String> = []
         try sql.transaction {
             let current = try revision()
-            guard loadedRevision == nil || loadedRevision == current else { throw KMDataError.invalidData("別の操作で家計簿が更新されました。再読み込みしてから保存してください。") }
+            if let expected = expectedRevision ?? loadedRevision {
+                guard expected == current else { throw KMDataError.invalidData("別の操作で家計簿が更新されました。再読み込みしてから保存してください。") }
+            }
             guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
             nextRevision = current + 1
             try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(nextRevision)])
@@ -145,13 +152,22 @@ import Foundation
             }
             try put("settings", [store.settingsValue]); try put("monthly-settings", [store.monthlySettings]); try put("native-budgets", [store.nativeBudgets])
             // Draft deletion also removes its image in the same transaction; imported CSVs remain intact.
+            // Retention follows IDs, not loaded payloads: a snapshot that lazily reads images must not
+            // prune artifacts it has never opened.
+            let retained = store.artifactIds
+                .union(store.pendingArtifacts.map(\.metadata.id))
+                .union(store.imageValues.keys)
             for row in try sql.rows("SELECT id FROM artifacts") {
                 let id = try row.required("id")
-                if store.imageValues[id] == nil { try sql.execute("DELETE FROM artifacts WHERE id=?", [.text(id)]) }
+                if retained.contains(id) { committedArtifactIds.insert(id) }
+                else { try sql.execute("DELETE FROM artifacts WHERE id=?", [.text(id)]) }
             }
             if let ifActive, try !ifActive() { throw KMDataError.staleProfile }
         }
         loadedRevision = nextRevision
+        store.artifactIds = committedArtifactIds
+        store.pendingArtifacts = []
+        return nextRevision
     }
     func saveArtifacts(_ artifacts: [KMBackupArtifact]) throws {
         try sql.transaction {
