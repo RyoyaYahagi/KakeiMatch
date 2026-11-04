@@ -35,8 +35,8 @@ final class ReconciliationFlowTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["金額が¥20違います"].exists || app.staticTexts["△ 金額が¥20違います"].exists)
         capture(app, "comparison-light")
         tap("reconciliation.confirmMatch.fixture-statement-0.actual:fixture-transaction-000", app: app)
-        XCTAssertTrue(app.buttons["reconciliation.count.一致"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.buttons["reconciliation.count.一致"].label, "一致 5件")
+        // The seal is pressed first and the decision is saved a moment later, so wait for the new count.
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier == %@ AND label == %@", "reconciliation.count.一致", "一致 5件")).firstMatch.waitForExistence(timeout: 5))
         tap("reconciliation-matched", app: app)
         tap("reconciliation.matchedItem.fixture-statement-0", app: app)
         tap("reconciliation.undo.fixture-statement-0", app: app)

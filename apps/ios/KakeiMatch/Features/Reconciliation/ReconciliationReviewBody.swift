@@ -10,6 +10,9 @@ struct ReconciliationReviewBody: View {
     @State private var destination = ""
     @State private var excluded = false
     @State private var categorySheet = false
+    /// The candidate whose slip carries the pressed "済" seal while the decision is saved.
+    @State private var pressedReceipt: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,7 +26,8 @@ struct ReconciliationReviewBody: View {
                             amount: abs(candidate.transaction.amountYen),
                             source: model.accounts.first { $0.id == candidate.transaction.accountId }?.name ?? "利用できない支払元",
                             sameDate: candidate.sameDate, sameAmount: candidate.sameAmount,
-                            differsDate: !candidate.sameDate, differsAmount: !candidate.sameAmount))
+                            differsDate: !candidate.sameDate, differsAmount: !candidate.sameAmount),
+                            pressed: pressedReceipt == candidate.receiptId)
                         Text("△ \(candidate.reason)").font(KMTypography.body(14, weight: .bold))
                             .foregroundStyle(KMColor.warning).padding(.vertical, 8).padding(.horizontal, 12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -35,8 +39,8 @@ struct ReconciliationReviewBody: View {
                         if !candidate.canConfirm {
                             Text("分割された記録の金額差は反映できません。別の候補を選ぶか、明細を確認してください。")
                         }
-                        Button("同じ支出") { perform(.confirm(statement: row.id, receipt: candidate.receiptId)) }
-                            .buttonStyle(KMButtonStyle(role: .primary)).disabled(!candidate.canConfirm)
+                        Button("同じ支出") { confirm(candidate.receiptId) }
+                            .buttonStyle(KMButtonStyle(role: .primary)).disabled(!candidate.canConfirm || pressedReceipt != nil)
                             .accessibilityIdentifier("reconciliation.confirmMatch.\(row.id).\(candidate.receiptId)")
                         Button("別の支出") { perform(.reject(statement: row.id, receipt: candidate.receiptId)) }
                             .buttonStyle(KMButtonStyle(role: .text)).frame(maxWidth: .infinity)
@@ -86,6 +90,11 @@ struct ReconciliationReviewBody: View {
                 .buttonStyle(KMButtonStyle(role: .text)).frame(maxWidth: .infinity)
                 .accessibilityIdentifier("reconciliation.ignore.\(row.id)")
         }.padding(.bottom, 16).foregroundStyle(KMColor.text)
+            .sensoryFeedback(.success, trigger: pressedReceipt) { _, pressed in pressed != nil }
+            .onChange(of: model.errorMessage) { _, error in
+                // The decision was not saved: lift the seal so the slip does not claim a match.
+                if error != nil { pressedReceipt = nil }
+            }
             .onAppear {
                 if category.isEmpty {
                     category = KMReconciliationPresentation.suggestedCategory(merchant: row.statement.merchant,
@@ -110,6 +119,16 @@ struct ReconciliationReviewBody: View {
                     }
                 }.presentationBackground(.clear)
             }
+    }
+
+    /// docs/DESIGN.md 突き合わせの伝票: press the seal (0.2 s), hold it briefly, then save and read the list again.
+    private func confirm(_ receiptId: String) {
+        guard pressedReceipt == nil else { return }
+        KMMotion.perform(reduceMotion, KMMotion.press) { pressedReceipt = receiptId }
+        Task {
+            if !reduceMotion { try? await Task.sleep(for: KMMotion.sealHold) }
+            perform(.confirm(statement: row.id, receipt: receiptId))
+        }
     }
 }
 
@@ -159,6 +178,8 @@ struct ReconciliationSlip: View {
     let statement: KMStatementTransaction
     var record: Record?
     var stamped = false
+    /// nil: no large seal. false: waiting on a candidate slip. true: pressed by 「同じ支出」.
+    var pressed: Bool? = nil
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var body: some View {
         VStack(spacing: 0) {
@@ -183,6 +204,16 @@ struct ReconciliationSlip: View {
                         .foregroundStyle(KMColor.success).frame(width: 60, height: 60)
                         .background(KMColor.surface.opacity(0.7), in: Circle()).overlay { Circle().stroke(KMColor.success, lineWidth: 3) }
                         .rotationEffect(.degrees(-14)).padding(.trailing, 16).accessibilityHidden(true)
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if let pressed {
+                    // PWA .slip-seal: 96 pt, lands from 1.6x to its size; invisible until pressed.
+                    VStack(spacing: 0) { Text("済").font(KMTypography.body(34, weight: .black)); Text("照合").font(KMTypography.body(11)).tracking(1.1) }
+                        .foregroundStyle(KMColor.success).frame(width: 96, height: 96)
+                        .background(KMColor.surface.opacity(0.7), in: Circle()).overlay { Circle().stroke(KMColor.success, lineWidth: 4) }
+                        .rotationEffect(.degrees(-14)).scaleEffect(pressed ? 1 : 1.6).opacity(pressed ? 0.92 : 0)
+                        .padding(.trailing, 16).allowsHitTesting(false).accessibilityHidden(true)
                 }
             }
     }
