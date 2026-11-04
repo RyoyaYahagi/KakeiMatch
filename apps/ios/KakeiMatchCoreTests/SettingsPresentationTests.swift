@@ -17,6 +17,7 @@ struct SettingsPresentationTests {
         #expect(sections[1].rows[1].isDestructive)
         #expect(sections[3].rows[0].value == "システム")
         #expect(sections[3].rows[1].destination == .contact)
+        #expect(sections[3].rows[2].destination == .appInfo)
         #expect(sections[2].rows[0].destination == .ai)
         #expect(sections[2].rows[0].value == nil)
         #expect(sections[3].rows[1].value == nil)

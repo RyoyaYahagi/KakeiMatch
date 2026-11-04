@@ -40,6 +40,27 @@ final class SettingsFlowTests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor func testAppInformationOpensAndReturnsToSettings() {
+        continueAfterFailure = false
+        for appearance in ["light", "dark"] {
+            let app = launch(appearance)
+            let about = app.buttons["settings.appInfo"]
+            for _ in 0..<4 where !about.isHittable { app.swipeUp() }
+            XCTAssertTrue(about.waitForExistence(timeout: 5))
+            about.tap()
+            XCTAssertTrue(app.staticTexts["settings-page-app-title"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["app-info-version"].exists)
+            XCTAssertTrue(app.staticTexts["端末内の診断"].exists)
+            XCTAssertTrue(app.staticTexts["オープンソースライセンス"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["Actual Budget"].firstMatch.exists)
+            XCTAssertFalse(app.staticTexts["ライセンスを読み込めませんでした。"].exists)
+            capture(app, "about-" + appearance)
+            app.buttons["settings.back"].tap()
+            XCTAssertTrue(app.buttons["settings.theme"].waitForExistence(timeout: 5))
+            app.terminate()
+        }
+    }
+
     @MainActor func testDarkSettingsRootScreenshot() {
         continueAfterFailure = false
         let app = launch("dark")
