@@ -53,7 +53,6 @@ final class DynamicTypeLayoutTests: XCTestCase {
         screenshot(app, named: "dynamic-type-xl-settings")
         app.swipeUp()
         assertTappable(app.buttons["settings.theme"], screen: screen)
-        assertTappable(app.buttons["settings.screenLock"], screen: screen)
     }
 
     @MainActor

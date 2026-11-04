@@ -4,7 +4,6 @@ struct KMSettingsRow: Identifiable, Equatable {
     enum Destination: Equatable {
         case unimplemented
         case theme
-        case screenLock
         case budget
         case recurring
         case contact
@@ -31,8 +30,6 @@ struct KMSettingsSection: Identifiable, Equatable {
 /// PWA settings labels, ordering, and display conditions without view or storage access.
 enum KMSettingsPresentation {
     static let themePreferenceKey = KMAppSettingsPreferences.themePreferenceKey
-    static let screenLockEnabledKey = KMAppSettingsPreferences.screenLockEnabledKey
-    static let screenLockRequestNotificationName = KMAppSettingsPreferences.screenLockRequestNotificationName
     static let backupReminderAge: TimeInterval = 30 * 24 * 60 * 60
 
     static let backupReminder = "△ 復旧に備えてバックアップを書き出してください。目安は最終書き出しから30日です。"
@@ -46,14 +43,6 @@ enum KMSettingsPresentation {
         }
     }
 
-    static func screenLockLabel(isEnabled: Bool) -> String { isEnabled ? "オン" : "オフ" }
-
-    static func screenLockStatus(isEnabled: Bool) -> String {
-        isEnabled
-            ? "有効です。解除にはこの端末のFace IDまたはパスコードを使います。設定はこの端末だけに保存されています。"
-            : "無効です。設定や復旧で家計データは削除されません。"
-    }
-
     /// Mirrors shouldRemindLocalExport: missing/invalid timestamps remind; future timestamps do not.
     static func shouldRemindBackup(lastExportAt: Date?, now: Date) -> Bool {
         guard let lastExportAt else { return true }
@@ -64,7 +53,7 @@ enum KMSettingsPresentation {
         return current - exported >= backupReminderAge
     }
 
-    static func sections(theme: KMThemePreference, screenLockEnabled: Bool, aiUsageValue: String? = nil) -> [KMSettingsSection] {
+    static func sections(theme: KMThemePreference, aiUsageValue: String? = nil) -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
@@ -75,7 +64,6 @@ enum KMSettingsPresentation {
             ]),
             KMSettingsSection(title: "データ", rows: [
                 .init(id: "settings.backup", title: "バックアップと復元", destination: .backup),
-                .init(id: "settings.screenLock", title: "画面ロック", value: screenLockLabel(isEnabled: screenLockEnabled), destination: .screenLock),
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [

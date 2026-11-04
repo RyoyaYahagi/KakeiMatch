@@ -57,7 +57,7 @@ struct NativeAuthPresentationTests {
     }
 
     @Test func settingsRowCarriesUsageValueAndOpensAuthPage() {
-        let sections = KMSettingsPresentation.sections(theme: .system, screenLockEnabled: false, aiUsageValue: "今日 2/5回")
+        let sections = KMSettingsPresentation.sections(theme: .system, aiUsageValue: "今日 2/5回")
         #expect(sections[2].rows[0].title == "ログイン・利用状況")
         #expect(sections[2].rows[0].value == "今日 2/5回")
         #expect(sections[2].rows[0].destination == .ai)

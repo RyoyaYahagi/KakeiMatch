@@ -47,10 +47,6 @@ struct PayrollView: View {
         .accessibilityIdentifier("payroll.screen")
         .task { await model.load(repositories) }
         .onDisappear { if !showsCamera { model.cancel() } }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
-            showsCamera = false
-            model.cancel()
-        }
         .onChange(of: model.reviewFingerprint) { _, _ in
             if !model.hasPendingRecord && !model.saved && !model.isDraftPreview { model.reviewed = false }
         }

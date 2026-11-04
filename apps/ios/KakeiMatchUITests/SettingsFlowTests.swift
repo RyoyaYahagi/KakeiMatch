@@ -19,7 +19,7 @@ final class SettingsFlowTests: XCTestCase {
         add(attachment)
     }
 
-    @MainActor func testThemeSelectionAndScreenLockSettingsNavigation() {
+    @MainActor func testThemeSelectionUpdatesRowAndSettingsNavigation() {
         continueAfterFailure = false
         let app = launch("light")
         capture(app, "initial-light")
@@ -37,12 +37,6 @@ final class SettingsFlowTests: XCTestCase {
         app.buttons["settings.back"].tap()
         XCTAssertTrue(app.staticTexts["theme-row-value"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["settings.theme"].label.contains("ライト"), true)
-
-        app.buttons["settings.screenLock"].tap()
-        XCTAssertTrue(app.staticTexts["screen-lock-settings-title"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["screen-lock-settings-status"].exists)
-        XCTAssertTrue(app.buttons["screen-lock-enable"].exists || app.buttons["screen-lock-disable"].exists)
-        capture(app, "screen-lock-light")
         app.terminate()
     }
 
@@ -51,7 +45,7 @@ final class SettingsFlowTests: XCTestCase {
         let app = launch("dark")
         capture(app, "initial-dark")
         XCTAssertTrue(app.staticTexts["設定"].exists)
-        XCTAssertTrue(app.buttons["settings.screenLock"].exists)
+        XCTAssertTrue(app.buttons["settings.theme"].exists)
         app.terminate()
     }
 }
