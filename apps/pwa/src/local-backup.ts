@@ -1,5 +1,5 @@
 import { accountMetadataRecordId, ActualRestoreIncompleteError, ActualRestoreTargetExistsError } from '../../../src/lib/actual-browser-ledger';
-import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2 } from '../../../src/lib/local-data';
+import { LOCAL_PROFILE_KEY, LocalDataRepository, type LocalDataBackupV2, type LocalDataRecord } from '../../../src/lib/local-data';
 import { createPortableBackup, readPortableBackup } from '../../../src/lib/local-backup-format';
 import { monthlyBudgetSettingsRecordId, validateMonthlyBudgetSettings } from '../../../src/lib/monthly-budget-settings';
 import { basicCategorySettingsRecordId } from './local-category-defaults';
@@ -25,6 +25,11 @@ type Dependencies = {
 };
 const defaults = (): Dependencies => ({ storage: localStorage, openRepository: id => LocalDataRepository.open(id), makeId: () => crypto.randomUUID(), now: () => new Date() });
 
+/** The PWA no longer has a screen lock; older backups may still carry one. */
+function isLegacyScreenLockSetting(record: Pick<LocalDataRecord, 'id' | 'kind'>): boolean {
+  return record.kind === 'app-settings' && record.id.startsWith('settings:screen-lock');
+}
+
 function directories(storage: Dependencies['storage']): string[] {
   const raw = storage.getItem(RESTORE_DIRECTORIES_KEY);
   if (!raw) return [];
@@ -46,6 +51,7 @@ export async function createLocalSnapshot(repository: LocalDataRepository, ledge
   const budgetId = (await repository.get<LocalBudgetSettings>('settings:budget'))?.value.budgetId;
   // The target budget location belongs to this device, not to a portable household snapshot.
   localData.records = localData.records.filter(record => record.id !== 'settings:budget'
+    && !isLegacyScreenLockSetting(record)
     && (!record.id.startsWith('settings:basic-categories:') || record.id === (budgetId ? basicCategorySettingsRecordId(budgetId) : ''))
     && (!record.id.startsWith('settings:monthly-budgets:') || record.id === (budgetId ? monthlyBudgetSettingsRecordId(budgetId) : ''))
     && (!record.id.startsWith('settings:spending-exclusion:') || (record.value as { budgetId?: unknown }).budgetId === budgetId)
@@ -97,7 +103,7 @@ async function stageHouseholdBackup(backup: {actualBackup: Uint8Array; localData
     const budgetId = await ledger.restoreBackup(backup.actualBackup, dataDir);
     const localData = {
       ...backup.localData,
-      records: backup.localData.records.map(record => {
+      records: backup.localData.records.filter(record => !isLegacyScreenLockSetting(record)).map(record => {
         if (record.id.startsWith('settings:spending-exclusion:')) {
           const value = record.value as { budgetId: string; transactionId: string };
           return { ...record, id: `settings:spending-exclusion:${encodeURIComponent(budgetId)}:${encodeURIComponent(value.transactionId)}`, value: { ...value, budgetId } };
