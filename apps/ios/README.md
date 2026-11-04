@@ -72,7 +72,7 @@ runnerの公式一覧にmacos-15 / Xcode 26.2 / iOS 26.2 / iPhone 17が掲載さ
 
 ### TestFlightへの送信
 
-Macで `scripts/testflight.sh` を実行すると、今checkoutしているコードをReleaseでarchiveし、App Store Connect用に書き出してTestFlightへ送信します。マージ前のbranchからも送れます。ビルド番号は既定でUTCの `YYYYMMDDHHMM` なので、手で上げる必要はありません。
+Macで `scripts/testflight.sh` を実行すると、今checkoutしているコードをReleaseでarchiveし、App Store Connect用に書き出してTestFlightへ送信します。マージ前のbranchからも送れます。ビルド番号は実行環境のタイムゾーンにかかわらず、既定で日本時間（`Asia/Tokyo`）の `YYYYMMDDHHMM` を自動生成するため、手で上げる必要はありません。`--build-number` で明示指定することもできます。回帰テストはリポジトリrootで `node --test scripts/testflight.test.mjs` を実行します。
 
 ```sh
 export KM_DEVELOPMENT_TEAM=<Team ID> ASC_KEY_ID=<API key ID> ASC_ISSUER_ID=<Issuer ID>

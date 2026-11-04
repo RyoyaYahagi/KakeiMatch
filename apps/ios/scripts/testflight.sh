@@ -10,7 +10,7 @@ and upload it to TestFlight. Builds whatever is checked out, so a branch can
 be sent before its pull request is merged.
 
 Options:
-  --build-number <n>      CFBundleVersion to use. Default: UTC time as YYYYMMDDHHMM.
+  --build-number <n>      CFBundleVersion to use. Default: Japan time (Asia/Tokyo) as YYYYMMDDHHMM.
   --work-dir <path>       Directory for the archive, ipa and logs.
                           Default: a new directory under ${TMPDIR:-/tmp}.
   --no-upload             Stop after exporting the ipa.
@@ -36,7 +36,7 @@ require_env() {
   [[ -n "${!1:-}" ]] || fail_usage "$1 is not set"
 }
 
-build_number="$(date -u +%Y%m%d%H%M)"
+build_number="$(TZ=Asia/Tokyo date +%Y%m%d%H%M)"
 work_dir=""
 upload=true
 
