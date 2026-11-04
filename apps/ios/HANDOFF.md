@@ -81,7 +81,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | Home | `feature/ios-home` | #295 | **Mac** | マージ済み（`be4a1df`） |
 | 照合バッジと shell | `fix/ios-shell-review-badge` | #300 | **Mac** | マージ済み（`8ab3b14`） |
 | 記録一覧 | `feature/ios-records` | #301 | **Mac** | マージ済み（`a15b0c8`） |
-| 設定・テーマ・画面ロック | `feature/ios-settings`, `feature/ios-settings-shell` | #303, #305 | **Mac** | マージ済み（PWA準拠の設定、テーマ、画面ロック） |
+| 設定・テーマ | `feature/ios-settings`, `feature/ios-settings-shell` | #303, #305 | **Mac** | マージ済み（PWA準拠の設定、テーマ）。画面ロックは利用者の決定で後のPRにより削除 |
 | 明細照合（CSV取り込み・判断履歴） | `feature/ios-reconciliation` | #304 | **Mac** | マージ済み |
 | 手入力（支出・収入・振替） | `feature/ios-entry` | #307 | **Mac** | マージ済み |
 | レシート登録（撮影・AI読み取り・警告確認・台帳登録） | `feature/ios-receipt` | #308 | **Mac** | マージ済み。撮影画像の新規保存と未完成入力の下書き保存は #331 で接続 |
@@ -126,7 +126,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 7 | 定期登録 | `local-recurring-ui.ts` | `migration/recurring/*` |
 | 8 | 予算 | `local-monthly-budgets.ts`, `local-monthly-budget-service.ts` | `migration/budget/*` |
 | 9 | カテゴリ / 支払い元管理 | `local-master-ui.ts`, `local-account-ui.ts`, `local-category-rules-ui.ts` | `migration/masters/*` |
-| 10 | 設定（テーマ・画面ロック含む） | `settings-ui.ts`, `theme-settings.ts`, `local-screen-lock*.ts` | `migration/settings/*` |
+| 10 | 設定（テーマ含む） | `settings-ui.ts`, `theme-settings.ts` | `migration/settings/*` |
 | 11 | 問い合わせ | `contact-ui.ts`, `contact-diagnostics.ts` | `migration/contact/*` |
 | 12 | バックアップ / 復元 | `local-backup-ui.ts` | `migration/backup/*` |
 | 13 | 給与明細 | `payroll-ui.ts` | 既存 `docs/screenshots` を確認 |
@@ -197,4 +197,4 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 - Liquid Glass の枠部分は PWA と見た目が変わる（利用者の希望による意図的な差）
 - フォントの描画・行間はブラウザーと完全一致しない可能性がある。PWA の金額は等幅フォント表示なので、iOS でも等幅（monospaced digits ではなく等幅書体）で合わせる
 - CI の Simulator（iPhone 17）は幅 402pt、PWA の参照スクショは 390px。折り返し位置の差は幅の違いを考慮して判断する
-- PWA 固有の機能（Service Worker 更新通知、ホーム画面追加の案内、WebAuthn による画面ロック）は iOS ネイティブの同等機能（App Store 更新、Face ID / LocalAuthentication など）で代替が必要
+- PWA 固有の機能（Service Worker 更新通知、ホーム画面追加の案内）は iOS ネイティブの同等機能（App Store 更新など）で代替が必要

@@ -129,9 +129,6 @@ struct ReceiptView: View {
         .overlay {
             if model.needsGuestStart { guestStartDialog }
         }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
-            showsCamera = false; showsPhotos = false; showsImage = false; model.stopWaiting()
-        }
         .photosPicker(isPresented: $showsPhotos, selection: $photo, matching: .images, preferredItemEncoding: .current)
         .onChange(of: photo) { _, value in
             Task {

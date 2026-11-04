@@ -67,6 +67,17 @@ import ZIPFoundation
         try FileManager.default.createSymbolicLink(atPath: database.path, withDestinationPath: moved.path)
         #expect(throws: (any Error).self) { try KMSQLiteStore(directory: directory) }
     }
+    /// The app lock only lived in UserDefaults, but an upgraded device may still carry lock keys
+    /// in the stored settings object. Decoding must ignore them instead of blocking the household.
+    @Test func legacyScreenLockSettingsInTheDeviceDatabaseStillOpen() throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let path = directory.appendingPathComponent("household.sqlite")
+        let db = try KMStoreDatabase(url: path)
+        try db.save(try db.load())
+        let legacy = #"{"theme":"light","lastExportAt":null,"screenLockEnabled":true,"screenLockBiometric":true,"screenLockSecret":"synthetic-only"}"#
+        try KMSQLite(url: path).execute("UPDATE objects SET json=? WHERE collection='settings'", [.blob(Data(legacy.utf8))])
+        #expect(try KMStoreDatabase(url: path).load().settingsValue.theme == .light)
+    }
     @Test func migrationZeroToFourAndFutureVersionAreNonDestructive() throws {
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appendingPathComponent("v0.sqlite")
@@ -182,6 +193,27 @@ import ZIPFoundation
         #expect(restoredRecords.map(\.value) == originalRecords.map(\.value))
         #expect(restoredRecords.map(\.updatedAt) == originalRecords.map(\.updatedAt))
         #expect(try await restored.settings().theme == .dark) // Keep device-local appearance while restoring all originals.
+    }
+
+    /// A `.kmib` written before the app-lock removal keeps the same settings row. Restoring it
+    /// must open the household and leave appearance device-local, even with lock keys present.
+    @Test func nativeBackupWithLegacyScreenLockSettingsRestores() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let sourceDirectory = directory.appendingPathComponent("source")
+        let source = try KMSQLiteStore(directory: sourceDirectory)
+        try await source.importBackup(from: fixture("synthetic", "kmb"))
+        var settings = try await source.settings(); settings.theme = .light
+        try await source.saveSettings(settings)
+        let path = sourceDirectory.appendingPathComponent(try source.profile().current.uuidString).appendingPathComponent("household.sqlite")
+        let legacy = #"{"theme":"light","lastExportAt":null,"screenLockEnabled":true,"screenLockBiometric":true}"#
+        try KMSQLite(url: path).execute("UPDATE objects SET json=? WHERE collection='settings'", [.blob(Data(legacy.utf8))])
+        let backup = try await source.exportNativeBackup(); defer { try? FileManager.default.removeItem(at: backup) }
+
+        let restored = try KMSQLiteStore(directory: directory.appendingPathComponent("restored"))
+        try await restored.saveSettings(.init(theme: .dark))
+        try await restored.importBackup(from: backup)
+        #expect(try await restored.transactions(matching: .init(limit: nil)).count == 12)
+        #expect(try await restored.settings().theme == .dark) // Appearance stays device-local.
     }
 
     private func rewriteNative(_ data: Data, _ change: (inout [String: Any]) -> Void) throws -> Data {

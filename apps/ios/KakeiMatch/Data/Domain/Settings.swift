@@ -4,7 +4,7 @@ import Foundation
 enum KMThemePreference: String, Codable, CaseIterable, Sendable { case system, light, dark }
 
 // TS: apps/pwa/src/theme-settings.ts and src/lib/local-backup-format.ts settings:backup (separate stores in PWA).
-/// Device appearance is not household backup/sync data. No Cloud credentials or screen-lock secrets here.
+/// Device appearance is not household backup/sync data. No Cloud credentials here.
 struct KMAppSettings: Codable, Equatable, Sendable {
     var theme: KMThemePreference = .system
     var lastExportAt: Date? = nil

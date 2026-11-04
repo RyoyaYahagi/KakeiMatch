@@ -36,7 +36,7 @@ Application Support/KakeiMatch/
 
 `artifacts`のpayloadはsnapshot読み込みでは取得せず、IDの集合だけを保持する。レシート画像の表示・AI送信・backupは必要になった時点で`original(_:)`相当のAPIからID指定で読む。保存時の不要artifact削除は、payloadを読んだかどうかではなく、読み込み時に保持したID・新規保存したID・削除したIDの集合で判定する。そのため、画像を一覧読み込みしていないsnapshotから下書きレシートを削除しても、他の既存画像やCSV原本を巻き込まない。
 
-DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログイン・API token・画面ロック情報を保存しない。このPRは独自の暗号化やKeychain認証を実装しない。
+DBは暗号化していない。OSのアプリsandbox内に置き、Cloudログイン・API tokenを保存しない。このPRは独自の暗号化やKeychain認証を実装しない。
 
 ### 版と移行
 

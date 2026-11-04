@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 // Method totals in seconds from run 40702769985, updated with a 2026-11-01 pull request run. These are hints, not a test list:
 // deleted methods disappear; new methods receive the default estimate.
 const durations = {
-  'AppShellSettingsTests/testEnabledScreenLockHidesAppAndLocksOnLaunch': 19,
+  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 15,
   'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 23,
   'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 18,
   'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 16,
@@ -56,7 +56,7 @@ const durations = {
   'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
   'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
   'SettingsFlowTests/testDarkSettingsRootScreenshot': 11,
-  'SettingsFlowTests/testThemeSelectionAndScreenLockSettingsNavigation': 21,
+  'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 21,
 };
 
 // Methods that only open a screen and attach reference screenshots. Pull requests

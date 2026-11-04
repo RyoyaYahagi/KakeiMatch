@@ -36,10 +36,6 @@ struct RecordsView: View {
         .fullScreenCover(isPresented: Binding(get: { model.page == .pending }, set: { if !$0 { Task { await model.showList() } } })) {
             pendingDetail.background(KMColor.bg)
         }
-        .onReceive(NotificationCenter.default.publisher(for: Notification.Name(KMAppSettingsPreferences.screenLockDidLockNotificationName))) { _ in
-            pendingToDelete = nil
-            if model.page == .pending { Task { await model.showList() } }
-        }
         .confirmationDialog("「\(pendingToDelete.map(KMRecordsPresentation.pendingTitle) ?? "")」を削除しますか？このレシート画像と確認待ちの内容も削除されます。",
             isPresented: Binding(get: { pendingToDelete != nil }, set: { if !$0 { pendingToDelete = nil } }), titleVisibility: .visible) {
                 if let receipt = pendingToDelete {

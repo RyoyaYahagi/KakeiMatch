@@ -26,17 +26,20 @@ final class AppShellSettingsTests: XCTestCase {
         app.terminate()
     }
 
-    @MainActor func testEnabledScreenLockHidesAppAndLocksOnLaunch() {
+    /// Devices upgraded from a build with the app lock can still have the lock preference in
+    /// UserDefaults. It must be ignored, so the household opens without a lock screen.
+    @MainActor func testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp() {
         let app = XCUIApplication()
-        app.launchArguments = ["-UITestFixture", "migration", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        app.launchArguments = ["-UITestFixture", "migration", "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP",
+                               "-kakeimatch.screen-lock.enabled", "YES"]
+        // The removed DEBUG override was the other old way to force the lock screen.
         app.launchEnvironment["KM_UI_TEST_SCREEN_LOCK_ENABLED"] = "1"
-        app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = "dark"
         app.launch()
 
-        XCTAssertTrue(app.staticTexts["shell.screen-lock-title"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["screen-lock-unlock"].exists)
-        XCTAssertFalse(app.buttons["settings-tab"].isHittable, "The locked household UI must be inaccessible.")
-        attach(app.screenshot(), named: "settings-shell-screen-lock-launch")
+        XCTAssertTrue(app.otherElements["home.screen"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.staticTexts["shell.screen-lock-title"].exists)
+        XCTAssertTrue(app.buttons["settings-tab"].isHittable,
+                      "An upgraded device must open the household without a lock screen.")
         app.terminate()
     }
 

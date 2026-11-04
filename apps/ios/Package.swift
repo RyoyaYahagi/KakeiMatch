@@ -63,7 +63,6 @@ let package = Package(
                 "KakeiMatch.entitlements",
             ],
             sources: [
-                "App/KMAppLockPresentation.swift",
                 "App/KMAppSettingsPreferences.swift",
                 "App/ReconciliationBadgeCount.swift",
                 "Core/KMAmountFormatter.swift",

@@ -43,7 +43,7 @@ test('normalizes xcresult attachment names including extension-less names', () =
 test('splits attachment names into state key and theme', () => {
   assert.deepEqual(parseCaptureName('home-populated-light.png'), { key: 'home-populated', theme: 'light' });
   assert.deepEqual(parseCaptureName('settings.screen-dark'), { key: 'settings.screen', theme: 'dark' });
-  assert.deepEqual(parseCaptureName('settings-shell-screen-lock-launch'), { key: 'settings-shell-screen-lock-launch', theme: null });
+  assert.deepEqual(parseCaptureName('settings-shell-appearance'), { key: 'settings-shell-appearance', theme: null });
   assert.equal(parseCaptureName(''), null);
 });
 
