@@ -12,6 +12,10 @@ import Foundation
     var receiptValues: [KMReceipt]
     /// Native IDs are preserved on import; fixture-only names are synthesized below.
     var payeeValues: [KMPayee] = []
+    /// Artifact IDs known to exist in the backing database, without their payload bytes.
+    /// SQLite loads only IDs so opening a household never decodes every receipt image.
+    var artifactIds: Set<String> = []
+    /// Payloads loaded or staged in this working copy. Missing IDs stay readable through the store.
     var imageValues: [String: Data] = [:]
     /// Unfinished editor input keyed by receipt ID; never part of the confirmed snapshot.
     var receiptDraftValues: [String: KMLocalRecord<KMReceiptDraft>] = [:]
@@ -176,6 +180,7 @@ import Foundation
             receiptDraftValues.removeValue(forKey: oldId)
             if let blobId = replaceBlobId {
                 imageValues.removeValue(forKey: blobId)
+                artifactIds.remove(blobId)
                 pendingArtifacts.removeAll { $0.metadata.id == blobId }
             }
         }
@@ -203,6 +208,7 @@ import Foundation
         receiptDraftValues.removeValue(forKey: id)
         if let blobId = receipt.image?.blobId, !receiptValues.contains(where: { $0.image?.blobId == blobId }) {
             imageValues.removeValue(forKey: blobId)
+            artifactIds.remove(blobId)
             pendingArtifacts.removeAll { $0.metadata.id == blobId }
         }
     }
