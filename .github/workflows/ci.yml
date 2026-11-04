@@ -37,8 +37,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          # A self-hosted host keeps its pnpm store; uploading it only costs time.
-          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
       - name: Test CI selection rules
         run: node --test scripts/select-ci-tests.test.mjs
       - name: Select checks from changed files
@@ -47,6 +45,13 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/select-ci-tests.mjs
+      # iOS-only changes never install dependencies, so there is no store to save.
+      - name: Restore pnpm cache for PWA checks
+        if: steps.changes.outputs.skip_pwa != 'true' && runner.environment == 'github-hosted'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
       - name: Validate TestFlight upload script
         run: |
           bash -n apps/ios/scripts/testflight.sh
