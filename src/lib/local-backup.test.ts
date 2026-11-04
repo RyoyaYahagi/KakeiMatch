@@ -56,6 +56,24 @@ describe('combined staging restore', () => {
     expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId);
   });
 
+  it('restores a legacy backup containing screen lock settings without carrying them forward', async () => {
+    const legacy = await source.serialize();
+    legacy.records.push({ id: 'settings:screen-lock', kind: 'app-settings', value: { pinHash: 'synthetic-pin-hash', biometric: { credentialId: 'synthetic-credential' } }, updatedAt: at });
+    const file = await createPortableBackup({ actualBackup: new Uint8Array([1, 2, 3]), localData: legacy });
+    await restoreLocalBackup(file, ledger(), overrides());
+    const restored = await openRepository(stagingId);
+    expect(await restored.get('settings:screen-lock')).toBeNull();
+    const fresh = await exportLocalBackup(restored, ledger(), new Date(at));
+    expect((await readPortableBackup(fresh)).localData.records.some(record => record.id.startsWith('settings:screen-lock'))).toBe(false);
+    restored.close();
+  });
+
+  it('does not write screen lock settings into a new backup', async () => {
+    await source.put({ id: 'settings:screen-lock', kind: 'app-settings', value: { pinHash: 'synthetic-pin-hash' }, updatedAt: at });
+    const file = await exportLocalBackup(source, ledger(), new Date(at));
+    expect((await readPortableBackup(file)).localData.records.some(record => record.id.startsWith('settings:screen-lock'))).toBe(false);
+  });
+
   it('preserves budget settings in .kmb and remaps them to the restored Actual budget ID', async () => {
     await source.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: 'actual-old' }, updatedAt: at });
     await source.put({ id: 'settings:monthly-budgets:actual-old', kind: 'app-settings', value: {

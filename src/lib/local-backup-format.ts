@@ -151,6 +151,10 @@ function recordValueSchema(kind: LocalDataKind, id: string): z.ZodType {
       statementProvider: z.enum(["smbc_card", "rakuten_card", "aeon_card", "paypay", "paypay_card"]).optional(),
     }).strict();
     case "app-settings":
+      // Older builds never wrote the screen lock into .kmb, but a backup may
+      // still contain one. Accept the record so restore does not fail; the
+      // restore and export paths drop it instead of carrying it forward.
+      if (id.startsWith("settings:screen-lock")) return z.unknown();
       if (id.startsWith("settings:reconciliation-suspected:")) return z.object({ statementId: z.string().min(1), markedAt: isoDateTime }).strict();
       if (id.startsWith("settings:reconciliation-manual:")) return z.object({ statementId: z.string().min(1) }).strict();
       if (id === "settings:reconciliation-attention") return z.object({ keys: z.array(z.string().min(1)), updatedAt: isoDateTime }).strict();
