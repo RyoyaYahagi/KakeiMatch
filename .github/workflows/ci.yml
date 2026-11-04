@@ -45,7 +45,7 @@ jobs:
                 skip_pwa=true
                 while IFS= read -r -d '' file; do
                   case "$file" in
-                    apps/ios/*|.github/workflows/ios.yml) ;;
+                    apps/ios/*|.github/workflows/ios.yml|.github/workflows/ci.yml|scripts/testflight.test.mjs) ;;
                     *) skip_pwa=false; break ;;
                   esac
                 done < "$changed_files"
@@ -56,7 +56,7 @@ jobs:
           fi
           echo "skip_pwa=$skip_pwa" >> "$GITHUB_OUTPUT"
           if [ "$skip_pwa" = "true" ]; then
-            echo "Only iOS files changed; skipping PWA checks."
+            echo "Only iOS or CI files changed; skipping PWA checks."
           fi
       - uses: pnpm/action-setup@v4
         with:
@@ -66,6 +66,10 @@ jobs:
           node-version: 22
           # A self-hosted host keeps its pnpm store; uploading it only costs time.
           cache: ${{ runner.environment == 'github-hosted' && steps.changes.outputs.skip_pwa != 'true' && 'pnpm' || '' }}
+      - name: Validate TestFlight upload script
+        run: |
+          bash -n apps/ios/scripts/testflight.sh
+          node --test scripts/testflight.test.mjs
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm install --frozen-lockfile
       - if: steps.changes.outputs.skip_pwa != 'true'
