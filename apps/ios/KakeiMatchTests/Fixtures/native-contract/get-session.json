@@ -1,0 +1,19 @@
+{
+  "user": {
+    "id": "synthetic-account",
+    "name": "Synthetic invited member",
+    "email": "contract-member@example.invalid",
+    "emailVerified": false,
+    "image": null,
+    "createdAt": "2026-12-01T00:00:00.000Z",
+    "updatedAt": "2026-12-01T00:00:00.000Z"
+  },
+  "session": {
+    "id": "synthetic-native-session",
+    "userId": "synthetic-account",
+    "token": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expiresAt": "2027-01-15T00:00:00.000Z",
+    "createdAt": "2027-01-01T00:00:00.000Z",
+    "updatedAt": "2027-01-01T00:00:00.000Z"
+  }
+}

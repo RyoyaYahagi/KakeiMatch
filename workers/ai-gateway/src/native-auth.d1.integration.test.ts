@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { Miniflare } from 'miniflare';
 import { Encoder } from 'cbor-x';
 import { AsnEcSignatureFormatter } from '@peculiar/x509';
@@ -176,6 +176,29 @@ async function inviteAccount(env: Fixture['env'], email: string) {
   return await response.json() as { context: string };
 }
 
+const contractFixtures = new URL('../../../apps/ios/KakeiMatchTests/Fixtures/native-contract/', import.meta.url);
+const contractInstants = {
+  sessionCreated: '2027-01-01T00:00:00.000Z',
+  sessionExpires: '2027-01-15T00:00:00.000Z',
+  userCreated: '2026-12-01T00:00:00.000Z',
+};
+function expectInstant(value: unknown) {
+  expect(typeof value).toBe('string');
+  expect(value).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/);
+  expect(Number.isNaN(Date.parse(value as string))).toBe(false);
+}
+function expectContractKeys(value: Record<string, unknown>, keys: string[]) {
+  expect(Object.keys(value).sort()).toEqual([...keys].sort());
+}
+function writeContractFixture(name: string, value: unknown) {
+  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  const path = new URL(`${name}.json`, contractFixtures);
+  if (process.env.UPDATE_NATIVE_CONTRACT_FIXTURES === '1') {
+    mkdirSync(contractFixtures, { recursive: true });
+    writeFileSync(path, serialized);
+  }
+  expect(readFileSync(path, 'utf8'), `${name}.json is stale. Run npm run test:update-native-contract-fixtures --prefix workers/ai-gateway`).toBe(serialized);
+}
 const fixedNow = 1_800_000_000;
 describe('native auth on local D1 with real Better Auth passkey verification', () => {
   it('stores the actual Better Auth Passkey challenge and its verification cookie server-side', async () => {
@@ -388,5 +411,130 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toEqual({ deleted: true, localHouseholdDataPreserved: true });
     expect((await deletion.run('/api/native/auth/get-session', undefined, `Native ${deletionLogin.sessionToken}`)).status).toBe(401);
+  });
+
+  it('keeps native session, usage, and passkey responses compatible with the committed iOS fixtures', async () => {
+    const { db, env, run } = await makeFixture();
+    const invite = await inviteAccount(env, 'contract-member@example.invalid');
+    const registrationCeremony = await passkeyOptions(run, 'register', invite.context);
+    const credential = await makeCredential();
+    const registered = await run('/api/native/passkey/verify', {
+      ceremonyId: registrationCeremony.ceremonyId,
+      response: await registrationResponse(credential, registrationCeremony.options.challenge),
+      name: '契約テスト端末',
+      assertion: 'synthetic-app-attest-contract-registration-assertion',
+    });
+    expect(registered.status).toBe(200);
+    const registeredSession = await registered.json() as { sessionToken: string };
+    expect((await run('/api/native/auth/sign-out', undefined, `Native ${registeredSession.sessionToken}`, 'POST')).status).toBe(200);
+
+    const loginCeremony = await passkeyOptions(run, 'authenticate');
+    const loginResponse = await run('/api/native/passkey/verify', {
+      ceremonyId: loginCeremony.ceremonyId,
+      response: await signedResponse(credential, loginCeremony.options.challenge),
+      assertion: 'synthetic-app-attest-contract-login-assertion',
+    });
+    expect(loginResponse.status).toBe(200);
+    const login = await loginResponse.json() as { sessionToken: string };
+    const authorization = `Native ${login.sessionToken}`;
+
+    const sessionResponse = await run('/api/native/auth/get-session', undefined, authorization);
+    expect(sessionResponse.status).toBe(200);
+    const sessionBody = await sessionResponse.json() as {
+      session: Record<string, unknown>; user: Record<string, unknown>;
+    };
+    expect(sessionResponse.headers.get('set-cookie')).toBeNull();
+    expectContractKeys(sessionBody, ['session', 'user']);
+    // iOS treats ipAddress/userAgent as optional; native responses must not
+    // carry the empty user agent that made KMAPIShapes.cloudSession fail.
+    expectContractKeys(sessionBody.session, ['id', 'userId', 'token', 'expiresAt', 'createdAt', 'updatedAt']);
+    expectContractKeys(sessionBody.user, ['id', 'name', 'email', 'emailVerified', 'image', 'createdAt', 'updatedAt']);
+    expect(sessionBody.session).not.toHaveProperty('ipAddress');
+    expect(sessionBody.session).not.toHaveProperty('userAgent');
+    expectInstant(sessionBody.session.createdAt);
+    expectInstant(sessionBody.session.updatedAt);
+    expectInstant(sessionBody.session.expiresAt);
+    // Better Auth's D1 adapter returned epoch milliseconds here before the
+    // native boundary normalized them to the ISO8601 shape iOS decodes.
+    expectInstant(sessionBody.user.createdAt);
+    expectInstant(sessionBody.user.updatedAt);
+    expect(typeof sessionBody.user.id).toBe('string');
+    expect(typeof sessionBody.user.name).toBe('string');
+    expect(typeof sessionBody.user.email).toBe('string');
+    expect(typeof sessionBody.user.emailVerified).toBe('boolean');
+    expect(sessionBody.user.image === null || typeof sessionBody.user.image === 'string').toBe(true);
+    expect(typeof sessionBody.session.id).toBe('string');
+    expect(typeof sessionBody.session.token).toBe('string');
+    expect(sessionBody.session.userId).toBe(sessionBody.user.id);
+
+    const userId = sessionBody.user.id as string;
+    await db.prepare("INSERT INTO account_entitlements(user_id,plan,monthly_ai_limit) VALUES (?,'family',NULL)").bind(userId).run();
+    const usageResponse = await run('/api/native/ai/usage', undefined, authorization);
+    expect(usageResponse.status).toBe(200);
+    const usage = await usageResponse.json() as Record<string, unknown>;
+    expectContractKeys(usage, ['plan', 'period', 'month', 'used', 'limit', 'remaining']);
+    expect(usage).toMatchObject({ plan: 'family', period: 'month', used: 0, limit: null, remaining: null });
+    expect(usage.month).toMatch(/^\d{4}-\d{2}$/);
+
+    const passkeyResponse = await run('/api/native/auth/passkey/list-user-passkeys', undefined, authorization);
+    expect(passkeyResponse.status).toBe(200);
+    const passkeys = await passkeyResponse.json() as Array<Record<string, unknown>>;
+    expect(passkeys).toHaveLength(1);
+    const passkey = passkeys[0]!;
+    expectContractKeys(passkey, ['id', 'name', 'publicKey', 'userId', 'credentialID', 'counter', 'deviceType', 'backedUp', 'transports', 'createdAt', 'aaguid']);
+    expect(typeof passkey.id).toBe('string');
+    expect(passkey.name === null || typeof passkey.name === 'string').toBe(true);
+    expect(typeof passkey.publicKey).toBe('string');
+    expect((passkey.publicKey as string).length).toBeGreaterThan(0);
+    expect(typeof passkey.credentialID).toBe('string');
+    expect((passkey.credentialID as string).length).toBeGreaterThan(0);
+    expect(Number.isSafeInteger(passkey.counter) && (passkey.counter as number) >= 0).toBe(true);
+    expect(['singleDevice', 'multiDevice']).toContain(passkey.deviceType);
+    expect(typeof passkey.backedUp).toBe('boolean');
+    expect(passkey.transports === null || typeof passkey.transports === 'string').toBe(true);
+    expectInstant(passkey.createdAt);
+    expect(passkey.aaguid === null || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(passkey.aaguid as string)).toBe(true);
+    expect(passkey.userId).toBe(userId);
+
+    writeContractFixture('get-session', {
+      user: {
+        id: 'synthetic-account',
+        name: sessionBody.user.name,
+        email: sessionBody.user.email,
+        emailVerified: sessionBody.user.emailVerified,
+        image: sessionBody.user.image,
+        createdAt: contractInstants.userCreated,
+        updatedAt: contractInstants.userCreated,
+      },
+      session: {
+        id: 'synthetic-native-session',
+        userId: 'synthetic-account',
+        token: 'A'.repeat(43),
+        expiresAt: contractInstants.sessionExpires,
+        createdAt: contractInstants.sessionCreated,
+        updatedAt: contractInstants.sessionCreated,
+      },
+    });
+    writeContractFixture('ai-usage', {
+      plan: usage.plan,
+      period: usage.period,
+      month: '2026-11',
+      used: usage.used,
+      limit: usage.limit,
+      remaining: usage.remaining,
+    });
+    writeContractFixture('passkeys', [{
+      id: 'synthetic-passkey',
+      name: passkey.name,
+      publicKey: 'synthetic-public-key',
+      userId: 'synthetic-account',
+      credentialID: 'synthetic-credential-id',
+      counter: passkey.counter,
+      deviceType: passkey.deviceType,
+      backedUp: passkey.backedUp,
+      transports: passkey.transports,
+      createdAt: contractInstants.userCreated,
+      aaguid: '00000000-0000-0000-0000-000000000000',
+    }]);
   });
 });
