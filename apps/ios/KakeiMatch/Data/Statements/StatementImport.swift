@@ -36,15 +36,15 @@ import Foundation
             added += 1
         }
         let reviews = parsed.needsReviewRows.map { KMStatementImport.NeedsReviewRow(rowNumber: $0.rowNumber, reason: $0.reason) }
-        let value = old?.value ?? .init(provider: provider, fileHash: hash, encoding: parsed.encoding, headerSignature: signature,
+        let value = KMStatementImport(provider: provider, fileHash: hash, encoding: parsed.encoding, accountId: old?.value.accountId, headerSignature: signature,
             totalRows: parsed.totalRows, excludedRows: parsed.excludedRows.count, duplicateRowsInFile: parsed.duplicateRowsInFile,
-            needsReviewRows: reviews, createdAt: timestamp)
+            needsReviewRows: reviews, createdAt: old?.value.createdAt ?? timestamp)
         let artifactId = "statement-source:\(importId)"
         let artifact = KMBackupArtifact(metadata: .init(id: artifactId, ownerKind: "statement-import", ownerId: importId,
             contentType: "text/csv", createdAt: timestamp, present: true, entry: nil, size: data.count, sha256: hash), data: data)
         // Publish after every fallible validation, including conflicting external IDs.
         statementValues = current
-        if let index = importValues.firstIndex(where: { $0.id == importId }) { importValues[index].updatedAt = timestamp }
+        if let index = importValues.firstIndex(where: { $0.id == importId }) { importValues[index].value = value; importValues[index].updatedAt = timestamp }
         else { importValues.append(.init(id: importId, kind: .statementImport, value: value, updatedAt: timestamp)) }
         imageValues[artifactId] = data
         pendingArtifacts.removeAll { $0.metadata.id == artifactId }; pendingArtifacts.append(artifact)

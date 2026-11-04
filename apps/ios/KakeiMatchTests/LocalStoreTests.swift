@@ -4,6 +4,30 @@ import ZIPFoundation
 @testable import KakeiMatch
 
 @MainActor struct LocalStoreTests {
+    @Test func rakutenRetryRefreshesOldReviewMetadataWithoutDuplicatingPurchases() async throws {
+        let store = KMInMemoryStore()
+        let headers = "利用日,利用店名・商品名,利用者,支払方法,利用金額,手数料/利息,支払総額,9月支払金額,当月請求額,10月繰越残高,新規サイン"
+        let csv = Data("\(headers)\n2026/09/01,人工店舗,本人,1回払い,1200,0,1200,1200,1200,0,*\n".utf8)
+        let created = Date(timeIntervalSince1970: 1000), retried = Date(timeIntervalSince1970: 2000)
+        let first = try await store.importStatement(data: csv, provider: .rakutenCard, at: created)
+        #expect(first.added == 1)
+        // Simulate an import saved by the old parser, which rejected every purchase.
+        store.statementValues = []
+        store.importValues[0].value.accountId = "legacy-synthetic-account"
+        store.importValues[0].value.needsReviewRows = [.init(rowNumber: 2, reason: "通常購入の形式ではありません")]
+        store.importValues[0].value.excludedRows = 99
+        let second = try await store.importStatement(data: csv, provider: .rakutenCard, at: retried)
+        #expect(second.id == first.id && second.added == 1)
+        #expect(second.needsReviewRows.isEmpty)
+        #expect(store.importValues.count == 1)
+        let metadata = store.importValues[0].value
+        #expect(metadata.createdAt == created && metadata.accountId == "legacy-synthetic-account")
+        #expect(metadata.needsReviewRows == [] && metadata.excludedRows == 0)
+        #expect(store.importValues[0].updatedAt == retried)
+        let third = try await store.importStatement(data: csv, provider: .rakutenCard, at: retried)
+        #expect(third.added == 0 && third.duplicates == 1)
+        #expect(store.statementValues.count == 1)
+    }
     private func temporary() throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
