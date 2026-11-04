@@ -53,6 +53,11 @@ final class KMContactDiagnosticRecorder {
         return KMContactPresentation.diagnostics(currentScreen: currentScreen, isOnline: isOnline, events: visible)
     }
 
+    /// Clears recorded events without changing the current screen or network state.
+    func clear() {
+        events = []
+    }
+
     func resetForTest() {
         events = []
         currentScreen = .home

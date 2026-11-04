@@ -11,6 +11,7 @@ private enum KMSettingsPage: Equatable {
     case accounts
     case backup
     case ai
+    case appInfo
 }
 
 struct SettingsView: View {
@@ -49,6 +50,7 @@ struct SettingsView: View {
             switch page {
             case .root: settingsRoot
             case .theme: themePage
+            case .appInfo: KMAppInformationView(onBack: { page = .root })
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
             case .recurring: KMRecurringView(onBack: { page = .root })
             case .contact: ContactView(onBackToSettings: { page = .root })
@@ -152,6 +154,7 @@ struct SettingsView: View {
             case .accounts: page = .accounts
             case .backup: page = .backup
             case .ai: page = .ai
+            case .appInfo: page = .appInfo
             case .unimplemented: break
             }
         } label: {
