@@ -31,33 +31,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check whether PWA checks are needed
-        id: changes
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          skip_pwa=false
-          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
-            changed_files="$RUNNER_TEMP/changed-files"
-            if git diff --name-only -z "$BASE_SHA" "$HEAD_SHA" > "$changed_files"; then
-              if [ -s "$changed_files" ]; then
-                skip_pwa=true
-                while IFS= read -r -d '' file; do
-                  case "$file" in
-                    apps/ios/*|.github/workflows/ios.yml) ;;
-                    *) skip_pwa=false; break ;;
-                  esac
-                done < "$changed_files"
-              fi
-            else
-              echo "Could not compare PR commits; running all checks."
-            fi
-          fi
-          echo "skip_pwa=$skip_pwa" >> "$GITHUB_OUTPUT"
-          if [ "$skip_pwa" = "true" ]; then
-            echo "Only iOS files changed; skipping PWA checks."
-          fi
       - uses: pnpm/action-setup@v4
         with:
           version: 10.15.0
@@ -65,7 +38,15 @@ jobs:
         with:
           node-version: 22
           # A self-hosted host keeps its pnpm store; uploading it only costs time.
-          cache: ${{ runner.environment == 'github-hosted' && steps.changes.outputs.skip_pwa != 'true' && 'pnpm' || '' }}
+          cache: ${{ runner.environment == 'github-hosted' && 'pnpm' || '' }}
+      - name: Test CI selection rules
+        run: node --test scripts/select-ci-tests.test.mjs
+      - name: Select checks from changed files
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: node scripts/select-ci-tests.mjs
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm install --frozen-lockfile
       - if: steps.changes.outputs.skip_pwa != 'true'
@@ -81,17 +62,18 @@ jobs:
         run: pnpm --dir apps/pwa test
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm --dir apps/pwa exec cf build
-      - if: steps.changes.outputs.skip_pwa != 'true' && runner.environment == 'github-hosted'
+      - if: steps.changes.outputs.e2e != '' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
       # The runner image already provides Chromium's system libraries, so skip the slow apt step.
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.e2e != ''
         run: pnpm --dir apps/pwa exec playwright-core install chromium
       - name: Synthetic local-first flows without legacy runtime
-        if: steps.changes.outputs.skip_pwa != 'true'
+        if: steps.changes.outputs.e2e != ''
         env:
+          E2E_SCRIPTS: ${{ steps.changes.outputs.e2e }}
           # A dev server may already hold 5173 on the self-hosted host.
           E2E_PORT: 5199
         run: |
@@ -100,7 +82,7 @@ jobs:
           pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port "$E2E_PORT" --strictPort > "$RUNNER_TEMP/kakeimatch-pwa-dev.log" 2>&1 &
           pwa_pid=$!
           trap 'kill "$pwa_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 60); do
+          for _attempt in $(seq 1 60); do
             if curl --fail --silent "http://127.0.0.1:$E2E_PORT/" > /dev/null; then break; fi
             sleep 1
           done
@@ -115,17 +97,10 @@ jobs:
             fi
           }
           export -f run_script
-          printf '%s\n' \
-            test:payroll-e2e test:backup-e2e test:moneyforward-e2e test:receipt-items-e2e test:e2e test:manual-e2e test:manual-retry-e2e \
-            test:receipt-edits-e2e test:account-types-e2e test:ai-costs-e2e test:smbc-statements-e2e \
-            test:rakuten-statements-e2e test:updates-e2e test:masters-e2e test:deletions-e2e \
-            test:pending-receipt-deletion-e2e test:recurring-e2e test:ai-paused-e2e test:entry-masters-e2e \
-            test:screen-lock-removal-e2e test:manual-items-e2e test:transfers-e2e test:monthly-budgets-e2e \
-            test:monthly-dashboard-e2e test:record-navigation-e2e test:transaction-search-e2e \
-            test:category-learning-e2e test:account-balances-e2e test:reconciliation-e2e \
-            test:provider-only-reconciliation-e2e test:reconciliation-review-e2e test:statement-options-e2e test:desktop-layout-e2e test:contact-e2e \
-            test:diagnostics-e2e test:security-e2e test:encryption-e2e test:receipt-ai-warnings-e2e test:guest-ai-e2e test:device-link-e2e test:local-data-rescue-e2e test:receipt-total-check-e2e test:receipt-ai-reading-e2e test:recurring-catch-up-e2e test:idb-migration-e2e test:actual-compatibility-e2e \
-            | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
+          read -r -a e2e_scripts <<< "$E2E_SCRIPTS"
+          # The single-quoted command expands $1 in each child shell.
+          # shellcheck disable=SC2016
+          printf '%s\n' "${e2e_scripts[@]}" | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
       - name: Upload E2E logs
         if: failure() && steps.changes.outputs.skip_pwa != 'true'
         uses: actions/upload-artifact@v4
