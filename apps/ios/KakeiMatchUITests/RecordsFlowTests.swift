@@ -71,6 +71,50 @@ final class RecordsFlowTests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor func testSearchPeriodOpensCalendar() {
+        continueAfterFailure = false
+        for appearance in ["light", "dark"] {
+            let app = launch(appearance)
+            app.buttons["records.search"].tap()
+            app.buttons["records.chip.start"].tap()
+            XCTAssertTrue(app.datePickers.firstMatch.waitForExistence(timeout: 5), "期間からカレンダーを開けること")
+            capture(app, "search-calendar-\(appearance)")
+            app.buttons["キャンセル"].tap()
+            app.buttons["records.advanced"].tap()
+            for field in ["start", "end"] {
+                let input = app.buttons["records.search.\(field)"]
+                XCTAssertEqual(input.value as? String, "指定なし")
+                input.tap()
+                XCTAssertTrue(app.datePickers.firstMatch.waitForExistence(timeout: 3))
+                app.buttons["records.search.dateApply"].tap()
+                XCTAssertNotEqual(input.value as? String, "指定なし")
+                input.tap()
+                XCTAssertTrue(app.datePickers.firstMatch.waitForExistence(timeout: 3))
+                app.buttons["records.search.dateClear"].tap()
+                XCTAssertEqual(input.value as? String, "指定なし")
+            }
+            app.terminate()
+        }
+    }
+
+    @MainActor func testSearchChipsSelectRequestedCondition() {
+        continueAfterFailure = false
+        let app = launch("light")
+        app.buttons["records.search"].tap()
+        app.buttons["records.advanced"].tap()
+        for (field, title, option) in [("kind", "種類", "収入"), ("category", "カテゴリ（非表示を含む）", "食費"), ("account", "口座（利用終了を含む）", "PayPayカード")] {
+            app.buttons["records.chip.\(field)"].tap()
+            // The requested selector must open even when detailed conditions are already expanded.
+            XCTAssertTrue(app.buttons[option].waitForExistence(timeout: 3), "\(title)の選択肢が開くこと")
+            app.buttons[option].tap()
+        }
+        app.buttons["records.chip.minimum"].tap()
+        let minimum = app.textFields["records.search.minimum"]
+        XCTAssertTrue(minimum.waitForExistence(timeout: 3))
+        minimum.typeText("100")
+        app.terminate()
+    }
+
     @MainActor private func openAppliedPayroll(_ appearance: String) -> XCUIApplication {
         let app = launch(appearance, fixture: "payroll")
         app.buttons["records.filter.income"].tap()

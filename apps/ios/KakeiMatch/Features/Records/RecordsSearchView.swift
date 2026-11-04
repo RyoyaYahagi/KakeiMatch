@@ -4,6 +4,14 @@ struct KMRecordsSearchView: View {
     @Bindable var model: KMRecordsModel
     @State private var advanced = false
     @FocusState private var focused: String?
+    @State private var dateField: SearchDateField?
+    @State private var selectedDate = Date()
+
+    private enum SearchDateField: String, Identifiable {
+        case start, end
+        var id: String { rawValue }
+        var title: String { self == .start ? "開始日" : "終了日" }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -78,6 +86,29 @@ struct KMRecordsSearchView: View {
         .foregroundStyle(KMColor.text)
         .disabled(model.busy)
         .accessibilityElement(children: .contain).accessibilityIdentifier("records.searchScreen")
+        .sheet(item: $dateField) { field in
+            VStack(spacing: KMSpacing.space3) {
+                Text(field.title).font(KMTypography.body(17, weight: .bold))
+                DatePicker(field.title, selection: $selectedDate, displayedComponents: .date)
+                    .datePickerStyle(.graphical)
+                    .environment(\.calendar, KMDate.calendar)
+                    .environment(\.timeZone, KMDate.calendar.timeZone)
+                    .environment(\.locale, Locale(identifier: "ja_JP"))
+                    .accessibilityIdentifier("records.search.calendar")
+                HStack {
+                    Button("指定を解除") { setDate("", field: field); dateField = nil }
+                        .accessibilityIdentifier("records.search.dateClear")
+                    Spacer()
+                    Button("キャンセル") { dateField = nil }
+                    Button("設定する") {
+                        setDate(KMDate(instant: selectedDate).rawValue, field: field)
+                        dateField = nil
+                    }.accessibilityIdentifier("records.search.dateApply")
+                }.buttonStyle(KMButtonStyle(role: .text))
+            }
+            .padding(KMSpacing.space4)
+            .presentationDetents([.height(540), .large])
+        }
     }
 
     private var period: String {
@@ -89,27 +120,61 @@ struct KMRecordsSearchView: View {
         let draft = model.appliedSearch
         return draft.minimum.isEmpty && draft.maximum.isEmpty ? "" : draft.minimum + "〜" + draft.maximum + "円"
     }
-    private func chip(_ label: String, value: String, field: String) -> some View {
-        Button { advanced = true; focused = field } label: {
-            HStack(spacing: KMSpacing.space1) {
-                Text(value.isEmpty ? label : "\(label)：\(value)").lineLimit(1)
-                KMIcon(name: "chevronDown", size: 14)
-            }
-            .font(KMTypography.body(14, weight: value.isEmpty ? .medium : .bold))
-            .padding(.horizontal, KMSpacing.space4).frame(height: 36)
-            .background(value.isEmpty ? KMColor.surface : KMColor.primarySoft, in: Capsule())
-            .overlay { Capsule().stroke(value.isEmpty ? KMColor.borderStrong : KMColor.primary, lineWidth: value.isEmpty ? 1 : 2) }
-            .frame(minHeight: 44).contentShape(Rectangle())
+    @ViewBuilder private func chip(_ label: String, value: String, field: String) -> some View {
+        if field == "kind" {
+            Menu {
+                Picker(label, selection: $model.search.kind) {
+                    Text("すべて").tag("")
+                    ForEach(KMRecordsFilter.allCases.filter { $0 != .all }, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
+                }
+            } label: { chipLabel(label, value: value) }
+            .accessibilityIdentifier("records.chip.kind")
+        } else if field == "category" {
+            Menu {
+                Picker(label, selection: $model.search.categoryId) {
+                    Text("すべて").tag("")
+                    ForEach(model.categories) { Text($0.name + ($0.hidden ? " · 非表示" : "")).tag($0.id) }
+                }
+            } label: { chipLabel(label, value: value) }
+            .accessibilityIdentifier("records.chip.category")
+        } else if field == "account" {
+            Menu {
+                Picker(label, selection: $model.search.accountId) {
+                    Text("すべて").tag("")
+                    ForEach(model.accounts) { Text($0.name + ($0.closed ? " · 利用終了" : "")).tag($0.id) }
+                }
+            } label: { chipLabel(label, value: value) }
+            .accessibilityIdentifier("records.chip.account")
+        } else {
+            Button {
+                focused = nil
+                if field == "start" { openDate(.start) }
+                else { advanced = true; focused = field }
+            } label: { chipLabel(label, value: value) }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("records.chip.\(field)")
         }
-        .buttonStyle(.plain).foregroundStyle(value.isEmpty ? KMColor.text : KMColor.primary)
-        .accessibilityIdentifier("records.chip.\(field)").accessibilityAddTraits(value.isEmpty ? [] : .isSelected)
+    }
+
+    private func chipLabel(_ label: String, value: String) -> some View {
+        HStack(spacing: KMSpacing.space1) {
+            Text(value.isEmpty ? label : "\(label)：\(value)").lineLimit(1)
+            KMIcon(name: "chevronDown", size: 14)
+        }
+        .font(KMTypography.body(14, weight: value.isEmpty ? .medium : .bold))
+        .padding(.horizontal, KMSpacing.space4).frame(height: 36)
+        .background(value.isEmpty ? KMColor.surface : KMColor.primarySoft, in: Capsule())
+        .overlay { Capsule().stroke(value.isEmpty ? KMColor.borderStrong : KMColor.primary, lineWidth: value.isEmpty ? 1 : 2) }
+        .frame(minHeight: 44).contentShape(Rectangle())
+        .foregroundStyle(value.isEmpty ? KMColor.text : KMColor.primary)
+        .accessibilityAddTraits(value.isEmpty ? [] : .isSelected)
     }
 
     private var fields: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space2) {
             Text("金額は分割品目の金額ではなく、記録全体の金額です。").font(KMTypography.note).padding(.vertical, KMSpacing.space2)
-            field("開始日", id: "start", text: $model.search.startDate, hint: "YYYY-MM-DD")
-            field("終了日", id: "end", text: $model.search.endDate, hint: "YYYY-MM-DD")
+            dateInput(.start, value: model.search.startDate)
+            dateInput(.end, value: model.search.endDate)
             picker("種類", id: "kind", selection: $model.search.kind) {
                 Text("すべて").tag("")
                 ForEach(KMRecordsFilter.allCases.filter { $0 != .all }, id: \.rawValue) { Text($0.label).tag($0.rawValue) }
@@ -125,6 +190,37 @@ struct KMRecordsSearchView: View {
             field("金額の下限（円）", id: "minimum", text: $model.search.minimum, hint: "下限なし", numeric: true)
             field("金額の上限（円）", id: "maximum", text: $model.search.maximum, hint: "上限なし", numeric: true)
         }
+    }
+
+    private func openDate(_ field: SearchDateField) {
+        focused = nil
+        let value = field == .start ? model.search.startDate : model.search.endDate
+        selectedDate = (try? KMDate(value)).map(KMEntryPresentation.dateValue) ?? model.now
+        dateField = field
+    }
+
+    private func setDate(_ value: String, field: SearchDateField) {
+        if field == .start { model.search.startDate = value }
+        else { model.search.endDate = value }
+    }
+
+    private func dateInput(_ field: SearchDateField, value: String) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+            Text(field.title).font(KMTypography.text)
+            Button { openDate(field) } label: {
+                HStack {
+                    Text(value.isEmpty ? "指定なし" : value)
+                    Spacer()
+                    KMIcon(name: "chevronDown", size: 14)
+                }
+                .padding(KMSpacing.space3).frame(minHeight: 48)
+                .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.borderStrong) }
+            }
+            .buttonStyle(.plain).accessibilityLabel(field.title)
+            .accessibilityValue(value.isEmpty ? "指定なし" : value)
+            .accessibilityIdentifier("records.search.\(field.rawValue)")
+        }.padding(.top, KMSpacing.space2)
     }
 
     private func field(_ label: String, id: String, text: Binding<String>, hint: String, numeric: Bool = false) -> some View {
