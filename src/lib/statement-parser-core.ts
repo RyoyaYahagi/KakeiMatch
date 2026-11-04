@@ -329,6 +329,7 @@ const rakutenParser: StatementParser = {
     const needsReviewRows: NonNullable<StatementParseResult["needsReviewRows"]> = [];
     const fingerprintOrdinals = new Map<string, number>();
     let priorCandidate: { rowNumber: number; transactionIndex: number } | null = null;
+    let inCancellationSection = false;
 
     const addReview = (rowNumber: number, reason: string, continuation: boolean) => {
       if (continuation && priorCandidate?.rowNumber === rowNumber - 1) {
@@ -348,7 +349,26 @@ const rakutenParser: StatementParser = {
       if (row.some((field) => field.length > MAX_STATEMENT_FIELD_LENGTH)) return;
       // e-NAVI separates sections with an all-empty CSV record. This is not a
       // continuation of the preceding purchase; preserve its transaction.
-      if (is12Column && row.every((field) => field.trim() === "")) {
+      if (row.every((field) => field.trim() === "")) {
+        excludedRows.push({ rowNumber, reason: "non_expense" });
+        priorCandidate = null;
+        return;
+      }
+      if (row[0].trim() === "■ご利用キャンセルなど" && row.slice(1).every((field) => field.trim() === "")) {
+        excludedRows.push({ rowNumber, reason: "non_expense" });
+        priorCandidate = null;
+        inCancellationSection = true;
+        return;
+      }
+      if (inCancellationSection) {
+        addReview(rowNumber, "返金・取消の可能性があります", false);
+        return;
+      }
+      // A known FX annotation contains no purchase fields. Keep the preceding
+      // validated yen purchase; unknown or populated continuations still require review.
+      if (priorCandidate?.rowNumber === rowNumber - 1 && row[0].trim() === "" &&
+        /^現地利用額\s*\d+(?:\.\d+)?\s*変換レート\s*\d+(?:\.\d+)?円$/.test(row[1].normalize("NFKC").trim()) &&
+        row.slice(2).every((field) => field.trim() === "")) {
         excludedRows.push({ rowNumber, reason: "non_expense" });
         priorCandidate = null;
         return;
@@ -375,7 +395,7 @@ const rakutenParser: StatementParser = {
       else if (amount === null || amount <= 0) reason = "利用金額を確認できません";
       else if (parsedOtherAmounts.some((value) => value === null)) reason = "支払金額欄を確認できません";
       else if (is12Column && !/^(?:[1-9]|1[0-2])月$/.test(row[7])) reason = "支払月を確認できません";
-      else if ((parseYen(rawFee) ?? 0) > 0 || rawNewSign.trim() !== "" || (parseYen(rawFutureAmount) ?? 0) > 0) reason = "通常購入の形式ではありません";
+      else if ((parseYen(rawFee) ?? 0) > 0 || !["", "*"].includes(rawNewSign.trim()) || (parseYen(rawFutureAmount) ?? 0) > 0) reason = "通常購入の形式ではありません";
       else if (missingPurchaseColumns) reason = "複数行明細または部分行の可能性があります";
 
       if (reason) {

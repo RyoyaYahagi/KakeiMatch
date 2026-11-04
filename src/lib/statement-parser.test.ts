@@ -141,6 +141,49 @@ describe("parseStatement", () => {
     expect(parseStatement(csv([changedMonth]), "rakuten_card").fatalErrors[0].code).toBe("header_mismatch");
   });
 
+  it("imports starred 11-column purchases while separating FX notes, blanks, and cancellations in the PWA", async () => {
+    const purchase = ["2026/09/03", "人工海外商店", "本人", "1回払い", "850", "0", "850", "850", "850", "0", "*"];
+    const note = ["", "現地利用額　５．０００変換レート　１７０．０００円", ...Array<string>(9).fill("")];
+    const other = ["2026/09/04", "人工国内商店", "本人", "1回払い", "300", "0", "300", "300", "0", "0", "*"];
+    const section = ["■ご利用キャンセルなど", ...Array<string>(10).fill("")];
+    const cancelled = ["2026/09/05", "人工取消商店", "本人", "1回", "600", "0", "600", "", "", "", ""];
+    const bytes = csv([RAKUTEN_2026_09_HEADER, purchase, note, other, Array<string>(11).fill(""), section, cancelled]);
+    const result = await parseStatementBlob(new Blob([new Uint8Array(bytes)]), "rakuten_card");
+    expect(result.fatalErrors).toEqual([]);
+    expect(result.transactions).toMatchObject([
+      { merchant: "人工海外商店", amountYen: 850 }, { merchant: "人工国内商店", amountYen: 300 },
+    ]);
+    expect(result.excludedRows).toEqual([3, 5, 6].map(rowNumber => ({ rowNumber, reason: "non_expense" })));
+    expect(result.needsReviewRows).toEqual([{ rowNumber: 7, reason: "返金・取消の可能性があります" }]);
+    expect(parseStatement(bytes, "rakuten_card")).toEqual(result);
+    const unstarred = parseStatement(csv([RAKUTEN_2026_09_HEADER, [...purchase.slice(0, 10), ""]]), "rakuten_card");
+    expect(result.transactions[0].sourceFingerprint).toBe(unstarred.transactions[0].sourceFingerprint);
+  });
+
+  it.each([[RAKUTEN_2026_09_HEADER], [RAKUTEN_12_COLUMN_HEADER]])("never imports purchases from a cancellation section", (header) => {
+    const normal = header.length === 11
+      ? ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "100", "0", ""]
+      : ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "10月", "100", "100", "0", ""];
+    const section = ["■ご利用キャンセルなど", ...Array<string>(header.length - 1).fill("")];
+    const result = parseStatement(csv([header, normal, section, normal]), "rakuten_card");
+    expect(result.transactions).toHaveLength(1);
+    expect(result.excludedRows).toEqual([{ rowNumber: 3, reason: "non_expense" }]);
+    expect(result.needsReviewRows).toEqual([{ rowNumber: 4, reason: "返金・取消の可能性があります" }]);
+  });
+
+  it("keeps unknown signs and ambiguous FX continuation rows for review", () => {
+    const normal = ["2026/09/01", "人工商店", "本人", "1回払い", "100", "0", "100", "100", "100", "0", ""];
+    expect(parseStatement(csv([RAKUTEN_2026_09_HEADER, [...normal.slice(0, 10), "?"]]), "rakuten_card").transactions).toEqual([]);
+    for (const detail of [
+      ["", "現地利用額 不明 変換レート 不明", ...Array<string>(9).fill("")],
+      ["", "現地利用額 ５．０００変換レート ２０．０００円", "本人", ...Array<string>(8).fill("")],
+    ]) {
+      const result = parseStatement(csv([RAKUTEN_2026_09_HEADER, normal, detail]), "rakuten_card");
+      expect(result.transactions).toEqual([]);
+      expect(result.needsReviewRows).toHaveLength(2);
+    }
+  });
+
   it("imports the 12-column e-NAVI layout through the PWA using purchase amounts", async () => {
     const bytes = csv([RAKUTEN_12_COLUMN_HEADER,
       ["2026/09/01", "人工商店", "本人", "1回払い", "1200", "0", "1200", "10月", "1000", "800", "0", ""],
