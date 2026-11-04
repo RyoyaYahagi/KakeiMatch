@@ -107,7 +107,7 @@ AppleのPasskey APIはAssociated Domainsのwebcredentials設定を必要とし�
 | `auth/passkey/delete-passkey`, `auth/sign-out` POST | account sessionのみ |
 | `account/delete` DELETE | account sessionのみ |
 
-`get-session` の `session.token` / `id` / `expiresAt` はネイティブの値へ置換します。Webのsession tokenとSet-Cookieを外へ出しません。ログアウト・本人削除はguest資格情報と家計データを削除しません。APIエラーの本文や暗号検証の例外はログへ出さず、固定の安全なerror codeだけ返します。
+`get-session` の `session.token` / `id` / `expiresAt` はネイティブの値へ置換します。Webのsession tokenとSet-Cookieを外へ出しません。ネイティブ境界は `session.ipAddress` / `session.userAgent` を応答へ含めません。Better AuthのD1 adapterがepoch millisecondsで返す `user.createdAt` / `updatedAt` と `passkey.createdAt` はISO8601へ直し、iOSの検査と同じ形にします。ログアウト・本人削除はguest資格情報と家計データを削除しません。APIエラーの本文や暗号検証の例外はログへ出さず、固定の安全なerror codeだけ返します。
 
 ## 4. App Attest 検証
 

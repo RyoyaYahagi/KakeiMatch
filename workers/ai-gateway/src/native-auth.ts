@@ -61,6 +61,7 @@ async function hash(bytes: Uint8Array) { return new Uint8Array(await crypto.subt
 async function tokenHash(token: string) { return encode(await hash(utf8.encode(token))); }
 function randomToken() { return encode(crypto.getRandomValues(new Uint8Array(32))); }
 function object(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function instant(value: unknown): unknown { return typeof value === 'number' ? new Date(value).toISOString() : value; }
 function fields(body: Record<string, unknown>, allowed: string[]) { return Object.keys(body).every(key => allowed.includes(key)); }
 function text(value: unknown, max: number): value is string { return typeof value === 'string' && value.length > 0 && value.length <= max; }
 async function body(request: Request): Promise<Record<string, unknown> | null> {
@@ -375,13 +376,31 @@ async function authenticatedRequest(request: Request, env: NativeEnv & { ACCOUNT
   if (targetPath === '/api/account/delete') return withoutCookies(await handleAccountRequest(forwarded, env as AccountEnv));
   const response = await handleAuthRequest(forwarded, env as AccountEnv);
   if (targetPath === '/api/auth/get-session' && response.ok) {
-    const result = await response.json() as { session?: Record<string, unknown>; user?: unknown } | null;
+    const result = await response.json() as { session?: Record<string, unknown>; user?: Record<string, unknown> } | null;
     if (!result?.session) return json(401, { error: 'unauthorized' });
     // Preserve the existing model without disclosing a browser session token.
     result.session.token = request.headers.get('authorization')!.slice('Native '.length);
     result.session.id = session.token_hash;
     result.session.expiresAt = new Date(session.expires_at * 1000).toISOString();
+    // iOS does not need the caller's IP/User-Agent, and Better Auth stores an
+    // empty string when the native bridge has no user agent. The iOS contract
+    // treats both as optional, so omit them instead of exposing network data.
+    delete result.session.ipAddress;
+    delete result.session.userAgent;
+    // Better Auth's D1 adapter returns user createdAt/updatedAt as epoch
+    // milliseconds while the session timestamps are ISO strings. The iOS
+    // contract uses ISO8601 for both, so normalize at the native boundary.
+    if (result.user) {
+      result.user.createdAt = instant(result.user.createdAt);
+      result.user.updatedAt = instant(result.user.updatedAt);
+    }
     return json(200, result);
+  }
+  if (targetPath === '/api/auth/passkey/list-user-passkeys' && response.ok) {
+    const result: unknown = await response.json();
+    if (!Array.isArray(result) || result.some(value => !object(value))) throw new Error('invalid_passkey_list');
+    // The D1 adapter returns the credential createdAt as epoch milliseconds.
+    return json(200, result.map(value => ({ ...(value as Record<string, unknown>), createdAt: instant((value as Record<string, unknown>).createdAt) })));
   }
   return withoutCookies(response);
 }

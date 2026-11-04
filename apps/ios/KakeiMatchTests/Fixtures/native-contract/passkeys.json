@@ -1,0 +1,15 @@
+[
+  {
+    "id": "synthetic-passkey",
+    "name": "契約テスト端末",
+    "publicKey": "synthetic-public-key",
+    "userId": "synthetic-account",
+    "credentialID": "synthetic-credential-id",
+    "counter": 1,
+    "deviceType": "singleDevice",
+    "backedUp": false,
+    "transports": "internal",
+    "createdAt": "2026-12-01T00:00:00.000Z",
+    "aaguid": "00000000-0000-0000-0000-000000000000"
+  }
+]

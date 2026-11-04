@@ -8,6 +8,10 @@ enum KMAPIShapes {
         "session": .object(["id": .text(max: 128), "userId": .text(max: 128), "token": .text(max: 8192), "expiresAt": instant,
                             "createdAt": instant, "updatedAt": instant, "ipAddress": .nullable(.text(max: 128)), "userAgent": .nullable(.text(max: 2048))], optional: ["ipAddress", "userAgent"])
     ]))
+    static let accountUsage: KMAPIShape = .object([
+        "plan": .values(["free", "pro", "family"]), "period": .values(["month"]), "month": .month,
+        "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
+    ])
     static let passkeys: KMAPIShape = .array(.object([
         "id": .text(max: 128), "name": .nullable(.text(max: 500)), "publicKey": .text(max: 8192), "userId": .text(max: 128),
         "credentialID": .text(max: 2048), "counter": .integer(), "deviceType": .values(["singleDevice", "multiDevice"]),
