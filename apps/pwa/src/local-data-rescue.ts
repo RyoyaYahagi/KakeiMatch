@@ -198,7 +198,7 @@ export async function createLocalDataRescueFile(options: {
       manifest: {
         scope: '選択中プロフィールのKakeiMatch端末内IndexedDBにある既知のrecord kindとblob owner kind。復旧用の読み取り専用救出データです。',
         includes: ['対応済みrecord kindの対象プロフィール記録（JSON化した読取量が合計32 MiB以内。設定とCryptoKeyを含む記録を除外）', 'owner kindがreceiptまたはstatement-importの原本（1 MiB単位のBase64チャンク、1件32 MiB・合計64 MiB以内）'],
-        excludes: ['Actual Budgetの家計簿とデータベース', 'app-settings', '画面ロック設定', 'クラウドのログイン情報・session・AI token', '同期用CryptoKey', '未対応のrecord kindとblob owner kind', '別プロフィール', '他のブラウザーデータベース'],
+        excludes: ['Actual Budgetの家計簿とデータベース', 'app-settings', 'クラウドのログイン情報・session・AI token', '同期用CryptoKey', '未対応のrecord kindとblob owner kind', '別プロフィール', '他のブラウザーデータベース'],
         warning: 'これは完全な家計バックアップではありません。.kmb形式ではなく、このアプリから復元できません。Actual Budgetの家計簿と未対応の将来データを含みません。公開せず、更新後の復旧支援に限って保管してください。',
         skippedSensitiveRecords,
         skippedUnknownRecords,

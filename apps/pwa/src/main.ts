@@ -11,11 +11,13 @@ import { iconMarkup } from './ui-icons';
 import { renderOssLicenses } from './oss-licenses';
 import { observeAppUpdates } from './app-updates';
 import { initializeDiagnosticsUi } from './local-diagnostics-ui';
-import { initializeLocalScreenLock } from './local-screen-lock';
 import { recordLocalDiagnostic } from './local-diagnostics';
+import { removeLegacyScreenLockData } from './legacy-screen-lock';
 import { downloadLocalDataRescue } from './local-data-rescue';
 import { initializeThemeSettings } from './theme-settings';
 import './style.css';
+
+removeLegacyScreenLockData();
 
 const authClient = createAuthClient({ baseURL: location.origin, plugins: [passkeyClient()] });
 
@@ -39,7 +41,7 @@ root.innerHTML = `
       <h2 id="migration-rescue-title">端末データの救出</h2>
       <p>更新に失敗した場合や、新しい版のデータをこのアプリが開けない場合に、対応済みのKakeiMatch記録を読み取り専用で書き出せます。</p>
       <p>このファイルを読み込んで復元することはできません。救出後はアプリを修正版へ更新し、再読み込みして開き直してください。</p>
-      <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿と未対応の新しい種類のデータは含まず、このファイルから復元できません。画面ロック設定、クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
+      <p class="migration-rescue-warning">これは完全な家計バックアップではありません。Actual Budgetの家計簿と未対応の新しい種類のデータは含まず、このファイルから復元できません。クラウドのログイン情報、同期のための暗号鍵も含みません。</p>
       <button id="migration-rescue-export" class="secondary" type="button">${iconMarkup('income')}救出データを書き出す</button>
       <p id="migration-rescue-status" role="status" aria-live="polite"></p>
     </section>
@@ -72,7 +74,6 @@ root.innerHTML = `
       <section id="backup-quick" class="surface-section backup-quick" aria-label="バックアップの状況"></section>
       <section id="data-rows" class="surface-section settings-list" aria-label="データの設定">
         <button class="master-entry" type="button" data-settings-page="settings-page-ledger" aria-label="バックアップと復元"><span class="master-entry-name">バックアップと復元</span></button>
-        <button class="master-entry" type="button" data-settings-page="settings-page-lock" aria-label="画面ロック"><span class="master-entry-name">画面ロック</span><span id="screen-lock-row-value" class="master-entry-value"></span></button>
         <button class="master-entry destructive-text" type="button" data-settings-page="settings-page-cleanup" aria-label="原本の整理・全削除"><span class="master-entry-name">原本の整理・全削除</span></button>
       </section>
       <h3 class="settings-group-title">写真の読み取り</h3>
@@ -111,11 +112,6 @@ root.innerHTML = `
           <p class="storage-location-risk">端末の紛失やブラウザーのデータ消去で、家計データが失われることがあります。バックアップを別の場所に保存してください。</p>
         </section>
       </div>
-      </section>
-      <section id="settings-page-lock" class="settings-page" hidden aria-labelledby="settings-page-lock-title">
-        <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
-        <h2 id="settings-page-lock-title" class="page-title">画面ロック</h2>
-      <div id="screen-lock-host"></div>
       </section>
       <section id="settings-page-cleanup" class="settings-page" hidden aria-labelledby="settings-page-cleanup-title">
         <button class="text-button back-link" type="button" data-settings-back aria-label="設定へ戻る">${iconMarkup('chevronLeft')}設定</button>
@@ -173,7 +169,6 @@ const element = <T extends HTMLElement>(id: string) => document.getElementById(i
 renderOssLicenses(element<HTMLElement>('oss-licenses'));
 initializeThemeSettings();
 initializeDiagnosticsUi(element<HTMLElement>('app-info'));
-initializeLocalScreenLock(element<HTMLElement>('app-shell'), element<HTMLElement>('settings-content'));
 const message = element<HTMLParagraphElement>('message');
 const network = element<HTMLElement>('network');
 const householdView = element<HTMLElement>('household-view');
