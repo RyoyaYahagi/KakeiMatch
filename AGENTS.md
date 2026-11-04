@@ -82,6 +82,10 @@ Issue #30以降のCloudflare作業では、新しい公式 `cf` CLIを第一選�
 - `cf` はopen betaなので、実行時点の `cf --help` / `cf cli search` / 公式Docsを確認する
 - Gemini/Jev等の秘密鍵をsource/configへ直書きしない。Cloudflare Secret bindingとして扱い、browser bundleへ露出させない
 
+## CIの実行範囲
+
+CIは変更の検証に必要なものだけを実行します。PRの自動実行と差分に応じたテスト選択を基本とし、手動実行・再実行の前に既存の実行範囲と状態を確認してください。追加実行は、自動CIやローカル検証で確認できない項目がある場合、または利用者が求めた場合に限り、対象と理由を明示します。全件CIの定例的な手動実行や同じheadへの重複実行は避け、不要になった自分の実行は取り消します。必須チェックは維持してください。
+
 ## Git
 
 mainへの直接pushは禁止です。変更の大小を問わず、作業branchからPull Requestで統合します。
