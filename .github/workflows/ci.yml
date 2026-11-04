@@ -94,10 +94,15 @@ jobs:
           mkdir -p e2e-logs
           # Keep each script's output separate so parallel logs stay readable.
           run_script() {
-            if pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
+            local debug=""
+            if [ "$1" = "test:category-learning-e2e" ]; then debug="pw:api"; fi
+            # Bound each process group so a stuck browser cannot consume the job's 15 minutes.
+            if DEBUG="$debug" timeout --signal=TERM --kill-after=10s 180s pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
               echo "PASS $1"
             else
-              echo "FAIL $1"; cat "e2e-logs/${1//:/-}.log"; return 1
+              local status=$?
+              echo "FAIL $1 (exit $status; suite limit 180s)"
+              cat "e2e-logs/${1//:/-}.log"; return 1
             fi
           }
           export -f run_script
