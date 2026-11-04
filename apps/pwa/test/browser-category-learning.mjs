@@ -6,6 +6,8 @@ import { waitForBackupExportReady } from './backup-e2e-helpers.mjs';
 if (!process.env.PWA_E2E_URL) throw new Error('Set PWA_E2E_URL to an isolated synthetic preview.');
 const browser = await chromium.launch({ headless: true, ...(process.env.PWA_BROWSER_PATH ? { executablePath: process.env.PWA_BROWSER_PATH } : {}), args: ['--no-sandbox'] });
 const context = await browser.newContext({ viewport: { width: 375, height: 812 }, acceptDownloads: true });
+context.setDefaultTimeout(30_000);
+context.setDefaultNavigationTimeout(30_000);
 await context.addInitScript(() => { navigator.serviceWorker.register = async () => ({}); });
 const page = await context.newPage();
 await page.clock.setFixedTime(new Date('2026-10-01T03:00:00Z'));
