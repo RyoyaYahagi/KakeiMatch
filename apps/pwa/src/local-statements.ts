@@ -99,10 +99,14 @@ export class LocalStatementService {
 
       const id = oldImport?.id ?? crypto.randomUUID();
       const now = new Date().toISOString();
-      const value: StatementImportMetadata = oldImport?.value ?? {
+      // Reparse on retry so parser fixes also refresh previously saved review reasons.
+      // Preserve the import identity, original timestamp and any legacy account mapping.
+      const value: StatementImportMetadata = {
+        ...oldImport?.value,
         provider, fileHash, encoding: parsed.encoding, headerSignature: parsed.headerSignature,
         totalRows: parsed.totalRows, excludedRows: parsed.excludedRows.length,
-        duplicateRowsInFile: parsed.duplicateRowsInFile, needsReviewRows: parsed.needsReviewRows ?? [], createdAt: now,
+        duplicateRowsInFile: parsed.duplicateRowsInFile, needsReviewRows: parsed.needsReviewRows ?? [],
+        createdAt: oldImport?.value.createdAt ?? now,
       };
       await this.repository.putBlob({
         id: `statement-source:${id}`, ownerKind: "statement-import", ownerId: id,

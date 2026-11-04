@@ -47,6 +47,29 @@ describe("LocalStatementService", () => {
     expect(await service.list()).toHaveLength(2);
   });
 
+  it("recovers an all-review Rakuten import on retry and refreshes its saved parse results", async () => {
+    const { repository, service } = await openService();
+    const starred = [...rakutenPurchase.slice(0, 10), "*"];
+    const input = csv([rakutenHeaders, starred, Array<string>(11).fill("")]);
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    await repository.put({ id: "old-rakuten-import", kind: "statement-import", value: {
+      provider: "rakuten_card", fileHash: sha256Hex(new Uint8Array(await input.arrayBuffer())),
+      accountId: "legacy-account", encoding: "utf-8", headerSignature: JSON.stringify(rakutenHeaders),
+      totalRows: 2, excludedRows: 0, duplicateRowsInFile: 0, createdAt,
+      needsReviewRows: [{ rowNumber: 2, reason: "通常購入の形式ではありません" }, { rowNumber: 3, reason: "継続行または部分行の可能性があります" }],
+    }, updatedAt: createdAt });
+
+    expect(await service.importFile(input, "rakuten_card")).toMatchObject({
+      id: "old-rakuten-import", added: 1, duplicates: 0, excluded: 1, needsReviewRows: [],
+    });
+    expect((await service.imports())[0].value).toMatchObject({
+      accountId: "legacy-account", createdAt, excludedRows: 1, needsReviewRows: [],
+    });
+    expect(await service.importFile(input, "rakuten_card")).toMatchObject({ added: 0, duplicates: 1, needsReviewRows: [] });
+    expect(await service.list()).toHaveLength(1);
+    expect(await service.imports()).toHaveLength(1);
+  });
+
   it("uses standard SHA-256 output for both canonical fingerprints and raw files", () => {
     expect(sha256Hex(new TextEncoder().encode("abc"))).toBe("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
     expect(sha256Hex(new Uint8Array())).toBe("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
