@@ -15,6 +15,13 @@ struct AppInformationTests {
         #expect(snapshot.network == "offline")
     }
 
+    /// The camera sheet is OS-provided UI inside this bundle. It follows the
+    /// app development region, so "Use Photo" only becomes "写真を使用" when
+    /// the bundle declares Japanese.
+    @Test func systemProvidedCameraUsesJapanese() {
+        #expect(Bundle.main.object(forInfoDictionaryKey: "CFBundleDevelopmentRegion") as? String == "ja")
+    }
+
     @Test func licenseResourcesAreBundled() throws {
         for resource in ["ActualLicense", "ThirdPartyLicenses"] {
             let url = try #require(Bundle.main.url(forResource: resource, withExtension: "txt"))

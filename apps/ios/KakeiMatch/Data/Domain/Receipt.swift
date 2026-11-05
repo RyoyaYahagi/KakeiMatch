@@ -78,6 +78,9 @@ struct KMReceiptExtraction: Codable, Equatable, Sendable {
 
 // TS: apps/pwa/src/local-receipts.ts — LocalReceipt
 struct KMReceipt: Codable, Equatable, Sendable, Identifiable {
+    /// PWA local-receipts.ts MAX_ITEMS_FOR_JEV: Jev only classifies the first 30 items.
+    static let maximumClassificationItems = 30
+
     enum SuggestionSource: String, Codable, Equatable, Sendable {
         case merchantMapping = "merchant_mapping"
         case learnedRule = "learned_rule"

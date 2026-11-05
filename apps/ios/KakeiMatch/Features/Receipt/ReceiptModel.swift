@@ -436,7 +436,8 @@ final class KMReceiptModel {
                 displayedDraft = draftSnapshot
                 if !learning.appliedRules.isEmpty { status = "いつもの分類を適用しました。" }
 
-                let itemIndexes = learning.itemIndexesToClassify
+                // PWA only sends the first 30 items; an index beyond that cannot be in the request.
+                let itemIndexes = learning.itemIndexesToClassify.filter { $0 < KMReceipt.maximumClassificationItems }
                 let needsClassification = extraction.items.isEmpty
                     ? extraction.merchant != nil && learning.categoryId == nil
                     : !itemIndexes.isEmpty

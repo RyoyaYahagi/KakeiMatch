@@ -501,7 +501,7 @@ actor KMWorkerAPI {
         // Do not accept callers' malformed domain values merely because Codable encoded them.
         _ = try KMAPIValidation.request(extraction, shape: KMAPIShapes.receipt.encodingShape)
         try KMAPIShapes.validateReceipt(extraction)
-        let items = extraction.items.prefix(30).map { KMCategoryRequest.Receipt.Item(name: String($0.name.trimmingCharacters(in: .whitespacesAndNewlines).utf16Prefix(200)), amountYen: $0.amountYen) }
+        let items = extraction.items.prefix(KMReceipt.maximumClassificationItems).map { KMCategoryRequest.Receipt.Item(name: String($0.name.trimmingCharacters(in: .whitespacesAndNewlines).utf16Prefix(200)), amountYen: $0.amountYen) }
         let merchant = extraction.merchant.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).utf16Prefix(200)) }
         guard merchant != nil || !items.isEmpty else { throw KMAPIError.invalidRequest }
         if let indexes = itemIndexes {
