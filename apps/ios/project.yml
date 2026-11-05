@@ -1,6 +1,10 @@
 name: KakeiMatch
 options:
   minimumXcodeGenVersion: 2.44.1
+  # The app is Japanese-only. Without this the system camera sheet shows
+  # English controls such as "Use Photo" because the bundle development
+  # region stays en.
+  developmentLanguage: ja
   deploymentTarget:
     iOS: '26.0'
 settings:

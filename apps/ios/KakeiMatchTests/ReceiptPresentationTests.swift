@@ -250,6 +250,8 @@ struct ReceiptPresentationTests {
 /// The receipt screen uses the real typed API against this synthetic transport.
 private final class ReceiptHTTPStub: URLProtocol, @unchecked Sendable {
     static let body = Mutex("")
+    /// Path-specific responses; a path not listed here falls back to `body`.
+    static let responses = Mutex<[String: String]>([:])
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -257,7 +259,7 @@ private final class ReceiptHTTPStub: URLProtocol, @unchecked Sendable {
         switch request.url?.path {
         case "/api/ai/token": json = #"{"token":"header.payload.signature","expiresAt":1800000600}"#
         case "/api/native/config": json = #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#
-        default: json = Self.body.withLock { $0 }
+        default: json = Self.responses.withLock { $0[request.url?.path ?? ""] } ?? Self.body.withLock { $0 }
         }
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
                                        headerFields: ["Content-Type": "application/json"])!
@@ -277,6 +279,7 @@ extension ReceiptModelTests {
     private func readingModel(response: String, native: Bool = false, guest: Bool = true,
                               attest: any KMAppAttesting = ReceiptUnsupportedAttest()) async throws -> (KMReceiptModel, KMRepositories) {
         ReceiptHTTPStub.body.withLock { $0 = response }
+        ReceiptHTTPStub.responses.withLock { $0 = [:] }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
@@ -297,6 +300,49 @@ extension ReceiptModelTests {
         let model = KMReceiptModel(api: api)
         await model.load(repositories, receiptID: receipt.id)
         return (model, repositories)
+    }
+
+    @Test func jevItemAnswersBecomeTheReceiptCategories() async throws {
+        let extraction = #"{"documentKind":"receipt","merchant":"合成店","purchasedDate":"2026-10-14","purchasedTime":null,"totalAmountYen":3284,"taxAmountYen":null,"items":[{"name":"合成りんご","amountYen":2000},{"name":"合成石けん","amountYen":1284}],"warnings":[]}"#
+        let (model, _) = try await readingModel(response: extraction)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let household = try #require(model.categories.first { $0.name == "日用品" })
+        let answer = { (choice: String) in
+            let other = 0.1 / Double(max(model.categories.count - 1, 1))
+            let probabilities = model.categories.map { category in
+                "\"\(category.id)\":\(category.id == choice ? "0.9" : String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), other))"
+            }.joined(separator: ",")
+            return "{\"type\":\"choice\",\"choice\":\"\(choice)\",\"confidence\":0.9,\"probabilities\":{\(probabilities)}}"
+        }
+        ReceiptHTTPStub.responses.withLock {
+            $0["/api/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\"item_0\":\(answer(food.id)),\"item_1\":\(answer(household.id))}}"
+        }
+        await model.startReading()?.value
+        #expect(model.phase == .idle)
+        #expect(model.error == nil)
+        #expect(model.items.map(\.categoryId) == [food.id, household.id])
+        #expect(model.receipt?.aiSuggestion.source == .jev)
+    }
+
+    @Test func jevOnlySendsTheFirstThirtyItems() async throws {
+        let items = (0..<31).map { "{\"name\":\"合成品目\($0)\",\"amountYen\":100}" }.joined(separator: ",")
+        let extraction = "{\"documentKind\":\"receipt\",\"merchant\":\"合成店\",\"purchasedDate\":\"2026-10-14\",\"purchasedTime\":null,\"totalAmountYen\":3100,\"taxAmountYen\":null,\"items\":[\(items)],\"warnings\":[]}"
+        let (model, _) = try await readingModel(response: extraction)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let other = 0.1 / Double(max(model.categories.count - 1, 1))
+        let probabilities = model.categories.map { category in
+            "\"\(category.id)\":\(category.id == food.id ? "0.9" : String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), other))"
+        }.joined(separator: ",")
+        let answer = "{\"type\":\"choice\",\"choice\":\"\(food.id)\",\"confidence\":0.9,\"probabilities\":{\(probabilities)}}"
+        let answers = (0..<30).map { "\"item_\($0)\":\(answer)" }.joined(separator: ",")
+        ReceiptHTTPStub.responses.withLock {
+            $0["/api/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\(answers)}}"
+        }
+        await model.startReading()?.value
+        #expect(model.phase == .idle)
+        #expect(model.error == nil)
+        #expect(model.items.prefix(30).allSatisfy { $0.categoryId == food.id })
+        #expect(model.items[30].categoryId == nil)
     }
 
     @Test func invalidAndNonReceiptResponsesDoNotReplaceManualInput() async throws {
