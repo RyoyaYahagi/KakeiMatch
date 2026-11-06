@@ -59,12 +59,39 @@ describe("reconciliation merchant comparison", () => {
 });
 
 describe("runReconciliationEngine", () => {
+  it.each([
+    ["アオゾラストア", "あおぞらストア"],
+    ["ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"],
+    ["あおぞらストア", "アオゾラストア"],
+  ])("retains the kana variant of %s ahead of three similar but different stores", (merchant, equivalent) => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant })],
+      receipts: [receipt("correct", { merchant: equivalent }),
+        ...["アオゾラカフェ", "アオゾラホテル", "アオゾラ薬局"].map((name, index) => receipt(`noise-${index}`, { merchant: name }))],
+    });
+    expect(result.candidates).toHaveLength(3);
+    expect(result.candidates[0]).toMatchObject({ receiptId: "correct", merchantSimilarity: 1, score: 0.75 });
+    expect(result.candidates[0]?.reasons).toContain("merchant_similar");
+    expect(result.statementResults[0]?.status).toBe("needs_review");
+  });
+
+  it("does not turn kana equivalence into an automatic match or a learned alias", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant: "アオゾラストア" })],
+      receipts: [receipt("r", { merchant: "あおぞらストア" })],
+    });
+    expect(result.candidates[0]?.merchantSimilarity).toBe(1);
+    expect(result.candidates[0]?.reasons).not.toContain("merchant_alias_match");
+    expect(result.statementResults[0]?.status).toBe("needs_review");
+    expect(merchantAliasKey("アオゾラストア", "別名")).not.toBe(merchantAliasKey("あおぞらストア", "別名"));
+  });
+
   it("matches an exact unique amount, date, and merchant and returns the version", () => {
     const result = runReconciliationEngine({ statements: [statement("s1")], receipts: [receipt("r1")] });
     expect(result.ruleVersion).toBe(RECONCILIATION_RULE_VERSION);
     expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r1" });
     expect(result.receiptResults[0]).toMatchObject({ status: "matched", matchedStatementTransactionId: "s1" });
-    expect(result.candidates[0]).toMatchObject({ rank: 1, score: 0.9, amountDeltaYen: 0, dateDistanceDays: 0, merchantSimilarity: 1 });
+    expect(result.candidates[0]).toMatchObject({ rank: 1, score: 0.75, amountDeltaYen: 0, dateDistanceDays: 0, merchantSimilarity: 1 });
     expect(["matched", "needs_review", "unmatched_statement"]).toContain(result.statementResults[0]?.status);
   });
 
@@ -202,6 +229,28 @@ describe("runReconciliationEngine", () => {
     expect(result.candidates[0]?.score).toBe(0.73);
     expect(result.candidates[1]?.reasons).not.toContain("payment_source_match");
     expect(result.statementResults[0]?.status).toBe("needs_review");
+  });
+
+  it("retains the mapped source ahead of three same-amount alternatives with closer dates and merchants", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { preferredAccountIds: ["account-2"] })],
+      receipts: [receipt("correct", { actualAccountId: "account-2", merchant: "別の表記", purchasedDate: "2026-09-03" }),
+        ...["a", "b", "c"].map(id => receipt(id))],
+    });
+    expect(result.candidates).toHaveLength(3);
+    expect(result.candidates[0]?.receiptId).toBe("correct");
+    expect(result.candidates[0]?.reasons).toContain("payment_source_match");
+    expect(result.candidates.slice(1).every(row => row.receiptId !== "correct")).toBe(true);
+    expect(result.statementResults[0]?.status).toBe("needs_review");
+  });
+
+  it("does not let payment source alone outweigh a maximum allowed amount difference", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { preferredAccountIds: ["account-2"] })],
+      receipts: [receipt("mapped", { actualAccountId: "account-2", amountYen: 1100 }),
+        receipt("exact", { merchant: "別の表記", purchasedDate: "2026-09-03" })],
+    });
+    expect(result.candidates.map(row => row.receiptId)).toEqual(["exact", "mapped"]);
   });
 
   it("retains an automatic pair when more than three review candidates outrank it", () => {

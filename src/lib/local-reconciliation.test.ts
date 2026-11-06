@@ -96,6 +96,39 @@ function createLocalReconciliationService(repo: LocalDataRepository, mock: Retur
 afterEach(() => repositories.splice(0).forEach((repo) => repo.close()));
 
 describe("LocalReconciliationService", () => {
+  it("uses the current payment-source mapping to retain an older same-amount candidate", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    mock.transactions.set("correct", { id: "correct", date: "2026-09-03", amountYen: -1200, kind: "expense", payeeName: "別の表記", categoryName: null, accountId: "account-2", cleared: false });
+    for (const id of ["a", "b", "c"]) {
+      mock.transactions.set(id, { id, date: "2026-09-10", amountYen: -1200, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
+    }
+    await seed(repo, [makeStatement("statement-1")]);
+    const service = new LocalReconciliationService(repo, mock.ledger as never, async id => id === "account-2" ? "paypay" : null);
+    const run = await service.run();
+    expect(run.candidates[0]).toMatchObject({ receiptId: "actual:correct", rank: 1 });
+    expect(run.candidates[0]?.reasons).toContain("payment_source_match");
+    expect(run.candidates).toHaveLength(3);
+    expect(run.statementResults[0]?.status).toBe("needs_review");
+    expect(mock.calls).toEqual([]);
+  });
+
+  it("persists the kana-equivalent candidate ahead of same-day same-amount unrelated expenses", async () => {
+    const repo = await repository();
+    const mock = makeLedger();
+    for (const [id, merchant] of [["correct", "あおぞらストア"], ["noise-0", "アオゾラカフェ"], ["noise-1", "アオゾラホテル"], ["noise-2", "アオゾラ薬局"]]) {
+      mock.transactions.set(id!, { id: id!, date: "2026-09-10", amountYen: -1200, kind: "expense", payeeName: merchant!, categoryName: null, accountId: "account-1", cleared: false });
+    }
+    await seed(repo, [makeStatement("statement-1", { merchant: "アオゾラストア" })]);
+    const service = createLocalReconciliationService(repo, mock);
+    const run = await service.run();
+    expect(run.candidates).toHaveLength(3);
+    expect(run.candidates[0]).toMatchObject({ receiptId: "actual:correct", rank: 1, merchantSimilarity: 1 });
+    expect(run.statementResults[0]?.status).toBe("needs_review");
+    expect((await service.latest())?.candidates).toEqual(run.candidates);
+    expect(mock.calls).toEqual([]);
+  });
+
   it("saves immutable snapshots and batch clears automatic matches without changing receipt amount", async () => {
     const repo = await repository();
     const mock = makeLedger();

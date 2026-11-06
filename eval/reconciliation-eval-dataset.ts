@@ -7,6 +7,8 @@ export type ReconciliationEvalCase = {
   expectedMatches: Array<{ statementId: string; receiptId: string }>;
   expectedStatementStatuses: Record<string, "matched" | "needs_review" | "unmatched_statement">;
   expectedReceiptStatuses: Record<string, "matched" | "needs_review" | "unmatched_receipt">;
+  /** Correct first review candidate, even when automatic matching is intentionally withheld. */
+  expectedTopCandidates?: Record<string, string>;
 };
 
 const statement = (id: string, merchant: string, amountYen: number, usedDate = "2026-09-29", kind: "purchase" | "refund" = "purchase"): ReconciliationStatement => ({
@@ -23,6 +25,30 @@ const pair = (id: string, sm: string, rm = sm, amount = 1280, sd = "2026-09-29",
 
 /** Artificial records only. Each scenario runs in isolation so case order cannot affect results. */
 export const reconciliationEvalDataset: ReconciliationEvalCase[] = [
+  {
+    id: "candidate-payment-source",
+    statements: [{ ...statement("s", "架空ストア", 1200), preferredAccountIds: ["account-correct"] }],
+    receipts: [receipt("correct", "別の表記", 1200, "2026-09-22"),
+      ...["a", "b", "c"].map(id => receipt(id, "架空ストア", 1200))],
+    expectedMatches: [],
+    expectedStatementStatuses: { s: "needs_review" },
+    expectedReceiptStatuses: { correct: "needs_review", a: "needs_review", b: "needs_review", c: "needs_review" },
+    expectedTopCandidates: { s: "correct" },
+  },
+  ...[
+    ["アオゾラストア", "あおぞらストア"],
+    ["ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"],
+    ["あおぞらストア", "アオゾラストア"],
+  ].map(([merchant, equivalent], index): ReconciliationEvalCase => ({
+    id: `candidate-kana-${index}`,
+    statements: [statement("s", merchant!, 1200)],
+    receipts: [receipt("correct", equivalent!, 1200),
+      ...["アオゾラカフェ", "アオゾラホテル", "アオゾラ薬局"].map((name, i) => receipt(`noise-${i}`, name, 1200))],
+    expectedMatches: [],
+    expectedStatementStatuses: { s: "needs_review" },
+    expectedReceiptStatuses: { correct: "needs_review", "noise-0": "needs_review", "noise-1": "needs_review", "noise-2": "needs_review" },
+    expectedTopCandidates: { s: "correct" },
+  })),
   pair("exact-01", "青空食堂", "青空食堂", 1280),
   pair("exact-02", "みどり書店", "みどり書店", 2450),
   pair("exact-03", "架空スーパー", "架空スーパー", 5280),

@@ -10,7 +10,7 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    static let ruleVersion = "1.1.0"
+    static let ruleVersion = "1.2.0"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -27,6 +27,7 @@ enum KMReconciliationEngine {
         var delta: Int
         var days: Int
         var similarity: KMJSNumber
+        var autoSimilarity: KMJSNumber
         var aliasMatch: Bool
         var reasons: [String]
     }
@@ -45,9 +46,21 @@ enum KMReconciliationEngine {
     static func merchantSimilarity(_ left: String, _ right: String) -> Decimal {
         similarityNumber(left, right).decimalApproximation
     }
-    private static func similarityNumber(_ left: String, _ right: String) -> KMJSNumber {
-        let a = Array(normalizeMerchant(left).unicodeScalars)
-        let b = Array(normalizeMerchant(right).unicodeScalars)
+    private static func similarityNumber(_ left: String, _ right: String, forReview: Bool = false) -> KMJSNumber {
+        func scalars(_ value: String) -> [Unicode.Scalar] {
+            let normalized = normalizeMerchant(value)
+            // Foundation can leave half-width voiced kana decomposed after compatibility mapping.
+            let composed = forReview ? normalized.precomposedStringWithCanonicalMapping : normalized
+            return composed.unicodeScalars.map { scalar in
+                // Review ranking only; keep automatic matching and alias identity unchanged.
+                if forReview && ((0x3041...0x3096).contains(scalar.value) || (0x309D...0x309E).contains(scalar.value)) {
+                    return UnicodeScalar(scalar.value + 0x60)!
+                }
+                return scalar
+            }
+        }
+        let a = scalars(left)
+        let b = scalars(right)
         guard !a.isEmpty, !b.isEmpty else { return 0 }
         if a.elementsEqual(b) { return 1 }
         func bigrams(_ chars: [Unicode.Scalar]) -> Set<String> {
@@ -90,19 +103,21 @@ enum KMReconciliationEngine {
                     let delta = abs(statement.amountYen - receipt.amountYen)
                     let tolerance = max(KMJSNumber(amountTolerance), KMJSNumber(statement.amountYen) * amountRatio)
                     guard KMJSNumber(delta) <= tolerance else { continue }
-                    let similarity = similarityNumber(statement.merchant, receipt.merchant)
+                    let autoSimilarity = similarityNumber(statement.merchant, receipt.merchant)
+                    let similarity = similarityNumber(statement.merchant, receipt.merchant, forReview: true)
                     let alias = aliases.contains(aliasKey(statement.merchant, receipt.merchant))
                     let sameSource = preferredAccountIds[statement.id]?.contains(receipt.actualAccountId) ?? false
                     let dateScore = KMJSNumber(1) - KMJSNumber(distance) / 8
                     let amountScore = delta == 0 ? KMJSNumber(1) : max(0, KMJSNumber(1) - KMJSNumber(delta) / tolerance)
                     let merchantScore = alias ? KMJSNumber(1) : similarity
-                    let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.30") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.10") : 0)).roundedMillion().decimal
-                    let autoScore = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25") + merchantScore * KMJSNumber("0.20")).roundedMillion().binary
+                    let autoMerchantScore = alias ? KMJSNumber(1) : autoSimilarity
+                    let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.15") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.25") : 0)).roundedMillion().decimal
+                    let autoScore = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25") + autoMerchantScore * KMJSNumber("0.20")).roundedMillion().binary
                     var reasons = [delta == 0 ? "amount_exact" : "amount_close", distance <= autoWindow ? "date_close" : "date_within_window"]
                     if similarity >= candidateMerchantThreshold { reasons.append("merchant_similar") }
                     if alias { reasons.append("merchant_alias_match") }
                     if sameSource { reasons.append("payment_source_match") }
-                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore, delta: delta, days: distance, similarity: similarity, aliasMatch: alias, reasons: reasons)
+                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore, delta: delta, days: distance, similarity: similarity, autoSimilarity: autoSimilarity, aliasMatch: alias, reasons: reasons)
                     byStatement[statement.id, default: []].append(candidate)
                     byReceipt[receipt.receiptId, default: []].append(candidate)
                 }
@@ -118,7 +133,7 @@ enum KMReconciliationEngine {
             guard let top = choices.first, !manualStatementIds.contains(statement.id) else { continue }
             let receiptChoices = byReceipt[top.receiptId] ?? []
             guard let receiptTop = receiptChoices.first else { continue }
-            let strong = top.delta == 0 && top.days <= autoWindow && (top.similarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold
+            let strong = top.delta == 0 && top.days <= autoWindow && (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold
             if receiptTop.statementId == statement.id && margin(top, choices.dropFirst().first) >= marginThreshold && margin(receiptTop, receiptChoices.dropFirst().first) >= marginThreshold && strong {
                 matchedStatements[statement.id] = top.receiptId
                 matchedReceipts[top.receiptId] = statement.id
