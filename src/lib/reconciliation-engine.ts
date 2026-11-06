@@ -10,9 +10,10 @@ export const RECONCILIATION_RULES = {
   candidateMerchantSimilarity: 0.7,
   autoMatchMerchantSimilarity: 0.72,
   amountWeight: 0.55,
-  dateWeight: 0.30,
+  dateWeight: 0.15,
   merchantWeight: 0.05,
-  paymentSourceWeight: 0.10,
+  // At equal amounts, source evidence outweighs the full date/merchant variation.
+  paymentSourceWeight: 0.25,
   autoMatchAmountWeight: 0.55,
   autoMatchDateWeight: 0.25,
   autoMatchMerchantWeight: 0.20,

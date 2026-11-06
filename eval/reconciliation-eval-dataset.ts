@@ -25,6 +25,16 @@ const pair = (id: string, sm: string, rm = sm, amount = 1280, sd = "2026-09-29",
 
 /** Artificial records only. Each scenario runs in isolation so case order cannot affect results. */
 export const reconciliationEvalDataset: ReconciliationEvalCase[] = [
+  {
+    id: "candidate-payment-source",
+    statements: [{ ...statement("s", "架空ストア", 1200), preferredAccountIds: ["account-correct"] }],
+    receipts: [receipt("correct", "別の表記", 1200, "2026-09-22"),
+      ...["a", "b", "c"].map(id => receipt(id, "架空ストア", 1200))],
+    expectedMatches: [],
+    expectedStatementStatuses: { s: "needs_review" },
+    expectedReceiptStatuses: { correct: "needs_review", a: "needs_review", b: "needs_review", c: "needs_review" },
+    expectedTopCandidates: { s: "correct" },
+  },
   ...[
     ["アオゾラストア", "あおぞらストア"],
     ["ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"],

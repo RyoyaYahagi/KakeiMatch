@@ -111,7 +111,7 @@ enum KMReconciliationEngine {
                     let amountScore = delta == 0 ? KMJSNumber(1) : max(0, KMJSNumber(1) - KMJSNumber(delta) / tolerance)
                     let merchantScore = alias ? KMJSNumber(1) : similarity
                     let autoMerchantScore = alias ? KMJSNumber(1) : autoSimilarity
-                    let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.30") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.10") : 0)).roundedMillion().decimal
+                    let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.15") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.25") : 0)).roundedMillion().decimal
                     let autoScore = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25") + autoMerchantScore * KMJSNumber("0.20")).roundedMillion().binary
                     var reasons = [delta == 0 ? "amount_exact" : "amount_close", distance <= autoWindow ? "date_close" : "date_within_window"]
                     if similarity >= candidateMerchantThreshold { reasons.append("merchant_similar") }
