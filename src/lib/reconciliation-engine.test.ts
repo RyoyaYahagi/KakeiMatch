@@ -59,6 +59,33 @@ describe("reconciliation merchant comparison", () => {
 });
 
 describe("runReconciliationEngine", () => {
+  it.each([
+    ["アオゾラストア", "あおぞらストア"],
+    ["ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"],
+    ["あおぞらストア", "アオゾラストア"],
+  ])("retains the kana variant of %s ahead of three similar but different stores", (merchant, equivalent) => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant })],
+      receipts: [receipt("correct", { merchant: equivalent }),
+        ...["アオゾラカフェ", "アオゾラホテル", "アオゾラ薬局"].map((name, index) => receipt(`noise-${index}`, { merchant: name }))],
+    });
+    expect(result.candidates).toHaveLength(3);
+    expect(result.candidates[0]).toMatchObject({ receiptId: "correct", merchantSimilarity: 1, score: 0.9 });
+    expect(result.candidates[0]?.reasons).toContain("merchant_similar");
+    expect(result.statementResults[0]?.status).toBe("needs_review");
+  });
+
+  it("does not turn kana equivalence into an automatic match or a learned alias", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant: "アオゾラストア" })],
+      receipts: [receipt("r", { merchant: "あおぞらストア" })],
+    });
+    expect(result.candidates[0]?.merchantSimilarity).toBe(1);
+    expect(result.candidates[0]?.reasons).not.toContain("merchant_alias_match");
+    expect(result.statementResults[0]?.status).toBe("needs_review");
+    expect(merchantAliasKey("アオゾラストア", "別名")).not.toBe(merchantAliasKey("あおぞらストア", "別名"));
+  });
+
   it("matches an exact unique amount, date, and merchant and returns the version", () => {
     const result = runReconciliationEngine({ statements: [statement("s1")], receipts: [receipt("r1")] });
     expect(result.ruleVersion).toBe(RECONCILIATION_RULE_VERSION);

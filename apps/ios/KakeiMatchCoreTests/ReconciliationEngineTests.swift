@@ -3,6 +3,24 @@ import Testing
 @testable import KakeiMatchCore
 
 struct ReconciliationEngineTests {
+    @Test func kanaVariantsStayInTopThreeWithoutAutomaticIdentity() {
+        for (merchant, equivalent) in [("アオゾラストア", "あおぞらストア"), ("ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"), ("あおぞらストア", "アオゾラストア")] {
+            let result = KMReconciliationEngine.run(
+                statements: [statement("s", merchant: merchant)],
+                receipts: [receipt("correct", merchant: equivalent)] + ["アオゾラカフェ", "アオゾラホテル", "アオゾラ薬局"].enumerated().map { receipt("noise-\($0.offset)", merchant: $0.element) })
+            #expect(result.candidates.count == 3)
+            #expect(result.candidates.first?.receiptId == "correct")
+            #expect(result.candidates.first?.merchantSimilarity == 1)
+            #expect(result.candidates.first?.score == Decimal(string: "0.9"))
+            #expect(result.candidates.first?.reasons.contains("merchant_similar") == true)
+            #expect(result.statementResults.first?.status == .needsReview)
+        }
+        let single = KMReconciliationEngine.run(statements: [statement("s", merchant: "アオゾラストア")], receipts: [receipt("r", merchant: "あおぞらストア")])
+        #expect(single.statementResults.first?.status == .needsReview)
+        #expect(single.candidates.first?.reasons.contains("merchant_alias_match") == false)
+        #expect(KMReconciliationEngine.aliasKey("アオゾラストア", "別名") != KMReconciliationEngine.aliasKey("あおぞらストア", "別名"))
+    }
+
     private func statement(_ id: String, merchant: String = "架空ストア新宿", amount: Int = 1200, date: String = "2026-09-10", kind: KMStatementTransaction.Kind = .purchase) -> KMStatementTransaction {
         KMStatementTransaction(id: id, importId: "import-\(id)", provider: .paypayCard, externalId: nil, kind: kind,
             usedDate: KMDate(rawValue: date), usedTime: nil, postedDate: nil, merchant: merchant, amountYen: amount,
@@ -26,7 +44,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.1.0")
+        #expect(result.ruleVersion == "1.2.0")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.9")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])

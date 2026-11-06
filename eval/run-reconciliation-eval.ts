@@ -15,10 +15,21 @@ function main() {
   let unmatchedReceiptCount = 0;
   let stateChecks = 0;
   let correctStateChecks = 0;
+  let candidateChecks = 0;
+  let correctTopCandidates = 0;
+  let correctTopThreeCandidates = 0;
   const failures: Array<{ caseId: string; issue: string }> = [];
 
   for (const testCase of reconciliationEvalDataset) {
     const result = runReconciliationEngine({ statements: testCase.statements, receipts: testCase.receipts });
+    for (const [statementId, receiptId] of Object.entries(testCase.expectedTopCandidates ?? {})) {
+      const choices = result.candidates.filter(row => row.statementTransactionId === statementId);
+      candidateChecks += 1;
+      if (choices.some(row => row.rank === 1 && row.receiptId === receiptId)) correctTopCandidates += 1;
+      else failures.push({ caseId: testCase.id, issue: `expected first candidate: ${statementId} -> ${receiptId}` });
+      if (choices.some(row => row.rank <= 3 && row.receiptId === receiptId)) correctTopThreeCandidates += 1;
+      else failures.push({ caseId: testCase.id, issue: `correct candidate missing from top three: ${statementId} -> ${receiptId}` });
+    }
     const actualPairs = result.statementResults.flatMap((row) => row.status === "matched" && row.matchedReceiptId
       ? [{ statementId: row.statementTransactionId, receiptId: row.matchedReceiptId }]
       : []);
@@ -56,6 +67,9 @@ function main() {
   const metrics = {
     caseCount: reconciliationEvalDataset.length,
     expectedMatchCount,
+    candidateChecks,
+    candidateTop1Accuracy: candidateChecks === 0 ? null : correctTopCandidates / candidateChecks,
+    candidateRecallAt3: candidateChecks === 0 ? null : correctTopThreeCandidates / candidateChecks,
     autoMatchPrecision: actualAutoMatches === 0 ? 1 : correctAutoMatches / actualAutoMatches,
     autoMatchCoverage: expectedMatchCount === 0 ? 0 : correctAutoMatches / expectedMatchCount,
     needsReviewRate: statementCount === 0 ? 0 : needsReviewCount / statementCount,

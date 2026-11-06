@@ -1,6 +1,6 @@
 /** Pure, deterministic reconciliation rules. Persistence and user scoping belong to callers. */
 
-export const RECONCILIATION_RULE_VERSION = "1.1.0";
+export const RECONCILIATION_RULE_VERSION = "1.2.0";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -93,6 +93,12 @@ function bigrams(value: string): Set<string> {
   return result;
 }
 
+/** Kana equivalence is a review-ranking hint, never automatic identity evidence. */
+function normalizeCandidateMerchant(merchant: string): string {
+  return normalizeReconciliationMerchant(merchant).replace(/[\u3041-\u3096\u309d\u309e]/gu,
+    (kana) => String.fromCodePoint(kana.codePointAt(0)! + 0x60));
+}
+
 /** Sørensen–Dice similarity over character bigrams (0..1), stable for Japanese text. */
 export function reconciliationMerchantSimilarity(left: string, right: string): number {
   const a = normalizeReconciliationMerchant(left);
@@ -123,7 +129,7 @@ function safeAmount(amount: number): boolean {
   return Number.isSafeInteger(amount) && amount >= 0;
 }
 
-type InternalCandidate = ReconciliationCandidate & { aliasMatch: boolean; autoScore: number };
+type InternalCandidate = ReconciliationCandidate & { aliasMatch: boolean; autoScore: number; autoMerchantSimilarity: number };
 
 function scoreCandidate(input: {
   amountExact: boolean;
@@ -131,6 +137,7 @@ function scoreCandidate(input: {
   statementAmountYen: number;
   dateDistanceDays: number;
   merchantSimilarity: number;
+  autoMerchantSimilarity: number;
   aliasMatch: boolean;
   samePaymentSource: boolean;
 }): { score: number; autoScore: number } {
@@ -141,13 +148,14 @@ function scoreCandidate(input: {
   const amountScore = input.amountExact ? 1 : Math.max(0, 1 - input.amountDeltaYen / amountTolerance);
   const dateScore = 1 - input.dateDistanceDays / (RECONCILIATION_RULES.candidateDateWindowDays + 1);
   const merchantScore = input.aliasMatch ? 1 : input.merchantSimilarity;
+  const autoMerchantScore = input.aliasMatch ? 1 : input.autoMerchantSimilarity;
   const round = (score: number) => Math.round(score * 1_000_000) / 1_000_000;
   return {
     score: round(amountScore * RECONCILIATION_RULES.amountWeight + dateScore * RECONCILIATION_RULES.dateWeight
       + merchantScore * RECONCILIATION_RULES.merchantWeight + Number(input.samePaymentSource) * RECONCILIATION_RULES.paymentSourceWeight),
     // Keep automatic confidence conservative, independently of the review candidate ranking.
     autoScore: round(amountScore * RECONCILIATION_RULES.autoMatchAmountWeight
-      + dateScore * RECONCILIATION_RULES.autoMatchDateWeight + merchantScore * RECONCILIATION_RULES.autoMatchMerchantWeight),
+      + dateScore * RECONCILIATION_RULES.autoMatchDateWeight + autoMerchantScore * RECONCILIATION_RULES.autoMatchMerchantWeight),
   };
 }
 
@@ -194,7 +202,8 @@ export function runReconciliationEngine(input: {
         const dateDistanceDays = Math.abs(statementDay - receiptDay);
         const amountDeltaYen = Math.abs(statement.amountYen - receipt.amountYen);
         const amountExact = amountDeltaYen === 0;
-        const merchantSimilarity = reconciliationMerchantSimilarity(statement.merchant, receipt.merchant);
+        const autoMerchantSimilarity = reconciliationMerchantSimilarity(statement.merchant, receipt.merchant);
+        const merchantSimilarity = reconciliationMerchantSimilarity(normalizeCandidateMerchant(statement.merchant), normalizeCandidateMerchant(receipt.merchant));
         const aliasMatch = input.aliases?.has(merchantAliasKey(statement.merchant, receipt.merchant)) ?? false;
         const allowedDelta = Math.max(RECONCILIATION_RULES.amountToleranceAbsoluteYen, statement.amountYen * RECONCILIATION_RULES.amountToleranceRatio);
         if (amountDeltaYen > allowedDelta) continue;
@@ -212,10 +221,11 @@ export function runReconciliationEngine(input: {
           statementTransactionId: statement.statementTransactionId,
           receiptId: receipt.receiptId,
           rank: 0,
-          ...scoreCandidate({ amountExact, amountDeltaYen, statementAmountYen: statement.amountYen, dateDistanceDays, merchantSimilarity, aliasMatch, samePaymentSource }),
+          ...scoreCandidate({ amountExact, amountDeltaYen, statementAmountYen: statement.amountYen, dateDistanceDays, merchantSimilarity, autoMerchantSimilarity, aliasMatch, samePaymentSource }),
           amountDeltaYen,
           dateDistanceDays,
           merchantSimilarity,
+          autoMerchantSimilarity,
           reasons,
           aliasMatch,
         };
@@ -246,7 +256,7 @@ export function runReconciliationEngine(input: {
     const receiptHasMargin = margin(receiptTop, receiptChoices[1]) >= RECONCILIATION_RULES.autoMatchMargin;
     const isExactAndStrong = top.amountDeltaYen === 0
       && top.dateDistanceDays <= RECONCILIATION_RULES.autoMatchDateWindowDays
-      && (top.merchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
+      && (top.autoMerchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
       && top.autoScore >= RECONCILIATION_RULES.autoMatchScore;
     if (isMutualBest && statementHasMargin && receiptHasMargin && isExactAndStrong) {
       matchedStatements.set(statement.statementTransactionId, top.receiptId);
