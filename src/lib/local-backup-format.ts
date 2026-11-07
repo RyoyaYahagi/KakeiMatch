@@ -1,3 +1,4 @@
+import { reconciliationAnalysisSchema } from "./reconciliation-analytics";
 import { payrollRecordSchema } from '../../workers/ai-gateway/src/payroll-schema';
 import { z } from "zod";
 import { warningIndexInRange } from "./receipt-extraction";
@@ -96,6 +97,7 @@ const runResult = z.object({
 const reconciliationRun = runResult.extend({
   runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime,
   inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
+  analysis: reconciliationAnalysisSchema.optional(),
 }).strict();
 const resolution = z.object({
   id: z.string(), runId: z.string(), statementId: z.string(), resolution: z.enum(["same_expense", "no_receipt", "transfer", "ignored"]), source: z.enum(["automatic", "user"]),

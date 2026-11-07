@@ -100,6 +100,7 @@ extension ReceiptRepository {
 }
 
 @MainActor protocol ReconciliationRepository {
+    func analysisRuns() async throws -> [KMReconciliationRun]
     func latestRun() async throws -> KMReconciliationRun?
     func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun
     func confirmSameExpense(runId: String, statementId: String, receiptId: String, at timestamp: Date) async throws -> KMReconciliationResolution

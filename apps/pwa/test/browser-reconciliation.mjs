@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright-core';
 
@@ -152,6 +153,22 @@ try {
   assert.equal(await page.locator('#local-view').getByText('Synthetic Cash Store', { exact: false }).count(), 0);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   if (process.env.PWA_RECONCILIATION_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECONCILIATION_SCREENSHOT_PATH, fullPage: true });
+
+  const analysis = page.locator('[data-testid="reconciliation-analytics"]');
+  await analysis.locator('summary').click();
+  assert.match(await analysis.innerText(), /1位の採用率/);
+  for (const detailed of [false, true]) {
+    const downloadPromise = page.waitForEvent('download');
+    await analysis.getByRole('button', { name: detailed ? '詳細版を書き出す（店名・金額を含む）' : '匿名化版を書き出す', exact: true }).click();
+    const download = await downloadPromise;
+    const report = JSON.parse(readFileSync(await download.path(), 'utf8'));
+    assert.equal(report.mode, detailed ? 'detailed' : 'anonymous');
+    assert.ok(report.runs.length > 0);
+    assert.ok(report.runs.some(run => run.events?.length > 0));
+    if (detailed) assert.ok(report.runs.some(run => run.contents?.statements.length > 0));
+    else assert.ok(report.runs.every(run => !run.contents));
+  }
+  if (process.env.PWA_ANALYSIS_SCREENSHOT_PATH) await analysis.screenshot({ path: process.env.PWA_ANALYSIS_SCREENSHOT_PATH });
 
   // Leaving for home while the reconciliation redraw is still running keeps home on screen.
   const refresh = await page.evaluateHandle(() => {

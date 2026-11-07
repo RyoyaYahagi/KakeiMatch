@@ -57,13 +57,32 @@ import Foundation
                 if let id = state.resolutions[i].actualTransactionId, let mapped = mapped[id] { state.resolutions[i].actualTransactionId = mapped }
             }
             state.transactions = working.transactionValues; state.accounts = working.accountValues
+            if let latest = state.latest, !working.runValues.contains(where: { $0.runId == latest.runId }) { working.runValues.append(latest) }
+            @MainActor func append(_ event: KMReconciliationAnalysis.Event, runId: String) {
+                guard let index = working.runValues.firstIndex(where: { $0.runId == runId }), working.runValues[index].analysis != nil else { return }
+                working.runValues[index].analysis?.events.append(event)
+            }
+            for resolution in state.resolutions where !working.resolutionValues.contains(resolution) {
+                append(.init(at: timestamp, statementId: resolution.statementId, receiptId: resolution.receiptId, kind: "decision", source: resolution.source.rawValue,
+                    resolution: resolution.resolution.rawValue, status: resolution.status.rawValue, errorCode: resolution.errorCode), runId: resolution.runId)
+            }
+            for rejection in state.rejections where !(working.reconciliationState?.rejections.contains(rejection) ?? false) {
+                append(.init(at: timestamp, statementId: rejection.statementId, receiptId: rejection.receiptId, kind: "rejected", source: "user"), runId: rejection.runId)
+            }
+            for undo in state.undoHistory where !(working.reconciliationState?.undoHistory.contains(undo) ?? false) {
+                append(.init(at: undo.undoneAt, statementId: undo.resolution.statementId, receiptId: undo.resolution.receiptId, kind: "undo", source: "user",
+                    resolution: undo.resolution.resolution.rawValue, status: "applied"), runId: undo.resolution.runId)
+            }
+            if let id = state.latest?.runId { state.latest = working.runValues.first { $0.runId == id } }
             working.reconciliationState = state; working.resolutionValues = state.resolutions; working.suspectedValues = state.suspected
         }
     }
+    func analysisRuns() async throws -> [KMReconciliationRun] { runValues }
+
     func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun {
         var state = currentReconciliation()
         let run = try state.run(id: id, at: timestamp)
-        try await storeReconciliation(state, at: timestamp); runValues.append(run); return run
+        try await storeReconciliation(state, at: timestamp); return runValues.first { $0.runId == run.runId } ?? run
     }
     func confirmSameExpense(runId: String, statementId: String, receiptId: String, at timestamp: Date) async throws -> KMReconciliationResolution {
         var state = currentReconciliation()

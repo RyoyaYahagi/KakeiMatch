@@ -208,3 +208,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 [GRDB, 2026/10] GRDB.swift. “README / What is GRDB?” https://github.com/groue/GRDB.swift
 
 [ZIPFoundation, 0.9.20] Thomas Zoechlingほか. “Archive+Reading.swift / Entry.swift.” https://github.com/weichsel/ZIPFoundation/tree/0.9.20
+
+### 照合の分析履歴
+
+`KMReconciliationRun.analysis`に任意の分析用コピーと追記履歴を保存します。明細・表示候補の内容は照合時点で固定し、判断・却下・取り消しの履歴は`storeReconciliation`の作業用コピー内で既存の台帳更新とともに確定します。SQLiteの既存`runs`と`.kmb`へ含め、新しい外部保存先を設けません。旧データでこのフィールドがない場合は未記録として扱います。集計・書き出しの意味と保持範囲はrootの`docs/LOCAL_RECONCILIATION.md`「照合の分析と書き出し」を参照してください。

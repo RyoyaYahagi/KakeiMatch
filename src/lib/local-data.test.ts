@@ -114,6 +114,22 @@ describe("LocalDataRepository", () => {
     expect(await first.getBlob("blob-1")).toBeNull();
   });
 
+  it("commits audit records and deletes decisions atomically", async () => {
+    const repository = await open("profile-a", new IDBFactory());
+    const at = "2026-09-30T00:00:00.000Z";
+    await repository.put({ id: "decision", kind: "reconciliation-resolution", value: {}, updatedAt: at });
+    const remove = vi.spyOn(IDBObjectStore.prototype, "delete").mockImplementation(function (this: IDBObjectStore) {
+      this.transaction.abort(); throw new Error("synthetic deletion failure");
+    });
+    await expect(repository.putRecords([{ id: "undo", kind: "correction-audit", value: {}, updatedAt: at }], ["decision"])).rejects.toThrow();
+    remove.mockRestore();
+    expect(await repository.get("decision")).not.toBeNull();
+    expect(await repository.get("undo")).toBeNull();
+    await repository.putRecords([{ id: "undo", kind: "correction-audit", value: {}, updatedAt: at }], ["decision"]);
+    expect(await repository.get("decision")).toBeNull();
+    expect(await repository.get("undo")).not.toBeNull();
+  });
+
   it("commits related records together and rolls all of them back if queueing one fails", async () => {
     const repository = await open("profile-a", new IDBFactory());
     await repository.putRecords([

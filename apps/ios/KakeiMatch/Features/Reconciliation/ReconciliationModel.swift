@@ -2,6 +2,7 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class KMReconciliationModel {
+    var analysisRuns: [KMReconciliationRun] = []
     var run: KMReconciliationRun?
     var statements: [KMStatementTransaction] = []
     var imports: [KMLocalRecord<KMStatementImport>] = []
@@ -42,6 +43,7 @@ import Observation
     }
     private func reload(_ repositories: KMRepositories) async throws {
         let run = try await repositories.reconciliation.latestRun()
+        self.analysisRuns = try await repositories.reconciliation.analysisRuns()
         let resolutions = try await repositories.reconciliation.resolutions()
         let suspected = try await repositories.reconciliation.suspectedStatements()
         let statements = try await repositories.statements.statementTransactions()

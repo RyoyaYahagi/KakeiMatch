@@ -132,8 +132,15 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
     }
     @discardableResult mutating func run(id: String, at timestamp: Date) throws -> KMReconciliationRun {
         let result = calculate()
-        let run = KMReconciliationRun(runId: id, createdAt: timestamp, completedAt: timestamp, ruleVersion: result.ruleVersion,
+        var run = KMReconciliationRun(runId: id, createdAt: timestamp, completedAt: timestamp, ruleVersion: result.ruleVersion,
             candidates: result.candidates, statementResults: result.statementResults, receiptResults: result.receiptResults)
+        run.analysis = KMReconciliationAnalysis(statements: result.statementResults.compactMap { row in
+            guard let s = statements.first(where: { $0.id == row.statementTransactionId }) else { return nil }
+            return .init(id: s.id, merchant: s.merchant, date: s.usedDate.rawValue, amountYen: s.amountYen, paymentSource: s.provider.rawValue)
+        }, candidates: Array(Set(result.candidates.map(\.receiptId))).sorted().compactMap { id in
+            guard let t = source(id) else { return nil }
+            return .init(id: id, merchant: t.payeeName ?? "", date: t.date.rawValue, amountYen: abs(t.amountYen), paymentSource: accounts.first { $0.id == t.accountId }?.name ?? t.accountId)
+        })
         latest = run
         for match in result.statementResults where match.status == .matched {
             guard let receiptId = match.matchedReceiptId, let statement = statements.first(where: { $0.id == match.statementTransactionId }),

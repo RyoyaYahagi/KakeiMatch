@@ -4,6 +4,21 @@ import ZIPFoundation
 @testable import KakeiMatch
 
 @MainActor struct LocalStoreTests {
+    @Test func reconciliationAnalysisSurvivesDecisionUndo() async throws {
+        let store = KMInMemoryStore(transactions: [.init(id: "t", date: KMDate(rawValue: "2026-10-01"), amountYen: -980, kind: .expense, payeeName: "合成店舗", accountId: "card")],
+            accounts: [.init(id: "card", name: "合成カード", accountType: .creditCard, statementProvider: .paypayCard)], categories: [.init(id: "food", name: "食費")])
+        store.statementValues = [.init(id: "s", importId: "import", provider: .paypayCard, kind: .purchase, usedDate: KMDate(rawValue: "2026-10-01"), merchant: "合成店舗", amountYen: 1000, sourceFingerprint: "synthetic", duplicateOrdinal: 1)]
+        let at = Date(timeIntervalSince1970: 1_792_000_000)
+        let run = try await store.runReconciliation(id: "analysis-run", at: at)
+        let decision = try await store.confirmSameExpense(runId: run.runId, statementId: "s", receiptId: "actual:t", at: at)
+        try await store.undoSameExpense(id: decision.id, at: at.addingTimeInterval(1))
+        let history = try await store.analysisRuns()
+        #expect(history.first?.analysis?.candidates.first?.amountYen == 980)
+        #expect(history.first?.analysis?.events.last?.kind == "undo")
+        #expect(history.first?.analysis?.events.contains(where: { $0.kind == "decision" && $0.status == "applied" }) == true)
+        #expect(KMReconciliationAnalytics.summarize(history).manualMatches == 0)
+    }
+
     @Test func rakutenRetryRefreshesOldReviewMetadataWithoutDuplicatingPurchases() async throws {
         let store = KMInMemoryStore()
         let headers = "利用日,利用店名・商品名,利用者,支払方法,利用金額,手数料/利息,支払総額,9月支払金額,当月請求額,10月繰越残高,新規サイン"

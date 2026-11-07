@@ -332,6 +332,7 @@ import Foundation
     func moneyForwardHistory() async throws -> [KMMoneyForwardBatch] { try await access { try await $0.moneyForwardHistory() } }
     func moneyForwardRules() async throws -> KMMoneyForwardMappings { try await access { try await $0.moneyForwardRules() } }
     func undoMoneyForward(id: String, at timestamp: Date) async throws { try await access(true) { try await $0.undoMoneyForward(id: id, at: timestamp) } }
+    func analysisRuns() async throws -> [KMReconciliationRun] { try await access { try await $0.analysisRuns() } }
     func latestRun() async throws -> KMReconciliationRun? { try await access { try await $0.latestRun() } }
     func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun { try await access(true) { try await $0.runReconciliation(id: id, at: timestamp) } }
     func confirmSameExpense(runId: String, statementId: String, receiptId: String, at timestamp: Date) async throws -> KMReconciliationResolution { try await access(true) { try await $0.confirmSameExpense(runId: runId, statementId: statementId, receiptId: receiptId, at: timestamp) } }
