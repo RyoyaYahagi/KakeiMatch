@@ -96,6 +96,21 @@ function createLocalReconciliationService(repo: LocalDataRepository, mock: Retur
 afterEach(() => repositories.splice(0).forEach((repo) => repo.close()));
 
 describe("LocalReconciliationService", () => {
+  it("keeps immutable analysis contents and decision history after undo", async () => {
+    const repo = await repository(); const mock = makeLedger();
+    mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1150, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
+    await seed(repo, [makeStatement("statement-1")], [makeReceipt("receipt-1", { confirmedValue: { merchant: "架空ストア新宿", purchasedDate: "2026-09-10", totalAmountYen: 1150, accountId: "account-1" } })]);
+    const service = createLocalReconciliationService(repo, mock); const run = await service.run();
+    const decision = await service.sameExpense(run.runId, "statement-1", "receipt-1");
+    await service.undoSameExpense(decision.id);
+    const saved = (await service.analysisRuns()).find(row => row.runId === run.runId)!;
+    expect(saved.analysis?.candidates[0].amountYen).toBe(1150);
+    expect(saved.analysis?.statements[0].amountYen).toBe(1200);
+    expect(saved.analysis?.events.some(row => row.kind === "decision" && row.status === "applied")).toBe(true);
+    expect(saved.analysis?.events.at(-1)?.kind).toBe("undo");
+    expect(await service.resolutions()).toEqual([]);
+  });
+
   it("uses the current payment-source mapping to retain an older same-amount candidate", async () => {
     const repo = await repository();
     const mock = makeLedger();

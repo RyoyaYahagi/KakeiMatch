@@ -236,15 +236,16 @@ export class LocalDataRepository {
   }
 
   /** Atomically commits related metadata records in one IndexedDB transaction. */
-  async putRecords(records: LocalDataRecord[]): Promise<void> {
+  async putRecords(records: LocalDataRecord[], deleteIds: string[] = []): Promise<void> {
     try {
       const transaction = this.database.transaction(RECORDS_STORE, "readwrite");
       const done = transactionDone(transaction);
       const store = transaction.objectStore(RECORDS_STORE);
       try {
         for (const record of records) store.put({ ...record, profileId: this.profileId, key: toKey(this.profileId, record.id) });
+        for (const id of deleteIds) store.delete(toKey(this.profileId, id));
       } catch (error) {
-        transaction.abort();
+        try { transaction.abort(); } catch { /* The failing request may already have aborted it. */ }
         await done.catch(() => undefined);
         throw error;
       }

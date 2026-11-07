@@ -83,6 +83,7 @@ let package = Package(
                 "Data/Domain/Payroll.swift",
                 "Data/Domain/Receipt.swift",
                 "Data/Domain/Reconciliation.swift",
+                "Data/Domain/ReconciliationAnalytics.swift",
                 "Data/Domain/Recurring.swift",
                 "Data/Domain/Settings.swift",
                 "Data/Domain/Transaction.swift",

@@ -20,7 +20,9 @@ struct LocalReconciliationTests {
         let url = try #require(Bundle.main.url(forResource: "reconciliation", withExtension: "json"))
         let golden = try KMJSON.decoder().decode(Golden.self, from: Data(contentsOf: url))
         let repositories = try KMFixtureLoader.load(named: "reconciliation")
-        #expect(try await repositories.reconciliation.latestRun() == golden.run)
+        var actual = try await repositories.reconciliation.latestRun()
+        actual?.analysis = nil // Legacy golden checks matching, not newly recorded analysis snapshots.
+        #expect(actual == golden.run)
         #expect(try await repositories.reconciliation.resolutions() == golden.resolutions)
     }
     @Test func manualCorrectionUndoAndAutoSuppression() throws {

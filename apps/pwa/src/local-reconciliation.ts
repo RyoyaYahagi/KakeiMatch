@@ -1,3 +1,4 @@
+import type { AnalysisEvent, ReconciliationAnalysis } from "../../../src/lib/reconciliation-analytics";
 import {
   merchantAliasKey,
   normalizeReconciliationMerchant,
@@ -48,6 +49,7 @@ export type LocalRun = ReconciliationEngineResult & {
   createdAt: string;
   completedAt: string;
   inputFingerprint?: string;
+  analysis?: ReconciliationAnalysis;
 };
 
 type ActualTransactionSnapshot = Pick<ActualTransaction, "date" | "amountYen" | "payeeName" | "accountId" | "isSplit"> & { cleared?: boolean };
@@ -78,7 +80,7 @@ export type LocalResolution = {
 
 type BrowserLedger = ReturnType<typeof import("../../../src/lib/actual-browser-ledger").createActualBrowserLedger>;
 type PairRejection = { runId: string; statementId: string; receiptId: string };
-type CandidateSource = { actualTransaction: ActualTransaction; receipt: LocalReceipt | null };
+type CandidateSource = { actualTransaction: ActualTransaction; receipt: LocalReceipt | null; paymentSource: string };
 type StatementWindow = { importId: string; provider: StatementProvider; accountId: string | null; startDate: string; endDate: string; statements: LocalStatement[] };
 type PreparedInput = {
   result: ReconciliationEngineResult;
@@ -241,7 +243,7 @@ export class LocalReconciliationService {
         (transaction.importedId && excludedImportedIds.has(transaction.importedId))) continue;
       const receipt = receiptByActualId.get(transaction.id) ?? null;
       const candidateId = receipt?.id ?? nativeCandidateId(transaction.id);
-      const source = { actualTransaction: transaction, receipt };
+      const source = { actualTransaction: transaction, receipt, paymentSource: account.name };
       sourcesByCandidateId.set(candidateId, source);
       engineReceipts.push({
         receiptId: candidateId, actualTransactionId: transaction.id,
@@ -321,7 +323,13 @@ export class LocalReconciliationService {
       const prepared = await this.prepareInput();
       const completedAt = now();
       const runId = crypto.randomUUID();
-      let run = freezeDeep({ ...prepared.result, runId, createdAt: completedAt, completedAt, inputFingerprint: prepared.fingerprint });
+      let run: LocalRun = freezeDeep({ analysis: { statements: prepared.result.statementResults.flatMap(row => {
+        const s = prepared.statementsById.get(row.statementTransactionId);
+        return s ? [{ id: s.id, merchant: s.merchant, date: s.usedDate, amountYen: s.amountYen, paymentSource: s.provider }] : [];
+      }), candidates: [...new Set(prepared.result.candidates.map(row => row.receiptId))].map(id => {
+        const source = prepared.sourcesByCandidateId.get(id)!; const t = source.actualTransaction;
+        return { id, merchant: t.payeeName ?? "", date: t.date, amountYen: Math.abs(t.amountYen), paymentSource: source.paymentSource };
+      }), events: [] }, ...prepared.result, runId, createdAt: completedAt, completedAt, inputFingerprint: prepared.fingerprint });
       await this.repo.put({ id: runRecordId(runId), kind: "reconciliation-run", value: run, updatedAt: completedAt });
       await this.repo.put({ id: resultRecordId(runId), kind: "reconciliation-result", value: prepared.result, updatedAt: completedAt });
       await this.repo.put({ id: latestRunPointerId, kind: "app-settings", value: { runId }, updatedAt: completedAt });
@@ -341,10 +349,22 @@ export class LocalReconciliationService {
       for (const resolution of resolutionBatch) await this.repo.put({ id: resolution.id, kind: "reconciliation-resolution", value: resolution, updatedAt: completedAt });
       if (resolutionBatch.length) await this.applyBatch(resolutionBatch);
       const afterAutomaticMatches = await this.prepareInput();
-      run = freezeDeep({ ...run, inputFingerprint: afterAutomaticMatches.fingerprint });
+      run = freezeDeep({ ...run, analysis: (await this.repo.get<LocalRun>(runRecordId(runId)))?.value.analysis, inputFingerprint: afterAutomaticMatches.fingerprint });
       await this.repo.put({ id: runRecordId(runId), kind: "reconciliation-run", value: run, updatedAt: now() });
       return run;
     });
+  }
+
+  async analysisRuns(): Promise<LocalRun[]> {
+    return (await this.repo.list<LocalRun>("reconciliation-run")).map(row => row.value);
+  }
+
+  private async analysisRecord(runId: string, event: Omit<AnalysisEvent, "id" | "at">) {
+    const record = await this.repo.get<LocalRun>(runRecordId(runId));
+    if (!record?.value.analysis) return null;
+    const value = { ...record.value, analysis: { ...record.value.analysis,
+      events: [...record.value.analysis.events, { ...event, id: crypto.randomUUID(), at: now() }] } };
+    return { ...record, value };
   }
 
   async latest(): Promise<LocalRun | null> { return this.getLatestRecord(); }
@@ -401,7 +421,8 @@ export class LocalReconciliationService {
       const id = rejectionRecordId(runId, statementId, receiptId);
       if (await this.repo.get(id)) throw new LocalReconciliationError("decision_conflict");
       const value: PairRejection = { runId, statementId, receiptId };
-      await this.repo.put({ id, kind: "correction-audit", value, updatedAt: now() });
+      const audit = await this.analysisRecord(runId, { kind: "rejected", statementId, receiptId, source: "user", resolution: null, status: null, errorCode: null });
+      await this.repo.putRecords([{ id, kind: "correction-audit", value, updatedAt: now() }, ...(audit ? [audit] : [])]);
     });
   }
 
@@ -541,9 +562,11 @@ export class LocalReconciliationService {
         if (alias && !stillUsed && (!alias.value.learnedBy || alias.value.learnedBy.startsWith("reconciliation-resolution:"))) await this.repo.delete(aliasId);
       }
       const undoneAt = resolution.undoRequestedAt!;
-      await this.repo.put({ id: `reconciliation-undo:${input.statementId}:${undoneAt}`, kind: "correction-audit",
-        value: { targetType: "reconciliation-undo", statementId: input.statementId, resolution: input, undoneAt }, updatedAt: now() });
-      await this.repo.delete(input.id);
+      const audit = await this.analysisRecord(input.runId, { kind: "undo", statementId: input.statementId, receiptId: input.receiptId,
+        source: "user", resolution: input.resolution, status: "applied", errorCode: null });
+      await this.repo.putRecords([{ id: `reconciliation-undo:${input.statementId}:${undoneAt}`, kind: "correction-audit",
+        value: { targetType: "reconciliation-undo", statementId: input.statementId, resolution: input, undoneAt }, updatedAt: now() },
+        ...(audit ? [audit] : [])], [input.id]);
     } catch (error) {
       await this.storeResolution({ ...resolution, status: "failed", errorCode: error instanceof LocalReconciliationError ? error.code : "actual_apply_failed" });
       throw error;
@@ -567,9 +590,13 @@ export class LocalReconciliationService {
   }
 
   private async storeResolution(resolution: LocalResolution): Promise<LocalResolution> {
-    const updated = { ...resolution, updatedAt: now() };
-    await this.repo.put({ id: updated.id, kind: "reconciliation-resolution", value: updated, updatedAt: updated.updatedAt });
-    return updated;
+    return serialize(`${this.repo.profileId}:analysis`, async () => {
+      const updated = { ...resolution, updatedAt: now() };
+      const audit = await this.analysisRecord(updated.runId, { kind: "decision", statementId: updated.statementId,
+        receiptId: updated.receiptId, source: updated.source, resolution: updated.resolution, status: updated.status, errorCode: updated.errorCode });
+      await this.repo.putRecords([{ id: updated.id, kind: "reconciliation-resolution", value: updated, updatedAt: updated.updatedAt }, ...(audit ? [audit] : [])]);
+      return updated;
+    });
   }
 
   private async hydrateLegacySnapshot(resolution: LocalResolution): Promise<LocalResolution> {

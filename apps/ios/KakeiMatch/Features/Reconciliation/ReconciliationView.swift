@@ -1,8 +1,20 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ReconciliationView: View {
     @Environment(\.repositories) private var repositories
     @State private var model = KMReconciliationModel()
+    @State private var analysisExpanded = false
+    @State private var exportingAnalysis = false
+    @State private var analysisDocument: AnalysisDocument?
+    @State private var analysisFilename = "reconciliation-analysis"
+    private struct AnalysisDocument: FileDocument {
+        static var readableContentTypes: [UTType] { [.json] }
+        var data: Data
+        init(data: Data) { self.data = data }
+        init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
+        func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+    }
     @State private var importerExpanded = false
     @State private var matchedExpanded = false
     @State private var ignoredExpanded = false
@@ -17,6 +29,29 @@ struct ReconciliationView: View {
         var message: String
         var action: KMReconciliationModel.Action
     }
+    private var analyticsSection: some View {
+        DisclosureGroup("照合の分析", isExpanded: $analysisExpanded) {
+            VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                ForEach(KMReconciliationAnalytics.summarize(model.analysisRuns).lines, id: \.self) { Text($0).font(KMTypography.body(14)) }
+                Text("1位の採用率は、人が「同じ支出」と判断して反映できた候補が対象です。自動一致や未確認は正解として数えません。候補なしは誤判定を意味しません。取り消した判断は採用率から除きます。反映の失敗率は判断の最新状態で集計し、再試行で成功したものと「登録しない」は失敗に数えません。")
+                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                Text("履歴は端末内に保存します。匿名化版には店名・取引日・取引額・支払元名を含めません。差額・日付差・操作日時は含みます。詳細版には照合時点の内容を含めます。")
+                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                Button("匿名化版を書き出す") { exportAnalysis(detailed: false) }.buttonStyle(KMButtonStyle(role: .secondary))
+                    .accessibilityIdentifier("reconciliation.analysis.exportAnonymous")
+                Button("詳細版を書き出す（店名・金額を含む）") { exportAnalysis(detailed: true) }.buttonStyle(KMButtonStyle(role: .secondary))
+                    .accessibilityIdentifier("reconciliation.analysis.exportDetailed")
+            }.padding(.vertical, 8)
+        }.accessibilityIdentifier("reconciliation.analytics")
+    }
+    private func exportAnalysis(detailed: Bool) {
+        do {
+            analysisDocument = AnalysisDocument(data: try KMReconciliationAnalytics.export(model.analysisRuns, detailed: detailed, at: Date()))
+            analysisFilename = "reconciliation-analysis-\(detailed ? "detailed" : "anonymous")"
+            exportingAnalysis = true
+        } catch { model.message = "分析データを書き出せませんでした。もう一度お試しください。" }
+    }
+
     var body: some View {
         ScrollViewReader { scroll in
             VStack(alignment: .leading, spacing: KMSpacing.space3) {
@@ -40,6 +75,7 @@ struct ReconciliationView: View {
                         .accessibilityIdentifier("reconciliation.error")
                 }
                 if let message = model.message { Text(message).font(KMTypography.note).accessibilityIdentifier("message") }
+                if !model.isLoading { analyticsSection }
                 if model.isLoading { ProgressView().frame(maxWidth: .infinity) }
                 else if let run = model.run {
                     Text(model.runFeedback ?? "最終照合 \(KMReconciliationPresentation.timestamp(run.completedAt))。記録を追加・修正したら、もう一度照合すると新しい一致を探します。")
@@ -73,6 +109,9 @@ struct ReconciliationView: View {
             .disabled(model.isBusy)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .contain).accessibilityIdentifier("reconciliation.screen")
+        }
+        .fileExporter(isPresented: $exportingAnalysis, document: analysisDocument, contentType: .json, defaultFilename: analysisFilename) { result in
+            if case .failure = result { model.message = "分析データを書き出せませんでした。もう一度お試しください。" }
         }
         .task { await model.load(repositories) }
         .onChange(of: model.run?.runId) { _, _ in
