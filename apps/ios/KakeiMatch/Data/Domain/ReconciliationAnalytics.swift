@@ -38,7 +38,8 @@ struct KMReconciliationAnalyticsSummary: Equatable, Sendable {
 }
 
 enum KMReconciliationAnalytics {
-    static func summarize(_ runs: [KMReconciliationRun]) -> KMReconciliationAnalyticsSummary {
+    static func summarize(_ runs: [KMReconciliationRun], includingTests: Bool = false) -> KMReconciliationAnalyticsSummary {
+        let runs = runs.filter { includingTests || $0.mode != "test" }
         var summary = KMReconciliationAnalyticsSummary(runs: runs.count, recordedRuns: runs.filter { $0.analysis != nil }.count)
         var observations: [String: KMReconciliationStatementResult] = [:]
         var decisions: [String: (KMReconciliationAnalysis.Event, KMReconciliationRun)] = [:]
@@ -70,7 +71,8 @@ enum KMReconciliationAnalytics {
         return summary
     }
 
-    static func export(_ runs: [KMReconciliationRun], detailed: Bool, at: Date) throws -> Data {
+    static func export(_ runs: [KMReconciliationRun], detailed: Bool, at: Date, test: Bool = false) throws -> Data {
+        let runs = runs.filter { ($0.mode == "test") == test }
         var ids: [String: String] = [:]
         func id(_ value: String?) -> Any {
             guard let value else { return NSNull() }
@@ -80,9 +82,9 @@ enum KMReconciliationAnalytics {
         }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let summary = summarize(runs)
+        let summary = summarize(runs, includingTests: test)
         let result: [[String: Any]] = try runs.map { run in
-            var row: [String: Any] = ["runId": id(run.runId), "completedAt": formatter.string(from: run.completedAt), "ruleVersion": run.ruleVersion,
+            var row: [String: Any] = ["mode": run.mode ?? "normal", "runId": id(run.runId), "completedAt": formatter.string(from: run.completedAt), "ruleVersion": run.ruleVersion,
                 "statements": run.statementResults.map { ["statementId": id($0.statementTransactionId), "status": $0.status.rawValue] },
                 "candidates": run.candidates.map { c -> [String: Any] in
                     ["statementId": id(c.statementTransactionId), "receiptId": id(c.receiptId), "rank": c.rank, "score": NSDecimalNumber(decimal: c.score),
@@ -97,7 +99,7 @@ enum KMReconciliationAnalytics {
             }
             return row
         }
-        return try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "mode": detailed ? "detailed" : "anonymous", "exportedAt": formatter.string(from: at),
+        return try JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "scope": test ? "test" : "normal", "mode": detailed ? "detailed" : "anonymous", "exportedAt": formatter.string(from: at),
             "summary": ["runs": summary.runs, "recordedRuns": summary.recordedRuns, "statements": summary.statements, "noCandidates": summary.noCandidates,
                         "manualMatches": summary.manualMatches, "firstChoices": summary.firstChoices, "rejected": summary.rejected, "terminalDecisions": summary.terminalDecisions, "failed": summary.failed,
                         "noCandidateRate": summary.statements > 0 ? Double(summary.noCandidates) / Double(summary.statements) as Any : NSNull(),

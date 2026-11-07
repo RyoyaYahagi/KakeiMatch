@@ -98,6 +98,7 @@ const reconciliationRun = runResult.extend({
   runId: z.string(), createdAt: isoDateTime, completedAt: isoDateTime,
   inputFingerprint: z.string().regex(/^[0-9a-f]{64}$/i).optional(),
   analysis: reconciliationAnalysisSchema.optional(),
+  mode: z.literal("test").optional(),
 }).strict();
 const resolution = z.object({
   id: z.string(), runId: z.string(), statementId: z.string(), resolution: z.enum(["same_expense", "no_receipt", "transfer", "ignored"]), source: z.enum(["automatic", "user"]),

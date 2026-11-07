@@ -96,6 +96,46 @@ function createLocalReconciliationService(repo: LocalDataRepository, mock: Retur
 afterEach(() => repositories.splice(0).forEach((repo) => repo.close()));
 
 describe("LocalReconciliationService", () => {
+  it("replays resolved statements and cleared expenses without changing any live state", async () => {
+    const repo = await repository(); const mock = makeLedger();
+    mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1200, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
+    await seed(repo, [makeStatement("statement-1")], [makeReceipt("receipt-1")]);
+    const service = createLocalReconciliationService(repo, mock);
+    const normal = await service.run();
+    const beforeRecords = await repo.list(), beforeTransactions = [...mock.transactions.values()], beforeCalls = [...mock.calls];
+    const replay = await service.testRun();
+    expect(replay.mode).toBe("test");
+    expect(replay.statementResults[0]?.matchedReceiptId).toBe("receipt-1");
+    expect(replay.analysis?.candidates[0].merchant).toBe("架空ストア新宿");
+    expect(replay.analysis?.events).toEqual([]);
+    expect(await service.latest()).toEqual(normal);
+    expect([...mock.transactions.values()]).toEqual(beforeTransactions);
+    expect(mock.calls).toEqual(beforeCalls);
+    expect((await repo.list()).filter(row => row.id !== `reconciliation-run:${replay.runId}`)).toEqual(beforeRecords);
+    expect(await service.analysisRuns()).toEqual([normal]);
+    expect(await service.analysisRuns(true)).toEqual([replay]);
+    await expect(service.sameExpense(replay.runId, "statement-1", "receipt-1")).rejects.toMatchObject({ code: "decision_conflict" });
+  });
+
+  it("keeps an unresolved normal result actionable after a test replay", async () => {
+    const repo = await repository(); const mock = makeLedger();
+    mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1150, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
+    await seed(repo, [makeStatement("statement-1")], [makeReceipt("receipt-1", { confirmedValue: { merchant: "架空ストア新宿", purchasedDate: "2026-09-10", totalAmountYen: 1150, accountId: "account-1" } })]);
+    const service = createLocalReconciliationService(repo, mock);
+    const normal = await service.run(); await service.testRun();
+    const decision = await service.sameExpense(normal.runId, "statement-1", "receipt-1");
+    expect(decision.status).toBe("applied");
+    expect((await service.analysisRuns(true))[0].analysis?.events).toEqual([]);
+  });
+
+  it("does not expose a test-only run as the latest normal result", async () => {
+    const repo = await repository(); const mock = makeLedger();
+    const service = createLocalReconciliationService(repo, mock);
+    const replay = await service.testRun();
+    expect(await service.latest()).toBeNull();
+    await expect(service.sameExpense(replay.runId, "unknown", "unknown")).rejects.toMatchObject({ code: "stale_run" });
+  });
+
   it("keeps immutable analysis contents and decision history after undo", async () => {
     const repo = await repository(); const mock = makeLedger();
     mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1150, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });

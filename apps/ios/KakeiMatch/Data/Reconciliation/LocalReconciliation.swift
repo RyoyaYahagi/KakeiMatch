@@ -130,7 +130,16 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
         result.receiptResults.removeAll { !waiting.contains($0.receiptId) }
         return result
     }
-    @discardableResult mutating func run(id: String, at timestamp: Date) throws -> KMReconciliationRun {
+    @discardableResult mutating func run(id: String, at timestamp: Date, testMode: Bool = false) throws -> KMReconciliationRun {
+        if testMode {
+            // Value-copy sandbox: predicted automatic matches can never reach the live ledger or decisions.
+            var sandbox = self
+            sandbox.resolutions = []; sandbox.rejections = []; sandbox.suspected = []; sandbox.manualStatementIds = []
+            for index in sandbox.transactions.indices { sandbox.transactions[index].cleared = false }
+            var result = try sandbox.run(id: id, at: timestamp)
+            result.mode = "test"
+            return result
+        }
         let result = calculate()
         var run = KMReconciliationRun(runId: id, createdAt: timestamp, completedAt: timestamp, ruleVersion: result.ruleVersion,
             candidates: result.candidates, statementResults: result.statementResults, receiptResults: result.receiptResults)

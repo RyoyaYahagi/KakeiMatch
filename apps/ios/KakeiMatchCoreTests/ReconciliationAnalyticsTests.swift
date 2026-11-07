@@ -15,6 +15,15 @@ struct ReconciliationAnalyticsTests {
     private func event(kind: String = "decision", source: String = "user", status: String = "applied") -> KMReconciliationAnalysis.Event {
         .init(at: at, statementId: "private-statement", receiptId: "private-receipt", kind: kind, source: source, resolution: "same_expense", status: status)
     }
+    @Test func testExportsAreSeparateFromNormalMetrics() throws {
+        var value = run(); value.mode = "test"
+        #expect(KMReconciliationAnalytics.summarize([value]).runs == 0)
+        let normal = try #require(try JSONSerialization.jsonObject(with: KMReconciliationAnalytics.export([value], detailed: true, at: at)) as? [String: Any])
+        #expect((normal["runs"] as? [Any])?.isEmpty == true)
+        let report = try #require(try JSONSerialization.jsonObject(with: KMReconciliationAnalytics.export([value], detailed: true, at: at, test: true)) as? [String: Any])
+        #expect(report["scope"] as? String == "test")
+        #expect((report["runs"] as? [[String: Any]])?.first?["mode"] as? String == "test")
+    }
     @Test func denominatorsUndoAndRetries() {
         var value = run()
         #expect(KMReconciliationAnalytics.summarize([value]).manualMatches == 0)

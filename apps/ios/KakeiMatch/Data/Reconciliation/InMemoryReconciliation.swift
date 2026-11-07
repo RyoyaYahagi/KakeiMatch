@@ -77,6 +77,12 @@ import Foundation
             working.reconciliationState = state; working.resolutionValues = state.resolutions; working.suspectedValues = state.suspected
         }
     }
+    func runTestReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun {
+        var sandbox = currentReconciliation()
+        let run = try sandbox.run(id: id, at: timestamp, testMode: true)
+        runValues.append(run)
+        return run
+    }
     func analysisRuns() async throws -> [KMReconciliationRun] { runValues }
 
     func runReconciliation(id: String, at timestamp: Date) async throws -> KMReconciliationRun {

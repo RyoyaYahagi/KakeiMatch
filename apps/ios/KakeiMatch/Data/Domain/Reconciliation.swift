@@ -45,6 +45,7 @@ struct KMReconciliationRun: Codable, Equatable, Sendable, Identifiable {
     var runId: String
     var createdAt: Date
     var completedAt: Date
+    var mode: String? = nil
     var analysis: KMReconciliationAnalysis? = nil
     var inputFingerprint: String?
     var ruleVersion: String

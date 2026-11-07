@@ -1366,9 +1366,9 @@ export async function initializeLocalUi(options: { openAccount: () => void }) {
     const refresh = button('もう一度照合する', runAgain); refresh.className = 'secondary compact'; refresh.prepend(icon('repeat'));
     header.append(text('h2', '照合'), refresh); view.append(header);
     const { run, decisions, suspected, pending } = await reconciliationState();
-    const analysisRuns = await reconciliation.analysisRuns();
+    const [analysisRuns, testRuns] = await Promise.all([reconciliation.analysisRuns(), reconciliation.analysisRuns(true)]);
     ensureScreen(screen);
-    view.append(reconciliationAnalyticsSection(analysisRuns));
+    view.append(reconciliationAnalyticsSection(analysisRuns, testRuns, () => reconciliation.testRun()));
     if (run) {
       const status = text('p', runFeedback ?? `最終照合 ${shortDateTime(run.completedAt)}。記録を追加・修正したら、もう一度照合すると新しい一致を探します。`, 'muted review-run-status');
       status.setAttribute('role', 'status'); view.append(status);

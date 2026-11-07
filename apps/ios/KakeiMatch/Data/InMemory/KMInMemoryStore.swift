@@ -214,7 +214,7 @@ import Foundation
     }
     func statementImports() async throws -> [KMLocalRecord<KMStatementImport>] { importValues }
     func statementTransactions() async throws -> [KMStatementTransaction] { statementValues }
-    func latestRun() async throws -> KMReconciliationRun? { runValues.max { $0.createdAt < $1.createdAt } }
+    func latestRun() async throws -> KMReconciliationRun? { runValues.filter { $0.mode != "test" }.max { $0.createdAt < $1.createdAt } }
     func resolutions() async throws -> [KMReconciliationResolution] { resolutionValues }
     func saveResolution(_ resolution: KMReconciliationResolution) async throws {
         resolutionValues.removeAll { $0.id == resolution.id }; resolutionValues.append(resolution)
