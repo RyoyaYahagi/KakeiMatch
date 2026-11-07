@@ -45,9 +45,16 @@ import Testing
         for i in memory.transactionValues.indices { memory.transactionValues[i].cleared = false }
         let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
         let initial = try repositories(memory, durable: durable, directory: directory)
-        #expect(try await initial.reconciliation.runReconciliation(id: golden.run.runId, at: golden.run.createdAt) == golden.run)
+        let actual = try await initial.reconciliation.runReconciliation(id: golden.run.runId, at: golden.run.createdAt)
+        var matchingResult = actual
+        matchingResult.analysis = nil // The legacy golden contains only matching results.
+        #expect(matchingResult == golden.run)
+        let analysis = try #require(actual.analysis)
+        #expect(analysis.statements.count == actual.statementResults.count)
+        #expect(analysis.events.contains { $0.kind == "decision" && $0.source == "automatic" && $0.status == "applied" })
         let after = try reopen(initial, durable: durable, directory: directory)
-        #expect(try await after.reconciliation.latestRun() == golden.run)
+        // Preserve the original snapshot and events, including generated event IDs, after SQLite reopen.
+        #expect(try await after.reconciliation.latestRun() == actual)
         #expect(try await after.reconciliation.resolutions() == golden.resolutions)
     }
 
