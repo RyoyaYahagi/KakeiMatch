@@ -51,9 +51,9 @@ it("round-trips immutable reconciliation contents and append-only events", async
   const record = data.records.find(row => row.kind === "reconciliation-run")!;
   const analysis = { statements: [{ id: "s", merchant: "合成店舗", date: "2026-09-28", amountYen: 1200, paymentSource: "合成カード" }], candidates: [],
     events: [{ id: "event", at: time, statementId: "s", receiptId: null, kind: "undo", source: "user", resolution: "same_expense", status: "applied", errorCode: null }] };
-  record.value = { ...(record.value as object), analysis };
+  record.value = { ...(record.value as object), analysis, mode: "test" };
   const restored = await readPortableBackup(await create(data));
-  expect(restored.localData.records.find(row => row.id === record.id)?.value).toMatchObject({ analysis });
+  expect(restored.localData.records.find(row => row.id === record.id)?.value).toMatchObject({ analysis, mode: "test" });
 });
 
 describe("account metadata backup", () => {

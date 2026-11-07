@@ -212,3 +212,5 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 ### 照合の分析履歴
 
 `KMReconciliationRun.analysis`に任意の分析用コピーと追記履歴を保存します。明細・表示候補の内容は照合時点で固定し、判断・却下・取り消しの履歴は`storeReconciliation`の作業用コピー内で既存の台帳更新とともに確定します。SQLiteの既存`runs`と`.kmb`へ含め、新しい外部保存先を設けません。旧データでこのフィールドがない場合は未記録として扱います。集計・書き出しの意味と保持範囲はrootの`docs/LOCAL_RECONCILIATION.md`「照合の分析と書き出し」を参照してください。
+
+テスト再照合は`KMLocalReconciliation`の値コピーで判断・却下・疑いマーク・手動指定・照合済みフラグを除外条件から外し、予測結果とコピーした内容を`mode: test`のrunだけに保存します。値コピーでの予測処理は実際の台帳へ到達しません。元のサービス状態・判断・最新runは保持し、SQLiteの保存もrunの追加だけです。通常集計と通常JSONはテストrunを除きます。

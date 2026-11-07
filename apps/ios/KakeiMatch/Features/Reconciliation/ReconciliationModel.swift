@@ -3,6 +3,7 @@ import Observation
 
 @MainActor @Observable final class KMReconciliationModel {
     var analysisRuns: [KMReconciliationRun] = []
+    var testRuns: [KMReconciliationRun] = []
     var run: KMReconciliationRun?
     var statements: [KMStatementTransaction] = []
     var imports: [KMLocalRecord<KMStatementImport>] = []
@@ -43,7 +44,9 @@ import Observation
     }
     private func reload(_ repositories: KMRepositories) async throws {
         let run = try await repositories.reconciliation.latestRun()
-        self.analysisRuns = try await repositories.reconciliation.analysisRuns()
+        let allRuns = try await repositories.reconciliation.analysisRuns()
+        self.analysisRuns = allRuns.filter { $0.mode != "test" }
+        self.testRuns = allRuns.filter { $0.mode == "test" }
         let resolutions = try await repositories.reconciliation.resolutions()
         let suspected = try await repositories.reconciliation.suspectedStatements()
         let statements = try await repositories.statements.statementTransactions()
@@ -69,6 +72,17 @@ import Observation
         self.categories = KMReconciliationPresentation.categoryChoices(categories, groups: groups)
         self.categoryRules = categoryRules
         self.presentation = projection; self.attention = attention
+    }
+
+    func testReplay(_ repositories: KMRepositories?) async {
+        guard let repositories, !isBusy else { return }
+        isBusy = true; defer { isBusy = false }
+        do {
+            let result = try await repositories.reconciliation.runTestReconciliation(id: UUID().uuidString, at: now(repositories))
+            testRuns = try await repositories.reconciliation.analysisRuns().filter { $0.mode == "test" }
+            message = "テスト再照合しました。明細\(result.statementResults.count)件、候補\(result.candidates.count)件。家計簿は変更していません。"
+            errorMessage = nil
+        } catch { errorMessage = Self.errorText(error) }
     }
 
     func rerun(_ repositories: KMRepositories?) async {

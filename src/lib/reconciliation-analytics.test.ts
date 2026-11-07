@@ -9,6 +9,15 @@ const run = (events: AnalysisEvent[] = []): AnalysisRun => ({ runId: 'private-ru
     candidates: [{ id: 'private-receipt', merchant: '秘密の店舗', date: '2026-10-31', amountYen: 12325, paymentSource: '秘密のカード' }], events } });
 
 describe('reconciliation analysis', () => {
+  it('keeps test runs out of normal metrics and exports, with explicitly marked test exports', () => {
+    const test = { ...run(), mode: 'test' as const };
+    expect(summarizeReconciliation([test]).runs).toBe(0);
+    expect(exportReconciliationAnalysis([test], true, at).runs).toEqual([]);
+    const report = exportReconciliationAnalysis([test], true, at, 'test');
+    expect(report.scope).toBe('test');
+    expect(report.runs[0].mode).toBe('test');
+    expect(report.summary.statements).toBe(1);
+  });
   it('keeps unreviewed and automatic outcomes out of the manual denominator', () => {
     expect(summarizeReconciliation([run()]).firstChoiceRate).toBeNull();
     expect(summarizeReconciliation([run([event({ source: 'automatic' })])]).manualMatches).toBe(0);

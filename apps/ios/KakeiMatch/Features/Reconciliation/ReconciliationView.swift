@@ -41,13 +41,24 @@ struct ReconciliationView: View {
                     .accessibilityIdentifier("reconciliation.analysis.exportAnonymous")
                 Button("詳細版を書き出す（店名・金額を含む）") { exportAnalysis(detailed: true) }.buttonStyle(KMButtonStyle(role: .secondary))
                     .accessibilityIdentifier("reconciliation.analysis.exportDetailed")
+                Text("テスト再照合").font(KMTypography.body(16, weight: .bold))
+                Text("判断済みの明細と照合済みの支出も対象にします。家計簿や通常の判断は変更しません。現在の記録・支払元設定・学習済み店名で再計算するため、当時の再現や正解率の測定ではありません。明細から作成した支出も候補に含まれます。")
+                    .font(KMTypography.note).foregroundStyle(KMColor.muted)
+                Button("テスト再照合する") { Task { await model.testReplay(repositories) } }
+                    .buttonStyle(KMButtonStyle(role: .secondary)).accessibilityIdentifier("reconciliation.analysis.testReplay")
+                if let latest = model.testRuns.max(by: { $0.completedAt < $1.completedAt }) {
+                    Text("保存したテスト：\(model.testRuns.count)回。最新の対象明細\(latest.statementResults.count)件、候補\(latest.candidates.count)件。")
+                        .font(KMTypography.body(14)).accessibilityIdentifier("reconciliation.analysis.testStatus")
+                    Button("テストの匿名化版を書き出す") { exportAnalysis(detailed: false, test: true) }.buttonStyle(KMButtonStyle(role: .secondary))
+                    Button("テストの詳細版を書き出す（店名・金額を含む）") { exportAnalysis(detailed: true, test: true) }.buttonStyle(KMButtonStyle(role: .secondary))
+                } else { Text("テスト結果はまだありません。").font(KMTypography.note) }
             }.padding(.vertical, 8)
         }.accessibilityIdentifier("reconciliation.analytics")
     }
-    private func exportAnalysis(detailed: Bool) {
+    private func exportAnalysis(detailed: Bool, test: Bool = false) {
         do {
-            analysisDocument = AnalysisDocument(data: try KMReconciliationAnalytics.export(model.analysisRuns, detailed: detailed, at: Date()))
-            analysisFilename = "reconciliation-analysis-\(detailed ? "detailed" : "anonymous")"
+            analysisDocument = AnalysisDocument(data: try KMReconciliationAnalytics.export(test ? model.testRuns : model.analysisRuns, detailed: detailed, at: Date(), test: test))
+            analysisFilename = "reconciliation-\(test ? "test-" : "")analysis-\(detailed ? "detailed" : "anonymous")"
             exportingAnalysis = true
         } catch { model.message = "分析データを書き出せませんでした。もう一度お試しください。" }
     }

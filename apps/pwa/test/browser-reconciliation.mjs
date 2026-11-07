@@ -168,6 +168,22 @@ try {
     if (detailed) assert.ok(report.runs.some(run => run.contents?.statements.length > 0));
     else assert.ok(report.runs.every(run => !run.contents));
   }
+  await analysis.getByRole('button', { name: 'テスト再照合する', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[data-testid="reconciliation-analytics"]')?.textContent.includes('保存したテスト：1回'));
+  const testDownloadPromise = page.waitForEvent('download');
+  await analysis.getByRole('button', { name: 'テストの詳細版を書き出す（店名・金額を含む）', exact: true }).click();
+  const testDownload = await testDownloadPromise;
+  const testReport = JSON.parse(readFileSync(await testDownload.path(), 'utf8'));
+  assert.equal(testReport.scope, 'test');
+  assert.ok(testReport.runs.every(run => run.mode === 'test'));
+  assert.ok(testReport.runs.some(run => run.contents?.statements.length > 0));
+  assert.ok(testReport.runs.every(run => run.events.length === 0));
+  const normalDownloadPromise = page.waitForEvent('download');
+  await analysis.getByRole('button', { name: '詳細版を書き出す（店名・金額を含む）', exact: true }).click();
+  const normalReport = JSON.parse(readFileSync(await (await normalDownloadPromise).path(), 'utf8'));
+  assert.equal(normalReport.scope, 'normal');
+  assert.ok(normalReport.runs.every(run => run.mode !== 'test'));
+
   if (process.env.PWA_ANALYSIS_SCREENSHOT_PATH) await analysis.screenshot({ path: process.env.PWA_ANALYSIS_SCREENSHOT_PATH });
 
   // Leaving for home while the reconciliation redraw is still running keeps home on screen.

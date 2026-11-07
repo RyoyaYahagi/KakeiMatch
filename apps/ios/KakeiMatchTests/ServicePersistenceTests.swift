@@ -35,6 +35,33 @@ import Testing
         durable ? KMRepositories(persistent: try KMSQLiteStore(directory: directory)) : repositories
     }
 
+    @Test(arguments: [false, true]) func testReplayDoesNotChangeLedgerDecisionsOrLatestRun(durable: Bool) async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let initial = try repositories(seed(), durable: durable, directory: directory)
+        let preview = try await initial.reconciliation.runTestReconciliation(id: "preview", at: now.addingTimeInterval(-1))
+        #expect(try await initial.reconciliation.latestRun() == nil)
+        await #expect(throws: KMReconciliationError("stale_run")) {
+            try await initial.reconciliation.confirmSameExpense(runId: preview.runId, statementId: "s", receiptId: "actual:t", at: now)
+        }
+        let normal = try await initial.reconciliation.runReconciliation(id: "normal", at: now)
+        _ = try await initial.reconciliation.runTestReconciliation(id: "pending-preview", at: now)
+        let decision = try await initial.reconciliation.confirmSameExpense(runId: "normal", statementId: "s", receiptId: "actual:t", at: now)
+        let transaction = try await initial.transactions.transaction(id: "t")
+        let test = try await initial.reconciliation.runTestReconciliation(id: "test", at: now.addingTimeInterval(1))
+        #expect(test.mode == "test" && test.statementResults.count == 1 && !test.candidates.isEmpty)
+        #expect(test.analysis?.events.isEmpty == true)
+        let after = try reopen(initial, durable: durable, directory: directory)
+        #expect(try await after.transactions.transaction(id: "t") == transaction)
+        #expect(try await after.reconciliation.resolutions() == [decision])
+        let latest = try #require(try await after.reconciliation.latestRun())
+        #expect(latest.runId == normal.runId && latest.mode == nil)
+        #expect(try await after.reconciliation.analysisRuns().contains(test))
+        #expect(KMReconciliationAnalytics.summarize([test]).runs == 0)
+        await #expect(throws: KMReconciliationError("decision_conflict")) {
+            try await after.reconciliation.confirmSameExpense(runId: test.runId, statementId: "s", receiptId: "actual:t", at: now)
+        }
+    }
+
     @Test(arguments: [false, true]) func goldenComputedThroughBothRepositories(durable: Bool) async throws {
         struct Golden: Decodable { var run: KMReconciliationRun; var resolutions: [KMReconciliationResolution] }
         let url = try #require(Bundle.main.url(forResource: "reconciliation", withExtension: "json"))

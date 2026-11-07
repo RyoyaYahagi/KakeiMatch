@@ -11,10 +11,11 @@ export const reconciliationAnalysisSchema = z.object({
 export type ReconciliationAnalysis = z.infer<typeof reconciliationAnalysisSchema>;
 export type AnalysisEvent = ReconciliationAnalysis['events'][number];
 export type AnalysisRun = { runId: string; completedAt: string; ruleVersion: string; candidates: ReconciliationCandidate[];
-  statementResults: ReconciliationStatementResult[]; analysis?: ReconciliationAnalysis };
+  statementResults: ReconciliationStatementResult[]; analysis?: ReconciliationAnalysis; mode?: "test" };
 
 /** One latest observation and active decision per statement; reruns and retries are not new samples. */
-export function summarizeReconciliation(runs: AnalysisRun[]) {
+export function summarizeReconciliation(runs: AnalysisRun[], includeTests = false) {
+  runs = runs.filter(run => includeTests || run.mode !== "test");
   const observations = new Map<string, ReconciliationStatementResult>();
   const decisions = new Map<string, { event: AnalysisEvent; run: AnalysisRun }>();
   const ordered = [...runs].sort((a,b) => a.completedAt.localeCompare(b.completedAt) || a.runId.localeCompare(b.runId));
@@ -44,15 +45,16 @@ export function summarizeReconciliation(runs: AnalysisRun[]) {
 }
 
 /** Allowlist export. Anonymous mode removes contents and replaces identifiers per export. */
-export function exportReconciliationAnalysis(runs: AnalysisRun[], detailed: boolean, exportedAt: string) {
+export function exportReconciliationAnalysis(runs: AnalysisRun[], detailed: boolean, exportedAt: string, scope: "normal" | "test" = "normal") {
+  runs = runs.filter(run => (run.mode === "test") === (scope === "test"));
   const ids = new Map<string,string>();
   const id = (value: string | null): string | null => {
     if (value === null || detailed) return value;
     if (!ids.has(value)) ids.set(value, `item-${ids.size + 1}`);
     return ids.get(value)!;
   };
-  return { schemaVersion: 1, mode: detailed ? 'detailed' : 'anonymous', exportedAt, summary: summarizeReconciliation(runs),
-    runs: runs.map(run => ({ runId: id(run.runId), completedAt: run.completedAt, ruleVersion: run.ruleVersion,
+  return { schemaVersion: 1, scope, mode: detailed ? 'detailed' : 'anonymous', exportedAt, summary: summarizeReconciliation(runs, scope === "test"),
+    runs: runs.map(run => ({ mode: run.mode ?? "normal", runId: id(run.runId), completedAt: run.completedAt, ruleVersion: run.ruleVersion,
       statements: run.statementResults.map(row => ({ statementId: id(row.statementTransactionId), status: row.status })),
       candidates: run.candidates.map(c => ({ statementId: id(c.statementTransactionId), receiptId: id(c.receiptId), rank: c.rank,
         score: c.score, amountDeltaYen: c.amountDeltaYen, dateDistanceDays: c.dateDistanceDays,

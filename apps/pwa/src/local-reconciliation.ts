@@ -50,6 +50,7 @@ export type LocalRun = ReconciliationEngineResult & {
   completedAt: string;
   inputFingerprint?: string;
   analysis?: ReconciliationAnalysis;
+  mode?: "test";
 };
 
 type ActualTransactionSnapshot = Pick<ActualTransaction, "date" | "amountYen" | "payeeName" | "accountId" | "isSplit"> & { cleared?: boolean };
@@ -173,7 +174,7 @@ export class LocalReconciliationService {
     private readonly setStatementProvider?: (accountId: string, provider: StatementProvider) => Promise<void>,
   ) {}
 
-  private async prepareInput(): Promise<PreparedInput> {
+  private async prepareInput(testMode = false): Promise<PreparedInput> {
     const [statementRecords, receiptRecords, resolutionRecords, rejectionRecords, aliasRecords, importRecords, accounts, settings] = await Promise.all([
       this.repo.list<LocalStatement>("statement-transaction"),
       this.repo.list<LocalReceipt>("receipt-metadata"),
@@ -187,14 +188,14 @@ export class LocalReconciliationService {
     const statements = statementRecords.map(({ value }) => value);
     const statementById = new Map(statements.map((statement) => [statement.id, statement]));
     const importsById = new Map(importRecords.map(({ id, value }) => [id, value]));
-    const priorResolutions = resolutionRecords.map(({ value }) => value);
-    const flagged = settings.filter(row => row.id.startsWith("settings:reconciliation-suspected:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []);
-    const manualStatementIds = new Set(settings.filter(row => row.id.startsWith("settings:reconciliation-manual:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []));
+    const priorResolutions = (testMode ? [] : resolutionRecords).map(({ value }) => value);
+    const flagged = (testMode ? [] : settings).filter(row => row.id.startsWith("settings:reconciliation-suspected:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []);
+    const manualStatementIds = new Set((testMode ? [] : settings).filter(row => row.id.startsWith("settings:reconciliation-manual:")).flatMap(row => row.value.statementId ? [row.value.statementId] : []));
     const excludedStatementIds = new Set([...priorResolutions.map((item) => item.statementId), ...flagged]);
     const excludedActualIds = new Set(priorResolutions.flatMap((item) => item.actualTransactionId ? [item.actualTransactionId] : []));
     const excludedImportedIds = new Set(priorResolutions.flatMap((item) => item.importedId ? [item.importedId] : []));
     const excludedReceiptIds = new Set(priorResolutions.filter((item) => item.resolution === "same_expense" && item.receiptId).map((item) => item.receiptId!));
-    const rejected = rejectionRecords.map(({ value }) => value).filter((value) => value && "statementId" in value && "receiptId" in value) as PairRejection[];
+    const rejected = (testMode ? [] : rejectionRecords).map(({ value }) => value).filter((value) => value && "statementId" in value && "receiptId" in value) as PairRejection[];
     const aliases = new Set(aliasRecords.flatMap(({ value }) => value?.merchant && value.aliasMerchant
       ? [merchantAliasKey(value.merchant, value.aliasMerchant)] : []));
 
@@ -239,7 +240,7 @@ export class LocalReconciliationService {
     const engineReceipts: ReconciliationReceipt[] = [];
     for (const transaction of transactionsById.values()) {
       const account = accountsById.get(transaction.accountId);
-      if (!account || account.accountType === "cash" || account.closed || transaction.cleared || excludedActualIds.has(transaction.id) ||
+      if (!account || account.accountType === "cash" || account.closed || (!testMode && transaction.cleared) || excludedActualIds.has(transaction.id) ||
         (transaction.importedId && excludedImportedIds.has(transaction.importedId))) continue;
       const receipt = receiptByActualId.get(transaction.id) ?? null;
       const candidateId = receipt?.id ?? nativeCandidateId(transaction.id);
@@ -283,7 +284,7 @@ export class LocalReconciliationService {
     });
     const result: ReconciliationEngineResult = {
       ...engineResult,
-      receiptResults: engineResult.receiptResults.filter((item) => waitingReceiptIds.has(item.receiptId)),
+      receiptResults: testMode ? engineResult.receiptResults : engineResult.receiptResults.filter((item) => waitingReceiptIds.has(item.receiptId)),
     };
     const referencedAccountIds = new Set([...rowsByImport.values()].flatMap((rows) => rows.map((transaction) => transaction.accountId)));
     const inputSnapshot = {
@@ -313,23 +314,38 @@ export class LocalReconciliationService {
 
   private async getLatestRecord(): Promise<LocalRun | null> {
     const pointer = await this.repo.get<{ runId: string }>(latestRunPointerId);
-    if (pointer) return (await this.repo.get<LocalRun>(runRecordId(pointer.value.runId)))?.value ?? null;
+    if (pointer) {
+      const run = (await this.repo.get<LocalRun>(runRecordId(pointer.value.runId)))?.value;
+      if (run && run.mode !== "test") return run;
+    }
     const runs = await this.repo.list<LocalRun>("reconciliation-run");
-    return runs.map((row) => row.value).sort((a, b) => b.completedAt.localeCompare(a.completedAt) || b.runId.localeCompare(a.runId))[0] ?? null;
+    return runs.map((row) => row.value).filter(run => run.mode !== "test").sort((a, b) => b.completedAt.localeCompare(a.completedAt) || b.runId.localeCompare(a.runId))[0] ?? null;
   }
 
-  async run(): Promise<LocalRun> {
-    return serialize(this.repo.profileId, async () => {
-      const prepared = await this.prepareInput();
-      const completedAt = now();
-      const runId = crypto.randomUUID();
-      let run: LocalRun = freezeDeep({ analysis: { statements: prepared.result.statementResults.flatMap(row => {
+  private makeRun(prepared: PreparedInput, testMode = false): LocalRun {
+    const completedAt = now(), runId = crypto.randomUUID();
+    return freezeDeep({ analysis: { statements: prepared.result.statementResults.flatMap(row => {
         const s = prepared.statementsById.get(row.statementTransactionId);
         return s ? [{ id: s.id, merchant: s.merchant, date: s.usedDate, amountYen: s.amountYen, paymentSource: s.provider }] : [];
       }), candidates: [...new Set(prepared.result.candidates.map(row => row.receiptId))].map(id => {
         const source = prepared.sourcesByCandidateId.get(id)!; const t = source.actualTransaction;
         return { id, merchant: t.payeeName ?? "", date: t.date, amountYen: Math.abs(t.amountYen), paymentSource: source.paymentSource };
-      }), events: [] }, ...prepared.result, runId, createdAt: completedAt, completedAt, inputFingerprint: prepared.fingerprint });
+      }), events: [] }, ...prepared.result, ...(testMode ? { mode: "test" as const } : {}), runId, createdAt: completedAt, completedAt, inputFingerprint: prepared.fingerprint });
+  }
+
+  async testRun(): Promise<LocalRun> {
+    return serialize(this.repo.profileId, async () => {
+      const run = this.makeRun(await this.prepareInput(true), true);
+      await this.repo.put({ id: runRecordId(run.runId), kind: "reconciliation-run", value: run, updatedAt: run.completedAt });
+      return run;
+    });
+  }
+
+  async run(): Promise<LocalRun> {
+    return serialize(this.repo.profileId, async () => {
+      const prepared = await this.prepareInput();
+      let run = this.makeRun(prepared);
+      const { runId, completedAt } = run;
       await this.repo.put({ id: runRecordId(runId), kind: "reconciliation-run", value: run, updatedAt: completedAt });
       await this.repo.put({ id: resultRecordId(runId), kind: "reconciliation-result", value: prepared.result, updatedAt: completedAt });
       await this.repo.put({ id: latestRunPointerId, kind: "app-settings", value: { runId }, updatedAt: completedAt });
@@ -355,8 +371,8 @@ export class LocalReconciliationService {
     });
   }
 
-  async analysisRuns(): Promise<LocalRun[]> {
-    return (await this.repo.list<LocalRun>("reconciliation-run")).map(row => row.value);
+  async analysisRuns(testMode = false): Promise<LocalRun[]> {
+    return (await this.repo.list<LocalRun>("reconciliation-run")).map(row => row.value).filter(run => (run.mode === "test") === testMode);
   }
 
   private async analysisRecord(runId: string, event: Omit<AnalysisEvent, "id" | "at">) {
