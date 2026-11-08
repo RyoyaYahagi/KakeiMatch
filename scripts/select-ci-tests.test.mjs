@@ -76,3 +76,10 @@ test('TestFlight and CI-only changes preserve main PWA skip policy', () => {
   assert.ok(mixed.e2e.length < allSuites.length);
   assert.deepEqual(selectChecks(files, { full: true }).e2e, allSuites);
 });
+
+test('read-only snapshot CLI and its fixtures skip browser suites but keep PWA checks', () => {
+  const result = selectChecks(['tools/kakeimatch-read/lib/validate.mjs', 'tools/kakeimatch-read/validate.test.mjs',
+    'test/fixtures/muse-snapshot/snapshot-sample-normal.json']);
+  assert.deepEqual(result.e2e, []);
+  assert.equal(result.skipPwa, false);
+});

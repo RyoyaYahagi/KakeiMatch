@@ -60,7 +60,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 ## 読み取り専用の担保
 
 - **データの流れが一方向**: アプリはスナップショットを書き出すだけで、Driveから読み込まない。既存の復元はスナップショットを受け付けない（テストで確認する）。
-- **CLIに書き込み口がない**: CLIはファイル、標準入力、`rclone cat` から読むだけで、サブコマンドに書き込みがない。KakeiMatchのWorkerやDriveへの書き込みを呼ばないことをテストで確認する。
+- **CLIに書き込み口がない**: CLIはファイルと標準入力から読むだけで、サブコマンドに書き込みがなく、子プロセスも起動しない。Driveからの取得（Drive連携や `rclone cat`）は呼び出す側が行う。rcloneの設定によっては読むだけで書き込みが起きる（`cache` など）ため、CLIの中からは呼ばない。ファイル・ネットワークへの書き込みや子プロセスを使わないことをテストで確認する。
 - **Driveの権限を絞る**: 直接書き込みでは `drive.file` だけを求め、アプリが作ったファイル以外は見えない。
 - **形式の取り違えを防ぐ**: スナップショットは `kind: "kakeimatch-snapshot"` を持ち、CLIは `.kmb` / `.kmib` や未対応の版を推測で読み替えずにエラーにする。
 
@@ -69,7 +69,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 | 段階 | 内容 |
 | --- | --- |
 | 1 | この文書、形式の仕様、合成データのサンプル |
-| 2 | CLI（`tools/kakeimatch-read`）と合成データでのテスト |
+| 2 | CLI（`tools/kakeimatch-read`）と合成データでのテスト。使い方は[CLIのREADME](../tools/kakeimatch-read/README.md) |
 | 3 | iOSでスナップショットを組み立てる処理とテスト |
 | 4 | iOSの設定画面からの共有シートでの書き出し |
 | 5 | iOSのGoogle連携とDriveへの直接書き込み（GCPの準備待ち） |
