@@ -83,23 +83,11 @@ struct KMMuseSnapshotBuilder {
         return (0..<count).map { fromMonth.shifted(by: $0) }
     }
 
-    /// Repository search hides the incoming side of transfers because the records list shows one
-    /// row per transfer. The snapshot documents both sides, so fetch the linked peer by ID.
+    /// Both sides of a transfer are rows in the snapshot, each kept or dropped by its own date, so a
+    /// pair that straddles the range boundary contributes only the side inside it.
     private func transactionRows(from start: KMDate, to end: KMDate) async throws -> [KMTransaction] {
-        let query = KMTransactionQuery(startDate: start, endDate: end, limit: nil)
-        let listed = try await transactions.transactions(matching: query)
-        var seen = Set<String>()
-        var rows: [KMTransaction] = []
-        for row in listed {
-            guard seen.insert(row.id).inserted else { continue }
-            rows.append(row)
-            guard row.kind == .transfer, let peerId = row.transferId, !seen.contains(peerId),
-                  let peer = try await transactions.transaction(id: peerId),
-                  peer.kind == .transfer, peer.date >= start, peer.date <= end else { continue }
-            seen.insert(peer.id)
-            rows.append(peer)
-        }
-        return rows
+        let query = KMTransactionQuery(startDate: start, endDate: end, limit: nil, includeIncomingTransfers: true)
+        return try await transactions.transactions(matching: query)
     }
 
     private func categoryName(_ id: String?, explicit: String?, names: [String: String]) -> String? {
