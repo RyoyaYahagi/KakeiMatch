@@ -1,5 +1,6 @@
 // コマンドライン解析と実行。ファイルやネットワークへの書き込みは行わない。
-import { readFileSync, readdirSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
+import { readFileBounded, readStreamBounded } from './read-bounded.mjs';
 import { UsageError, SnapshotError } from './errors.mjs';
 import { loadSnapshot } from './source.mjs';
 import { compareMonthly } from './aggregate.mjs';
@@ -128,9 +129,9 @@ export function parseArgs(argv, env = process.env) {
 
 function createIo(options) {
   return {
-    readFile: options.readFile ?? (path => readFileSync(path)),
+    readFile: options.readFile ?? ((path, readOptions) => readFileBounded(path, readOptions)),
     readDir: options.readDir ?? (dir => readdirSync(dir, { withFileTypes: true })),
-    readStdin: options.readStdin ?? (() => readFileSync(0)),
+    readStdin: options.readStdin ?? (() => readStreamBounded(process.stdin)),
     now: options.now ?? (() => new Date()),
   };
 }

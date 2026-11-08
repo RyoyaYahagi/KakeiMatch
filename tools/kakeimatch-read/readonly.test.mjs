@@ -53,7 +53,7 @@ test('CLI のソースに書き込み系 API と fetch・http の利用がない
     for (const match of text.matchAll(/import\s*\{([^}]+)\}\s*from\s*'node:fs'/g)) {
       const names = importedNames(match[1]);
       for (const name of names) {
-        assert.ok(['readFileSync', 'readdirSync'].includes(name), `${file} が node:fs の ${name} を import しています`);
+        assert.ok(['readFileSync', 'readdirSync', 'openSync', 'fstatSync', 'readSync', 'closeSync', 'constants'].includes(name), `${file} が node:fs の ${name} を import しています`);
       }
     }
   }

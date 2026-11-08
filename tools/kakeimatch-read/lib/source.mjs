@@ -20,35 +20,38 @@ function errorText(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function readLocalBytes(io, path) {
+function readLocalBytes(io, path, readOptions) {
   try {
-    return io.readFile(path);
+    return io.readFile(path, readOptions);
   } catch (error) {
+    if (error?.code === 'ENOTREG') throw new SnapshotError([`${path} は通常のファイルではないので読みません`]);
+    if (error?.code === 'ELOOP') throw new SnapshotError([`${path} はシンボリックリンクなので読みません`]);
     throw new SnapshotError([`${path} を読めません（${errorCode(error)}）`]);
   }
+}
+
+function isNewer(candidate, current) {
+  const difference = Date.parse(candidate.snapshot.generatedAt) - Date.parse(current.snapshot.generatedAt);
+  if (difference !== 0) return difference > 0;
+  return candidate.name < current.name;
 }
 
 // 検証に通る候補のうち generatedAt が最も新しいものを返す。同名なら名前順で安定させる。
 async function selectNewest(candidates, label) {
   const failures = [];
-  const valid = [];
+  // Only the newest candidate so far is kept, so memory does not grow with the number of files.
+  let selected = null;
   for (const candidate of candidates) {
     try {
-      valid.push({ ...candidate, snapshot: await candidate.load() });
+      const loaded = { ...candidate, snapshot: await candidate.load() };
+      if (selected === null || isNewer(loaded, selected)) selected = loaded;
     } catch (error) {
       failures.push(errorText(error));
     }
   }
-  if (valid.length === 0) {
+  if (selected === null) {
     throw new SnapshotError([`${label} に検証を通るスナップショットがありません`, ...failures]);
   }
-  valid.sort((left, right) => {
-    const difference = Date.parse(right.snapshot.generatedAt) - Date.parse(left.snapshot.generatedAt);
-    if (difference !== 0) return difference;
-    if (left.name === right.name) return 0;
-    return left.name < right.name ? -1 : 1;
-  });
-  const selected = valid[0];
   return { snapshot: selected.snapshot, label: selected.label };
 }
 
@@ -68,7 +71,8 @@ async function loadFromDir(dir, io) {
   }
   const candidates = names.map(name => {
     const path = join(dir, name);
-    return { name, label: path, load: () => readSnapshotBytes(readLocalBytes(io, path), path) };
+    // The entry was a regular file when listed; O_NOFOLLOW keeps a symbolic link swapped in later from being read.
+    return { name, label: path, load: () => readSnapshotBytes(readLocalBytes(io, path, { noFollow: true }), path) };
   });
   return selectNewest(candidates, dir);
 }
@@ -77,7 +81,7 @@ export async function loadSnapshot(source, io) {
   if (!source || !source.kind) throw new UsageError('読み込み元がありません');
   if (source.kind === 'file') {
     if (source.value === '-') {
-      return { snapshot: readSnapshotBytes(io.readStdin(), '標準入力'), label: '標準入力' };
+      return { snapshot: readSnapshotBytes(await io.readStdin(), '標準入力'), label: '標準入力' };
     }
     const bytes = readLocalBytes(io, source.value);
     return { snapshot: readSnapshotBytes(bytes, source.value), label: source.value };
