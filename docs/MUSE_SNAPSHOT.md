@@ -28,7 +28,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 段階を2つに分けます。
 
 1. **共有シートでの書き出し（先に入れる）**: 設定画面で期間を選んでスナップショットを作り、iOSの共有シートから「ファイル」アプリ経由でDriveの `KakeiMatch` フォルダへ保存する。GoogleのOAuthクライアント登録を待たずに、実データでの読み取りを確かめられる。Drive連携が使えないときの予備にもなる。
-2. **Driveへの直接書き込み（後から入れる）**: Google Sign-Inで `drive.file` 権限だけを求め、アプリが作った `KakeiMatch/snapshot.json` を上書きする。GCPのOAuthクライアント登録と同意画面の記載を利用者が済ませてから実装する。
+2. **Driveへの直接書き込み（実装済み、実機確認待ち）**: Google Sign-Inで `drive.file` 権限だけを求め、アプリが作った `KakeiMatch/snapshot.json` を上書きする。GCPのOAuthクライアント登録と同意画面の記載を利用者が済ませてから実装した。
 
 ### 含めるもの
 
@@ -41,6 +41,25 @@ Muse: kakeimatch-read balances | transactions | monthly
 月ごとの集計値は、アプリのホーム画面と同じ `TransactionRepository.home(month:)` の結果を書きます。Muse側で取引から計算し直した値と画面の値がずれないようにするためです。CLIは取引から計算し直した値と比べ、ずれていれば警告します。
 
 レシート画像、明細CSV、照合の作業データ、予算、定期登録、給与明細の内訳、ログイン情報、AIの利用状況は含めません。必要になったら形式の版を上げずに追加できる項目か、別の形式にするかを都度判断します。
+
+### Driveへの自動書き込み
+
+設定のトグルは既定でOFFにし、OFFの間はGoogle Sign-Inの復元を含むDrive向けの処理を動かさない。ONにしたときだけ次のタイミングで書き込む（案C）。
+
+- アプリの起動時と、前面に戻ったとき（`scenePhase == .active`）
+- 設定ページの「今すぐ保存」
+
+自動・手動とも、期間は書き出し時点の `KMMuseExportPresentation.defaultRange(today:)`（当月と過去2か月）で、`KMMuseSnapshotBuilder.build(...)` の出力をそのまま送る。保存先はDriveの `KakeiMatch` フォルダ直下の `snapshot.json` 固定で、既存ファイルがあれば中身を差し替える。
+
+Driveに対して行う操作は次の3種類だけにする。中身の取得（`alt=media`）、削除、ゴミ箱への移動、権限の変更は行わない。アプリはDriveから読み込まない。
+
+| 操作 | リクエスト |
+| --- | --- |
+| フォルダの作成 | `KakeiMatch` がなければ `POST /drive/v3/files` |
+| ファイルの作成 | `snapshot.json` がなければ `POST /upload/drive/v3/files?uploadType=multipart` |
+| ファイルの上書き | あれば `PATCH /upload/drive/v3/files/<id>?uploadType=media` |
+
+401のときだけトークンを取り直して1回やり直す。それでも401なら失敗として扱い、5xxなどは再試行しない。送信に失敗したときは最後に送った内容のfingerprintを更新せず、次に前面へ戻ったときにもう一度判定する（連続した再試行はしない）。Driveが返す英語のエラー文は画面に出さず、日本語の理由に置き換える。
 
 ### 暗号化しない
 
@@ -72,7 +91,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 | 2 | CLI（`tools/kakeimatch-read`）と合成データでのテスト。使い方は[CLIのREADME](../tools/kakeimatch-read/README.md) |
 | 3 | iOSでスナップショットを組み立てる処理とテスト |
 | 4 | iOSの設定画面からの共有シートでの書き出し |
-| 5 | iOSのGoogle連携とDriveへの直接書き込み（GCPの準備待ち） |
+| 5 | iOSのGoogle連携とDriveへの直接書き込み（実装済み、実機確認待ち） |
 
 iOSにはPWAの対応画面がない新機能です。画面はPWAの設定画面の部品と文言の調子に合わせ、PRの「PWAとの差分」にその旨を書きます。
 

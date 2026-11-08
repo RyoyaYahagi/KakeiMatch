@@ -13,6 +13,7 @@ struct AppShell: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.repositories) private var repositories
+    @Environment(\.driveSync) private var driveSync
     @State private var reviewCount = 0
     @State private var reviewCountError: String?
     @AppStorage(KMAppSettingsPreferences.themePreferenceKey) private var themePreferenceRaw = KMThemePreference.system.rawValue
@@ -138,6 +139,7 @@ struct AppShell: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
                 Task { await refreshReviewCount() }
+                Task { await driveSync?.syncIfNeeded(repositories: repositories) }
             }
         }
         .task {
@@ -151,6 +153,10 @@ struct AppShell: View {
             }
             await refreshReviewCount()
             await deletionNotice.configure(repositories)
+            // OFF returns before any repository read, so the default install
+            // behaves exactly as before this feature existed. Running it in a
+            // child task keeps a slow Drive request from delaying the first screen.
+            Task { await driveSync?.syncIfNeeded(repositories: repositories) }
         }
     }
 

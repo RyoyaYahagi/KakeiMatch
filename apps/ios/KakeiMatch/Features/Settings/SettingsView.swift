@@ -11,6 +11,7 @@ private enum KMSettingsPage: Equatable {
     case accounts
     case backup
     case museExport
+    case driveSync
     case ai
     case appInfo
 }
@@ -25,6 +26,7 @@ struct SettingsView: View {
     var onOpenMoneyForward: () -> Void = {}
     var onShowHome: () -> Void = {}
     @Environment(\.repositories) private var repositories
+    @Environment(\.driveSync) private var driveSync
     @State private var model = KMSettingsModel()
     @State private var auth = KMNativeAuthModel()
     @State private var page = KMSettingsPage.root
@@ -62,6 +64,12 @@ struct SettingsView: View {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
             case .museExport: KMMuseExportView(now: museExportNow, onBack: { page = .root })
+            case .driveSync:
+                if let driveSync {
+                    KMDriveSyncView(model: driveSync, onBack: { page = .root })
+                } else {
+                    KMDriveSyncView(now: museExportNow, onBack: { page = .root })
+                }
             case .ai: KMNativeAuthView(model: auth, onBack: { page = .root; onAIBack() }, onShowHome: onShowHome)
             }
         }
@@ -102,7 +110,8 @@ struct SettingsView: View {
 
             let sections = KMSettingsPresentation.sections(
                 theme: model.settings.theme,
-                aiUsageValue: auth.settingsRowValue
+                aiUsageValue: auth.settingsRowValue,
+                driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: driveSync?.isEnabled == true)
             )
             ForEach(sections) { section in
                 Text(section.title)
@@ -164,6 +173,7 @@ struct SettingsView: View {
             case .accounts: page = .accounts
             case .backup: page = .backup
             case .museExport: page = .museExport
+            case .driveSync: page = .driveSync
             case .ai: page = .ai
             case .appInfo: page = .appInfo
             case .unimplemented: break

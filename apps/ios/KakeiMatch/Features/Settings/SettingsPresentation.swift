@@ -12,6 +12,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case accounts
         case backup
         case museExport
+        case driveSync
         case ai
         case appInfo
     }
@@ -55,7 +56,12 @@ enum KMSettingsPresentation {
         return current - exported >= backupReminderAge
     }
 
-    static func sections(theme: KMThemePreference, aiUsageValue: String? = nil) -> [KMSettingsSection] {
+    static func driveSyncValue(isEnabled: Bool) -> String {
+        KMDriveSyncPresentation.rowValue(isEnabled: isEnabled)
+    }
+
+    static func sections(theme: KMThemePreference, aiUsageValue: String? = nil,
+                         driveSyncValue: String = "オフ") -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
@@ -67,6 +73,8 @@ enum KMSettingsPresentation {
             KMSettingsSection(title: "データ", rows: [
                 .init(id: "settings.backup", title: "バックアップと復元", destination: .backup),
                 .init(id: "settings.museExport", title: "AIアシスタント向けの書き出し", destination: .museExport),
+                .init(id: "settings.driveSync", title: "Google Driveへの自動保存",
+                      value: driveSyncValue, destination: .driveSync),
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [

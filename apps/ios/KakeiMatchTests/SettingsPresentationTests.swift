@@ -11,6 +11,23 @@ struct MasterPresentationTests {
     }
 }
 
+struct DriveSyncSettingsRowTests {
+    @Test func rowSitsAfterMuseExportAndShowsTheToggleState() {
+        let off = KMSettingsPresentation.sections(theme: .system)
+        let dataRows = off[1].rows
+        #expect(dataRows.map(\.title) == [
+            "バックアップと復元", "AIアシスタント向けの書き出し", "Google Driveへの自動保存",
+            "原本の整理・全削除",
+        ])
+        #expect(dataRows[2].destination == .driveSync)
+        #expect(dataRows[2].value == "オフ")
+
+        let on = KMSettingsPresentation.sections(
+            theme: .system, driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: true))
+        #expect(on[1].rows[2].value == "オン")
+    }
+}
+
 @MainActor struct SettingsModelTests {
     @Test func themeSelectionPersistsToRepositoryAndAppPreference() async throws {
         let repositories = try KMFixtureLoader.load(named: "migration")

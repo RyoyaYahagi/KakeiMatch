@@ -43,6 +43,10 @@ Service Workerは `/api/*` をcacheしません。Workerはブラウザー内の
 
 iOSのAPI層は、App AttestとPasskeyで検証する専用 `/api/native/*` を使います。家計データの正本や通常の端末内操作はCloud accountに依存しません。Webの認証経路を緩めず、ネイティブセッション・短期tokenを既存のWeb Cookie/JWTと分離します。検証後のAI処理は既存の利用枠・接続元制限・費用停止を通します。AASA、必要設定、追加D1表、実機確認の残件は[ネイティブ認証境界](NATIVE_APP_AUTH.md)に定義します。API層の追加であり、認証画面・家計サービスへの接続までの完成を意味しません。
 
+## iOSのGoogle Driveへの書き出し
+
+iOSアプリは、利用者が設定で明示的に有効にした場合だけ、本人のGoogle Driveへ直接スナップショットを書き込みます。書き込みはアプリの起動時・前面復帰時と「今すぐ保存」に行い、家計データは開発者のCloudflare Worker・D1・R2を通りません。アプリが要求する権限は `drive.file` だけに限定し、アプリが作った `KakeiMatch/snapshot.json` の作成と上書き、およびフォルダ作成の3操作以外は行いません。アプリはDriveから読み込まず、削除・権限変更もしません。既定はOFFで、OFFの間はGoogle Sign-Inの復元も含めてDrive向けの処理を動かしません。詳細は[Museへの読み取り専用スナップショット](MUSE_SNAPSHOT.md)を参照してください。
+
 ## 端末内データの移行
 
 Issue #38のクラウド保存は、明示同意後の暗号文のみを端末外へ送る追加経路として段階的に実装します。端末側の共通暗号形式と復旧コードは[暗号化クラウド保存の共通形式](ENCRYPTED_HOUSEHOLD_STORAGE.md)に定義します。現段階では送信・保存先・同意UIは未実装で、通常の端末内利用には影響しません。将来の保存先へ平文家計データ、復旧コード、復号鍵を送らず、Cloud account/Passkeyと復号鍵を分けます。
