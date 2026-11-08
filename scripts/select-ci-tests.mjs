@@ -31,6 +31,7 @@ function isPwaIndependent(file) {
 
 function hasNoBrowserImpact(file) {
   return isPwaIndependent(file) || file.endsWith('.md') || file.startsWith('docs/') ||
+    file.startsWith('tools/kakeimatch-read/') || file.startsWith('test/fixtures/muse-snapshot/') ||
     /^src\/.*\.test\.ts$/.test(file);
 }
 
