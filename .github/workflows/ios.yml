@@ -5,6 +5,7 @@ on:
     paths:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
+      - 'test/fixtures/muse-snapshot/**'
       - '.github/workflows/ios.yml'
       # Docs and the TestFlight upload script do not affect the app build or tests.
       - '!apps/ios/**/*.md'
@@ -16,6 +17,7 @@ on:
     paths:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
+      - 'test/fixtures/muse-snapshot/**'
       - '.github/workflows/ios.yml'
       # Docs and the TestFlight upload script do not affect the app build or tests.
       - '!apps/ios/**/*.md'
