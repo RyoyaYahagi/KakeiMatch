@@ -23,7 +23,7 @@ KakeiMatch iOSがMuse向けに書き出すJSONの正式な仕様です。iOSの�
   "timeZone": "Asia/Tokyo",
   "currency": "JPY",
   "appVersion": "0.1.0 (202611080000)",
-  "range": { "fromMonth": "2026-09", "toMonth": "2026-10" },
+  "range": { "fromMonth": "2026-10", "toMonth": "2026-10" },
   "accounts": [
     { "id": "acc-bank", "name": "合成銀行", "type": "bank", "closed": false, "offBudget": false, "balanceYen": 182000 }
   ],
@@ -37,7 +37,7 @@ KakeiMatch iOSがMuse向けに書き出すJSONの正式な仕様です。iOSの�
   ],
   "monthly": [
     {
-      "month": "2026-10", "incomeYen": 250000, "expenseYen": 1280, "balanceYen": 248720,
+      "month": "2026-10", "incomeYen": 0, "expenseYen": 1280, "balanceYen": -1280,
       "byCategory": [{ "categoryId": "cat-food", "categoryName": "食費", "amountYen": 1280 }]
     }
   ]
@@ -68,7 +68,7 @@ KakeiMatch iOSがMuse向けに書き出すJSONの正式な仕様です。iOSの�
 | `fromMonth` | 年月 | 最初の月（この月の1日を含む） |
 | `toMonth` | 年月 | 最後の月（この月の末日を含む）。`fromMonth` 以降で、期間は最大60か月 |
 
-期間は月単位です。月の途中から書き出すと月次集計と取引の範囲がずれるため、日単位の指定は受け付けません。書き出す月が当月を含む場合、当月は書き出した時点までの値です。
+期間は月単位です。月の途中から書き出すと月次集計と取引の範囲がずれるため、日単位の指定は受け付けません。取引と月次集計は、書き出した時点で端末に保存されている、その期間の取引すべてから作ります。日付が書き出した日より後の取引（先の日付で登録したものなど）も含みます。ホーム画面の月次集計と同じ扱いです。
 
 ### `accounts[]`
 
@@ -112,7 +112,17 @@ KakeiMatch iOSがMuse向けに書き出すJSONの正式な仕様です。iOSの�
 
 `byCategory[]` の要素は `categoryId`（未分類は `null`）、`categoryName`（未分類は `未分類`）、`amountYen` を持ちます。`amountYen` は支出を正の数で表します。分割取引の返金などで負になることがあります。
 
-月次集計はアプリのホーム画面と同じ規則で計算した値です。予算対象外の口座、振替、支出集計から外した出金は入りません。分割取引は内訳のカテゴリごとに数えます。
+月次集計はアプリのホーム画面と同じ規則で計算した値です。読み手が同じ値を計算し直せるよう、手順を次に示します。
+
+1. 対象の月の取引のうち、予算対象外の口座の取引、振替（`kind` が `transfer`）、支出集計から外した出金（`excludedFromSpending` が `true` で `amountYen` が負）を除く。
+2. 残った取引を、親の `amountYen` の符号で数える。正なら `incomeYen` に足し、負なら絶対値を `expenseYen` に足す。分割の内訳は収入・支出の合計には使わない。
+3. 親が出金（`amountYen` が負）の取引だけを、カテゴリ別支出に数える。分割でなければ親の `categoryId` に `-amountYen` を足す。分割なら内訳ごとに、その `categoryId` に `-amountYen` を足す。
+4. 0円になったカテゴリを除き、金額の大きい順に並べる。同じ金額なら `categoryName`、次に `categoryId` の順にする。
+
+返金の扱いは次の2通りです。
+
+- **単独の返品入金**（`amountYen` が正の取引）: 収入に数え、カテゴリ別支出からは引かない。サンプルの `tx-0904`（返品 +300円）は、食費を減らさず `incomeYen` に入る。
+- **出金の分割の中の返金**（親が負で、内訳の一部が正）: 親の出金は支出に数え、正の内訳はそのカテゴリの支出から引く。そのカテゴリの `amountYen` は負になることがある。
 
 ## 読み手の検証
 
