@@ -91,6 +91,51 @@ struct MuseSnapshotBuilderTests {
             generatedAt: try MuseSnapshotFixture.generatedAt(), appVersion: MuseSnapshotFixture.appVersion)
         #expect(readOnly.writeCalls.isEmpty)
     }
+
+    /// The search hides the incoming side of a transfer; the snapshot keeps each side by its own date.
+    @Test func transferSidesAreKeptByTheirOwnDates() async throws {
+        let store = MuseSnapshotFixture.transferStore(outgoing: "2026-09-30", incoming: "2026-10-01")
+        let builder = KMMuseSnapshotBuilder(transactions: store, accounts: store, categories: store)
+        let october = try await builder.build(fromMonth: try KMYearMonth("2026-10"), toMonth: try KMYearMonth("2026-10"),
+            generatedAt: Date(timeIntervalSince1970: 0), appVersion: nil)
+        #expect(october.transactions.map(\.id) == ["t-in"])
+        let september = try await builder.build(fromMonth: try KMYearMonth("2026-09"), toMonth: try KMYearMonth("2026-09"),
+            generatedAt: Date(timeIntervalSince1970: 0), appVersion: nil)
+        #expect(september.transactions.map(\.id) == ["t-out"])
+    }
+
+    @Test func transferSidesOnDifferentDaysStayInDateDescendingOrder() async throws {
+        let store = MuseSnapshotFixture.transferStore(outgoing: "2026-10-28", incoming: "2026-10-30")
+        let builder = KMMuseSnapshotBuilder(transactions: store, accounts: store, categories: store)
+        let snapshot = try await builder.build(fromMonth: try KMYearMonth("2026-10"), toMonth: try KMYearMonth("2026-10"),
+            generatedAt: Date(timeIntervalSince1970: 0), appVersion: nil)
+        #expect(snapshot.transactions.map(\.id) == ["t-in", "t-out"])
+    }
+
+    /// Production reads go through SQLite; the snapshot must match the sample there too and leave the
+    /// stored household as it was.
+    @Test func sqliteStoreMatchesSampleAndKeepsStoredData() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let seeded = try KMSQLiteStore(directory: directory)
+        try KMStoreDatabase(url: directory.appendingPathComponent(try seeded.profile().current.uuidString)
+            .appendingPathComponent("household.sqlite")).save(MuseSnapshotFixture.store())
+        let store = try KMSQLiteStore(directory: directory)
+        let everything = KMTransactionQuery(limit: nil, includeIncomingTransfers: true)
+        let before = (try await store.transactions(matching: everything), try await store.accounts(includeClosed: true))
+
+        let snapshot = try await KMMuseSnapshotBuilder(transactions: store, accounts: store, categories: store).build(
+            fromMonth: try KMYearMonth("2026-09"), toMonth: try KMYearMonth("2026-10"),
+            generatedAt: try MuseSnapshotFixture.generatedAt(), appVersion: MuseSnapshotFixture.appVersion)
+        let actual = try MuseSnapshotFixture.normalized(try snapshot.jsonData())
+        let expected = try MuseSnapshotFixture.normalized(try MuseSnapshotFixture.sample("snapshot-sample-normal.json"))
+        #expect(actual == expected)
+
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.transactions(matching: everything) == before.0)
+        #expect(try await reopened.accounts(includeClosed: true) == before.1)
+    }
 }
 
 @MainActor
@@ -124,6 +169,18 @@ private enum MuseSnapshotFixture {
     static func isNull(_ value: Any?) -> Bool {
         guard let value else { return true }
         return value is NSNull
+    }
+
+    static func transferStore(outgoing: String, incoming: String) -> KMInMemoryStore {
+        KMInMemoryStore(
+            transactions: [
+                KMTransaction(id: "t-out", date: KMDate(rawValue: outgoing), amountYen: -1000, kind: .transfer,
+                    accountId: "a-bank", transferAccountId: "a-cash", transferId: "t-in"),
+                KMTransaction(id: "t-in", date: KMDate(rawValue: incoming), amountYen: 1000, kind: .transfer,
+                    accountId: "a-cash", transferAccountId: "a-bank", transferId: "t-out"),
+            ],
+            accounts: [KMAccount(id: "a-bank", name: "合成銀行", accountType: .bank),
+                       KMAccount(id: "a-cash", name: "財布", accountType: .cash)])
     }
 
     static func store() -> KMInMemoryStore {
