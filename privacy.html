@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>プライバシーポリシー｜KakeiMatch</title>
+<style>
+  body { font-family: -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif; margin: 0; color: #1c1c1e; background: #f7f7f5; line-height: 1.7; }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 20px 64px; }
+  h1 { font-size: 26px; margin: 0 0 8px; }
+  .meta { color: #888; font-size: 13px; margin: 0 0 32px; }
+  h2 { font-size: 18px; margin: 32px 0 8px; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+  a { color: #0a6cff; }
+  footer { margin-top: 48px; color: #888; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>プライバシーポリシー</h1>
+  <p class="meta">KakeiMatch（以下「本アプリ」）における情報の取り扱いについて定めます。制定日: 2026年11月9日</p>
+
+  <h2>基本方針</h2>
+  <p>本アプリは、開発者が運用するサーバーを持ちません。家計データは利用者の端末に保存され、開発者が利用者のデータを収集・閲覧することはありません。</p>
+
+  <h2>端末に保存される情報</h2>
+  <p>本アプリは、家計簿の記録（口座、取引、日付、金額、カテゴリ、店名、メモなど）を端末内のデータベースに保存します。これらの情報が開発者に送信されることはありません。</p>
+
+  <h2>データの書き出し</h2>
+  <p>本アプリには、家計データのスナップショットを JSON 形式で書き出す機能があります。書き出しは利用者自身の操作によってのみ行われ、保存先も利用者が選択します。</p>
+
+  <h2>Google Drive 連携（任意機能）</h2>
+  <ul>
+    <li>この連携は任意であり、既定では無効です。利用者がアプリ内で有効にした場合にのみ動作します。</li>
+    <li>有効にすると、Google サインインによる認証のうえ、書き出しデータ（snapshot.json）を利用者本人の Google Drive に自動保存します。保存先は、本アプリが作成する「KakeiMatch」フォルダです。</li>
+    <li>本アプリが要求する Google の権限（スコープ）は <code>drive.file</code> のみです。本アプリが作成したファイルだけにアクセスでき、利用者の Drive 内の他のファイルにはアクセスしません。</li>
+    <li>Google サインインで取得する情報（メールアドレスなど）は、本人の認証と画面表示のためにのみ使用します。開発者のサーバーは存在しないため、これらの情報が開発者に送信・保存されることもありません。</li>
+    <li>連携はアプリの設定からいつでも無効化でき、サインアウトも可能です。保存済みのファイルは、利用者が Google Drive 上で直接削除できます。</li>
+  </ul>
+
+  <h2>第三者への提供・外部送信</h2>
+  <ul>
+    <li>利用者のデータを第三者に提供・販売することはありません。</li>
+    <li>広告 SDK や行動解析（アナリティクス）SDK は使用していません。</li>
+    <li>上記の Google Drive 連携を利用者が有効にした場合を除き、本アプリが外部のサービスへデータを送信することはありません。</li>
+  </ul>
+
+  <h2>ポリシーの変更</h2>
+  <p>本ポリシーを変更した場合は、このページで告知します。重要な変更がある場合は、アプリの更新情報などでもお知らせします。</p>
+
+  <h2>お問い合わせ</h2>
+  <p>メール: <a href="mailto:yappapp.support@gmail.com">yappapp.support@gmail.com</a></p>
+
+  <h2>Summary (English)</h2>
+  <p>KakeiMatch is a household budgeting app. All financial records are stored locally on the user's device; the developer operates no server and collects no user data. An optional Google Drive integration (disabled by default) signs the user in with Google and saves a JSON snapshot of the user's data into a folder the app creates in the user's own Google Drive. The app requests only the <code>drive.file</code> scope, which limits access to files created by the app itself. Sign-in information (such as the email address) is used solely for authentication and display within the app and is never sent to the developer. The app contains no advertising or analytics SDKs and never sells or shares user data with third parties. Contact: yappapp.support@gmail.com</p>
+
+  <footer>© 2026 Ryoya Yahagi</footer>
+</main>
+</body>
+</html>
