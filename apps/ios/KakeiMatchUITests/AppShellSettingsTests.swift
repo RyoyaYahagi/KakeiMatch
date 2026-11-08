@@ -8,8 +8,10 @@ final class AppShellSettingsTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["settings-tab"].waitForExistence(timeout: 10))
         app.buttons["settings-tab"].tap()
-        XCTAssertTrue(app.buttons["settings.theme"].waitForExistence(timeout: 5))
-        app.buttons["settings.theme"].tap()
+        let theme = app.buttons["settings.theme"]
+        XCTAssertTrue(theme.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !theme.isHittable { app.swipeUp() }
+        theme.tap()
         XCTAssertTrue(app.staticTexts["settings-page-theme-title"].waitForExistence(timeout: 5))
 
         let picker = app.descendants(matching: .any)["theme-preference"]

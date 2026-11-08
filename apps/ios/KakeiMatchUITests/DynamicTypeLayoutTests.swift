@@ -51,8 +51,9 @@ final class DynamicTypeLayoutTests: XCTestCase {
         XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 10))
         assertTappable(app.buttons["settings-tab"], screen: screen)
         screenshot(app, named: "dynamic-type-xl-settings")
-        app.swipeUp()
-        assertTappable(app.buttons["settings.theme"], screen: screen)
+        let theme = app.buttons["settings.theme"]
+        for _ in 0..<3 where !theme.isHittable { app.swipeUp() }
+        assertTappable(theme, screen: screen)
     }
 
     @MainActor

@@ -11,6 +11,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case categories
         case accounts
         case backup
+        case museExport
         case ai
         case appInfo
     }
@@ -65,6 +66,7 @@ enum KMSettingsPresentation {
             ]),
             KMSettingsSection(title: "データ", rows: [
                 .init(id: "settings.backup", title: "バックアップと復元", destination: .backup),
+                .init(id: "settings.museExport", title: "AIアシスタント向けの書き出し", destination: .museExport),
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [

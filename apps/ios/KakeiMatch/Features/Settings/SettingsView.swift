@@ -10,6 +10,7 @@ private enum KMSettingsPage: Equatable {
     case categories
     case accounts
     case backup
+    case museExport
     case ai
     case appInfo
 }
@@ -60,6 +61,7 @@ struct SettingsView: View {
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
+            case .museExport: KMMuseExportView(today: repositories?.referenceDate ?? Date(), onBack: { page = .root })
             case .ai: KMNativeAuthView(model: auth, onBack: { page = .root; onAIBack() }, onShowHome: onShowHome)
             }
         }
@@ -153,6 +155,7 @@ struct SettingsView: View {
             case .categories: page = .categories
             case .accounts: page = .accounts
             case .backup: page = .backup
+            case .museExport: page = .museExport
             case .ai: page = .ai
             case .appInfo: page = .appInfo
             case .unimplemented: break
