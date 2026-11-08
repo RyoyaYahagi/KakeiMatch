@@ -169,7 +169,7 @@ function buildMonthly(snapshot, options, warnings) {
   return { data, human: RENDERERS.monthly(data) };
 }
 
-function buildValidate(snapshot) {
+function buildValidate(snapshot, warnings) {
   const data = {
     command: 'validate',
     generatedAt: snapshot.generatedAt,
@@ -178,6 +178,7 @@ function buildValidate(snapshot) {
     accounts: snapshot.accounts.length,
     transactions: snapshot.transactions.length,
     months: snapshot.monthly.length,
+    warnings,
   };
   return { data, human: RENDERERS.validate(data) };
 }
@@ -193,7 +194,7 @@ export function runCommand(command, options, snapshot, warnings, now) {
     case 'monthly':
       return buildMonthly(snapshot, options, warnings);
     case 'validate':
-      return buildValidate(snapshot);
+      return buildValidate(snapshot, warnings);
     default:
       throw new UsageError(`不明なサブコマンドです: ${command}`);
   }

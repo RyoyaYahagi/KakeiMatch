@@ -46,7 +46,6 @@ test('必須項目の欠落はどの項目かわかる日本語のエラーに�
 });
 
 test('金額が小数・文字列・安全でない整数ならエラーになる', () => {
-  expectError(snapshot => { snapshot.transactions[0].amountYen = -1.5; }, /amountYen が整数円ではありません/);
   expectError(snapshot => { snapshot.transactions[0].amountYen = '-1280'; }, /amountYen が整数円ではありません/);
   expectError(snapshot => {
     snapshot.transactions[0].amountYen = Number.MAX_SAFE_INTEGER + 1;
@@ -137,4 +136,45 @@ test('未知の項目は無視する', () => {
   snapshot.futureField = { anything: true };
   snapshot.transactions[0].futureField = 1;
   assert.equal(parse(snapshot).transactions.length, 12);
+});
+
+function expectRawError(text, pattern) {
+  assert.throws(() => readSnapshotBytes(Buffer.from(text, 'utf8'), LABEL), error => {
+    assert.ok(error instanceof SnapshotError, `SnapshotError ではありません: ${error}`);
+    assert.match(error.message, pattern);
+    return true;
+  });
+}
+
+test('小数・指数表記の数値は JSON.parse で丸められる前にエラーになる', () => {
+  const text = JSON.stringify(loadSample('snapshot-sample-normal'));
+  const balance = '"balanceYen":182000';
+  assert.ok(text.includes(balance));
+  expectRawError(text.replace(balance, '"balanceYen":9007199254740990.9'), /小数または指数表記の数値があります（9007199254740990\.9）/);
+  expectRawError(text.replace(balance, '"balanceYen":1e3'), /小数または指数表記/);
+  expectRawError(text.replace(balance, '"balanceYen":-1.5'), /小数または指数表記/);
+  // 文字列の中の小数は数値ではないので問題にしない。
+  assert.equal(parse({ ...loadSample('snapshot-sample-normal'), appVersion: '1.2e3 (1.5)' }).appVersion, '1.2e3 (1.5)');
+});
+
+test('存在しない日時や範囲外の時刻・時差の generatedAt はエラーになる', () => {
+  for (const value of ['2026-02-30T09:00:00+09:00', '2026-11-08T24:00:00+09:00', '2026-11-08T09:60:00+09:00',
+    '2026-11-08T09:00:00+15:00', '2026-11-08 09:00:00+09:00']) {
+    expectError(snapshot => { snapshot.generatedAt = value; }, /generatedAt/);
+  }
+});
+
+test('同じ月でカテゴリが重複する・0円・未分類の名前が違う byCategory はエラーになる', () => {
+  expectError(snapshot => {
+    const october = snapshot.monthly[1];
+    october.byCategory.splice(0, 1,
+      { categoryId: 'cat-food', categoryName: '食費', amountYen: 4259 },
+      { categoryId: 'cat-food', categoryName: '別の名前', amountYen: 1 });
+  }, /重複/);
+  expectError(snapshot => {
+    snapshot.monthly[1].byCategory.push({ categoryId: 'cat-zero', categoryName: '交際費', amountYen: 0 });
+  }, /0円/);
+  expectError(snapshot => {
+    snapshot.monthly[1].byCategory.find(category => category.categoryId === null).categoryName = 'その他';
+  }, /未分類/);
 });

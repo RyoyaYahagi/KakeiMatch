@@ -330,11 +330,22 @@ function readMonthly(errors, root, range) {
       errors.push(`${path}.byCategory が配列ではありません（実際: ${describeValue(byCategory)}）`);
       return;
     }
+    const seenCategories = new Set();
     byCategory.forEach((category, categoryIndex) => {
       const categoryPath = `${path}.byCategory[${categoryIndex}]`;
       if (!isPlainObject(category)) {
         errors.push(`${categoryPath} がオブジェクトではありません（実際: ${describeValue(category)}）`);
         return;
+      }
+      // The app aggregates each category into one row and drops zero rows.
+      const key = category.categoryId === null ? null : category.categoryId;
+      if (seenCategories.has(key)) {
+        errors.push(`${categoryPath}.categoryId が同じ月の中で重複しています（${describeValue(category.categoryId)}）`);
+      }
+      seenCategories.add(key);
+      if (category.amountYen === 0) errors.push(`${categoryPath}.amountYen が 0 です。0円のカテゴリは含めません`);
+      if (category.categoryId === null && hasField(category, 'categoryName') && category.categoryName !== '未分類') {
+        errors.push(`${categoryPath}.categoryName は未分類（categoryId が null）では「未分類」です（実際: ${describeValue(category.categoryName)}）`);
       }
       checkStringOrNull(errors, `${categoryPath}.categoryId`, requireField(errors, category, `${categoryPath}.categoryId`, 'categoryId'));
       checkRequiredString(
@@ -394,6 +405,27 @@ export function validateSnapshot(value) {
   return errors;
 }
 
+// JSON.parse turns 1e3 and 1.9 into numbers that may look like integers, so the raw number tokens
+// are checked first. Every number in v1 is an integer.
+export function findNonIntegerNumber(text) {
+  let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (char === '\\') index += 1;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') { inString = true; continue; }
+    if (char === '-' || (char >= '0' && char <= '9')) {
+      const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(index, index + 400))?.[0] ?? char;
+      if (/[.eE]/.test(token)) return token;
+      index += token.length - 1;
+    }
+  }
+  return null;
+}
+
 export function readSnapshotBytes(bytes, label) {
   if (!(bytes instanceof Uint8Array)) {
     throw new SnapshotError([`${label}: 読み込んだ内容がバイト列ではありません`]);
@@ -416,6 +448,10 @@ export function readSnapshotBytes(bytes, label) {
     throw new SnapshotError([
       `${label}: JSON として読めません（${error.message}）。.kmb / .kmib など別形式のファイルではないか確認してください`,
     ]);
+  }
+  const nonInteger = findNonIntegerNumber(text);
+  if (nonInteger !== null) {
+    throw new SnapshotError([`${label}: 小数または指数表記の数値があります（${nonInteger}）。金額などの数値は整数で書きます`]);
   }
   const errors = validateSnapshot(value);
   if (errors.length > 0) {

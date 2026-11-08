@@ -71,10 +71,20 @@ test('rclone の実行は cat と lsjson の引数だけを渡す', async () => 
   await rclone.cat('gdrive:KakeiMatch/snapshot.json');
   await rclone.listFiles('gdrive:KakeiMatch/');
   assert.deepEqual(execFile.calls, [
-    { file: 'rclone', args: ['cat', 'gdrive:KakeiMatch/snapshot.json'] },
-    { file: 'rclone', args: ['lsjson', '--files-only', 'gdrive:KakeiMatch/'] },
+    { file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] },
+    { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] },
   ]);
   for (const call of execFile.calls) {
     assert.ok(['cat', 'lsjson'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
   }
+});
+
+test('rclone には副作用を起こしうる RCLONE_* の環境変数を渡さない', async () => {
+  const execFile = fakeExecFile(() => ({ stdout: '{}' }));
+  const rclone = createRclone({ execFile, env: {
+    PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf',
+    RCLONE_LOG_FILE: '/tmp/unexpected.log', RCLONE_DRY_RUN: 'false', SECRET_TOKEN: 'x',
+  } });
+  await rclone.cat('gdrive:KakeiMatch/snapshot.json');
+  assert.deepEqual(execFile.envs[0], { PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf' });
 });

@@ -73,7 +73,7 @@ test('--remote はファイルを rclone cat だけで読む', async () => {
   const result = await execute(['summary', '--remote', 'gdrive:KakeiMatch/snapshot.json', '--json'], { execFile });
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).transactions, 12);
-  assert.deepEqual(execFile.calls, [{ file: 'rclone', args: ['cat', 'gdrive:KakeiMatch/snapshot.json'] }]);
+  assert.deepEqual(execFile.calls, [{ file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] }]);
 });
 
 test('--remote の末尾 / は lsjson で候補を列挙し、--dir と同じ規則で選ぶ', async () => {
@@ -97,7 +97,7 @@ test('--remote の末尾 / は lsjson で候補を列挙し、--dir と同じ規
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).generatedAt, '2026-11-05T09:00:00+09:00');
   assert.deepEqual(execFile.calls.map(call => call.args[0]), ['lsjson', 'cat', 'cat']);
-  assert.deepEqual(execFile.calls[0], { file: 'rclone', args: ['lsjson', '--files-only', 'gdrive:KakeiMatch/'] });
+  assert.deepEqual(execFile.calls[0], { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] });
   for (const call of execFile.calls) {
     assert.equal(call.file, 'rclone');
     assert.ok(['cat', 'lsjson'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);

@@ -3,7 +3,7 @@
 
 const MONTH_PATTERN = /^(\d{4})-(\d{2})$/;
 const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
-const DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const DATE_TIME_PATTERN = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
 
 export function isMonth(value) {
   if (typeof value !== 'string') return false;
@@ -44,8 +44,15 @@ export function monthOfDate(value) {
   return value.slice(0, 7);
 }
 
+// Date.parse rolls 2026-02-30 over to March, so each part is checked before parsing.
 export function isDateTime(value) {
-  return typeof value === 'string' && DATE_TIME_PATTERN.test(value) && Number.isFinite(Date.parse(value));
+  if (typeof value !== 'string') return false;
+  const match = DATE_TIME_PATTERN.exec(value);
+  if (!match || !isDate(match[1])) return false;
+  const [hour, minute, second] = [match[2], match[3], match[4]].map(Number);
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  if (match[5] !== undefined && (Number(match[5]) > 14 || Number(match[6]) > 59)) return false;
+  return Number.isFinite(Date.parse(value));
 }
 
 export function ageSeconds(generatedAt, now) {

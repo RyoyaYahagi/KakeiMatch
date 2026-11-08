@@ -18,6 +18,7 @@ export function fakeExecFile(handler) {
   const calls = [];
   const fake = (file, args, options, callback) => {
     calls.push({ file, args });
+    fake.envs.push(options?.env);
     const outcome = handler(args, calls.length - 1) ?? {};
     queueMicrotask(() => {
       if (outcome.error) callback(outcome.error, Buffer.alloc(0), Buffer.from(outcome.stderr ?? '', 'utf8'));
@@ -25,5 +26,6 @@ export function fakeExecFile(handler) {
     });
   };
   fake.calls = calls;
+  fake.envs = [];
   return fake;
 }

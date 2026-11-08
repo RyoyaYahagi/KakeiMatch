@@ -61,6 +61,7 @@ function readFlagValue(argv, index, flag) {
     throw new UsageError(`${flag} の値がありません`);
   }
   if (value === '') throw new UsageError(`${flag} の値が空です`);
+  if (flag === '--remote' && value.startsWith('-')) throw new UsageError(`--remote のパスは - で始められません: ${value}`);
   return value;
 }
 

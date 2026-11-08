@@ -101,6 +101,7 @@ export function renderValidate(data) {
     `期間: ${data.range.fromMonth} 〜 ${data.range.toMonth}`,
     `口座: ${data.accounts}件 / 取引: ${data.transactions}件 / 月次: ${data.months}件`,
   ];
+  lines.push(...warningLines(data.warnings));
   return `${lines.join('\n')}\n`;
 }
 

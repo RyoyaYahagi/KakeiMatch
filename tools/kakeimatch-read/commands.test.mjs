@@ -121,6 +121,25 @@ test('validate は検証結果だけを表示する', async () => {
   assert.match(human.stdout, /generatedAt/);
 });
 
+test('validate も集計の警告を --json の warnings と終了コードに反映する', async () => {
+  const snapshot = clone(loadSample('snapshot-sample-normal'));
+  snapshot.monthly[1].incomeYen += 1;
+  snapshot.monthly[1].balanceYen += 1;
+  const options = { readStdin: () => snapshotBytes(snapshot) };
+  const result = await execute(['validate', '--file', '-', '--json'], options);
+  assert.equal(result.exitCode, 0);
+  const data = JSON.parse(result.stdout);
+  assert.equal(data.valid, true);
+  assert.deepEqual(data.warnings.map(warning => warning.code), ['monthly-income-mismatch']);
+  assert.equal((await execute(['validate', '--file', '-', '--strict'], options)).exitCode, 3);
+});
+
+test('--remote の値が - で始まると rclone のオプションと取り違えないよう使い方の誤りにする', async () => {
+  const result = await execute(['summary', '--remote', '-h']);
+  assert.equal(result.exitCode, 1);
+  assert.match(result.stderr, /--remote のパスは - で始められません/);
+});
+
 test('使い方の誤りは終了コード 1 になる', async () => {
   const cases = [
     [],
