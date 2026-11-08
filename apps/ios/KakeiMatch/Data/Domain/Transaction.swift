@@ -75,4 +75,7 @@ struct KMTransactionQuery: Equatable, Sendable {
     var maxAmountYen: Int? = nil
     /// PWA records fetch 100 before the kind filter; search callers may use nil.
     var limit: Int? = 100
+    /// Search shows one row per transfer (the outgoing side). Exports that need every ledger row,
+    /// filtered by each row's own date, set this to also return the incoming side.
+    var includeIncomingTransfers: Bool = false
 }

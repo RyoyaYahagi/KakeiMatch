@@ -50,7 +50,7 @@ import Foundation
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] {
-        try filteredTransactions(query, recentOrder: false)
+        try filteredTransactions(query, recentOrder: false, includeIncomingTransfers: query.includeIncomingTransfers)
     }
     private func filteredTransactions(_ query: KMTransactionQuery, recentOrder: Bool, includeIncomingTransfers: Bool = false) throws -> [KMTransaction] {
         if let start = query.startDate, let end = query.endDate, start > end { throw KMDataError.invalidData("開始日は終了日以前にしてください。") }

@@ -78,6 +78,9 @@ targets:
       - path: ../../test/fixtures/ios-parity
         buildPhase: resources
         type: folder
+      - path: ../../test/fixtures/muse-snapshot
+        buildPhase: resources
+        type: folder
     dependencies:
       - target: KakeiMatch
     settings:
