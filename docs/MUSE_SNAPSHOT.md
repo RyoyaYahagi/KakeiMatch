@@ -69,7 +69,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 | 段階 | 内容 |
 | --- | --- |
 | 1 | この文書、形式の仕様、合成データのサンプル |
-| 2 | CLI（`tools/kakeimatch-read`）と合成データでのテスト |
+| 2 | CLI（`tools/kakeimatch-read`）と合成データでのテスト。使い方は[CLIのREADME](../tools/kakeimatch-read/README.md) |
 | 3 | iOSでスナップショットを組み立てる処理とテスト |
 | 4 | iOSの設定画面からの共有シートでの書き出し |
 | 5 | iOSのGoogle連携とDriveへの直接書き込み（GCPの準備待ち） |
