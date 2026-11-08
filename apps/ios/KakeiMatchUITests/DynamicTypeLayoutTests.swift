@@ -51,8 +51,33 @@ final class DynamicTypeLayoutTests: XCTestCase {
         XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 10))
         assertTappable(app.buttons["settings-tab"], screen: screen)
         screenshot(app, named: "dynamic-type-xl-settings")
-        app.swipeUp()
-        assertTappable(app.buttons["settings.theme"], screen: screen)
+        let theme = app.buttons["settings.theme"]
+        for _ in 0..<3 where !theme.isHittable { app.swipeUp() }
+        assertTappable(theme, screen: screen)
+
+        // The export page stacks each period label above its year and month pickers at
+        // accessibility sizes, so the longest labels must still stay inside the screen.
+        // The data section sits above 外観, which the previous step scrolled to.
+        let museExport = app.buttons["settings.museExport"]
+        for _ in 0..<5 where !museExport.isHittable { app.swipeDown(velocity: .slow) }
+        assertTappable(museExport, screen: screen)
+        museExport.tap()
+        XCTAssertTrue(app.otherElements["museExport.screen"].waitForExistence(timeout: 10))
+        // Settings pages share the shell's ScrollView, which keeps the offset of the list scrolled
+        // above, so the page opens part-way down; scroll back to its title first.
+        let title = app.staticTexts["museExport.title"]
+        for _ in 0..<8 where title.frame.minY < screen.frame.minY { app.swipeDown(velocity: .slow) }
+        assertInside(title, screen: screen)
+        let fromYear = app.descendants(matching: .any)["museExport.fromYear"]
+        let fromMonth = app.descendants(matching: .any)["museExport.fromMonth"]
+        for _ in 0..<4 where !fromYear.isHittable { app.swipeUp(velocity: .slow) }
+        assertTappable(fromYear, screen: screen)
+        for _ in 0..<3 where !fromMonth.isHittable { app.swipeUp(velocity: .slow) }
+        assertTappable(fromMonth, screen: screen)
+        let exportButton = app.buttons["museExport.exportButton"]
+        for _ in 0..<4 where !exportButton.isHittable { app.swipeUp(velocity: .slow) }
+        assertTappable(exportButton, screen: screen)
+        screenshot(app, named: "dynamic-type-xl-muse-export")
     }
 
     @MainActor

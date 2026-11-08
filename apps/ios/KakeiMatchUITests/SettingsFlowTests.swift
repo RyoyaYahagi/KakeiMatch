@@ -24,7 +24,9 @@ final class SettingsFlowTests: XCTestCase {
         let app = launch("light")
         capture(app, "initial-light")
 
-        app.buttons["settings.theme"].tap()
+        let theme = app.buttons["settings.theme"]
+        for _ in 0..<3 where !theme.isHittable { app.swipeUp() }
+        theme.tap()
         XCTAssertTrue(app.staticTexts["settings-page-theme-title"].waitForExistence(timeout: 5))
         let preferencePicker = app.descendants(matching: .any)["theme-preference"]
         XCTAssertTrue(preferencePicker.waitForExistence(timeout: 5))

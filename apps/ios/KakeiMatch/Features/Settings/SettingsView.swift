@@ -10,6 +10,7 @@ private enum KMSettingsPage: Equatable {
     case categories
     case accounts
     case backup
+    case museExport
     case ai
     case appInfo
 }
@@ -60,6 +61,7 @@ struct SettingsView: View {
             case .backup: KMBackupView(onBack: { page = .root }, onDataRestored: {
                 Task { await model.load(repositories) }
             }, onOpenMoneyForward: onOpenMoneyForward)
+            case .museExport: KMMuseExportView(now: museExportNow, onBack: { page = .root })
             case .ai: KMNativeAuthView(model: auth, onBack: { page = .root; onAIBack() }, onShowHome: onShowHome)
             }
         }
@@ -79,6 +81,14 @@ struct SettingsView: View {
         .onChange(of: initialAI) { _, ai in
             if ai { page = .ai }
         }
+    }
+
+    /// UI fixtures keep the bundled reference date; a normal launch uses the real clock so a
+    /// screen opened after a month or year rollover does not show the launch month as "today".
+    private var museExportNow: () -> Date {
+        guard let repositories, repositories.fixtureName != nil else { return { Date() } }
+        let reference = repositories.referenceDate
+        return { KMFixtureClock.now(reference: reference) }
     }
 
     private var settingsRoot: some View {
@@ -153,6 +163,7 @@ struct SettingsView: View {
             case .categories: page = .categories
             case .accounts: page = .accounts
             case .backup: page = .backup
+            case .museExport: page = .museExport
             case .ai: page = .ai
             case .appInfo: page = .appInfo
             case .unimplemented: break

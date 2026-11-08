@@ -8,13 +8,15 @@ struct SettingsPresentationTests {
         #expect(sections.map(\.title) == ["家計簿", "データ", "写真の読み取り", "アプリ"])
         #expect(sections.map { $0.rows.map(\.title) } == [
             ["分類ルール", "カテゴリ", "支払元", "予算設定", "定期登録"],
-            ["バックアップと復元", "原本の整理・全削除"],
+            ["バックアップと復元", "AIアシスタント向けの書き出し", "原本の整理・全削除"],
             ["ログイン・利用状況"],
             ["外観", "お問い合わせ", "アプリ情報"],
         ])
         #expect(!sections.flatMap(\.rows).contains { $0.title.contains("同期") })
         #expect(sections[1].rows[0].value == nil)
-        #expect(sections[1].rows[1].isDestructive)
+        #expect(sections[1].rows[1].destination == .museExport)
+        #expect(!sections[1].rows[1].isDestructive)
+        #expect(sections[1].rows[2].isDestructive)
         #expect(sections[3].rows[0].value == "システム")
         #expect(sections[3].rows[1].destination == .contact)
         #expect(sections[3].rows[2].destination == .appInfo)
