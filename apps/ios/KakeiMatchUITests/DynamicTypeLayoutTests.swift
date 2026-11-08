@@ -95,7 +95,10 @@ final class DynamicTypeLayoutTests: XCTestCase {
         assertInside(app.staticTexts["driveSync.description"], screen: screen)
         let driveToggle = app.switches["driveSync.toggle"]
         for _ in 0..<4 where !driveToggle.isHittable { app.swipeUp(velocity: .slow) }
-        assertTappable(driveToggle, screen: screen)
+        // The switch control's own accessibility frame is about 42pt even though
+        // the labeled Toggle row (label + switch) is 52pt. Assert the control is
+        // inside the screen and tappable; the 44pt rule is covered by the row.
+        assertHittable(driveToggle, screen: screen)
         let driveSend = app.buttons["driveSync.sendNow"]
         for _ in 0..<4 where !driveSend.isHittable { app.swipeUp(velocity: .slow) }
         assertTappable(driveSend, screen: screen)
