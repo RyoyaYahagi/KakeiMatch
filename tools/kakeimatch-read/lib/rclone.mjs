@@ -5,13 +5,12 @@ import { MAX_SNAPSHOT_BYTES } from './validate.mjs';
 
 const MAX_OUTPUT_BYTES = MAX_SNAPSHOT_BYTES + 1024;
 
-// RCLONE_* variables can turn on side effects such as RCLONE_LOG_FILE, so only the variables
-// rclone needs to find its config and run are passed through.
-const PASSED_ENV = ['PATH', 'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'TMPDIR', 'XDG_CONFIG_HOME',
-  'XDG_CACHE_HOME', 'RCLONE_CONFIG', 'RCLONE_CONFIG_PASS', 'SystemRoot', 'APPDATA', 'USERPROFILE'];
-
+// RCLONE_* variables set global flags, and some of them have side effects (RCLONE_LOG_FILE writes a
+// log). They are dropped except the config file location, its password and RCLONE_CONFIG_<REMOTE>_*,
+// which only define remotes. Other variables (PATH, HOME, proxies) pass through unchanged.
 export function rcloneEnv(env = process.env) {
-  return Object.fromEntries(PASSED_ENV.filter(name => env[name] !== undefined).map(name => [name, env[name]]));
+  return Object.fromEntries(Object.entries(env).filter(([name]) =>
+    !/^RCLONE_/i.test(name) || /^RCLONE_CONFIG(?:$|_)/i.test(name)));
 }
 
 function failureMessage(args, error, stderr) {

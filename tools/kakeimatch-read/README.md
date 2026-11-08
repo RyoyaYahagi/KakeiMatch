@@ -52,7 +52,7 @@ node tools/kakeimatch-read/kakeimatch-read.mjs transactions --limit 20 --remote 
 
 このCLIには書き込みの機能がありません。ファイルの書き込み・削除、ネットワーク通信（`fetch`、`http`）を使いません。`readonly.test.mjs` がソースを静的に検査します。
 
-rcloneには `cat` と `lsjson` だけを渡し、パスの前に `--` を置いてオプションとして読まれないようにします。`-` で始まる `--remote` の値は受け付けません。`RCLONE_LOG_FILE` などの環境変数で rclone に副作用が起きないよう、子プロセスへは `PATH`、`HOME`、`RCLONE_CONFIG` など実行に必要なものだけを渡します。
+rcloneには `cat` と `lsjson` だけを渡し、パスの前に `--` を置いてオプションとして読まれないようにします。`-` で始まる `--remote` の値は受け付けません。`RCLONE_LOG_FILE` などの環境変数で rclone に副作用が起きないよう、子プロセスへは `RCLONE_` で始まる環境変数を渡しません。例外は、設定ファイルの場所とそのパスワード（`RCLONE_CONFIG`、`RCLONE_CONFIG_PASS`）と、環境変数で定義した接続先（`RCLONE_CONFIG_<名前>_*`）です。
 
 ただし、rclone自体はGoogle Driveの認証トークンを更新したときに、自分の設定ファイル（`rclone.conf`）を書き換えることがあります。これはrcloneの認証情報の更新で、家計データやDrive上のファイルへの書き込みではありません。
 

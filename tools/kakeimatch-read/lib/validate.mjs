@@ -405,25 +405,47 @@ export function validateSnapshot(value) {
   return errors;
 }
 
-// JSON.parse turns 1e3 and 1.9 into numbers that may look like integers, so the raw number tokens
-// are checked first. Every number in v1 is an integer.
-export function findNonIntegerNumber(text) {
-  let inString = false;
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (inString) {
-      if (char === '\\') index += 1;
-      else if (char === '"') inString = false;
-      continue;
+// JSON.parse turns 1e3 and 1.9 into numbers that may look like integers, so the source text of every
+// non-integer number is recorded per holder object, and then only the integer fields of v1 are
+// checked. Unknown fields may hold any number.
+function parseKeepingNumberSource(text) {
+  const nonIntegerSources = new WeakMap();
+  const value = JSON.parse(text, function (key, parsed, context) {
+    if (typeof parsed === 'number') {
+      // Node 22+ passes the source text; without it the integer form cannot be checked, so fail closed.
+      const source = context?.source;
+      if (typeof source !== 'string') throw new SnapshotError(['この Node.js では数値の元の表記を確かめられません。Node.js 22 以上を使ってください']);
+      if (!/^-?(?:0|[1-9]\d*)$/.test(source)) {
+        if (!nonIntegerSources.has(this)) nonIntegerSources.set(this, new Map());
+        nonIntegerSources.get(this).set(key, source);
+      }
     }
-    if (char === '"') { inString = true; continue; }
-    if (char === '-' || (char >= '0' && char <= '9')) {
-      const token = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/.exec(text.slice(index, index + 400))?.[0] ?? char;
-      if (/[.eE]/.test(token)) return token;
-      index += token.length - 1;
+    return parsed;
+  });
+  return { value, nonIntegerSources };
+}
+
+function nonIntegerFields(root, nonIntegerSources) {
+  const found = [];
+  const check = (holder, keys, path) => {
+    if (typeof holder !== 'object' || holder === null) return;
+    for (const key of keys) {
+      const source = nonIntegerSources.get(holder)?.get(key);
+      if (source !== undefined) found.push(`${path}.${key}: ${source.length > 40 ? `${source.slice(0, 37)}...` : source}`);
     }
-  }
-  return null;
+  };
+  const each = (list, visit) => { if (Array.isArray(list)) list.forEach(visit); };
+  check(root, ['schemaVersion'], '最上位');
+  each(root?.accounts, (account, index) => check(account, ['balanceYen'], `accounts[${index}]`));
+  each(root?.transactions, (transaction, index) => {
+    check(transaction, ['amountYen'], `transactions[${index}]`);
+    each(transaction?.splits, (split, splitIndex) => check(split, ['amountYen'], `transactions[${index}].splits[${splitIndex}]`));
+  });
+  each(root?.monthly, (entry, index) => {
+    check(entry, ['incomeYen', 'expenseYen', 'balanceYen'], `monthly[${index}]`);
+    each(entry?.byCategory, (category, categoryIndex) => check(category, ['amountYen'], `monthly[${index}].byCategory[${categoryIndex}]`));
+  });
+  return found;
 }
 
 export function readSnapshotBytes(bytes, label) {
@@ -442,16 +464,19 @@ export function readSnapshotBytes(bytes, label) {
     throw new SnapshotError([`${label}: UTF-8 のテキストとして読めません`]);
   }
   let value;
+  let nonIntegerSources;
   try {
-    value = JSON.parse(text);
+    ({ value, nonIntegerSources } = parseKeepingNumberSource(text));
   } catch (error) {
+    if (error instanceof SnapshotError) throw error;
     throw new SnapshotError([
       `${label}: JSON として読めません（${error.message}）。.kmb / .kmib など別形式のファイルではないか確認してください`,
     ]);
   }
-  const nonInteger = findNonIntegerNumber(text);
-  if (nonInteger !== null) {
-    throw new SnapshotError([`${label}: 小数または指数表記の数値があります（${nonInteger}）。金額などの数値は整数で書きます`]);
+  const nonInteger = nonIntegerFields(value, nonIntegerSources);
+  if (nonInteger.length > 0) {
+    throw new SnapshotError(nonInteger.map(item =>
+      `${label}: 小数または指数表記の数値があります（${item}）。金額などの数値は整数で書きます`));
   }
   const errors = validateSnapshot(value);
   if (errors.length > 0) {

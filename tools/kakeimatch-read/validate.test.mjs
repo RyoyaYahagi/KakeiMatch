@@ -150,9 +150,19 @@ test('小数・指数表記の数値は JSON.parse で丸められる前にエ�
   const text = JSON.stringify(loadSample('snapshot-sample-normal'));
   const balance = '"balanceYen":182000';
   assert.ok(text.includes(balance));
-  expectRawError(text.replace(balance, '"balanceYen":9007199254740990.9'), /小数または指数表記の数値があります（9007199254740990\.9）/);
+  expectRawError(text.replace(balance, '"balanceYen":9007199254740990.9'), /小数または指数表記の数値があります（accounts\[0\]\.balanceYen: 9007199254740990\.9）/);
   expectRawError(text.replace(balance, '"balanceYen":1e3'), /小数または指数表記/);
   expectRawError(text.replace(balance, '"balanceYen":-1.5'), /小数または指数表記/);
+  // 400 文字を超える長い表記でも、元の表記全体で判定する。
+  expectRawError(text.replace(balance, `"balanceYen":90071992547409909${'0'.repeat(383)}e-384`), /小数または指数表記/);
+  // 未知の項目の小数は、既知の項目と同じ名前でも仕様どおり無視する。
+  assert.equal(parse({ ...loadSample('snapshot-sample-normal'), future: { ratio: 0.5, amountYen: 1.5 } }).future.ratio, 0.5);
+  const withUnknownInTransaction = clone(loadSample('snapshot-sample-normal'));
+  withUnknownInTransaction.transactions[0].extra = { amountYen: 0.25 };
+  assert.equal(parse(withUnknownInTransaction).transactions[0].extra.amountYen, 0.25);
+  // 分割の内訳と月次の値も対象にする。
+  expectRawError(text.replace('"amountYen":-2980', '"amountYen":-2980.0'), /transactions\[0\]\.splits\[0\]\.amountYen/);
+  expectRawError(text.replace('"incomeYen":250000', '"incomeYen":2.5e5'), /monthly\[1\]\.incomeYen/);
   // 文字列の中の小数は数値ではないので問題にしない。
   assert.equal(parse({ ...loadSample('snapshot-sample-normal'), appVersion: '1.2e3 (1.5)' }).appVersion, '1.2e3 (1.5)');
 });

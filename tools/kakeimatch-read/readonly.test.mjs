@@ -79,12 +79,19 @@ test('rclone の実行は cat と lsjson の引数だけを渡す', async () => 
   }
 });
 
-test('rclone には副作用を起こしうる RCLONE_* の環境変数を渡さない', async () => {
+test("rclone には副作用を起こしうる RCLONE_* の環境変数を渡さない", async () => {
   const execFile = fakeExecFile(() => ({ stdout: '{}' }));
   const rclone = createRclone({ execFile, env: {
     PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf',
     RCLONE_LOG_FILE: '/tmp/unexpected.log', RCLONE_DRY_RUN: 'false', SECRET_TOKEN: 'x',
   } });
   await rclone.cat('gdrive:KakeiMatch/snapshot.json');
-  assert.deepEqual(execFile.envs[0], { PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf' });
+  assert.deepEqual(execFile.envs[0], { PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf', SECRET_TOKEN: 'x' });
+});
+
+test('環境変数で定義した rclone の接続先（RCLONE_CONFIG_<REMOTE>_*）はそのまま渡す', async () => {
+  const execFile = fakeExecFile(() => ({ stdout: '{}' }));
+  const rclone = createRclone({ execFile, env: { RCLONE_CONFIG_REVIEW_TYPE: 'local', RCLONE_CONFIG_PASS: 'p', RCLONE_LOG_LEVEL: 'DEBUG' } });
+  await rclone.cat('review:/tmp/snapshot.json');
+  assert.deepEqual(execFile.envs[0], { RCLONE_CONFIG_REVIEW_TYPE: 'local', RCLONE_CONFIG_PASS: 'p' });
 });
