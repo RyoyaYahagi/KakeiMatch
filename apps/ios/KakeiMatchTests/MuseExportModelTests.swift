@@ -40,6 +40,10 @@ struct MuseExportModelTests {
         return try #require(formatter.date(from: value))
     }
 
+    private func setModificationDate(_ date: Date, of url: URL) throws {
+        try FileManager.default.setAttributes([.modificationDate: date], ofItemAtPath: url.path)
+    }
+
     private func store() -> KMInMemoryStore {
         KMInMemoryStore(
             transactions: [
@@ -84,7 +88,7 @@ struct MuseExportModelTests {
         #expect(model.fromMonth == (try KMYearMonth("2025-12")))
     }
 
-    @Test func monthAndYearChangesAfterLaunchUpdateTheDefaultRangeAndUpperLimit() throws {
+    @Test func refreshCurrentMonthUpdatesTheMonthAndSelectableYears() throws {
         var clock = try instant("2026-12-31T14:00:00Z") // 2026-12-31 23:00 in Asia/Tokyo.
         let model = KMMuseExportModel(now: { clock })
         #expect(model.currentMonth == (try KMYearMonth("2026-12")))
@@ -92,25 +96,43 @@ struct MuseExportModelTests {
         #expect(model.toMonth == (try KMYearMonth("2026-12")))
         #expect(model.selectableYears.last == 2026)
         #expect(model.selectableMonths(for: 2026).last == 12)
-        #expect(KMMuseExportPresentation.validationMessage(
-            from: try KMYearMonth("2027-01"), to: try KMYearMonth("2027-01"), currentMonth: model.currentMonth)
-            == KMMuseExportPresentation.futureMonth)
 
         clock = try instant("2027-01-15T03:00:00Z")
+        // A stored month changes only when the screen asks for it, which Observation can track.
+        #expect(model.currentMonth == (try KMYearMonth("2026-12")))
+        model.refreshCurrentMonth()
         #expect(model.currentMonth == (try KMYearMonth("2027-01")))
         #expect(model.selectableYears.last == 2027)
+        #expect(model.selectableYears.contains(2027))
         #expect(model.selectableMonths(for: 2027).last == 1)
-        #expect(KMMuseExportPresentation.validationMessage(
-            from: try KMYearMonth("2027-02"), to: try KMYearMonth("2027-02"), currentMonth: model.currentMonth)
-            == KMMuseExportPresentation.futureMonth)
-        #expect(KMMuseExportPresentation.validationMessage(
-            from: try KMYearMonth("2022-02"), to: try KMYearMonth("2027-01"), currentMonth: model.currentMonth) == nil)
+        #expect(model.selectableMonths(for: 2026).last == 12)
+        // The user's selection stays as it was; the new year becomes selectable.
+        #expect(model.fromMonth == (try KMYearMonth("2026-10")))
+        #expect(model.toMonth == (try KMYearMonth("2026-12")))
+        model.setToYear(2027)
+        #expect(model.toMonth == (try KMYearMonth("2027-01")))
+        #expect(model.rangeError == nil)
 
         // The screen is created when it opens, so a model created after the rollover starts in the
         // new month instead of keeping the launch month.
         let reopened = KMMuseExportModel(now: { clock })
         #expect(reopened.fromMonth == (try KMYearMonth("2026-11")))
         #expect(reopened.toMonth == (try KMYearMonth("2027-01")))
+    }
+
+    @Test func refreshCurrentMonthClampsAnEndMonthThatIsNowInTheFuture() throws {
+        var clock = try instant("2026-11-15T03:00:00Z")
+        let model = KMMuseExportModel(now: { clock })
+        model.setToMonth(try KMYearMonth("2026-12"))
+        #expect(model.rangeError == KMMuseExportPresentation.futureMonth)
+
+        // Going back one month makes the stored end month a future month again; refresh restores
+        // the same rule the export used before this screen refreshed itself.
+        clock = try instant("2026-10-15T03:00:00Z")
+        model.refreshCurrentMonth()
+        #expect(model.currentMonth == (try KMYearMonth("2026-10")))
+        #expect(model.toMonth == (try KMYearMonth("2026-10")))
+        #expect(model.rangeError == nil)
     }
 
     @Test func rangeValidationAllowsOldMonthsAndOnlyCapsTheSelectedSpan() throws {
@@ -208,6 +230,7 @@ struct MuseExportModelTests {
         await model.export(repositories)
         let first = try #require(model.exportedFileURL)
         #expect(FileManager.default.fileExists(atPath: first.path))
+        try setModificationDate(clock, of: first)
 
         clock = try instant("2026-11-15T01:00:00Z")
         await model.export(repositories)
@@ -232,6 +255,7 @@ struct MuseExportModelTests {
         model.setFromMonth(try KMYearMonth("2026-10"))
         #expect(model.exportedFileURL == nil)
         #expect(model.status == nil)
+        try setModificationDate(clock, of: first)
 
         clock = try instant("2026-11-15T01:00:00Z")
         await model.export(repositories)
@@ -250,12 +274,47 @@ struct MuseExportModelTests {
         let first = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
         await first.export(repositories)
         let file = try #require(first.exportedFileURL)
+        try setModificationDate(now.addingTimeInterval(-11 * 60), of: file)
         #expect(FileManager.default.fileExists(atPath: file.path))
 
         let reopened = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
         reopened.prepare()
 
         #expect(reopened.cleanupError == nil)
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func preparingKeepsSnapshotsThatAreLessThanTenMinutesOld() async throws {
+        let directory = try temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = store()
+        let repositories = repositories(transactions: base, accounts: base, categories: base, base: base)
+        let now = try instant("2026-11-15T00:00:00Z")
+        let first = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
+        await first.export(repositories)
+        let file = try #require(first.exportedFileURL)
+        // The share sheet or a save dialog may still be reading a file written moments ago.
+        try setModificationDate(now.addingTimeInterval(-9 * 60), of: file)
+
+        let reopened = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
+        reopened.prepare()
+
+        #expect(reopened.cleanupError == nil)
+        #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func preparingRemovesSnapshotsThatAreAtLeastTenMinutesOld() throws {
+        let directory = try temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let now = try instant("2026-11-15T00:00:00Z")
+        let file = directory.appendingPathComponent("kakeimatch-snapshot-20261114-230000.json")
+        try Data("古いファイル".utf8).write(to: file)
+        try setModificationDate(now.addingTimeInterval(-10 * 60), of: file)
+
+        let model = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
+        model.prepare()
+
+        #expect(model.cleanupError == nil)
         #expect(!FileManager.default.fileExists(atPath: file.path))
     }
 
@@ -268,6 +327,9 @@ struct MuseExportModelTests {
         let model = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
         await model.export(repositories)
         let file = try #require(model.exportedFileURL)
+        // The file this model points at is kept even after the stale lifetime, because the share
+        // link on screen still refers to it.
+        try setModificationDate(now.addingTimeInterval(-11 * 60), of: file)
         let unrelated = directory.appendingPathComponent("memo.txt")
         try Data("合成メモ".utf8).write(to: unrelated)
 
@@ -281,11 +343,12 @@ struct MuseExportModelTests {
     @Test func cleanupFailureIsReportedAndExportStillWritesANewFile() async throws {
         let directory = try temporary()
         defer { try? FileManager.default.removeItem(at: directory) }
+        let now = try instant("2026-11-15T00:30:00Z")
         let stale = directory.appendingPathComponent("kakeimatch-snapshot-20200101-000000.json")
         try Data("古いファイル".utf8).write(to: stale)
+        try setModificationDate(now.addingTimeInterval(-11 * 60), of: stale)
         let base = store()
         let repositories = repositories(transactions: base, accounts: base, categories: base, base: base)
-        let now = try instant("2026-11-15T00:30:00Z")
         let model = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory,
             removeItem: { url in
                 if url.lastPathComponent == stale.lastPathComponent {
@@ -338,6 +401,36 @@ struct MuseExportModelTests {
         let range = try #require(json["range"] as? [String: Any])
         #expect(range["fromMonth"] as? String == originalFrom.rawValue)
         #expect(range["toMonth"] as? String == originalTo.rawValue)
+    }
+
+    @Test func shareIsDisabledWhileExporting() async throws {
+        let directory = try temporary()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let base = store()
+        let readOnly = MuseSnapshotReadOnlyStore(base: base)
+        let repositories = repositories(transactions: readOnly, accounts: readOnly, categories: readOnly, base: base)
+        let now = try instant("2026-11-15T00:00:00Z")
+        let model = KMMuseExportModel(now: { now }, appVersion: { nil }, directory: directory)
+        await model.export(repositories)
+        let first = try #require(model.exportedFileURL)
+        #expect(model.canShare)
+
+        let gate = MuseSnapshotReadGate()
+        readOnly.beforeTransactionRead = { await gate.wait() }
+        let task = Task { await model.export(repositories) }
+        await gate.waitUntilStarted()
+
+        // The previous file stays on screen for the export window but must not be handed to the
+        // share sheet: the new export is about to replace it.
+        #expect(model.isWorking)
+        #expect(model.exportedFileURL == first)
+        #expect(!model.canShare)
+
+        gate.open()
+        await task.value
+        #expect(!model.isWorking)
+        #expect(model.canShare)
+        #expect(model.exportedFileURL != first)
     }
 
     @Test func exportNeverCallsRepositoryWrites() async throws {

@@ -16,6 +16,7 @@ enum KMMuseExportPresentation {
     static let shareTitle = "AIアシスタント向けの書き出し"
     static let exported = "書き出しました。「保存・共有」から保存先を選んでください。"
     static let notSaved = "生成したファイルは、まだ保存されていません。"
+    static let shareUnavailableWhileWorking = "書き出しが終わるまで「保存・共有」は使えません。"
     static let processing = "書き出しています。この画面を閉じずにお待ちください。"
     static let storeUnavailable = "家計データを開けませんでした。アプリを開き直してください。"
 

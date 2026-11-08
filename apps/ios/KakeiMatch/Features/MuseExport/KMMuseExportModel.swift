@@ -6,6 +6,9 @@ import Observation
 /// reads the exported file back into the app.
 @MainActor @Observable
 final class KMMuseExportModel {
+    /// The Asia/Tokyo month the screen treats as "this month". It is stored instead of computed so
+    /// Observation redraws the pickers when it changes; `refreshCurrentMonth()` moves it.
+    private(set) var currentMonth: KMYearMonth
     private(set) var fromMonth: KMYearMonth
     private(set) var toMonth: KMYearMonth
 
@@ -27,6 +30,7 @@ final class KMMuseExportModel {
          directory: URL = KMMuseExportPresentation.exportDirectory,
          removeItem: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
         let today = now()
+        currentMonth = KMDate(instant: today).yearMonth
         let range = KMMuseExportPresentation.defaultRange(today: today)
         fromMonth = range.from
         toMonth = range.to
@@ -36,14 +40,28 @@ final class KMMuseExportModel {
         self.removeItem = removeItem
     }
 
-    /// Recomputed for every read so a screen that stays open across midnight or a year boundary
-    /// does not keep last month's upper limit.
-    var currentMonth: KMYearMonth { KMDate(instant: now()).yearMonth }
+    /// Re-reads "this month" from the injected clock. The screen calls this when it appears, when
+    /// the app becomes active again, and when the calendar day changes, so a screen left open across
+    /// a month or year boundary stops offering the previous month's limit. A range that ends after
+    /// the new current month is clamped exactly like the pre-export refresh in `export`.
+    func refreshCurrentMonth() {
+        let month = KMDate(instant: now()).yearMonth
+        guard month != currentMonth else { return }
+        currentMonth = month
+        guard toMonth > currentMonth else { return }
+        toMonth = currentMonth
+        if fromMonth > toMonth { fromMonth = toMonth }
+        resetOutput()
+    }
+
     var selectableYears: [Int] { KMMuseExportPresentation.selectableYears(currentMonth: currentMonth) }
     var rangeError: String? {
         KMMuseExportPresentation.validationMessage(from: fromMonth, to: toMonth, currentMonth: currentMonth)
     }
     var canExport: Bool { rangeError == nil && !isWorking }
+    /// False while an export is running: the previous file may still be open in the share sheet or
+    /// a save dialog, and a new export will replace what the screen offers.
+    var canShare: Bool { exportedFileURL != nil && !isWorking }
     var rangeSummary: String { KMMuseExportPresentation.rangeSummary(from: fromMonth, to: toMonth) }
 
     func selectableMonths(for year: Int) -> [Int] {
@@ -51,8 +69,8 @@ final class KMMuseExportModel {
         return Array(1...last)
     }
 
-    /// Removes snapshots left by an earlier screen or app launch. The file this model can still
-    /// share is kept; everything else in the export directory is stale.
+    /// Removes snapshots left by an earlier screen or app launch that are old enough to no longer be
+    /// in use. The file this model can still share is kept regardless of its age.
     func prepare() {
         cleanupError = removeStaleExports(keeping: exportedFileURL)
     }
@@ -99,7 +117,7 @@ final class KMMuseExportModel {
 
     func export(_ repositories: KMRepositories?) async {
         guard !isWorking else { return }
-        refreshRangeForCurrentMonth()
+        refreshCurrentMonth()
         if let rangeError {
             status = rangeError
             isFailure = true
@@ -164,14 +182,6 @@ final class KMMuseExportModel {
         }
     }
 
-    private func refreshRangeForCurrentMonth() {
-        let current = currentMonth
-        guard toMonth > current else { return }
-        toMonth = current
-        if fromMonth > toMonth { fromMonth = toMonth }
-        resetOutput()
-    }
-
     private func resetOutput() {
         exportedFileURL = nil
         status = nil
@@ -187,6 +197,7 @@ final class KMMuseExportModel {
             var firstError: Error?
             for url in urls where isSnapshotFile(url) {
                 guard url.standardizedFileURL != keepURL else { continue }
+                guard isOldEnoughToDelete(url) else { continue }
                 do { try removeItem(url) } catch { firstError = firstError ?? error }
             }
             return firstError.map { KMMuseExportPresentation.cleanupFailureMessage($0) }
@@ -195,19 +206,36 @@ final class KMMuseExportModel {
         }
     }
 
+    /// A snapshot becomes stale ten minutes after it was written. That is long enough for the user
+    /// to finish sharing or saving the file, and short enough that plain-text household data does
+    /// not stay in the temporary directory for the rest of the day. The timestamp comes from the
+    /// injected clock so tests can move past it.
+    private static let staleExportLifetime: TimeInterval = 10 * 60
+
+    private func isOldEnoughToDelete(_ url: URL) -> Bool {
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
+              let modified = values.contentModificationDate else {
+            // Without a timestamp it is not safe to assume the file is old; the share sheet may
+            // still be reading it.
+            return false
+        }
+        return now().timeIntervalSince(modified) >= Self.staleExportLifetime
+    }
+
     private func isSnapshotFile(_ url: URL) -> Bool {
         url.lastPathComponent.hasPrefix("kakeimatch-snapshot-") && url.pathExtension == "json"
     }
 
     /// The generated name has one-second resolution. If that name is the file currently being
-    /// shared, keep it alive and add a suffix instead of replacing it in place.
+    /// shared, or a file too new to be treated as stale, keep it alive and add a suffix instead of
+    /// replacing it in place. Only a snapshot older than the stale lifetime is overwritten.
     private func newFileURL(for instant: Date) throws -> URL {
         let name = KMMuseExportPresentation.fileName(now: instant)
         let stem = String(name.dropLast(".json".count))
         var url = directory.appendingPathComponent(name)
         var suffix = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            if url.standardizedFileURL == exportedFileURL?.standardizedFileURL {
+            if url.standardizedFileURL == exportedFileURL?.standardizedFileURL || !isOldEnoughToDelete(url) {
                 url = directory.appendingPathComponent("\(stem)-\(suffix).json")
                 suffix += 1
             } else {
