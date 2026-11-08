@@ -78,4 +78,40 @@ import Testing
         #expect(rows.map(\.date) == [KMDate(rawValue: "2026-10-01")])
         #expect(try await repo.recurring.recurringTransactions().first?.nextDate == KMDate(rawValue: "2026-11-01"))
     }
+
+    @Test(arguments: [false, true]) func persistsSpendingExclusionAndCatchUpRowsInheritIt(durable: Bool) async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repo = try repository(durable: durable, directory: directory)
+        let value = KMRecurringTransaction(id: "synthetic-schedule", name: "合成定期", kind: .expense, amountYen: 1_700,
+            categoryId: "food", accountId: "bank", frequency: .monthly, startDate: KMDate(rawValue: "2026-08-01"),
+            postsTransaction: true, nextDate: nil, completed: false, editable: true, excludedFromSpending: true)
+        let today = KMDate(instant: now)
+
+        try await repo.recurring.saveRecurringForCatchUp(value, at: now)
+        let reloaded = durable ? KMRepositories(persistent: try KMSQLiteStore(directory: directory)) : repo
+        let saved = try #require(await reloaded.recurring.recurringTransactions().first)
+        #expect(saved.excludedFromSpending == true)
+        #expect(saved.isExcludedFromSpending)
+
+        try await reloaded.recurring.catchUpRecurring(id: value.id, dates: [KMDate(rawValue: "2026-10-01")], through: today, at: now)
+        let rows = try await reloaded.transactions.transactions(matching: .init(limit: nil))
+        #expect(rows.map(\.date) == [KMDate(rawValue: "2026-10-01")])
+        #expect(rows.first?.excludedFromSpending == true)
+    }
+
+    @Test(arguments: [false, true]) func automaticRunInheritsSavedSpendingExclusion(durable: Bool) async throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let repo = try repository(durable: durable, directory: directory)
+        let value = KMRecurringTransaction(id: "synthetic-schedule", name: "合成定期", kind: .expense, amountYen: 1_700,
+            categoryId: "food", accountId: "bank", frequency: .monthly, startDate: KMDate(rawValue: "2026-01-01"),
+            postsTransaction: true, nextDate: KMDate(rawValue: "2026-10-01"), completed: false, editable: true,
+            excludedFromSpending: true)
+
+        try await repo.recurring.saveRecurring(value, at: now)
+        let rows = try await repo.transactions.transactions(matching: .init(limit: nil))
+        #expect(rows.map(\.date) == [KMDate(rawValue: "2026-10-01")])
+        #expect(rows.first?.excludedFromSpending == true)
+    }
 }

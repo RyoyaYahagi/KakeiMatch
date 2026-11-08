@@ -9,6 +9,26 @@ struct RecurringScheduleServiceTests {
                                  frequency: frequency, startDate: date(start), postsTransaction: true)
     }
 
+    @Test func preservesSpendingExclusionOnlyForExpenseSchedules() throws {
+        var schedule = input(.monthly, start: "2026-10-01")
+        schedule.excludedFromSpending = true
+        let expense = try KMRecurringScheduleService.validatedInput(schedule)
+        #expect(expense.excludedFromSpending == true)
+        #expect(expense.isExcludedFromSpending)
+
+        schedule.kind = .income
+        let income = try KMRecurringScheduleService.validatedInput(schedule)
+        #expect(income.excludedFromSpending == nil)
+        #expect(!income.isExcludedFromSpending)
+    }
+
+    @Test func readsMissingSpendingExclusionAsIncluded() throws {
+        let json = #"{"name":"Synthetic recurring","kind":"expense","amountYen":50000,"categoryId":"rent","accountId":"bank","frequency":"monthly","startDate":"2026-10-01","postsTransaction":true}"#
+        let input = try KMJSON.decoder().decode(KMRecurringScheduleInput.self, from: Data(json.utf8))
+        #expect(input.excludedFromSpending == nil)
+        #expect(!input.isExcludedFromSpending)
+    }
+
     @Test func followsWeeklyMonthlyAndYearlyCalendarSemantics() {
         #expect(KMRecurringScheduleService.occurrenceDates(input: input(.monthly, start: "2026-01-31"), through: date("2026-05-31")).map(\.rawValue) == ["2026-01-31", "2026-03-31", "2026-05-31"])
         #expect(KMRecurringScheduleService.occurrenceDates(input: input(.yearly, start: "2024-02-29"), through: date("2032-03-01")).map(\.rawValue) == ["2024-02-29", "2028-02-29", "2032-02-29"])

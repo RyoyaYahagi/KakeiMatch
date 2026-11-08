@@ -314,7 +314,8 @@ import Foundation
     }
     func recurringInput(_ value: KMRecurringTransaction) -> KMRecurringScheduleInput {
         .init(name: value.name, kind: value.kind, amountYen: value.amountYen, categoryId: value.categoryId, accountId: value.accountId,
-            frequency: value.frequency, startDate: value.startDate, postsTransaction: value.postsTransaction)
+            frequency: value.frequency, startDate: value.startDate, postsTransaction: value.postsTransaction,
+            excludedFromSpending: value.excludedFromSpending)
     }
     func recurringOccurrences(scheduleId: String) async throws -> [KMRecurringProcessedOccurrence] {
         serviceState.occurrences.filter { $0.scheduleId == scheduleId }

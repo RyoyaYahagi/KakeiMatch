@@ -88,10 +88,11 @@ struct EntryPresentationTests {
 
         let entry = KMValidatedEntry(kind: .expense, amountYen: 1_200, payee: "家賃", date: endOfMonth,
             categoryId: "housing", accountId: "bank", destinationAccountId: nil, memo: nil,
-            time: nil, excludedFromSpending: false)
+            time: nil, excludedFromSpending: true)
         let schedule = KMEntryPresentation.recurringInput(for: entry, frequency: .monthly)
         #expect(schedule?.startDate.rawValue == "2026-03-31")
         #expect(schedule?.amountYen == 1_200)
+        #expect(schedule?.excludedFromSpending == true)
         #expect(KMEntryPresentation.recurringInput(for: entry, frequency: .none) == nil)
     }
 

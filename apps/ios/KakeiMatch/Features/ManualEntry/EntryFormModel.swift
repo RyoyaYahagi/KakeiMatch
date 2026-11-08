@@ -170,7 +170,8 @@ final class KMEntryFormModel {
                     kind: scheduleInput.kind, amountYen: scheduleInput.amountYen, categoryId: scheduleInput.categoryId,
                     accountId: scheduleInput.accountId, frequency: scheduleInput.frequency,
                     startDate: scheduleInput.startDate, postsTransaction: scheduleInput.postsTransaction,
-                    nextDate: nil, completed: false, editable: true)
+                    nextDate: nil, completed: false, editable: true,
+                    excludedFromSpending: scheduleInput.excludedFromSpending)
                 do {
                     try await repositories.recurring.saveRecurring(schedule, at: now)
                     status = "登録しました。\(scheduleInput.startDate.rawValue)から定期登録も作りました。"

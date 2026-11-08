@@ -98,7 +98,8 @@ enum KMRecurringScheduleService {
         }
         return KMRecurringScheduleInput(name: name, kind: input.kind, amountYen: input.amountYen,
             categoryId: input.categoryId, accountId: input.accountId, frequency: input.frequency,
-            startDate: input.startDate, postsTransaction: input.postsTransaction)
+            startDate: input.startDate, postsTransaction: input.postsTransaction,
+            excludedFromSpending: input.kind == .expense ? input.excludedFromSpending : nil)
     }
 
     static func validateMastersAndUniqueness(input: KMRecurringScheduleInput, editingId: String? = nil,

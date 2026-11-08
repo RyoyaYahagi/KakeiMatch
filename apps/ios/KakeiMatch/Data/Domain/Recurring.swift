@@ -17,6 +17,10 @@ struct KMRecurringTransaction: Codable, Equatable, Sendable, Identifiable {
     var nextDate: KMDate?
     var completed: Bool
     var editable: Bool
+    /// nil for schedules saved before this setting existed; treat it as "含める".
+    var excludedFromSpending: Bool? = nil
+
+    var isExcludedFromSpending: Bool { excludedFromSpending == true }
 }
 
 // TS: src/lib/recurring-schedule.ts — RecurringScheduleInput
@@ -29,6 +33,10 @@ struct KMRecurringScheduleInput: Codable, Equatable, Sendable {
     var frequency: KMRecurringTransaction.Frequency
     var startDate: KMDate
     var postsTransaction: Bool
+    /// nil for audits saved before this setting existed; treat it as "含める".
+    var excludedFromSpending: Bool? = nil
+
+    var isExcludedFromSpending: Bool { excludedFromSpending == true }
 }
 
 // TS: src/lib/recurring-schedule.ts — ScheduleAudit

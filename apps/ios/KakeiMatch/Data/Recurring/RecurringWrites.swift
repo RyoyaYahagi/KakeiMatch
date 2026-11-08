@@ -20,6 +20,7 @@ import Foundation
             }
             let editing = working.recurringValues.contains { $0.id == value.id }
             var saved = value; saved.name = input.name; saved.completed = false; saved.editable = true
+            saved.excludedFromSpending = input.excludedFromSpending
             if let index = working.recurringValues.firstIndex(where: { $0.id == value.id }) { working.recurringValues[index] = saved }
             else { working.recurringValues.append(saved) }
             working.masterWriteState.scheduleAudits.append(.init(targetType: .schedule, operationId: UUID().uuidString,
@@ -71,7 +72,8 @@ import Foundation
                     let importedId = KMRecurringScheduleService.importedId(scheduleId: id, date: date)
                     // Explicit add, never fuzzy-match an independent same-day manual transaction (#291).
                     let row = try await working.saveManual(.init(kind: input.kind == .expense ? .expense : .income, amountYen: input.amountYen,
-                        date: date, payeeName: input.name, categoryId: input.categoryId, accountId: input.accountId, importedId: importedId))
+                        date: date, payeeName: input.name, categoryId: input.categoryId, accountId: input.accountId,
+                        importedId: importedId, excludedFromSpending: input.kind == .expense && input.isExcludedFromSpending))
                     occurrences.append(.init(date: date, transaction: row, status: .created))
                     working.serviceState.occurrences.append(.init(scheduleId: id, date: date, importedId: importedId, processedAt: timestamp))
                 }

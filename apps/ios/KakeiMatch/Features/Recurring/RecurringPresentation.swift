@@ -29,6 +29,10 @@ enum KMRecurringPresentation {
         "\(kind == .income ? "+" : "−")\(KMAmountFormatter.yen(yen))"
     }
 
+    static func spendingExclusion(_ schedule: KMRecurringTransaction) -> String {
+        schedule.isExcludedFromSpending ? "含めない" : "含める"
+    }
+
     static func catchUpPrompt(_ plan: KMRecurringCatchUpPlan) -> String {
         guard let first = plan.startDate, let last = plan.endDate else { return "" }
         return "\(first.rawValue)〜\(last.rawValue)の未登録分があります。\n\(grouped(plan.dates.count))件 · 合計 \(yen(plan.totalAmountYen))"

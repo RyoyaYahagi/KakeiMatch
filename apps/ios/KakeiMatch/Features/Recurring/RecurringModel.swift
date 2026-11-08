@@ -37,6 +37,7 @@ final class KMRecurringModel {
 
     func save(name: String, kind: KMRecurringTransaction.Kind, amount: String, categoryId: String, accountId: String,
               frequency: KMRecurringTransaction.Frequency, startDate: String, postsTransaction: Bool,
+              excludedFromSpending: Bool,
               editing: KMRecurringTransaction?, repositories: KMRepositories?) async {
         guard let repositories else { error = "定期登録を保存できませんでした。アプリを開き直してください。"; return }
         guard let yen = Int(amount), let date = try? KMDate(startDate) else { error = "金額と開始日を確認してください。"; return }
@@ -47,7 +48,8 @@ final class KMRecurringModel {
         retryableCatchUp = nil
         let value = KMRecurringTransaction(id: editing?.id ?? UUID().uuidString, name: name, kind: kind, amountYen: yen,
             categoryId: categoryId, accountId: accountId, frequency: frequency, startDate: date,
-            postsTransaction: postsTransaction, nextDate: editing?.nextDate, completed: editing?.completed ?? false, editable: editing?.editable ?? true)
+            postsTransaction: postsTransaction, nextDate: editing?.nextDate, completed: editing?.completed ?? false, editable: editing?.editable ?? true,
+            excludedFromSpending: kind == .expense && excludedFromSpending)
         do {
             let through = KMDate(instant: repositories.referenceDate)
             let plan = try await repositories.recurring.previewRecurringCatchUp(value, through: through)
