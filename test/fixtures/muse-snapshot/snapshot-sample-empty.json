@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "kind": "kakeimatch-snapshot",
+  "generatedAt": "2026-11-08T09:00:00+09:00",
+  "timeZone": "Asia/Tokyo",
+  "currency": "JPY",
+  "appVersion": "0.1.0 (202611080000)",
+  "range": {
+    "fromMonth": "2026-11",
+    "toMonth": "2026-11"
+  },
+  "accounts": [],
+  "transactions": [],
+  "monthly": [
+    {
+      "month": "2026-11",
+      "incomeYen": 0,
+      "expenseYen": 0,
+      "balanceYen": 0,
+      "byCategory": []
+    }
+  ]
+}

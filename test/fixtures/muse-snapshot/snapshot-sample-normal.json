@@ -1,0 +1,284 @@
+{
+  "schemaVersion": 1,
+  "kind": "kakeimatch-snapshot",
+  "generatedAt": "2026-11-08T09:00:00+09:00",
+  "timeZone": "Asia/Tokyo",
+  "currency": "JPY",
+  "appVersion": "0.1.0 (202611080000)",
+  "range": {
+    "fromMonth": "2026-09",
+    "toMonth": "2026-10"
+  },
+  "accounts": [
+    {
+      "id": "acc-bank",
+      "name": "合成銀行",
+      "type": "bank",
+      "closed": false,
+      "offBudget": false,
+      "balanceYen": 182000
+    },
+    {
+      "id": "acc-card",
+      "name": "合成カード",
+      "type": "credit_card",
+      "closed": false,
+      "offBudget": false,
+      "balanceYen": -8240
+    },
+    {
+      "id": "acc-cash",
+      "name": "財布",
+      "type": "cash",
+      "closed": false,
+      "offBudget": false,
+      "balanceYen": 3360
+    },
+    {
+      "id": "acc-invest",
+      "name": "合成証券",
+      "type": "other",
+      "closed": false,
+      "offBudget": true,
+      "balanceYen": 450000
+    },
+    {
+      "id": "acc-old",
+      "name": "旧口座",
+      "type": "bank",
+      "closed": true,
+      "offBudget": false,
+      "balanceYen": 0
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx-1001",
+      "date": "2026-10-31",
+      "amountYen": -3480,
+      "kind": "expense",
+      "accountId": "acc-card",
+      "categoryId": null,
+      "categoryName": null,
+      "payeeName": "合成スーパー",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": [
+        {
+          "id": "tx-1001-a",
+          "categoryId": "cat-food",
+          "categoryName": "食費",
+          "amountYen": -2980,
+          "payeeName": null,
+          "memo": null
+        },
+        {
+          "id": "tx-1001-b",
+          "categoryId": "cat-daily",
+          "categoryName": "日用品",
+          "amountYen": -500,
+          "payeeName": null,
+          "memo": "洗剤"
+        }
+      ]
+    },
+    {
+      "id": "tx-1002",
+      "date": "2026-10-28",
+      "amountYen": -30000,
+      "kind": "transfer",
+      "accountId": "acc-bank",
+      "categoryId": null,
+      "categoryName": null,
+      "payeeName": "合成カードへ振替",
+      "memo": null,
+      "transferAccountId": "acc-card",
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-1003",
+      "date": "2026-10-28",
+      "amountYen": 30000,
+      "kind": "transfer",
+      "accountId": "acc-card",
+      "categoryId": null,
+      "categoryName": null,
+      "payeeName": "合成銀行から振替",
+      "memo": null,
+      "transferAccountId": "acc-bank",
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-1004",
+      "date": "2026-10-25",
+      "amountYen": 250000,
+      "kind": "income",
+      "accountId": "acc-bank",
+      "categoryId": "cat-salary",
+      "categoryName": "給与",
+      "payeeName": "合成株式会社",
+      "memo": "10月分",
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-1005",
+      "date": "2026-10-20",
+      "amountYen": -12000,
+      "kind": "expense",
+      "accountId": "acc-bank",
+      "categoryId": "cat-daily",
+      "categoryName": "日用品",
+      "payeeName": "立替分",
+      "memo": "あとで精算",
+      "transferAccountId": null,
+      "excludedFromSpending": true,
+      "splits": []
+    },
+    {
+      "id": "tx-1006",
+      "date": "2026-10-12",
+      "amountYen": -640,
+      "kind": "expense",
+      "accountId": "acc-cash",
+      "categoryId": null,
+      "categoryName": null,
+      "payeeName": "合成コンビニ",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-1007",
+      "date": "2026-10-05",
+      "amountYen": -50000,
+      "kind": "expense",
+      "accountId": "acc-invest",
+      "categoryId": "cat-daily",
+      "categoryName": "日用品",
+      "payeeName": "合成証券",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-1008",
+      "date": "2026-10-03",
+      "amountYen": -1280,
+      "kind": "expense",
+      "accountId": "acc-card",
+      "categoryId": "cat-food",
+      "categoryName": "食費",
+      "payeeName": "合成ベーカリー",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-0901",
+      "date": "2026-09-27",
+      "amountYen": -2200,
+      "kind": "expense",
+      "accountId": "acc-card",
+      "categoryId": "cat-transport",
+      "categoryName": "交通費",
+      "payeeName": "合成鉄道",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-0902",
+      "date": "2026-09-25",
+      "amountYen": 248000,
+      "kind": "income",
+      "accountId": "acc-bank",
+      "categoryId": "cat-salary",
+      "categoryName": "給与",
+      "payeeName": "合成株式会社",
+      "memo": "9月分",
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-0903",
+      "date": "2026-09-14",
+      "amountYen": -4560,
+      "kind": "expense",
+      "accountId": "acc-card",
+      "categoryId": "cat-food",
+      "categoryName": "食費",
+      "payeeName": "合成スーパー",
+      "memo": null,
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    },
+    {
+      "id": "tx-0904",
+      "date": "2026-09-14",
+      "amountYen": 300,
+      "kind": "income",
+      "accountId": "acc-card",
+      "categoryId": "cat-food",
+      "categoryName": "食費",
+      "payeeName": "合成スーパー",
+      "memo": "返品",
+      "transferAccountId": null,
+      "excludedFromSpending": false,
+      "splits": []
+    }
+  ],
+  "monthly": [
+    {
+      "month": "2026-09",
+      "incomeYen": 248300,
+      "expenseYen": 6760,
+      "balanceYen": 241540,
+      "byCategory": [
+        {
+          "categoryId": "cat-food",
+          "categoryName": "食費",
+          "amountYen": 4560
+        },
+        {
+          "categoryId": "cat-transport",
+          "categoryName": "交通費",
+          "amountYen": 2200
+        }
+      ]
+    },
+    {
+      "month": "2026-10",
+      "incomeYen": 250000,
+      "expenseYen": 5400,
+      "balanceYen": 244600,
+      "byCategory": [
+        {
+          "categoryId": "cat-food",
+          "categoryName": "食費",
+          "amountYen": 4260
+        },
+        {
+          "categoryId": null,
+          "categoryName": "未分類",
+          "amountYen": 640
+        },
+        {
+          "categoryId": "cat-daily",
+          "categoryName": "日用品",
+          "amountYen": 500
+        }
+      ]
+    }
+  ]
+}
