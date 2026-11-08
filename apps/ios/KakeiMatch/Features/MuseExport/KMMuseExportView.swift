@@ -83,6 +83,14 @@ struct KMMuseExportView: View {
         .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
             model.refreshCurrentMonth()
         }
+        // The day-change notice follows the device's time zone, so the page also wakes at the next
+        // Asia/Tokyo month start. The task is cancelled when the page goes away.
+        .task(id: model.currentMonth) {
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(model.secondsUntilNextMonth() + 1)) } catch { return }
+                model.refreshCurrentMonth()
+            }
+        }
     }
 
     private var backButton: some View {

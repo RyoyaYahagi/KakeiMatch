@@ -54,6 +54,15 @@ final class KMMuseExportModel {
         resetOutput()
     }
 
+    /// Seconds until the next month starts in Asia/Tokyo. `.NSCalendarDayChanged` follows the
+    /// device's own time zone, so on a device set to another zone it does not fire at Japan's month
+    /// boundary; the screen also sleeps until this instant and then refreshes "this month".
+    func secondsUntilNextMonth() -> TimeInterval {
+        let instant = now()
+        guard let end = KMDate.calendar.dateInterval(of: .month, for: instant)?.end else { return 60 * 60 }
+        return max(1, end.timeIntervalSince(instant))
+    }
+
     var selectableYears: [Int] { KMMuseExportPresentation.selectableYears(currentMonth: currentMonth) }
     var rangeError: String? {
         KMMuseExportPresentation.validationMessage(from: fromMonth, to: toMonth, currentMonth: currentMonth)
@@ -197,8 +206,14 @@ final class KMMuseExportModel {
             var firstError: Error?
             for url in urls where isSnapshotFile(url) {
                 guard url.standardizedFileURL != keepURL else { continue }
-                guard isOldEnoughToDelete(url) else { continue }
-                do { try removeItem(url) } catch { firstError = firstError ?? error }
+                do {
+                    guard try isOldEnoughToDelete(url) else { continue }
+                    try removeItem(url)
+                } catch {
+                    // The file stays (its age is unknown or removal failed), and the page says an older
+                    // plain-text file may remain.
+                    firstError = firstError ?? error
+                }
             }
             return firstError.map { KMMuseExportPresentation.cleanupFailureMessage($0) }
         } catch {
@@ -212,12 +227,12 @@ final class KMMuseExportModel {
     /// injected clock so tests can move past it.
     private static let staleExportLifetime: TimeInterval = 10 * 60
 
-    private func isOldEnoughToDelete(_ url: URL) -> Bool {
-        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey]),
-              let modified = values.contentModificationDate else {
-            // Without a timestamp it is not safe to assume the file is old; the share sheet may
-            // still be reading it.
-            return false
+    /// Throws when the timestamp cannot be read. Without it the file is not assumed to be old, since
+    /// the share sheet may still be reading it; callers keep the file.
+    private func isOldEnoughToDelete(_ url: URL) throws -> Bool {
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+        guard let modified = values.contentModificationDate else {
+            throw KMDataError.invalidData("書き出したファイルの更新日時を確かめられません。")
         }
         return now().timeIntervalSince(modified) >= Self.staleExportLifetime
     }
@@ -235,7 +250,7 @@ final class KMMuseExportModel {
         var url = directory.appendingPathComponent(name)
         var suffix = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            if url.standardizedFileURL == exportedFileURL?.standardizedFileURL || !isOldEnoughToDelete(url) {
+            if url.standardizedFileURL == exportedFileURL?.standardizedFileURL || (try? isOldEnoughToDelete(url)) != true {
                 url = directory.appendingPathComponent("\(stem)-\(suffix).json")
                 suffix += 1
             } else {

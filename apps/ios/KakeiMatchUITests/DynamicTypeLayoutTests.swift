@@ -57,8 +57,9 @@ final class DynamicTypeLayoutTests: XCTestCase {
 
         // The export page stacks each period label above its year and month pickers at
         // accessibility sizes, so the longest labels must still stay inside the screen.
+        // The data section sits above 外観, which the previous step scrolled to.
         let museExport = app.buttons["settings.museExport"]
-        for _ in 0..<5 where !museExport.isHittable { app.swipeUp(velocity: .slow) }
+        for _ in 0..<5 where !museExport.isHittable { app.swipeDown(velocity: .slow) }
         assertTappable(museExport, screen: screen)
         museExport.tap()
         XCTAssertTrue(app.otherElements["museExport.screen"].waitForExistence(timeout: 10))

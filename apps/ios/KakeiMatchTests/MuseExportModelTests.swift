@@ -120,6 +120,18 @@ struct MuseExportModelTests {
         #expect(reopened.toMonth == (try KMYearMonth("2027-01")))
     }
 
+    /// A device in UTC sees 2026-11-30 15:00 when Japan's December begins, so the page cannot rely on
+    /// the device's day-change notice and sleeps until the Asia/Tokyo month start instead.
+    @Test func secondsUntilNextMonthCountsToTheAsiaTokyoMonthStart() throws {
+        var clock = try instant("2026-11-30T14:59:00Z") // 2026-11-30 23:59 in Asia/Tokyo.
+        let model = KMMuseExportModel(now: { clock })
+        #expect(model.secondsUntilNextMonth() == 60)
+        clock = try instant("2026-11-30T15:00:01Z") // 2026-12-01 00:00:01 in Asia/Tokyo.
+        model.refreshCurrentMonth()
+        #expect(model.currentMonth == (try KMYearMonth("2026-12")))
+        #expect(model.secondsUntilNextMonth() == 31 * 24 * 60 * 60 - 1)
+    }
+
     @Test func refreshCurrentMonthClampsAnEndMonthThatIsNowInTheFuture() throws {
         var clock = try instant("2026-11-15T03:00:00Z")
         let model = KMMuseExportModel(now: { clock })
