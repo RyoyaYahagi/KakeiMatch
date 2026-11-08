@@ -26,6 +26,9 @@ function readLocalBytes(io, path, readOptions) {
   } catch (error) {
     if (error?.code === 'ENOTREG') throw new SnapshotError([`${path} は通常のファイルではないので読みません`]);
     if (error?.code === 'ELOOP') throw new SnapshotError([`${path} はシンボリックリンクなので読みません`]);
+    if (error?.code === 'ENOFOLLOW_UNSUPPORTED') {
+      throw new SnapshotError([`${path}: この環境では --dir の候補を安全に開けません。--file でファイルを指定してください`]);
+    }
     throw new SnapshotError([`${path} を読めません（${errorCode(error)}）`]);
   }
 }

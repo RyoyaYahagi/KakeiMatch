@@ -20,8 +20,13 @@ function readDescriptor(fd, limit) {
 
 // O_NONBLOCK keeps a FIFO without a writer from blocking open; the descriptor is then checked to be a
 // regular file, so the type cannot change between the check and the read.
-export function readFileBounded(path, { noFollow = false, limit = MAX_SNAPSHOT_BYTES } = {}) {
-  const flags = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (noFollow ? constants.O_NOFOLLOW ?? 0 : 0);
+// Without O_NOFOLLOW (Windows) a symbolic link swapped in after listing would be followed, so such a
+// read is refused instead of silently losing the protection.
+export function readFileBounded(path, { noFollow = false, limit = MAX_SNAPSHOT_BYTES, fsConstants = constants } = {}) {
+  if (noFollow && fsConstants.O_NOFOLLOW === undefined) {
+    throw Object.assign(new Error('この環境ではシンボリックリンクをたどらずに開けません'), { code: 'ENOFOLLOW_UNSUPPORTED' });
+  }
+  const flags = fsConstants.O_RDONLY | (fsConstants.O_NONBLOCK ?? 0) | (noFollow ? fsConstants.O_NOFOLLOW : 0);
   const fd = openSync(path, flags);
   try {
     if (!fstatSync(fd).isFile()) {

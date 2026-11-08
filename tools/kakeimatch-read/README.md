@@ -22,8 +22,8 @@ node tools/kakeimatch-read/kakeimatch-read.mjs <サブコマンド> <読み込�
 
 | 指定 | 内容 |
 | --- | --- |
-| `--file <path>` | ファイル。`-` で標準入力 |
-| `--dir <dir>` | ローカルのディレクトリ。`snapshot.json` と `kakeimatch-snapshot-*.json` のうち、検証に通り `generatedAt` が最も新しいものを使う |
+| `--file <path>` | ファイル。`-` で標準入力。FIFO などの通常でないファイルは読まない |
+| `--dir <dir>` | ローカルのディレクトリ。`snapshot.json` と `kakeimatch-snapshot-*.json` のうち、検証に通り `generatedAt` が最も新しいものを使う。シンボリックリンクと通常でないファイルは読まない。シンボリックリンクをたどらずに開けない環境（Windows）では使えない |
 | 環境変数 `KAKEIMATCH_SNAPSHOT` | 上のどれも指定しないときに使うファイルのパス |
 
 `--json` を付けると機械向けのJSONで出力します。どの出力にも `generatedAt` が入ります。古いスナップショットを最新の家計と取り違えないよう、読み手は必ず確認してください。

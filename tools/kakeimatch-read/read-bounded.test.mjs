@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
+import { constants, mkdtempSync, symlinkSync, truncateSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
@@ -59,4 +59,14 @@ test('--dir の候補がシンボリックリンクなら読まない', { skip: 
 
   // 列挙の後にシンボリックリンクへ差し替えられても、O_NOFOLLOW で読まない。
   assert.throws(() => readFileBounded(join(dir, 'snapshot.json'), { noFollow: true }), { code: 'ELOOP' });
+});
+
+test('O_NOFOLLOW のない環境では、たどらずに開くことを求められた読み込みを拒否する', () => {
+  const dir = workDir();
+  const path = join(dir, 'snapshot.json');
+  writeFileSync(path, snapshotBytes(loadSample('snapshot-sample-empty')));
+  const withoutNoFollow = { ...constants, O_NOFOLLOW: undefined };
+  assert.throws(() => readFileBounded(path, { noFollow: true, fsConstants: withoutNoFollow }), { code: 'ENOFOLLOW_UNSUPPORTED' });
+  // --file のように noFollow を求めない読み込みは、その環境でも読める。
+  assert.ok(readFileBounded(path, { fsConstants: withoutNoFollow }).length > 0);
 });
