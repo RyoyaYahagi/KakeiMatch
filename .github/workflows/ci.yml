@@ -56,6 +56,9 @@ jobs:
         run: |
           bash -n apps/ios/scripts/testflight.sh
           node --test scripts/testflight.test.mjs
+      # Dependency-free, so it runs before the PWA install and on iOS-only PRs too.
+      - name: Test the read-only snapshot CLI
+        run: node --test 'tools/kakeimatch-read/*.test.mjs'
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm install --frozen-lockfile
       - if: steps.changes.outputs.skip_pwa != 'true'
