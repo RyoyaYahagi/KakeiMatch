@@ -8,9 +8,9 @@ struct KMMuseExportView: View {
     @Environment(\.repositories) private var repositories
     @State private var model: KMMuseExportModel
 
-    init(today: Date = Date(), onBack: @escaping () -> Void) {
+    init(now: @escaping () -> Date = { Date() }, onBack: @escaping () -> Void) {
         self.onBack = onBack
-        _model = State(initialValue: KMMuseExportModel(today: today))
+        _model = State(initialValue: KMMuseExportModel(now: now))
     }
 
     var body: some View {
@@ -57,6 +57,9 @@ struct KMMuseExportView: View {
             if let status = model.status {
                 statusText(status, isFailure: model.isFailure)
             }
+            if let cleanupError = model.cleanupError {
+                statusText(cleanupError, isFailure: true, id: "museExport.cleanupStatus")
+            }
             if let url = model.exportedFileURL {
                 share(url)
             }
@@ -66,6 +69,7 @@ struct KMMuseExportView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("museExport.screen")
+        .task { model.prepare() }
     }
 
     private var backButton: some View {
@@ -89,10 +93,14 @@ struct KMMuseExportView: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("museExport.periodTitle")
 
-            monthRow(KMMuseExportPresentation.fromLabel, selection: Binding(
-                get: { model.fromMonth }, set: { model.setFromMonth($0) }), id: "museExport.fromMonth")
-            monthRow(KMMuseExportPresentation.toLabel, selection: Binding(
-                get: { model.toMonth }, set: { model.setToMonth($0) }), id: "museExport.toMonth")
+            monthRow(KMMuseExportPresentation.fromLabel,
+                year: Binding(get: { model.fromMonth.year }, set: { model.setFromYear($0) }),
+                month: Binding(get: { model.fromMonth.month }, set: { model.setFromMonthNumber($0) }),
+                yearID: "museExport.fromYear", monthID: "museExport.fromMonth")
+            monthRow(KMMuseExportPresentation.toLabel,
+                year: Binding(get: { model.toMonth.year }, set: { model.setToYear($0) }),
+                month: Binding(get: { model.toMonth.month }, set: { model.setToMonthNumber($0) }),
+                yearID: "museExport.toYear", monthID: "museExport.toMonth")
 
             if let error = model.rangeError {
                 Text("! \(error)")
@@ -119,22 +127,36 @@ struct KMMuseExportView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
-    private func monthRow(_ label: String, selection: Binding<KMYearMonth>, id: String) -> some View {
+    private func monthRow(_ label: String, year: Binding<Int>, month: Binding<Int>,
+                          yearID: String, monthID: String) -> some View {
         HStack(spacing: KMSpacing.space2) {
             Text(label)
                 .font(KMTypography.text)
                 .foregroundStyle(KMColor.text)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: KMSpacing.space2)
-            Picker(label, selection: selection) {
-                ForEach(model.monthOptions, id: \.rawValue) { month in
-                    Text(KMMuseExportPresentation.monthLabel(month)).tag(month)
+            Picker("\(label)の年", selection: year) {
+                ForEach(model.selectableYears, id: \.self) { value in
+                    Text("\(value)年").tag(value)
+                }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .frame(minHeight: 48)
+            .accessibilityLabel("\(label)の年")
+            .accessibilityIdentifier(yearID)
+            .disabled(model.isWorking)
+            Picker("\(label)の月", selection: month) {
+                ForEach(model.selectableMonths(for: year.wrappedValue), id: \.self) { value in
+                    Text("\(value)月").tag(value)
                 }
             }
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(minHeight: 48)
             .accessibilityLabel(label)
-            .accessibilityIdentifier(id)
+            .accessibilityIdentifier(monthID)
+            .disabled(model.isWorking)
         }
         .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
     }
@@ -159,12 +181,13 @@ struct KMMuseExportView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func statusText(_ value: String, isFailure: Bool) -> some View {
+    private func statusText(_ value: String, isFailure: Bool,
+                            id: String = "museExport.status") -> some View {
         Text(isFailure ? "! \(value)" : value)
             .font(KMTypography.note)
             .foregroundStyle(isFailure ? KMColor.danger : KMColor.primary)
             .fixedSize(horizontal: false, vertical: true)
-            .accessibilityIdentifier("museExport.status")
+            .accessibilityIdentifier(id)
     }
 }
 

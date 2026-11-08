@@ -32,6 +32,8 @@ final class MuseSnapshotReadOnlyStore: TransactionRepository, AccountRepository,
 
     let base: KMInMemoryStore
     private(set) var writeCalls: [String] = []
+    /// Lets a test hold the first ledger read so a range change can be attempted mid-export.
+    var beforeTransactionRead: (() async -> Void)?
 
     init(base: KMInMemoryStore) { self.base = base }
 
@@ -41,7 +43,8 @@ final class MuseSnapshotReadOnlyStore: TransactionRepository, AccountRepository,
     }
 
     func transactions(matching query: KMTransactionQuery) async throws -> [KMTransaction] {
-        try await base.transactions(matching: query)
+        if let beforeTransactionRead { await beforeTransactionRead() }
+        return try await base.transactions(matching: query)
     }
     func transaction(id: String) async throws -> KMTransaction? { try await base.transaction(id: id) }
     func recordDays(matching query: KMTransactionQuery) async throws -> [KMRecordDay] {

@@ -22,6 +22,12 @@ enum KMMuseExportPresentation {
     static let reversedRange = "開始月は終了月以前にしてください。"
     static let longRange = "期間は60か月以内で選んでください。"
     static let futureMonth = "終了月は今月より後を選べません。"
+    static let rangeChanged = "選択した期間が変わりました。もう一度「書き出す」を押してください。"
+    static let cleanupFailure = "古い書き出しファイルを削除できませんでした。端末の空き容量を確認してください。"
+
+    /// The start month can be older than five years; only the selected span is capped at 60 months.
+    /// A fixed window keeps the screen from reading the whole ledger just to build the picker.
+    static let selectableYearsBack = 50
 
     /// Two months before the current Asia/Tokyo month through the current month (3 months).
     static func defaultRange(today: Date) -> (from: KMYearMonth, to: KMYearMonth) {
@@ -29,9 +35,13 @@ enum KMMuseExportPresentation {
         return (current.shifted(by: -2), current)
     }
 
-    /// The picker never offers a month after today, so the future check is a guard as well.
-    static func monthOptions(currentMonth: KMYearMonth) -> [KMYearMonth] {
-        (0..<60).reversed().map { currentMonth.shifted(by: -$0) }
+    static func selectableYears(currentMonth: KMYearMonth) -> [Int] {
+        Array(max(1, currentMonth.year - selectableYearsBack)...currentMonth.year)
+    }
+
+    /// Months after the current month are not offered, so the future check stays a guard as well.
+    static func lastSelectableMonth(year: Int, currentMonth: KMYearMonth) -> Int {
+        year >= currentMonth.year ? currentMonth.month : 12
     }
 
     static func monthLabel(_ month: KMYearMonth) -> String {
@@ -61,7 +71,7 @@ enum KMMuseExportPresentation {
     }
 
     static let exportDirectory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("KakeiMatchMuseExport", isDirectory: true)
+        .appendingPathComponent("muse-export", isDirectory: true)
 
     /// `CFBundleShortVersionString` and `CFBundleVersion`, or nil when either is missing.
     static func appVersion(bundle: Bundle = .main) -> String? {
@@ -80,6 +90,11 @@ enum KMMuseExportPresentation {
         return message.range(of: "[ぁ-んァ-ヶ一-龠]", options: .regularExpression) != nil
             ? message
             : "書き出しに失敗しました。もう一度お試しください。"
+    }
+
+    /// The underlying error is not shown because file-system diagnostics are not user-facing copy.
+    static func cleanupFailureMessage(_ error: Error) -> String {
+        cleanupFailure
     }
 
     private static func monthCount(from: KMYearMonth, to: KMYearMonth) -> Int {

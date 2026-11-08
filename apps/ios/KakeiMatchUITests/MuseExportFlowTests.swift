@@ -37,6 +37,8 @@ final class MuseExportFlowTests: XCTestCase {
         XCTAssertTrue(summary.label.contains("2026年10月"), summary.label)
         XCTAssertTrue(app.descendants(matching: .any)["museExport.fromMonth"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["museExport.toMonth"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["museExport.fromYear"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["museExport.toYear"].exists)
         XCTAssertTrue(app.buttons["museExport.exportButton"].isEnabled)
         XCTAssertFalse(app.descendants(matching: .any)["museExport.shareLink"].exists)
 
@@ -45,7 +47,11 @@ final class MuseExportFlowTests: XCTestCase {
             NSPredicate(format: "identifier == %@ AND label CONTAINS %@", "museExport.status", "書き出しました")).firstMatch
         XCTAssertTrue(exportedStatus.waitForExistence(timeout: 10), "書き出しの完了が表示されません")
         XCTAssertTrue(exportedStatus.label.contains("書き出しました"), exportedStatus.label)
-        XCTAssertTrue(app.descendants(matching: .any)["museExport.shareLink"].waitForExistence(timeout: 5))
+        let share = app.descendants(matching: .any)["museExport.shareLink"]
+        XCTAssertTrue(share.waitForExistence(timeout: 5))
+        if !share.isHittable { app.swipeUp() }
+        XCTAssertTrue(share.isHittable)
+        XCTAssertTrue(share.label.contains("保存・共有"), share.label)
         capture(app, name: "muse-export-light")
 
         app.buttons["settings.back"].tap()
