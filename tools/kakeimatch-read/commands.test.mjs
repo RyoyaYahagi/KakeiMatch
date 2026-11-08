@@ -134,10 +134,11 @@ test('validate も集計の警告を --json の warnings と終了コードに�
   assert.equal((await execute(['validate', '--file', '-', '--strict'], options)).exitCode, 3);
 });
 
-test('--remote の値が - で始まると rclone のオプションと取り違えないよう使い方の誤りにする', async () => {
-  const result = await execute(['summary', '--remote', '-h']);
+test('--remote は使えず、標準入力で渡す方法を案内する', async () => {
+  const result = await execute(['summary', '--remote', 'gdrive:KakeiMatch/snapshot.json']);
   assert.equal(result.exitCode, 1);
-  assert.match(result.stderr, /--remote のパスは - で始められません/);
+  assert.match(result.stderr, /--remote はありません/);
+  assert.match(result.stderr, /--file -/);
 });
 
 test('使い方の誤りは終了コード 1 になる', async () => {

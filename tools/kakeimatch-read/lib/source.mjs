@@ -1,7 +1,6 @@
-// --file / --dir / --remote からスナップショットを1つ読む。書き込みは行わない。
+// --file / --dir からスナップショットを1つ読む。書き込みも子プロセスの起動も行わない。
 import { join } from 'node:path';
 import { SnapshotError, UsageError } from './errors.mjs';
-import { assertReadOnlyRemote } from './rclone.mjs';
 import { readSnapshotBytes } from './validate.mjs';
 
 export const SNAPSHOT_FILENAME = 'snapshot.json';
@@ -74,45 +73,6 @@ async function loadFromDir(dir, io) {
   return selectNewest(candidates, dir);
 }
 
-async function loadFromRemote(remotePath, io) {
-  const rclone = io.rclone();
-  await assertReadOnlyRemote(remotePath, rclone);
-  if (!remotePath.endsWith('/')) {
-    const bytes = await rclone.cat(remotePath);
-    const label = `rclone:${remotePath}`;
-    return { snapshot: readSnapshotBytes(bytes, label), label };
-  }
-  const listing = await rclone.listFiles(remotePath);
-  let parsed;
-  try {
-    parsed = JSON.parse(listing.toString('utf8'));
-  } catch {
-    throw new SnapshotError([`rclone lsjson の出力を JSON として読めません（${remotePath}）`]);
-  }
-  if (!Array.isArray(parsed)) {
-    throw new SnapshotError([`rclone lsjson の出力が配列ではありません（${remotePath}）`]);
-  }
-  const names = parsed
-    .filter(entry => entry && entry.IsDir !== true && typeof entry.Name === 'string' && isSnapshotCandidate(entry.Name))
-    .map(entry => entry.Name)
-    .sort();
-  if (names.length === 0) {
-    throw new SnapshotError([`${remotePath} に ${SNAPSHOT_FILENAME} も kakeimatch-snapshot-*.json もありません`]);
-  }
-  const candidates = names.map(name => {
-    const path = `${remotePath}${name}`;
-    return {
-      name,
-      label: `rclone:${path}`,
-      load: async () => {
-        const bytes = await rclone.cat(path);
-        return readSnapshotBytes(bytes, `rclone:${path}`);
-      },
-    };
-  });
-  return selectNewest(candidates, remotePath);
-}
-
 export async function loadSnapshot(source, io) {
   if (!source || !source.kind) throw new UsageError('読み込み元がありません');
   if (source.kind === 'file') {
@@ -123,6 +83,5 @@ export async function loadSnapshot(source, io) {
     return { snapshot: readSnapshotBytes(bytes, source.value), label: source.value };
   }
   if (source.kind === 'dir') return loadFromDir(source.value, io);
-  if (source.kind === 'remote') return loadFromRemote(source.value, io);
   throw new UsageError(`不明な読み込み元です: ${source.kind}`);
 }

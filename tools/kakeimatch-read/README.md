@@ -24,7 +24,6 @@ node tools/kakeimatch-read/kakeimatch-read.mjs <サブコマンド> <読み込�
 | --- | --- |
 | `--file <path>` | ファイル。`-` で標準入力 |
 | `--dir <dir>` | ローカルのディレクトリ。`snapshot.json` と `kakeimatch-snapshot-*.json` のうち、検証に通り `generatedAt` が最も新しいものを使う |
-| `--remote <rclone のパス>` | `rclone cat` で読む。接続先は種類が `drive` か `local` のものだけ使える（下の「読み取り専用であること」）。`/` で終わるパスはディレクトリとして `rclone lsjson` で候補を探し、`--dir` と同じ規則で選ぶ |
 | 環境変数 `KAKEIMATCH_SNAPSHOT` | 上のどれも指定しないときに使うファイルのパス |
 
 `--json` を付けると機械向けのJSONで出力します。どの出力にも `generatedAt` が入ります。古いスナップショットを最新の家計と取り違えないよう、読み手は必ず確認してください。
@@ -32,7 +31,8 @@ node tools/kakeimatch-read/kakeimatch-read.mjs <サブコマンド> <読み込�
 ```sh
 node tools/kakeimatch-read/kakeimatch-read.mjs monthly --month 2026-10 --json \
   --file test/fixtures/muse-snapshot/snapshot-sample-normal.json
-node tools/kakeimatch-read/kakeimatch-read.mjs transactions --limit 20 --remote gdrive:KakeiMatch/
+rclone cat -- gdrive:KakeiMatch/snapshot.json \
+  | node tools/kakeimatch-read/kakeimatch-read.mjs transactions --limit 20 --file -
 ```
 
 ## 検証と警告
@@ -52,11 +52,11 @@ node tools/kakeimatch-read/kakeimatch-read.mjs transactions --limit 20 --remote 
 
 このCLIには書き込みの機能がありません。ファイルの書き込み・削除、ネットワーク通信（`fetch`、`http`）を使いません。`readonly.test.mjs` がソースを静的に検査します。
 
-rcloneには `cat`、`lsjson`、`listremotes` だけを渡し、パスの前に `--` を置いてオプションとして読まれないようにします。`-` で始まる `--remote` の値は受け付けません。`RCLONE_LOG_FILE` などの環境変数で rclone に副作用が起きないよう、子プロセスへは `RCLONE_` で始まる環境変数を渡しません。例外は、設定ファイルの場所とそのパスワード（`RCLONE_CONFIG`、`RCLONE_CONFIG_PASS`）と、環境変数で定義した接続先（`RCLONE_CONFIG_<名前>_*`）です。
+子プロセスも起動しません。Google Driveなどからの取得はこのCLIでは行わず、呼び出す側に任せます。Drive連携で取得したファイルを `--file` に渡すか、rcloneの出力を標準入力から渡してください。
 
-rcloneには、読むだけでも書き込みが起きる種類の接続先があります（`cache` はキャッシュとデータベースを、`hasher` はデータベースを書きます）。そのため `--remote` で使える接続先は、種類が Google Drive（`drive`）かローカル（`local`）のものと、接続先の名前を付けないローカルのパスだけです。読む前に `rclone listremotes --json` で種類を確かめます。その場で接続先を組み立てる指定（`:cache,remote=...:` や `名前,オプション=値:`）は受け付けません。
+rcloneを使う場合、接続先の種類によっては読むだけでも書き込みが起きます（`cache` はキャッシュとデータベースを、`hasher` はデータベースを書きます）。家計データのコピーを手元に残さないよう、Google Drive（`drive`）の接続先から `rclone cat` で読んでください。rclone自体は、Google Driveの認証トークンを更新したときに自分の設定ファイル（`rclone.conf`）を書き換えることがあります。
 
-ただし、rclone自体はGoogle Driveの認証トークンを更新したときに、自分の設定ファイル（`rclone.conf`）を書き換えることがあります。これはrcloneの認証情報の更新で、家計データやDrive上のファイルへの書き込みではありません。
+CLIの中からrcloneを呼ぶ機能（`--remote`）は設けていません。rcloneの設定（設定ファイル、環境変数、接続文字列）の解釈によって書き込みが起きないことを、CLIの側では保証しきれないためです。
 
 ## テスト
 

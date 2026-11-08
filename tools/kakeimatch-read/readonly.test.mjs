@@ -3,8 +3,6 @@ import { test } from 'node:test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRclone } from './lib/rclone.mjs';
-import { fakeExecFile } from './helpers.mjs';
 
 const ROOT = fileURLToPath(new URL('.', import.meta.url));
 
@@ -18,7 +16,7 @@ function sourceFiles(dir = ROOT) {
   return files;
 }
 
-// `execFile as nodeExecFile` のような別名は、元の名前で判定する。
+// `readFileSync as read` のような別名は、元の名前で判定する。
 function importedNames(list) {
   return list.split(',').map(name => name.trim().split(/\s+as\s+/)[0]).filter(Boolean);
 }
@@ -39,6 +37,9 @@ const FORBIDDEN = [
   /\bfetch\s*\(/,
   /from\s+['"]node:https?['"]/,
   /from\s+['"]https?['"]/,
+  // 子プロセスを起動しない。外部コマンドの設定次第で書き込みが起きうるため。
+  /['"]node:child_process['"]/,
+  /['"]child_process['"]/,
 ];
 
 test('CLI のソースに書き込み系 API と fetch・http の利用がない', () => {
@@ -55,45 +56,6 @@ test('CLI のソースに書き込み系 API と fetch・http の利用がない
         assert.ok(['readFileSync', 'readdirSync'].includes(name), `${file} が node:fs の ${name} を import しています`);
       }
     }
-    for (const match of text.matchAll(/import\s*\{([^}]+)\}\s*from\s*'node:child_process'/g)) {
-      const names = importedNames(match[1]);
-      assert.deepEqual(names, ['execFile'], `${file} が child_process の execFile 以外を import しています`);
-    }
   }
 });
 
-test('rclone の実行は cat・lsjson・listremotes の引数だけを渡す', async () => {
-  const execFile = fakeExecFile(args => {
-    if (args[0] === 'lsjson') return { stdout: '[]' };
-    return { stdout: '{}' };
-  });
-  const rclone = createRclone({ execFile });
-  await rclone.cat('gdrive:KakeiMatch/snapshot.json');
-  await rclone.listFiles('gdrive:KakeiMatch/');
-  await rclone.listRemotes();
-  assert.deepEqual(execFile.calls, [
-    { file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] },
-    { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] },
-    { file: 'rclone', args: ['listremotes', '--json'] },
-  ]);
-  for (const call of execFile.calls) {
-    assert.ok(['cat', 'lsjson', 'listremotes'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
-  }
-});
-
-test("rclone には副作用を起こしうる RCLONE_* の環境変数を渡さない", async () => {
-  const execFile = fakeExecFile(() => ({ stdout: '{}' }));
-  const rclone = createRclone({ execFile, env: {
-    PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf',
-    RCLONE_LOG_FILE: '/tmp/unexpected.log', RCLONE_DRY_RUN: 'false', SECRET_TOKEN: 'x',
-  } });
-  await rclone.cat('gdrive:KakeiMatch/snapshot.json');
-  assert.deepEqual(execFile.envs[0], { PATH: '/usr/bin', HOME: '/home/test', RCLONE_CONFIG: '/home/test/rclone.conf', SECRET_TOKEN: 'x' });
-});
-
-test('環境変数で定義した rclone の接続先（RCLONE_CONFIG_<REMOTE>_*）はそのまま渡す', async () => {
-  const execFile = fakeExecFile(() => ({ stdout: '{}' }));
-  const rclone = createRclone({ execFile, env: { RCLONE_CONFIG_REVIEW_TYPE: 'local', RCLONE_CONFIG_PASS: 'p', RCLONE_LOG_LEVEL: 'DEBUG' } });
-  await rclone.cat('review:/tmp/snapshot.json');
-  assert.deepEqual(execFile.envs[0], { RCLONE_CONFIG_REVIEW_TYPE: 'local', RCLONE_CONFIG_PASS: 'p' });
-});

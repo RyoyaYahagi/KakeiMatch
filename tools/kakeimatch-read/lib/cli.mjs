@@ -4,12 +4,11 @@ import { UsageError, SnapshotError } from './errors.mjs';
 import { loadSnapshot } from './source.mjs';
 import { compareMonthly } from './aggregate.mjs';
 import { runCommand } from './commands.mjs';
-import { createRclone } from './rclone.mjs';
 
 const COMMANDS = new Set(['summary', 'balances', 'transactions', 'monthly', 'validate']);
 const GLOBAL_FLAGS = new Set(['--json', '--strict']);
 const BOOLEAN_FLAGS = new Set(['--json', '--strict', '--include-closed']);
-const VALUE_FLAGS = new Set(['--file', '--dir', '--remote', '--month', '--from', '--to', '--account', '--category', '--limit']);
+const VALUE_FLAGS = new Set(['--file', '--dir', '--month', '--from', '--to', '--account', '--category', '--limit']);
 const ALLOWED_FLAGS = {
   summary: [],
   balances: ['--include-closed'],
@@ -35,7 +34,6 @@ export const USAGE = `KakeiMatch の読み取り専用スナップショット�
 読み込み元（どれか1つ）:
   --file <path>                 ファイル。\`-\` で標準入力
   --dir <dir>                   ローカルのディレクトリ
-  --remote <path>               rclone のパス。\`/\` で終わるとディレクトリ
   環境変数 KAKEIMATCH_SNAPSHOT  ファイルのパス
 
 共通オプション:
@@ -61,7 +59,6 @@ function readFlagValue(argv, index, flag) {
     throw new UsageError(`${flag} の値がありません`);
   }
   if (value === '') throw new UsageError(`${flag} の値が空です`);
-  if (flag === '--remote' && value.startsWith('-')) throw new UsageError(`--remote のパスは - で始められません: ${value}`);
   return value;
 }
 
@@ -76,6 +73,10 @@ export function parseArgs(argv, env = process.env) {
         flags.set(argument, true);
         continue;
       }
+      if (argument === '--remote') {
+        // rclone's config decides whether a read also writes (cache, hasher), so fetching is left to the caller.
+        throw new UsageError('--remote はありません。rclone などで取得した内容を標準入力から渡してください（例: rclone cat -- gdrive:KakeiMatch/snapshot.json | kakeimatch-read summary --file -）');
+      }
       if (!VALUE_FLAGS.has(argument)) throw new UsageError(`不明なオプションです: ${argument}`);
       flags.set(argument, readFlagValue(argv, index, argument));
       index += 1;
@@ -89,14 +90,14 @@ export function parseArgs(argv, env = process.env) {
   if (!COMMANDS.has(command)) throw new UsageError(`不明なサブコマンドです: ${command}`);
   for (const flag of flags.keys()) {
     if (GLOBAL_FLAGS.has(flag)) continue;
-    if (flag === '--file' || flag === '--dir' || flag === '--remote') continue;
+    if (flag === '--file' || flag === '--dir') continue;
     if (!ALLOWED_FLAGS[command].includes(flag)) {
       throw new UsageError(`${command} では ${flag} を使えません`);
     }
   }
-  const sourceFlags = ['--file', '--dir', '--remote'].filter(flag => flags.has(flag));
+  const sourceFlags = ['--file', '--dir'].filter(flag => flags.has(flag));
   if (sourceFlags.length > 1) {
-    throw new UsageError('読み込み元は --file / --dir / --remote のどれか1つだけ指定してください');
+    throw new UsageError('読み込み元は --file / --dir のどちらか1つだけ指定してください');
   }
   let source;
   if (sourceFlags.length === 1) {
@@ -105,7 +106,7 @@ export function parseArgs(argv, env = process.env) {
   } else if (env.KAKEIMATCH_SNAPSHOT) {
     source = { kind: 'file', value: env.KAKEIMATCH_SNAPSHOT };
   } else {
-    throw new UsageError('読み込み元がありません（--file / --dir / --remote、または環境変数 KAKEIMATCH_SNAPSHOT）');
+    throw new UsageError('読み込み元がありません（--file / --dir、または環境変数 KAKEIMATCH_SNAPSHOT）');
   }
   const options = {
     includeClosed: flags.get('--include-closed') === true,
@@ -130,7 +131,6 @@ function createIo(options) {
     readFile: options.readFile ?? (path => readFileSync(path)),
     readDir: options.readDir ?? (dir => readdirSync(dir, { withFileTypes: true })),
     readStdin: options.readStdin ?? (() => readFileSync(0)),
-    rclone: options.rclone ?? (() => createRclone({ execFile: options.execFile })),
     now: options.now ?? (() => new Date()),
   };
 }
