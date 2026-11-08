@@ -29,25 +29,25 @@ struct MuseSnapshotBuilderTests {
             fromMonth: try KMYearMonth("2026-09"), toMonth: try KMYearMonth("2026-10"),
             generatedAt: try MuseSnapshotFixture.generatedAt(), appVersion: nil)
         let json = try MuseSnapshotFixture.object(try snapshot.jsonData())
-        #expect(json["appVersion"] is NSNull)
+        #expect(MuseSnapshotFixture.isNull(json["appVersion"]))
 
         let transactions = try #require(json["transactions"] as? [[String: Any]])
         let plain = try #require(transactions.first { $0["id"] as? String == "tx-1006" })
-        #expect(plain["categoryId"] is NSNull)
-        #expect(plain["categoryName"] is NSNull)
+        #expect(MuseSnapshotFixture.isNull(plain["categoryId"]))
+        #expect(MuseSnapshotFixture.isNull(plain["categoryName"]))
         #expect(plain["payeeName"] as? String == "合成コンビニ")
-        #expect(plain["memo"] is NSNull)
-        #expect(plain["transferAccountId"] is NSNull)
+        #expect(MuseSnapshotFixture.isNull(plain["memo"]))
+        #expect(MuseSnapshotFixture.isNull(plain["transferAccountId"]))
         let plainSplits = try #require(plain["splits"] as? [Any])
         #expect(plainSplits.isEmpty)
 
         let split = try #require(transactions.first { $0["id"] as? String == "tx-1001" })
-        #expect(split["categoryId"] is NSNull)
-        #expect(split["categoryName"] is NSNull)
+        #expect(MuseSnapshotFixture.isNull(split["categoryId"]))
+        #expect(MuseSnapshotFixture.isNull(split["categoryName"]))
         let splitRows = try #require(split["splits"] as? [[String: Any]])
         let firstSplit = try #require(splitRows.first)
-        #expect(firstSplit["payeeName"] is NSNull)
-        #expect(firstSplit["memo"] is NSNull)
+        #expect(MuseSnapshotFixture.isNull(firstSplit["payeeName"]))
+        #expect(MuseSnapshotFixture.isNull(firstSplit["memo"]))
         let lastSplit = try #require(splitRows.last)
         #expect(lastSplit["memo"] as? String == "洗剤")
     }
@@ -119,6 +119,11 @@ private enum MuseSnapshotFixture {
 
     static func object(_ data: Data) throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
+    static func isNull(_ value: Any?) -> Bool {
+        guard let value else { return true }
+        return value is NSNull
     }
 
     static func store() -> KMInMemoryStore {
