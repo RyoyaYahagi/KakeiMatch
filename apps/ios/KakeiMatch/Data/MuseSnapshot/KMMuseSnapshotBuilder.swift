@@ -90,7 +90,8 @@ struct KMMuseSnapshotBuilder {
         let listed = try await transactions.transactions(matching: query)
         var seen = Set<String>()
         var rows: [KMTransaction] = []
-        for row in listed where seen.insert(row.id).inserted {
+        for row in listed {
+            guard seen.insert(row.id).inserted else { continue }
             rows.append(row)
             guard row.kind == .transfer, let peerId = row.transferId, !seen.contains(peerId),
                   let peer = try await transactions.transaction(id: peerId),
