@@ -11,6 +11,17 @@ struct RecurringPresentationTests {
         #expect(KMRecurringPresentation.amount(12_300, kind: .income) == "+¥12,300")
     }
 
+    @Test func labelsSpendingExclusionFromSavedSetting() {
+        func schedule(_ excluded: Bool?) -> KMRecurringTransaction {
+            KMRecurringTransaction(id: "synthetic", name: "合成予定", kind: .expense, amountYen: 100,
+                categoryId: "category", accountId: "account", frequency: .monthly, startDate: KMDate(rawValue: "2026-10-14"),
+                postsTransaction: true, nextDate: nil, completed: false, editable: true, excludedFromSpending: excluded)
+        }
+        #expect(KMRecurringPresentation.spendingExclusion(schedule(true)) == "含めない")
+        #expect(KMRecurringPresentation.spendingExclusion(schedule(false)) == "含める")
+        #expect(KMRecurringPresentation.spendingExclusion(schedule(nil)) == "含める")
+    }
+
     @Test func derivesCalendarTimingFromTokyoDateOnlyValue() {
         func schedule(_ frequency: KMRecurringTransaction.Frequency, _ date: String) -> KMRecurringTransaction {
             KMRecurringTransaction(id: "synthetic", name: "合成予定", kind: .expense, amountYen: 100,

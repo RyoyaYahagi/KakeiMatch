@@ -17,6 +17,7 @@ struct KMRecurringView: View {
     @State private var startDate = ""
     @FocusState private var focusedEditorField: KMRecurringEditorField?
     @State private var postsTransaction = true
+    @State private var excludedFromSpending = false
     @State private var confirmsDelete = false
     @State private var confirmsCatchUpDelete = false
     @State private var selectingCatchUp = false
@@ -255,6 +256,10 @@ struct KMRecurringView: View {
                     .focused($focusedEditorField, equals: .startDate)
                     .accessibilityLabel("開始日").accessibilityIdentifier("recurring.startDate")
             }
+            if kind == .expense {
+                Toggle("支出の計算に含めない", isOn: $excludedFromSpending).tint(KMColor.primary)
+                    .frame(minHeight: KMLayout.minimumHit).accessibilityIdentifier("recurring.excluded")
+            }
             Toggle("予定日に自動登録する", isOn: $postsTransaction).tint(KMColor.primary)
                 .frame(minHeight: KMLayout.minimumHit).accessibilityIdentifier("recurring.autoPost")
             Spacer(minLength: 0)
@@ -263,7 +268,9 @@ struct KMRecurringView: View {
                 Task {
                     await Task.yield()
                     await model.save(name: name, kind: kind, amount: amount, categoryId: categoryId, accountId: accountId,
-                        frequency: frequency, startDate: startDate, postsTransaction: postsTransaction, editing: selected, repositories: repositories)
+                        frequency: frequency, startDate: startDate, postsTransaction: postsTransaction,
+                        excludedFromSpending: kind == .expense && excludedFromSpending,
+                        editing: selected, repositories: repositories)
                     if model.saved { page = .list }
                 }
             }.disabled(model.isSaving).accessibilityIdentifier("recurring.save")
@@ -331,6 +338,9 @@ struct KMRecurringView: View {
             detailRow("開始日", schedule.startDate.rawValue)
             detailRow("次回", schedule.nextDate?.rawValue ?? "未定")
             detailRow("自動登録", schedule.postsTransaction ? "オン" : "オフ")
+            if schedule.kind == .expense {
+                detailRow("支出の計算", KMRecurringPresentation.spendingExclusion(schedule))
+            }
         }.overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
@@ -460,6 +470,7 @@ struct KMRecurringView: View {
         frequency = value?.frequency ?? .monthly
         startDate = value?.startDate.rawValue ?? KMDate(instant: repositories?.referenceDate ?? Date()).rawValue
         postsTransaction = value?.postsTransaction ?? true
+        excludedFromSpending = value?.isExcludedFromSpending ?? false
         page = .editor
     }
 }

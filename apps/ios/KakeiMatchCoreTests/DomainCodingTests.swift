@@ -70,6 +70,8 @@ struct DomainCodingTests {
         #expect(recurring.kind.rawValue == "expense")
         #expect(recurring.frequency.rawValue == "monthly")
         #expect(recurring.nextDate == nil)
+        #expect(recurring.excludedFromSpending == nil)
+        #expect(!recurring.isExcludedFromSpending)
 
         let audit = try roundTrip(KMRecurringScheduleAudit.self, from: #"""
         {"targetType":"schedule","operationId":"op-1","operation":"update","scheduleId":"schedule-1","input":{"name":"合成定期","kind":"income","amountYen":5000,"categoryId":"income","accountId":"bank","frequency":"yearly","startDate":"2026-10-01","postsTransaction":true},"status":"applied","createdAt":"2026-10-03T01:02:03.125Z","appliedAt":null}
@@ -77,6 +79,7 @@ struct DomainCodingTests {
         #expect(audit.targetType.rawValue == "schedule")
         #expect(audit.operation.rawValue == "update")
         #expect(audit.input?.frequency.rawValue == "yearly")
+        #expect(audit.input?.excludedFromSpending == nil)
 
         let payroll = try roundTrip(KMPayrollRecord.self, from: #"""
         {"id":"00000000-0000-4000-8000-000000000001","actualTransactionId":null,"status":"pending","confirmed":{"documentKind":"pay_slip","employerName":"合成雇用主","paymentDate":"2026-10-01","payPeriod":null,"payType":"salary","grossPayYen":300000,"netPayYen":240000,"deductions":{"incomeTaxYen":10000,"residentTaxYen":5000,"healthInsuranceYen":12000,"pensionYen":25000,"employmentInsuranceYen":1000,"otherYen":null,"totalYen":53000},"allowances":[{"name":"通勤費","amountYen":null}],"warnings":[{"field":"netPayYen","code":"amount_mismatch"}]},"categoryId":"salary","accountId":"bank","extractionModel":"test-model","promptVersion":"payroll-v1","createdAt":"2026-10-03T01:02:03Z","updatedAt":"2026-10-03T01:02:04Z"}

@@ -184,7 +184,8 @@ enum KMEntryPresentation {
               let startDate = nextOccurrence(after: entry.date, frequency: scheduleFrequency) else { return nil }
         return KMRecurringScheduleInput(name: entry.payee, kind: entry.kind == .income ? .income : .expense,
             amountYen: entry.amountYen, categoryId: categoryId, accountId: entry.accountId,
-            frequency: scheduleFrequency, startDate: startDate, postsTransaction: true)
+            frequency: scheduleFrequency, startDate: startDate, postsTransaction: true,
+            excludedFromSpending: entry.excludedFromSpending)
     }
 
     static func dateValue(_ date: KMDate) -> Date {

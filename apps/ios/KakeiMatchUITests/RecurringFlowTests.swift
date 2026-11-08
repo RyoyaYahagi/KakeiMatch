@@ -114,6 +114,44 @@ final class RecurringFlowTests: XCTestCase {
         app.terminate()
     }
 
+    @MainActor func testRecurringSpendingExclusionIsSavedAndAppliedToGeneratedRecord() {
+        continueAfterFailure = false
+        let name = "合成除外の定期予定"
+        let app = launchList("light")
+        app.buttons["recurring.add"].tap()
+        XCTAssertTrue(app.staticTexts["recurring.editor.title"].waitForExistence(timeout: 5))
+        let nameField = app.textFields["recurring.name"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 5))
+        nameField.tap(); nameField.typeText(name)
+        let amount = app.textFields["recurring.amount"]
+        amount.tap(); amount.typeText("900")
+        app.descendants(matching: .any)["recurring.category"].tap()
+        tapMenuItem(app, "食費")
+        app.descendants(matching: .any)["recurring.account"].tap()
+        tapMenuItem(app, "PayPayカード")
+        let excluded = app.switches["recurring.excluded"]
+        XCTAssertTrue(excluded.waitForExistence(timeout: 5))
+        for _ in 0..<3 where !excluded.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        XCTAssertTrue(excluded.isHittable)
+        excluded.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let excludedOn = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "1"), object: excluded)
+        XCTAssertEqual(XCTWaiter.wait(for: [excludedOn], timeout: 3), .completed)
+        app.buttons["recurring.save"].tap()
+        XCTAssertTrue(app.staticTexts["定期登録を保存しました。"].waitForExistence(timeout: 8))
+
+        let schedule = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(schedule.waitForExistence(timeout: 8)); schedule.tap()
+        XCTAssertTrue(app.staticTexts["含めない"].waitForExistence(timeout: 5))
+
+        app.buttons["receipt-tab"].tap()
+        let records = app.descendants(matching: .any).matching(identifier: "records.screen").firstMatch
+        XCTAssertTrue(records.waitForExistence(timeout: 8))
+        let generated = records.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+        XCTAssertTrue(generated.waitForExistence(timeout: 8))
+        XCTAssertTrue(generated.label.contains("支出集計の対象外"))
+        app.terminate()
+    }
+
     @MainActor func testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory() {
         continueAfterFailure = false
         let name = "合成過去分の定期"
