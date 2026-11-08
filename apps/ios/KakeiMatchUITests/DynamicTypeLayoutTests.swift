@@ -63,7 +63,11 @@ final class DynamicTypeLayoutTests: XCTestCase {
         assertTappable(museExport, screen: screen)
         museExport.tap()
         XCTAssertTrue(app.otherElements["museExport.screen"].waitForExistence(timeout: 10))
-        assertInside(app.staticTexts["museExport.title"], screen: screen)
+        // Settings pages share the shell's ScrollView, which keeps the offset of the list scrolled
+        // above, so the page opens part-way down; scroll back to its title first.
+        let title = app.staticTexts["museExport.title"]
+        for _ in 0..<8 where title.frame.minY < screen.frame.minY { app.swipeDown(velocity: .slow) }
+        assertInside(title, screen: screen)
         let fromYear = app.descendants(matching: .any)["museExport.fromYear"]
         let fromMonth = app.descendants(matching: .any)["museExport.fromMonth"]
         for _ in 0..<4 where !fromYear.isHittable { app.swipeUp(velocity: .slow) }
