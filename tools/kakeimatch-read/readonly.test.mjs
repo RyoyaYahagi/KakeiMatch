@@ -62,7 +62,7 @@ test('CLI のソースに書き込み系 API と fetch・http の利用がない
   }
 });
 
-test('rclone の実行は cat と lsjson の引数だけを渡す', async () => {
+test('rclone の実行は cat・lsjson・listremotes の引数だけを渡す', async () => {
   const execFile = fakeExecFile(args => {
     if (args[0] === 'lsjson') return { stdout: '[]' };
     return { stdout: '{}' };
@@ -70,12 +70,14 @@ test('rclone の実行は cat と lsjson の引数だけを渡す', async () => 
   const rclone = createRclone({ execFile });
   await rclone.cat('gdrive:KakeiMatch/snapshot.json');
   await rclone.listFiles('gdrive:KakeiMatch/');
+  await rclone.listRemotes();
   assert.deepEqual(execFile.calls, [
     { file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] },
     { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] },
+    { file: 'rclone', args: ['listremotes', '--json'] },
   ]);
   for (const call of execFile.calls) {
-    assert.ok(['cat', 'lsjson'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
+    assert.ok(['cat', 'lsjson', 'listremotes'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
   }
 });
 

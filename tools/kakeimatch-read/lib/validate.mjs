@@ -408,10 +408,13 @@ export function validateSnapshot(value) {
 // JSON.parse turns 1e3 and 1.9 into numbers that may look like integers, so the source text of every
 // non-integer number is recorded per holder object, and then only the integer fields of v1 are
 // checked. Unknown fields may hold any number.
+const INTEGER_FIELD_NAMES = new Set(['schemaVersion', 'balanceYen', 'amountYen', 'incomeYen', 'expenseYen']);
+
 function parseKeepingNumberSource(text) {
   const nonIntegerSources = new WeakMap();
   const value = JSON.parse(text, function (key, parsed, context) {
-    if (typeof parsed === 'number') {
+    // Only names that can be an integer field of v1 are recorded, so unknown arrays of numbers stay cheap.
+    if (typeof parsed === 'number' && INTEGER_FIELD_NAMES.has(key)) {
       // Node 22+ passes the source text; without it the integer form cannot be checked, so fail closed.
       const source = context?.source;
       if (typeof source !== 'string') throw new SnapshotError(['この Node.js では数値の元の表記を確かめられません。Node.js 22 以上を使ってください']);

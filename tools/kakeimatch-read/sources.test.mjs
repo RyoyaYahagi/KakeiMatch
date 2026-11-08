@@ -73,7 +73,10 @@ test('--remote はファイルを rclone cat だけで読む', async () => {
   const result = await execute(['summary', '--remote', 'gdrive:KakeiMatch/snapshot.json', '--json'], { execFile });
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).transactions, 12);
-  assert.deepEqual(execFile.calls, [{ file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] }]);
+  assert.deepEqual(execFile.calls, [
+    { file: 'rclone', args: ['listremotes', '--json'] },
+    { file: 'rclone', args: ['cat', '--', 'gdrive:KakeiMatch/snapshot.json'] },
+  ]);
 });
 
 test('--remote の末尾 / は lsjson で候補を列挙し、--dir と同じ規則で選ぶ', async () => {
@@ -96,11 +99,11 @@ test('--remote の末尾 / は lsjson で候補を列挙し、--dir と同じ規
   const result = await execute(['summary', '--remote', 'gdrive:KakeiMatch/', '--json'], { execFile });
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(JSON.parse(result.stdout).generatedAt, '2026-11-05T09:00:00+09:00');
-  assert.deepEqual(execFile.calls.map(call => call.args[0]), ['lsjson', 'cat', 'cat']);
-  assert.deepEqual(execFile.calls[0], { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] });
+  assert.deepEqual(execFile.calls.map(call => call.args[0]), ['listremotes', 'lsjson', 'cat', 'cat']);
+  assert.deepEqual(execFile.calls[1], { file: 'rclone', args: ['lsjson', '--files-only', '--', 'gdrive:KakeiMatch/'] });
   for (const call of execFile.calls) {
     assert.equal(call.file, 'rclone');
-    assert.ok(['cat', 'lsjson'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
+    assert.ok(['cat', 'lsjson', 'listremotes'].includes(call.args[0]), `許可されないサブコマンド: ${call.args[0]}`);
   }
 });
 
@@ -132,4 +135,30 @@ test('候補のファイル名の規則', () => {
   assert.equal(isSnapshotCandidate('kakeimatch-snapshot.json'), false);
   assert.equal(isSnapshotCandidate('snapshot.json.bak'), false);
   assert.equal(isSnapshotCandidate('notes.txt'), false);
+});
+
+test('--remote は drive 以外の接続先と、その場で組み立てる接続先を使わない', async () => {
+  const remotes = [{ name: 'gdrive', type: 'drive' }, { name: 'cached', type: 'cache' }, { name: 'hashed', type: 'hasher' }];
+  for (const [remote, pattern] of [
+    ['cached:KakeiMatch/snapshot.json', /cached の種類（cache）は使えません/],
+    ['hashed:KakeiMatch/', /hashed の種類（hasher）は使えません/],
+    [':cache,remote=/tmp:snapshot.json', /その場で組み立てる接続先/],
+    ['gdrive,root_folder_id=root:KakeiMatch/snapshot.json', /その場で組み立てる接続先/],
+  ]) {
+    const execFile = fakeExecFile(() => ({ stdout: '{}' }), { remotes });
+    const result = await execute(['summary', '--remote', remote], { execFile, env: {} });
+    assert.equal(result.exitCode, 1, remote);
+    assert.match(result.stderr, pattern);
+    assert.ok(execFile.calls.every(call => call.args[0] === 'listremotes'), `${remote} で cat / lsjson を呼んでいます`);
+  }
+  const missing = await execute(['summary', '--remote', 'nowhere:snapshot.json'], { execFile: fakeExecFile(() => ({})), env: {} });
+  assert.equal(missing.exitCode, 2);
+  assert.match(missing.stderr, /接続先 nowhere が見つかりません/);
+});
+
+test('--remote のローカルのパスは接続先の確認なしで rclone cat で読む', async () => {
+  const execFile = fakeExecFile(() => ({ stdout: snapshotBytes(loadSample('snapshot-sample-normal')) }));
+  const result = await execute(['summary', '--remote', '/data/KakeiMatch/snapshot.json', '--json'], { execFile, env: {} });
+  assert.equal(result.exitCode, 0, result.stderr);
+  assert.deepEqual(execFile.calls.map(call => call.args[0]), ['cat']);
 });

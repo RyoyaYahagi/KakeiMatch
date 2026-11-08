@@ -14,12 +14,12 @@ export function snapshotBytes(snapshot) {
   return Buffer.from(JSON.stringify(snapshot), 'utf8');
 }
 
-export function fakeExecFile(handler) {
+export function fakeExecFile(handler, { remotes = [{ name: 'gdrive', type: 'drive' }] } = {}) {
   const calls = [];
   const fake = (file, args, options, callback) => {
     calls.push({ file, args });
     fake.envs.push(options?.env);
-    const outcome = handler(args, calls.length - 1) ?? {};
+    const outcome = args[0] === 'listremotes' ? { stdout: JSON.stringify(remotes) } : handler(args, calls.length - 1) ?? {};
     queueMicrotask(() => {
       if (outcome.error) callback(outcome.error, Buffer.alloc(0), Buffer.from(outcome.stderr ?? '', 'utf8'));
       else callback(null, Buffer.from(outcome.stdout ?? '', 'utf8'), Buffer.alloc(0));

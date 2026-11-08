@@ -1,6 +1,7 @@
 // --file / --dir / --remote からスナップショットを1つ読む。書き込みは行わない。
 import { join } from 'node:path';
 import { SnapshotError, UsageError } from './errors.mjs';
+import { assertReadOnlyRemote } from './rclone.mjs';
 import { readSnapshotBytes } from './validate.mjs';
 
 export const SNAPSHOT_FILENAME = 'snapshot.json';
@@ -75,6 +76,7 @@ async function loadFromDir(dir, io) {
 
 async function loadFromRemote(remotePath, io) {
   const rclone = io.rclone();
+  await assertReadOnlyRemote(remotePath, rclone);
   if (!remotePath.endsWith('/')) {
     const bytes = await rclone.cat(remotePath);
     const label = `rclone:${remotePath}`;
