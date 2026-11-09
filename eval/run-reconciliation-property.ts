@@ -108,6 +108,7 @@ type CaseMetrics = {
   refundMatchCount: number;
   nondeterminismCount: number;
   classificationMismatchCount: number;
+  ruleVersionMismatchCount: number;
   candidateChecks: number;
   candidateHits: number;
   truthPairsWithoutCandidates: number;
@@ -118,6 +119,7 @@ type CaseMetrics = {
 type FinalMetrics = CaseMetrics & {
   autoMatchPrecision: number;
   autoMatchPrecisionAll: number;
+  invalidAutoMatchCount: number;
   autoMatchCoverage: number;
   separableCoverage: number | null;
   candidateRecallAt3: number | null;
@@ -130,6 +132,7 @@ type CaseOutcome = {
   metrics: CaseMetrics;
   violations: Violation[];
   indistinguishable: IndistinguishableMatch[];
+  ruleVersions: string[];
 };
 
 // ---------- seeded RNG (mulberry32) ----------
@@ -204,6 +207,47 @@ const MERCHANT_FAMILIES: ReadonlyArray<{ base: string; variants: readonly string
   { base: "楽天市場", variants: ["楽天市場", "楽天市場 新宿", "RAKUTEN"] },
   { base: "ローソン", variants: ["ローソン", "ローソン新宿店", "LAWSON", "ﾛｰｿﾝ"] },
 ];
+
+type MerchantSimilarityFixture = {
+  label: string;
+  statement: string;
+  receipt: string;
+  expectedSimilarity: number;
+  expectedEligible: boolean;
+};
+
+/**
+ * Pinned values captured from rule 1.2.0, deliberately independent of the
+ * merchant pool builder and of the engine's current similarity implementation.
+ * If the engine changes similarity, these checks fail instead of silently
+ * reclassifying the generated cases as still valid.
+ */
+const MERCHANT_SIMILARITY_FIXTURES: readonly MerchantSimilarityFixture[] = [
+  { label: "separator-normalization", statement: "セブンイレブン", receipt: "セブン-イレブン", expectedSimilarity: 1, expectedEligible: true },
+  { label: "halfwidth-kana", statement: "アオゾラストア", receipt: "ｱｵｿﾞﾗｽﾄｱ", expectedSimilarity: 1, expectedEligible: true },
+  { label: "ascii-case", statement: "Amazon", receipt: "AMAZON", expectedSimilarity: 1, expectedEligible: true },
+  { label: "moderate-variant", statement: "ファミリーマート", receipt: "ファミリ-マート", expectedSimilarity: 0.7692307692307693, expectedEligible: true },
+  { label: "just-below-threshold-store-suffix", statement: "セブンイレブン", receipt: "セブン‐イレブン 群大前店", expectedSimilarity: 0.7142857142857143, expectedEligible: false },
+  { label: "just-below-threshold-domain", statement: "Amazon", receipt: "Amazon.co.jp", expectedSimilarity: 0.7142857142857143, expectedEligible: false },
+  { label: "kana-variant-not-auto", statement: "アオゾラストア", receipt: "あおぞらストア", expectedSimilarity: 0.3333333333333333, expectedEligible: false },
+  { label: "zero-aeon", statement: "イオン", receipt: "AEON", expectedSimilarity: 0, expectedEligible: false },
+  { label: "zero-lawson", statement: "ローソン", receipt: "LAWSON", expectedSimilarity: 0, expectedEligible: false },
+  { label: "abbreviation", statement: "マツモトキヨシ", receipt: "マツキヨ", expectedSimilarity: 0.4444444444444444, expectedEligible: false },
+  { label: "shared-prefix-different-store", statement: "アオゾラストア", receipt: "アオゾラカフェ", expectedSimilarity: 0.5, expectedEligible: false },
+];
+
+function checkMerchantSimilarityContract(): void {
+  for (const fixture of MERCHANT_SIMILARITY_FIXTURES) {
+    const actual = reconciliationMerchantSimilarity(fixture.statement, fixture.receipt);
+    if (Math.abs(actual - fixture.expectedSimilarity) > 1e-9) {
+      throw new Error(`merchant similarity contract changed (${fixture.label}): actual=${actual}, expected=${fixture.expectedSimilarity}`);
+    }
+    const eligible = actual >= PINNED_RULES.autoMatchMerchantSimilarity;
+    if (eligible !== fixture.expectedEligible) {
+      throw new Error(`merchant eligibility contract changed (${fixture.label}): actual=${eligible}, expected=${fixture.expectedEligible}`);
+    }
+  }
+}
 
 type MerchantPairs = {
   exact: MerchantPair[];
@@ -584,6 +628,7 @@ function emptyCaseMetrics(): CaseMetrics {
     refundMatchCount: 0,
     nondeterminismCount: 0,
     classificationMismatchCount: 0,
+    ruleVersionMismatchCount: 0,
     candidateChecks: 0,
     candidateHits: 0,
     truthPairsWithoutCandidates: 0,
@@ -599,9 +644,15 @@ function addMetrics(target: CaseMetrics, source: CaseMetrics): void {
 }
 
 function finalizeMetrics(metrics: CaseMetrics): FinalMetrics {
-  const precisionDenominator = metrics.correctAutoMatchCount + metrics.falseAutoMatchCount;
+  const invalidAutoMatchCount = metrics.falseAutoMatchCount
+    + metrics.ambiguousAutoMatchCount
+    + metrics.ineligibleTruthAutoMatchCount
+    + metrics.unexplainedAutoMatchCount
+    + metrics.matchWithoutTruthCount;
+  const precisionDenominator = metrics.correctAutoMatchCount + invalidAutoMatchCount;
   return {
     ...metrics,
+    invalidAutoMatchCount,
     autoMatchPrecision: precisionDenominator === 0 ? 1 : metrics.correctAutoMatchCount / precisionDenominator,
     autoMatchPrecisionAll: metrics.autoMatchCount === 0 ? 1 : metrics.correctAutoMatchCount / metrics.autoMatchCount,
     autoMatchCoverage: metrics.truthPairCount === 0 ? 0 : metrics.correctAutoMatchCount / metrics.truthPairCount,
@@ -613,6 +664,16 @@ function finalizeMetrics(metrics: CaseMetrics): FinalMetrics {
 }
 
 const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+
+function duplicateIds(ids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const id of ids) {
+    if (seen.has(id)) duplicates.add(id);
+    seen.add(id);
+  }
+  return [...duplicates];
+}
 
 function canonicalResult(result: ReconciliationEngineResult): string {
   return JSON.stringify({
@@ -676,15 +737,52 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     statements: shuffle(makeRng((generated.seed ^ 0x5bd1e995) >>> 0), statements),
     receipts: shuffle(makeRng((generated.seed ^ 0x27d4eb2f) >>> 0), receipts),
   });
+  const ruleVersions = [result.ruleVersion, shuffled.ruleVersion];
+  for (const [label, version] of [["base", result.ruleVersion], ["shuffled", shuffled.ruleVersion]] as const) {
+    if (version !== PINNED_RULE_VERSION) {
+      metrics.ruleVersionMismatchCount += 1;
+      addViolation("rule_version_mismatch", `${label}: actual=${version}, expected=${PINNED_RULE_VERSION}`);
+    }
+  }
   if (canonicalResult(result) !== canonicalResult(shuffled)) {
     metrics.nondeterminismCount += 1;
     addViolation("nondeterministic_result", "shuffled input changed the full result");
   }
 
+  const statementResultIds = result.statementResults.map((row) => row.statementTransactionId);
+  const receiptResultIds = result.receiptResults.map((row) => row.receiptId);
+  const statementResultIdSet = new Set(statementResultIds);
+  const receiptResultIdSet = new Set(receiptResultIds);
+  const inputStatementIds = new Set(statements.map((statement) => statement.statementTransactionId));
+  const inputReceiptIds = new Set(receipts.map((receipt) => receipt.receiptId));
+
+  if (result.statementResults.length !== statements.length) {
+    addViolation("statement_results_count_mismatch", `${result.statementResults.length}/${statements.length}`);
+  }
+  if (result.receiptResults.length !== receipts.length) {
+    addViolation("receipt_results_count_mismatch", `${result.receiptResults.length}/${receipts.length}`);
+  }
+  const duplicateStatementResults = duplicateIds(statementResultIds);
+  const duplicateReceiptResults = duplicateIds(receiptResultIds);
+  if (duplicateStatementResults.length > 0) {
+    addViolation("duplicate_statement_result_rows", duplicateStatementResults.slice(0, 5).join(", "));
+  }
+  if (duplicateReceiptResults.length > 0) {
+    addViolation("duplicate_receipt_result_rows", duplicateReceiptResults.slice(0, 5).join(", "));
+  }
+  const missingStatementResults = [...inputStatementIds].filter((id) => !statementResultIdSet.has(id));
+  const extraStatementResults = [...statementResultIdSet].filter((id) => !inputStatementIds.has(id));
+  if (missingStatementResults.length > 0 || extraStatementResults.length > 0) {
+    addViolation("statement_result_id_set_mismatch", `missing=${missingStatementResults.slice(0, 5).join(",") || "-"} extra=${extraStatementResults.slice(0, 5).join(",") || "-"}`);
+  }
+  const missingReceiptResults = [...inputReceiptIds].filter((id) => !receiptResultIdSet.has(id));
+  const extraReceiptResults = [...receiptResultIdSet].filter((id) => !inputReceiptIds.has(id));
+  if (missingReceiptResults.length > 0 || extraReceiptResults.length > 0) {
+    addViolation("receipt_result_id_set_mismatch", `missing=${missingReceiptResults.slice(0, 5).join(",") || "-"} extra=${extraReceiptResults.slice(0, 5).join(",") || "-"}`);
+  }
+
   const statementResults = new Map(result.statementResults.map((row) => [row.statementTransactionId, row]));
   const receiptResults = new Map(result.receiptResults.map((row) => [row.receiptId, row]));
-  if (statementResults.size !== statements.length) addViolation("statement_results_incomplete", `${statementResults.size}/${statements.length}`);
-  if (receiptResults.size !== receipts.length) addViolation("receipt_results_incomplete", `${receiptResults.size}/${receipts.length}`);
 
   const matchedStatements = result.statementResults.filter((row) => row.status === "matched");
   const matchedReceipts = result.receiptResults.filter((row) => row.status === "matched");
@@ -752,9 +850,7 @@ function runCase(generated: GeneratedCase): CaseOutcome {
   }
 
   // I1: automatic matches must be separable truth pairs, or documented irreducible matches.
-  let accountedAutoMatches = 0;
   for (const row of matchedStatements) {
-    accountedAutoMatches += 1;
     const statement = statementById.get(row.statementTransactionId);
     const matchedReceipt = row.matchedReceiptId ? receiptById.get(row.matchedReceiptId) : undefined;
     if (!statement || !matchedReceipt) {
@@ -819,7 +915,16 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     metrics.unexplainedAutoMatchCount += 1;
     addViolation("unexplained_false_auto_match", `${row.statementTransactionId} -> ${matchedReceipt.receiptId}; truth=${truth.receiptId}, no dominance`);
   }
-  if (accountedAutoMatches !== metrics.autoMatchCount) addViolation("accounting_mismatch", "auto match accounting drifted");
+  const classifiedAutoMatches = metrics.correctAutoMatchCount
+    + metrics.falseAutoMatchCount
+    + metrics.ambiguousAutoMatchCount
+    + metrics.ineligibleTruthAutoMatchCount
+    + metrics.indistinguishableAutoMatchCount
+    + metrics.unexplainedAutoMatchCount
+    + metrics.matchWithoutTruthCount;
+  if (classifiedAutoMatches !== metrics.autoMatchCount) {
+    addViolation("accounting_mismatch", `classified=${classifiedAutoMatches}, autoMatchCount=${metrics.autoMatchCount}`);
+  }
 
   // I6: the automatic pair must remain visible in the top three review candidates.
   for (const row of matchedStatements) {
@@ -891,7 +996,7 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (String(row.status) === "confirmed") addViolation("confirmed_status_emitted", receipt.receiptId);
   }
 
-  return { generated, metrics, violations, indistinguishable };
+  return { generated, metrics, violations, indistinguishable, ruleVersions };
 }
 
 // ---------- CLI, contract, and report ----------
@@ -934,6 +1039,7 @@ function parseOptions(argv: readonly string[]): Options | null {
 }
 
 function checkRuleContract(): void {
+  checkMerchantSimilarityContract();
   const actual = RECONCILIATION_RULES;
   for (const key of Object.keys(PINNED_RULES) as Array<keyof typeof PINNED_RULES>) {
     if (actual[key] !== PINNED_RULES[key]) {
@@ -960,6 +1066,7 @@ function main(): void {
   const byFamily = new Map<Family, CaseMetrics>();
   const violations: Violation[] = [];
   const indistinguishable: IndistinguishableMatch[] = [];
+  const observedRuleVersions = new Set<string>();
   for (let index = 0; index < options.cases; index += 1) {
     const generated = generateCase(index, options.seed, options.family);
     const outcome = runCase(generated);
@@ -969,9 +1076,11 @@ function main(): void {
     byFamily.set(generated.family, familyTotals);
     violations.push(...outcome.violations);
     indistinguishable.push(...outcome.indistinguishable);
+    for (const version of outcome.ruleVersions) observedRuleVersions.add(version);
   }
 
   const metrics = finalizeMetrics(totals);
+  const observedRuleVersionList = [...observedRuleVersions].sort(compareText);
   const byFamilyReport: Record<string, FinalMetrics> = {};
   for (const family of FAMILIES) {
     const familyMetrics = byFamily.get(family);
@@ -982,12 +1091,13 @@ function main(): void {
     dataset: "eval/run-reconciliation-property.ts",
     generatorVersion: "1",
     seed: options.seed,
-    ruleVersion: RECONCILIATION_RULE_VERSION,
+    ruleVersion: observedRuleVersionList.length === 0 ? null : observedRuleVersionList.join(", "),
+    observedRuleVersions: observedRuleVersionList,
     config: {
       cases: options.cases,
       family: options.family,
       maxViolations: options.maxViolations,
-      pinnedRuleVersion: PINNED_RULE_VERSION,
+      expectedRuleVersion: PINNED_RULE_VERSION,
     },
     metrics,
     byFamily: byFamilyReport,
