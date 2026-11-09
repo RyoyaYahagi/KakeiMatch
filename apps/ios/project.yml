@@ -117,6 +117,7 @@ targets:
         type: folder
     dependencies:
       - target: KakeiMatch
+      - package: GoogleSignIn
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios.tests

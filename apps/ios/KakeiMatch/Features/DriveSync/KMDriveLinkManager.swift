@@ -37,11 +37,15 @@ final class KMDriveLinkManager: KMDriveLinking {
     static let driveScope = "https://www.googleapis.com/auth/drive.file"
 
     typealias Restore = @MainActor (@escaping (GIDGoogleUser?, (any Error)?) -> Void) -> Void
+    typealias RefreshTokens = @MainActor (GIDGoogleUser) async throws
+        -> (user: GIDGoogleUser, token: String)
 
     private(set) var currentUser: GIDGoogleUser?
     @ObservationIgnored private let restore: Restore
+    @ObservationIgnored private let refreshTokens: RefreshTokens
     @ObservationIgnored private var restoreTask: Task<Void, Never>?
     @ObservationIgnored private var didRestore = false
+    @ObservationIgnored private var authGeneration = 0
 
     var isSignedIn: Bool { currentUser != nil }
     var accountID: String? { currentUser?.userID }
@@ -53,8 +57,13 @@ final class KMDriveLinkManager: KMDriveLinking {
 
     init(restore: @escaping Restore = { completion in
         GIDSignIn.sharedInstance.restorePreviousSignIn(completion: completion)
-    }) {
+    }, refreshTokens: @escaping RefreshTokens = { user in
+        let refreshed = try await user.refreshTokensIfNeeded()
+        return (refreshed, refreshed.accessToken.tokenString)
+    }, currentUser: GIDGoogleUser? = nil) {
         self.restore = restore
+        self.refreshTokens = refreshTokens
+        self.currentUser = currentUser
     }
 
     /// Called only when the toggle is ON or the settings page is opened. A
@@ -76,6 +85,7 @@ final class KMDriveLinkManager: KMDriveLinking {
     }
 
     private func restoreOnce() async {
+        let generation = authGeneration
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             restore { [weak self] user, error in
                 // The SDK documents that this callback runs on the main queue.
@@ -83,7 +93,8 @@ final class KMDriveLinkManager: KMDriveLinking {
                 // explicitly instead of crossing the boundary as a checked value.
                 nonisolated(unsafe) let restoredUser = user
                 Task { @MainActor [weak self] in
-                    guard let self, !self.didRestore else {
+                    guard let self, !self.didRestore,
+                          generation == self.authGeneration else {
                         continuation.resume()
                         return
                     }
@@ -91,12 +102,15 @@ final class KMDriveLinkManager: KMDriveLinking {
                         // A missing keychain entry is permanent; network and other
                         // errors keep didRestore false so a later foreground call
                         // can try again.
-                        if (error as NSError).code == GIDSignInError.hasNoAuthInKeychain.rawValue {
+                        let nsError = error as NSError
+                        if nsError.domain == kGIDSignInErrorDomain,
+                           nsError.code == GIDSignInError.hasNoAuthInKeychain.rawValue {
                             self.didRestore = true
                         }
                     } else {
                         self.currentUser = restoredUser
                         self.didRestore = true
+                        self.authGeneration += 1
                     }
                     continuation.resume()
                 }
@@ -116,6 +130,7 @@ final class KMDriveLinkManager: KMDriveLinking {
                 hint: nil,
                 additionalScopes: [Self.driveScope])
             currentUser = result.user
+            authGeneration += 1
             didRestore = true
             return true
         } catch {
@@ -127,6 +142,7 @@ final class KMDriveLinkManager: KMDriveLinking {
     }
 
     func signOut() {
+        authGeneration += 1
         GIDSignIn.sharedInstance.signOut()
         currentUser = nil
         didRestore = true
@@ -139,22 +155,27 @@ final class KMDriveLinkManager: KMDriveLinking {
     /// returns the cached token while it still looks unexpired, so the retry
     /// goes through AppAuth's forced-refresh flag instead.
     func accessToken(forceRefresh: Bool = false) async throws -> String {
+        let generation = authGeneration
         guard let currentUser else { throw KMDriveUploadError.notSignedIn }
         if forceRefresh {
-            return try await forceRefreshAccessToken(for: currentUser)
+            return try await forceRefreshAccessToken(for: currentUser, generation: generation)
         }
         // A refresh failure is reported as-is; the presentation layer keeps
         // English diagnostics off the screen and shows a Japanese reason.
-        let refreshed = try await currentUser.refreshTokensIfNeeded()
-        self.currentUser = refreshed
-        return refreshed.accessToken.tokenString
+        let result = try await refreshTokens(currentUser)
+        // Sign-out or sign-in may have completed while the refresh was waiting.
+        // Discard the result instead of reviving the old account.
+        guard generation == authGeneration else { throw KMDriveUploadError.cancelled }
+        self.currentUser = result.user
+        return result.token
     }
 
     /// Forces the next AppAuth refresh even when the cached access token has not
     /// reached its expiry. `GIDGoogleUser.refreshTokensIfNeeded()` does not do
     /// this by itself, so a 401 shortly before expiry would otherwise retry with
     /// the same token.
-    private func forceRefreshAccessToken(for user: GIDGoogleUser) async throws -> String {
+    private func forceRefreshAccessToken(for user: GIDGoogleUser,
+                                         generation: Int) async throws -> String {
         guard let session = user.fetcherAuthorizer as? AuthSession else {
             throw KMDriveUploadError.unauthorized
         }
@@ -169,6 +190,7 @@ final class KMDriveLinkManager: KMDriveLinking {
                 }
             }
         }
+        guard generation == authGeneration else { throw KMDriveUploadError.cancelled }
         // The retry must send a different credential; the same token would only
         // repeat the 401 that triggered this path.
         let token = try KMDriveForcedToken.validate(refreshedToken, previous: previousToken)
