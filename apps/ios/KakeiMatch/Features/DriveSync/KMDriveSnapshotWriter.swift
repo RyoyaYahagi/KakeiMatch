@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Japanese reasons for a failed Drive write. Drive's own English messages are
 /// kept in `server` for diagnostics but never shown on screen.
