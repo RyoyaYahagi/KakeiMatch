@@ -52,7 +52,7 @@ final class KMDriveLinkManager: KMDriveLinking {
     }
 
     init(restore: @escaping Restore = { completion in
-        GIDSignIn.sharedInstance.restorePreviousSignIn(completion)
+        GIDSignIn.sharedInstance.restorePreviousSignIn(completion: completion)
     }) {
         self.restore = restore
     }
