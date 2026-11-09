@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
-        run: bash scripts/ci-simulator.sh select
+        run: bash scripts/ci-simulator.sh select-xcode
       - name: Run macOS core tests without a simulator
         run: swift test --package-path .
 
@@ -67,9 +67,9 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
       # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
       # https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
-      # build-for-testing only needs a generic simulator destination, not a booted
-      # device. The concrete device is resolved later by each ui-tests shard.
-      - name: Select Xcode
+      # A concrete destination builds only the runner's arm64 slice. The generic
+      # simulator destination also built x86_64 and was much slower.
+      - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
       - name: Validate UI shard coverage
         id: shards
@@ -228,7 +228,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
-        run: bash scripts/ci-simulator.sh select
+        run: bash scripts/ci-simulator.sh select-xcode
       - name: Generate Xcode project
         run: |
           curl --fail --location --silent --show-error --retry 3 \

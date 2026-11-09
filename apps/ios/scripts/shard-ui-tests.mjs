@@ -1,66 +1,67 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-// Method totals in seconds measured on run 42481996769 (main, 2026-11-08) and
-// run 42713631077 (PR #381, 2026-11-09); values are the rounded mean of the two
-// runs. These are hints, not a test list: deleted methods disappear and new
-// methods receive the default estimate.
+// Method totals in seconds measured on run 42481996769 (main, 2026-11-08),
+// run 42713631077 (PR #381, 2026-11-09) and run 42720659398 (PR #383,
+// 2026-11-09); values are the rounded mean of the available runs. These are
+// hints, not a test list: deleted methods disappear and new methods receive the
+// default estimate.
 const durations = {
-  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 20,
-  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 68,
+  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 19,
+  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 53,
   'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 36,
-  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 22,
+  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 19,
   'BudgetFlowTests/testBudgetInitialDarkScreenshot': 11,
   'BudgetFlowTests/testBudgetInitialLightScreenshot': 26,
-  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 21,
+  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 28,
   'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 42,
-  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 24,
-  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 17,
-  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 67,
-  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 45,
-  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 112,
-  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 9,
-  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 18,
-  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 57,
-  'HomeFlowTests/testAttentionOpensReconciliation': 11,
+  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 31,
+  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 19,
+  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 73,
+  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 47,
+  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 103,
+  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 11,
+  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 24,
+  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 48,
+  'HomeFlowTests/testAttentionOpensReconciliation': 13,
   'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 83,
   'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 13,
-  'MasterManagementFlowTests/testCreateCategoryFromSettings': 16,
+  'MasterManagementFlowTests/testCreateCategoryFromSettings': 17,
   'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots': 25,
   'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark': 35,
   'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark': 37,
-  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 37,
-  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 28,
-  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 18,
-  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 26,
-  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 54,
+  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 30,
+  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 27,
+  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 20,
+  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 23,
+  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 59,
   'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 13,
-  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 15,
+  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 16,
   'PayrollFlowTests/testPayrollConfirmLightScreenshot': 13,
-  'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 17,
+  'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 19,
   'PayrollFlowTests/testPayrollInitialDarkScreenshot': 13,
   'PayrollFlowTests/testPayrollInitialLightScreenshot': 15,
   'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 23,
-  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 28,
+  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 29,
   'ReceiptFlowTests/testPendingReceiptUsesEditorAndReturnsToRecords': 13,
   'ReceiptFlowTests/testScreensDark': 62,
   'ReceiptFlowTests/testScreensLight': 79,
-  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 23,
-  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 43,
-  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 23,
+  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 22,
+  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 37,
+  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 21,
   'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 13,
-  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 30,
-  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 58,
-  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 23,
-  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 24,
-  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 33,
+  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 32,
+  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 72,
+  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 24,
+  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 26,
+  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 29,
   'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 14,
-  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 14,
+  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 22,
   'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 13,
-  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 39,
-  'RecordsFlowTests/testSearchChipsSelectRequestedCondition': 28,
-  'RecordsFlowTests/testSearchPeriodOpensCalendar': 60,
-  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 38,
+  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 38,
+  'RecordsFlowTests/testSearchChipsSelectRequestedCondition': 27,
+  'RecordsFlowTests/testSearchPeriodOpensCalendar': 58,
+  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 37,
   'RecurringFlowTests/testCatchUpDialogDarkScreenshot': 28,
   'RecurringFlowTests/testCatchUpDialogLightScreenshot': 31,
   'RecurringFlowTests/testCatchUpHistoryDarkScreenshot': 39,
@@ -69,7 +70,7 @@ const durations = {
   'RecurringFlowTests/testRecurringInitialDarkScreenshot': 8,
   'RecurringFlowTests/testRecurringInitialLightScreenshot': 8,
   'RecurringFlowTests/testRecurringSpendingExclusionIsSavedAndAppliedToGeneratedRecord': 39,
-  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 30,
+  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 32,
   'SettingsFlowTests/testDarkSettingsRootScreenshot': 12,
   'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 20,
 };
@@ -260,8 +261,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (!selection.all) shardCount = shardCountFor(tests, shardCount);
   }
   // Shard 0 also runs the simulator Swift Testing suite, parity export and uploads
-  // (about 160s on PR #381). Reserve that load so it receives fewer UI tests.
-  const shards = assignShards(tests, shardCount, durations, { reservedSeconds: 160, reservedShard: 0 });
+  // (about 110s on PR #383: 88s unit tests + 11s parity + 11s uploads). Reserve
+  // that load so it receives fewer UI tests without becoming the critical path.
+  const shards = assignShards(tests, shardCount, durations, { reservedSeconds: 110, reservedShard: 0 });
   if (index === undefined) {
     console.log(JSON.stringify(shards, null, 2));
   } else {
