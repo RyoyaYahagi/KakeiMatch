@@ -62,6 +62,14 @@ struct KMDriveSyncView: View {
             .accessibilityLabel("今すぐGoogle Driveへ保存")
             .accessibilityIdentifier("driveSync.sendNow")
 
+            if !model.isEnabled {
+                Text(KMDriveSyncPresentation.sendNowRequiresAutoSave)
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("driveSync.sendNowNote")
+            }
+
             if let status = model.statusText {
                 Text(status)
                     .font(KMTypography.note)

@@ -44,7 +44,7 @@ Muse: kakeimatch-read balances | transactions | monthly
 
 ### Driveへの自動書き込み
 
-設定のトグルは既定でOFFにし、OFFの間はGoogle Sign-Inの復元を含むDrive向けの処理を動かさない。ONにしたときだけ次のタイミングで書き込む（案C）。
+設定のトグルは既定でOFFにし、OFFの間は自動・手動ともDriveへ書き込まない（「今すぐ保存」も押せない）。保存済みのGoogle Sign-Inの復元は、ONのときと、利用者が設定ページを開いたときだけ行う。ONにしたときだけ次のタイミングで書き込む（案C）。
 
 - アプリの起動時と、前面に戻ったとき（`scenePhase == .active`）
 - 設定ページの「今すぐ保存」

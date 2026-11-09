@@ -14,6 +14,7 @@ enum KMDriveSyncPresentation {
     static let signOut = "サインアウト"
     static let sendNow = "今すぐ保存"
     static let sending = "保存しています…"
+    static let sendNowRequiresAutoSave = "自動保存をオンにすると使えます。"
     static let noAccount = "まだGoogle アカウントと連携していません。"
 
     static let notSignedIn = "Google Driveと連携していません。"

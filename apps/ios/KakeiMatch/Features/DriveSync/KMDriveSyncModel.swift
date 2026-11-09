@@ -50,7 +50,7 @@ final class KMDriveSyncModel {
     }
 
     var canSendNow: Bool {
-        isSignedIn && hasDriveScope && !isSyncing && !isAuthenticating
+        isEnabled && isSignedIn && hasDriveScope && !isSyncing && !isAuthenticating
     }
 
     var statusText: String? {
@@ -178,9 +178,10 @@ final class KMDriveSyncModel {
     }
 
     /// Manual path: sends even when the fingerprint matches the last upload.
-    /// The toggle only controls automatic sending, so a signed-in user can still
-    /// save once while auto-save is OFF.
+    /// The toggle is the single consent for writing to Drive, so OFF returns
+    /// before any repository read or builder call here too.
     func syncNow(repositories: KMRepositories?) async {
+        guard isEnabled else { return }
         guard !isSyncing, !isAuthenticating else { return }
         isSyncing = true
         defer { isSyncing = false }
@@ -190,7 +191,7 @@ final class KMDriveSyncModel {
         let startIdentity = currentAccountIdentity
         let generation = cancelGeneration
         guard let snapshot = await makeSnapshot(repositories: repositories) else { return }
-        guard generation == cancelGeneration,
+        guard isEnabled, generation == cancelGeneration,
               linker.isSignedIn, currentAccountIdentity == startIdentity else { return }
 
         do {

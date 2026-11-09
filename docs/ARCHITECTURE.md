@@ -45,7 +45,7 @@ iOSのAPI層は、App AttestとPasskeyで検証する専用 `/api/native/*` を�
 
 ## iOSのGoogle Driveへの書き出し
 
-iOSアプリは、利用者が設定で明示的に有効にした場合だけ、本人のGoogle Driveへ直接スナップショットを書き込みます。書き込みはアプリの起動時・前面復帰時と「今すぐ保存」に行い、家計データは開発者のCloudflare Worker・D1・R2を通りません。アプリが要求する権限は `drive.file` だけに限定し、アプリが作った `KakeiMatch/snapshot.json` の作成と上書き、およびフォルダ作成の3操作以外は行いません。アプリはDriveから読み込まず、削除・権限変更もしません。既定はOFFで、OFFの間はGoogle Sign-Inの復元も含めてDrive向けの処理を動かしません。詳細は[Museへの読み取り専用スナップショット](MUSE_SNAPSHOT.md)を参照してください。
+iOSアプリは、利用者が設定で明示的に有効にした場合だけ、本人のGoogle Driveへ直接スナップショットを書き込みます。書き込みはアプリの起動時・前面復帰時と「今すぐ保存」に行い、家計データは開発者のCloudflare Worker・D1・R2を通りません。アプリが要求する権限は `drive.file` だけに限定し、アプリが作った `KakeiMatch/snapshot.json` の作成と上書き、およびフォルダ作成の3操作以外は行いません。アプリはDriveから読み込まず、削除・権限変更もしません。既定はOFFで、OFFの間は自動・手動ともDriveへ書き込みません。保存済みのGoogle Sign-Inの復元は、ONのときと、利用者が設定ページを開いたときだけ行います。詳細は[Museへの読み取り専用スナップショット](MUSE_SNAPSHOT.md)を参照してください。
 
 ## 端末内データの移行
 

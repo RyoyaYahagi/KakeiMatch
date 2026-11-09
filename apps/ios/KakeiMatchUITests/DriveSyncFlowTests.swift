@@ -50,7 +50,8 @@ final class DriveSyncFlowTests: XCTestCase {
         let sendNow = app.buttons["driveSync.sendNow"]
         for _ in 0..<3 where !sendNow.isHittable { app.swipeUp() }
         XCTAssertTrue(sendNow.exists)
-        XCTAssertFalse(sendNow.isEnabled, "未サインインでは今すぐ保存を押せない")
+        XCTAssertFalse(sendNow.isEnabled, "自動保存がオフのあいだは今すぐ保存を押せない")
+        XCTAssertTrue(app.staticTexts["driveSync.sendNowNote"].label.contains("自動保存をオンにすると使えます"))
         XCTAssertTrue(app.buttons["driveSync.signIn"].exists)
         XCTAssertFalse(app.buttons["driveSync.signOut"].exists)
         capture(app, name: "drive-sync-light")

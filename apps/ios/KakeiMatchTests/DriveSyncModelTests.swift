@@ -414,7 +414,7 @@ struct DriveSyncModelTests {
         #expect(json["generatedAt"] as? String == "2026-11-15T12:00:00+09:00")
     }
 
-    @Test func manualSendWorksWhileAutoSaveIsOff() async throws {
+    @Test func manualSendDoesNothingWhileAutoSaveIsOff() async throws {
         let (prefs, defaults, name) = try preferences()
         defer { defaults.removePersistentDomain(forName: name) }
         let base = makeBase()
@@ -426,11 +426,16 @@ struct DriveSyncModelTests {
         let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
                                      now: { Date() }, appVersion: { nil })
 
-        await model.syncIfNeeded(repositories: repositories)
-        #expect(writer.uploads.isEmpty)
+        #expect(model.canSendNow == false)
 
         await model.syncNow(repositories: repositories)
-        #expect(writer.uploads.count == 1)
+
+        #expect(counting.transactionReads == 0)
+        #expect(counting.homeReads == 0)
+        #expect(counting.accountReads == 0)
+        #expect(counting.categoryReads == 0)
+        #expect(writer.uploads.isEmpty)
+        #expect(link.restoreCount == 0)
         #expect(prefs.isEnabled == false)
     }
 
