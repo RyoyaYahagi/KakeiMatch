@@ -67,6 +67,7 @@ export const screenshotOnly = [
   'BudgetFlowTests/testBudgetInitialDarkScreenshot',
   'BudgetFlowTests/testBudgetInitialLightScreenshot',
   'ContactFlowTests/testContactInitialScreenshotsInLightAndDark',
+  'DriveSyncFlowTests/testDriveSyncInitialScreenshotsInLightAndDark',
   'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots',
   'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark',
   'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark',

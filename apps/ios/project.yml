@@ -16,10 +16,25 @@ settings:
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
     KM_NATIVE_HOST: kakeimatch.yhgry.workers.dev
+    # The iOS OAuth client ID is public information (it is also in the built
+    # Info.plist and the URL scheme), so it is kept in source.
+    KM_GOOGLE_CLIENT_ID: 828427548675-v5pkal203tj2d9k13k3scv9po4ag7spv.apps.googleusercontent.com
+    KM_GOOGLE_URL_SCHEME: com.googleusercontent.apps.828427548675-v5pkal203tj2d9k13k3scv9po4ag7spv
 packages:
   ZIPFoundation:
     url: https://github.com/weichsel/ZIPFoundation.git
     exactVersion: 0.9.20
+  GoogleSignIn:
+    url: https://github.com/google/GoogleSignIn-iOS
+    exactVersion: 9.2.0
+  # The app uses the same AppAuth session GoogleSignIn already builds to force
+  # a token refresh for the single 401 retry.
+  GTMAppAuth:
+    url: https://github.com/google/GTMAppAuth.git
+    exactVersion: 5.0.0
+  AppAuth:
+    url: https://github.com/openid/AppAuth-iOS.git
+    exactVersion: 2.1.0
 targets:
   KakeiMatch:
     type: application
@@ -28,6 +43,10 @@ targets:
     dependencies:
       - sdk: libsqlite3.tbd
       - package: ZIPFoundation
+      - package: GoogleSignIn
+      - package: GTMAppAuth
+      - package: AppAuth
+        product: AppAuthCore
     entitlements:
       path: KakeiMatch/KakeiMatch.entitlements
       properties:
@@ -66,6 +85,21 @@ targets:
           plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
           /usr/libexec/PlistBuddy -c "Delete :KMNativeAPIHost" "$plist" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :KMNativeAPIHost string ${KM_NATIVE_HOST}" "$plist"
+      - name: Inject KMGoogleSignIn
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          # Delete first so a second build in the same derived-data directory can
+          # re-add the values instead of failing on an existing key.
+          /usr/libexec/PlistBuddy -c "Delete :GIDClientID" "$plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :GIDClientID string ${KM_GOOGLE_CLIENT_ID}" "$plist"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleURLTypes" "$plist" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes array" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0 dict" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleTypeRole string Editor" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes array" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :CFBundleURLTypes:0:CFBundleURLSchemes:0 string ${KM_GOOGLE_URL_SCHEME}" "$plist"
   KakeiMatchTests:
     type: bundle.unit-test
     platform: iOS
@@ -83,6 +117,7 @@ targets:
         type: folder
     dependencies:
       - target: KakeiMatch
+      - package: GoogleSignIn
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: jp.kakeimatch.ios.tests

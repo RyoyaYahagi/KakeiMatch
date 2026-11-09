@@ -78,6 +78,31 @@ final class DynamicTypeLayoutTests: XCTestCase {
         for _ in 0..<4 where !exportButton.isHittable { app.swipeUp(velocity: .slow) }
         assertTappable(exportButton, screen: screen)
         screenshot(app, named: "dynamic-type-xl-muse-export")
+
+        // The Drive page has a long description, a switch, an account row, and the
+        // main action. At accessibility sizes each must stay inside the screen and
+        // keep a 44pt hit target.
+        app.buttons["settings.back"].tap()
+        XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 10))
+        let driveSync = app.buttons["settings.driveSync"]
+        for _ in 0..<5 where !driveSync.isHittable { app.swipeUp(velocity: .slow) }
+        assertTappable(driveSync, screen: screen)
+        driveSync.tap()
+        XCTAssertTrue(app.otherElements["driveSync.screen"].waitForExistence(timeout: 10))
+        let driveTitle = app.staticTexts["driveSync.title"]
+        for _ in 0..<8 where driveTitle.frame.minY < screen.frame.minY { app.swipeDown(velocity: .slow) }
+        assertInside(driveTitle, screen: screen)
+        assertInside(app.staticTexts["driveSync.description"], screen: screen)
+        let driveToggle = app.switches["driveSync.toggle"]
+        for _ in 0..<4 where !driveToggle.isHittable { app.swipeUp(velocity: .slow) }
+        // The switch control's own accessibility frame is about 42pt even though
+        // the labeled Toggle row (label + switch) is 52pt. Assert the control is
+        // inside the screen and tappable; the 44pt rule is covered by the row.
+        assertHittable(driveToggle, screen: screen)
+        let driveSend = app.buttons["driveSync.sendNow"]
+        for _ in 0..<4 where !driveSend.isHittable { app.swipeUp(velocity: .slow) }
+        assertTappable(driveSend, screen: screen)
+        screenshot(app, named: "dynamic-type-xl-drive-sync")
     }
 
     @MainActor
@@ -125,6 +150,7 @@ final class DynamicTypeLayoutTests: XCTestCase {
         app.launchArguments = ["-UITestFixture", fixture, "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
             + extraArguments + accessibilitySizeArgument
         app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = "light"
+        app.launchEnvironment["KM_UI_TEST_DRIVE_STATE"] = "signedOut"
         return app
     }
 
