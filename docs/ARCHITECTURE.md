@@ -59,6 +59,6 @@ MoneyForward CSVの移行も端末内で解析・登録します。元CSVは保�
 
 ## legacy実装
 
-旧Next.jsアプリとserver adapterはlegacyまたは移行時の参照として残します。本番client、起動経路、家計データの正本ではありません。PWA production buildが共有するroot moduleは、browser-safeな15ファイルに限定しています。Vite pluginは実際のmodule graphを検査し、それ以外のroot moduleやlegacy runtime packageがbundleへ入る場合はbuildを失敗させます。詳細は[legacy文書index](legacy/README.md)と[legacy runtime inventory](LEGACY_RUNTIME_INVENTORY.md)を参照してください。現行PWAの動作と合成データによる確認手順は[ローカル利用フロー](LOCAL_FIRST_FLOW.md)に記載します。
+旧Next.jsアプリとserver adapterはlegacyまたは移行時の参照として残します。本番client、起動経路、家計データの正本ではありません。PWA production buildが共有するroot moduleは、browser-safeな17ファイルに限定しています。Vite pluginは実際のmodule graphを検査し、それ以外のroot moduleやlegacy runtime packageがbundleへ入る場合はbuildを失敗させます。詳細は[legacy文書index](legacy/README.md)と[legacy runtime inventory](LEGACY_RUNTIME_INVENTORY.md)を参照してください。現行PWAの動作と合成データによる確認手順は[ローカル利用フロー](LOCAL_FIRST_FLOW.md)に記載します。
 
 お問い合わせでは、録音終了後に音声をGoogleへ送り自動で文字起こしします。利用者が許可した場合は、サーバー管理のProduct Contextと文章をGeminiへ送り、1問ずつの深掘りと送信前要約を行います。別途利用者が許可した場合だけ、メモリ上のFlight Recorderから固定語彙で構成した画面・操作・安全なエラーコード・通信状態を添付します。生ログ、stack trace、入力文字列、家計データは診断コンテキストに入りません。最終送信時はAIやGitHubを呼ばず、管理者専用Inboxへ保存します。管理者が確認してからマスキング済み情報だけをAI分析またはIssue化します。原文は秘密情報を除去して暗号化し、90日の保存期限を設けます。管理UI/APIはサーバー側の管理者認可と、設定済み環境ではCloudflare Access JWT検証で保護します。詳細は[お問い合わせ](CONTACT.md)を参照してください。

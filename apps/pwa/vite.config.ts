@@ -13,7 +13,7 @@ const sharedRoot = fileURLToPath(new URL('../../src/', import.meta.url));
 const productionSharedModules = new Set([
   'lib/actual-browser-ledger.ts', 'lib/actual-ledger.ts', 'lib/local-data.ts',
   'lib/local-backup-format.ts', 'lib/moneyforward-import-format.ts', 'lib/category.ts', 'lib/receipt-extraction.ts',
-  'lib/receipt-validation.ts', 'lib/reconciliation-engine.ts', 'lib/reconciliation-analytics.ts', 'lib/statement-parser-core.ts',
+  'lib/receipt-validation.ts', 'lib/assignment.ts', 'lib/reconciliation-engine.ts', 'lib/reconciliation-analytics.ts', 'lib/statement-parser-core.ts',
   'lib/recurring-schedule.ts',
   'lib/category-learning.ts',
   'lib/monthly-budget-settings.ts',
