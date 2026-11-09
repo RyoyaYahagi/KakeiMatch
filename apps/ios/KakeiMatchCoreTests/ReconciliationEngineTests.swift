@@ -222,6 +222,28 @@ struct ReconciliationEngineTests {
         #expect(result.candidates.first?.reasons.contains("global_assignment_pair") == true)
     }
 
+    @Test func componentSplitKeepsInterleavedTieBreakAndIsOrderIndependent() {
+        let statements = [
+            statement("s-a", amount: 1000),
+            statement("s-b", amount: 2000),
+            statement("s-😀", amount: 1000),
+        ]
+        let receipts = [
+            receipt("r-a", amount: 1000),
+            receipt("r-b", amount: 2000),
+            receipt("r-😀", amount: 1000),
+        ]
+        let forward = KMReconciliationEngine.run(statements: statements, receipts: receipts)
+        let reversed = KMReconciliationEngine.run(statements: statements.reversed(), receipts: receipts.reversed())
+        #expect(forward == reversed)
+        let statuses = Dictionary(uniqueKeysWithValues: forward.statementResults.map {
+            ($0.statementTransactionId, "\($0.status.rawValue):\($0.matchedReceiptId ?? "-")")
+        })
+        #expect(statuses == ["s-a": "needs_review:-", "s-b": "matched:r-b", "s-😀": "needs_review:-"])
+        #expect(forward.candidates.first { $0.statementTransactionId == "s-a" }?.receiptId == "r-a")
+        #expect(forward.candidates.first { $0.statementTransactionId == "s-😀" }?.receiptId == "r-😀")
+    }
+
     @Test func competingAliasesDoNotAutoMatch() {
         let pair = KMReconciliationEngine.run(
             statements: [statement("s", merchant: "架空ストア", amount: 1300, date: "2026-09-10")],

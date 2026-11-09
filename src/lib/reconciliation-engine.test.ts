@@ -369,6 +369,32 @@ describe("global assignment automatic matching", () => {
     ]);
   });
 
+  it("keeps interleaved component tie-breaks after splitting", () => {
+    const statements = [
+      statement("s-a", { amountYen: 1000 }),
+      statement("s-b", { amountYen: 2000 }),
+      statement("s-😀", { amountYen: 1000 }),
+    ];
+    const receipts = [
+      receipt("r-a", { amountYen: 1000 }),
+      receipt("r-b", { amountYen: 2000 }),
+      receipt("r-😀", { amountYen: 1000 }),
+    ];
+    const diagnostics = inspectReconciliationAssignment({ statements, receipts });
+    expect(diagnostics.assignment).toEqual([
+      { statementTransactionId: "s-a", receiptId: "r-a" },
+      { statementTransactionId: "s-b", receiptId: "r-b" },
+      { statementTransactionId: "s-😀", receiptId: "r-😀" },
+    ]);
+    expect(diagnostics.deltas.map((row) => row.delta)).toEqual([0, 1_000_000, 0]);
+
+    const reversed = inspectReconciliationAssignment({
+      statements: [...statements].reverse(),
+      receipts: [...receipts].reverse(),
+    });
+    expect(reversed).toEqual(diagnostics);
+  });
+
   it("abstains when two aliases compete with equal weight", () => {
     const statements = [statement("s", { merchant: "架空ストア", amountYen: 1300, usedDate: "2026-09-10" })];
     const receipts = [

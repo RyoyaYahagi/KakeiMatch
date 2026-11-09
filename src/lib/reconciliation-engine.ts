@@ -334,6 +334,7 @@ function computeGlobalAssignment(
   const assignmentRowOrder = [...assignmentCandidates.keys()].sort(compareUtf8);
   const assignmentReceiptOrder = [...assignmentReceiptIds].sort(compareUtf8);
   const assignmentReceiptIndex = new Map(assignmentReceiptOrder.map((id, index) => [id, index]));
+  const assignmentRowIndex = new Map(assignmentRowOrder.map((id, index) => [id, index]));
   const assignmentWeights = assignmentRowOrder.map((statementId) => {
     const row = new Array<number>(assignmentReceiptOrder.length).fill(0);
     for (const candidate of assignmentCandidates.get(statementId) ?? []) {
@@ -341,48 +342,114 @@ function computeGlobalAssignment(
     }
     return row;
   });
-  const optimumWeight = assignmentWeights.length === 0 ? 0 : maximumWeight(assignmentWeights);
-  const optimalAssignment = assignmentWeights.length === 0
-    ? []
-    : lexicographicMaximumAssignment(assignmentWeights, assignmentRowOrder.map((_, index) => index), assignmentReceiptOrder.map((_, index) => index));
+
+  // Assignment, Δ and the lexicographic tie-break are separable over the
+  // connected components of E. Components share neither rows nor columns, so
+  // summing their optima is exactly the monolithic optimum while keeping each
+  // Hungarian matrix small.
+  type AssignmentNode = { kind: "statement" | "receipt"; id: string };
+  const nodes = new Map<string, AssignmentNode>();
+  const adjacency = new Map<string, string[]>();
+  const nodeKey = (kind: AssignmentNode["kind"], id: string): string => `${kind}\u0000${id}`;
+  const connect = (left: string, right: string): void => {
+    const leftEdges = adjacency.get(left) ?? [];
+    leftEdges.push(right);
+    adjacency.set(left, leftEdges);
+    const rightEdges = adjacency.get(right) ?? [];
+    rightEdges.push(left);
+    adjacency.set(right, rightEdges);
+  };
+  for (let row = 0; row < assignmentRowOrder.length; row += 1) {
+    for (let column = 0; column < assignmentReceiptOrder.length; column += 1) {
+      if ((assignmentWeights[row]?.[column] ?? 0) <= 0) continue;
+      const statementNode = nodeKey("statement", assignmentRowOrder[row]!);
+      const receiptNode = nodeKey("receipt", assignmentReceiptOrder[column]!);
+      nodes.set(statementNode, { kind: "statement", id: assignmentRowOrder[row]! });
+      nodes.set(receiptNode, { kind: "receipt", id: assignmentReceiptOrder[column]! });
+      connect(statementNode, receiptNode);
+    }
+  }
+
+  const visited = new Set<string>();
+  const components: Array<{ rows: number[]; columns: number[] }> = [];
+  const visit = (start: string): void => {
+    if (visited.has(start)) return;
+    visited.add(start);
+    const rows: number[] = [];
+    const columns: number[] = [];
+    const stack = [start];
+    while (stack.length > 0) {
+      const key = stack.pop()!;
+      const node = nodes.get(key)!;
+      if (node.kind === "statement") rows.push(assignmentRowIndex.get(node.id)!);
+      else columns.push(assignmentReceiptIndex.get(node.id)!);
+      for (const next of adjacency.get(key) ?? []) {
+        if (visited.has(next)) continue;
+        visited.add(next);
+        stack.push(next);
+      }
+    }
+    rows.sort((left, right) => left - right);
+    columns.sort((left, right) => left - right);
+    components.push({ rows, columns });
+  };
+  for (const statementId of assignmentRowOrder) visit(nodeKey("statement", statementId));
+  for (const receiptId of assignmentReceiptOrder) visit(nodeKey("receipt", receiptId));
 
   const assignedStatements = new Map<string, InternalCandidate>();
   const assignedReceipts = new Map<string, InternalCandidate>();
-  const assignment: ReconciliationAssignmentDiagnostics["assignment"] = [];
-  for (let row = 0; row < assignmentRowOrder.length; row += 1) {
-    const column = optimalAssignment[row] ?? -1;
-    if (column < 0 || (assignmentWeights[row]![column] ?? 0) <= 0) continue;
-    const statementId = assignmentRowOrder[row]!;
-    const receiptId = assignmentReceiptOrder[column]!;
-    const candidate = (assignmentCandidates.get(statementId) ?? []).find((item) => item.receiptId === receiptId);
-    if (!candidate) throw new Error("global_assignment_edge_missing");
-    assignedStatements.set(statementId, candidate);
-    assignedReceipts.set(receiptId, candidate);
-    assignment.push({ statementTransactionId: statementId, receiptId });
+  const deltaByPair = new Map<string, ReconciliationAssignmentDiagnostics["deltas"][number]>();
+  let optimumWeight = 0;
+  const globalAssignmentThreshold = Math.round(RECONCILIATION_RULES.globalAssignmentMargin * RECONCILIATION_RULES.globalAssignmentWeightScale);
+
+  for (const component of components) {
+    if (component.rows.length === 0 || component.columns.length === 0) continue;
+    const localWeights = component.rows.map((row) => component.columns.map((column) => assignmentWeights[row]![column]!));
+    const componentOptimum = maximumWeight(localWeights);
+    optimumWeight += componentOptimum;
+    const localAssignment = lexicographicMaximumAssignment(
+      localWeights,
+      component.rows.map((_, index) => index),
+      component.columns.map((_, index) => index),
+    );
+
+    // Δe is evaluated independently against the original E. Removing only e and
+    // re-optimizing inside its component keeps every other edge available, so
+    // an equal-total alternative produces Δe = 0.
+    for (let localRow = 0; localRow < component.rows.length; localRow += 1) {
+      const localColumn = localAssignment[localRow] ?? -1;
+      if (localColumn < 0 || (localWeights[localRow]?.[localColumn] ?? 0) <= 0) continue;
+      const statementId = assignmentRowOrder[component.rows[localRow]!]!;
+      const receiptId = assignmentReceiptOrder[component.columns[localColumn]!]!;
+      const candidate = (assignmentCandidates.get(statementId) ?? []).find((item) => item.receiptId === receiptId);
+      if (!candidate) throw new Error("global_assignment_edge_missing");
+      assignedStatements.set(statementId, candidate);
+      assignedReceipts.set(receiptId, candidate);
+
+      const original = localWeights[localRow]![localColumn]!;
+      localWeights[localRow]![localColumn] = 0;
+      const withoutEdge = maximumWeight(localWeights);
+      localWeights[localRow]![localColumn] = original;
+      const delta = componentOptimum - withoutEdge;
+      deltaByPair.set(`${statementId}\u0000${receiptId}`, {
+        statementTransactionId: statementId, receiptId, delta, automatic: delta >= globalAssignmentThreshold,
+      });
+    }
   }
 
-  // Δe is evaluated independently against the original E. Removing only e and
-  // re-optimizing keeps every other edge available, so an equal-total
-  // alternative produces Δe = 0.
-  const globalAssignmentThreshold = Math.round(RECONCILIATION_RULES.globalAssignmentMargin * RECONCILIATION_RULES.globalAssignmentWeightScale);
+  const assignment: ReconciliationAssignmentDiagnostics["assignment"] = [];
+  const deltas: ReconciliationAssignmentDiagnostics["deltas"] = [];
   const matchedStatements = new Map<string, string>();
   const matchedReceipts = new Map<string, string>();
-  const deltas: ReconciliationAssignmentDiagnostics["deltas"] = [];
-  for (let row = 0; row < assignmentRowOrder.length; row += 1) {
-    const column = optimalAssignment[row] ?? -1;
-    if (column < 0 || (assignmentWeights[row]![column] ?? 0) <= 0) continue;
-    const original = assignmentWeights[row]![column]!;
-    assignmentWeights[row]![column] = 0;
-    const withoutEdge = maximumWeight(assignmentWeights);
-    assignmentWeights[row]![column] = original;
-    const delta = optimumWeight - withoutEdge;
-    const automatic = delta >= globalAssignmentThreshold;
-    const statementId = assignmentRowOrder[row]!;
-    const receiptId = assignmentReceiptOrder[column]!;
-    deltas.push({ statementTransactionId: statementId, receiptId, delta, automatic });
-    if (!automatic) continue;
-    matchedStatements.set(statementId, receiptId);
-    matchedReceipts.set(receiptId, statementId);
+  for (const statementId of assignmentRowOrder) {
+    const candidate = assignedStatements.get(statementId);
+    if (!candidate) continue;
+    assignment.push({ statementTransactionId: statementId, receiptId: candidate.receiptId });
+    const delta = deltaByPair.get(`${statementId}\u0000${candidate.receiptId}`)!;
+    deltas.push(delta);
+    if (!delta.automatic) continue;
+    matchedStatements.set(statementId, candidate.receiptId);
+    matchedReceipts.set(candidate.receiptId, statementId);
   }
   return { optimumWeight, assignment, deltas, assignedStatements, assignedReceipts, matchedStatements, matchedReceipts };
 }

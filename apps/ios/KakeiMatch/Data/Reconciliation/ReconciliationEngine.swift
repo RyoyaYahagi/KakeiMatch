@@ -141,45 +141,56 @@ enum KMReconciliationEngine {
         let assignmentRowOrder = assignmentCandidates.keys.sorted(by: utf8Less)
         let assignmentReceiptOrder = assignmentReceiptIds.sorted(by: utf8Less)
         let assignmentReceiptIndex = Dictionary(uniqueKeysWithValues: assignmentReceiptOrder.enumerated().map { ($0.element, $0.offset) })
-        var assignmentWeights = assignmentRowOrder.map { statementId -> [Int] in
+        let assignmentWeights = assignmentRowOrder.map { statementId -> [Int] in
             var row = Array(repeating: 0, count: assignmentReceiptOrder.count)
             for candidate in assignmentCandidates[statementId] ?? [] {
                 row[assignmentReceiptIndex[candidate.receiptId]!] = globalAssignmentWeight(candidate)
             }
             return row
         }
-        let optimumWeight = assignmentWeights.isEmpty ? 0 : KMReconciliationAssignment.maximumWeight(assignmentWeights)
-        let optimalAssignment = assignmentWeights.isEmpty ? [] : KMReconciliationAssignment.lexicographicAssignment(
-            assignmentWeights, rowOrder: Array(0..<assignmentRowOrder.count), columnOrder: Array(0..<assignmentReceiptOrder.count))
 
+        // Assignment, Δ and the lexicographic tie-break are separable over the
+        // connected components of E. Components share neither rows nor columns,
+        // so summing their optima is exactly the monolithic optimum while keeping
+        // each Hungarian matrix small.
         var assignedStatements: [String: Candidate] = [:]
         var assignedReceipts: [String: Candidate] = [:]
-        for row in assignmentRowOrder.indices {
-            let column = optimalAssignment[row]
-            guard column >= 0, assignmentWeights[row][column] > 0 else { continue }
-            let statementId = assignmentRowOrder[row]
-            let receiptId = assignmentReceiptOrder[column]
-            guard let candidate = (assignmentCandidates[statementId] ?? []).first(where: { $0.receiptId == receiptId }) else { continue }
-            assignedStatements[statementId] = candidate
-            assignedReceipts[receiptId] = candidate
+        var deltaByPair: [String: Int] = [:]
+        for component in assignmentComponents(assignmentWeights) {
+            var localWeights = component.rows.map { row in
+                component.columns.map { column in assignmentWeights[row][column] }
+            }
+            let componentOptimum = KMReconciliationAssignment.maximumWeight(localWeights)
+            let localAssignment = KMReconciliationAssignment.lexicographicAssignment(
+                localWeights, rowOrder: Array(0..<component.rows.count), columnOrder: Array(0..<component.columns.count))
+
+            for localRow in component.rows.indices {
+                let localColumn = localAssignment[localRow]
+                guard localColumn >= 0, localWeights[localRow][localColumn] > 0 else { continue }
+                let statementId = assignmentRowOrder[component.rows[localRow]]
+                let receiptId = assignmentReceiptOrder[component.columns[localColumn]]
+                guard let candidate = (assignmentCandidates[statementId] ?? []).first(where: { $0.receiptId == receiptId }) else { continue }
+                assignedStatements[statementId] = candidate
+                assignedReceipts[receiptId] = candidate
+
+                // Δe is evaluated independently against the original E. Removing
+                // only e and re-optimizing inside its component keeps every other
+                // edge available, so an equal-total alternative produces Δe = 0.
+                let original = localWeights[localRow][localColumn]
+                localWeights[localRow][localColumn] = 0
+                let withoutEdge = KMReconciliationAssignment.maximumWeight(localWeights)
+                localWeights[localRow][localColumn] = original
+                deltaByPair[pairKey(statementId, receiptId)] = componentOptimum - withoutEdge
+            }
         }
 
-        // Δe is evaluated independently against the original E. An equal-total
-        // alternative therefore produces Δe = 0.
         var matchedStatements: [String: String] = [:]
         var matchedReceipts: [String: String] = [:]
-        for row in assignmentRowOrder.indices {
-            let column = optimalAssignment[row]
-            guard column >= 0, assignmentWeights[row][column] > 0 else { continue }
-            let original = assignmentWeights[row][column]
-            assignmentWeights[row][column] = 0
-            let withoutEdge = KMReconciliationAssignment.maximumWeight(assignmentWeights)
-            assignmentWeights[row][column] = original
-            if optimumWeight - withoutEdge < globalAssignmentThreshold { continue }
-            let statementId = assignmentRowOrder[row]
-            let receiptId = assignmentReceiptOrder[column]
-            matchedStatements[statementId] = receiptId
-            matchedReceipts[receiptId] = statementId
+        for statementId in assignmentRowOrder {
+            guard let candidate = assignedStatements[statementId] else { continue }
+            guard let delta = deltaByPair[pairKey(statementId, candidate.receiptId)], delta >= globalAssignmentThreshold else { continue }
+            matchedStatements[statementId] = candidate.receiptId
+            matchedReceipts[candidate.receiptId] = statementId
         }
         func ambiguous(_ candidate: Candidate) -> Bool {
             let s = byStatement[candidate.statementId] ?? [], r = byReceipt[candidate.receiptId] ?? []
@@ -223,6 +234,44 @@ enum KMReconciliationEngine {
                 reasonCodes: has ? ["candidate_requires_review"] + (assigned ? [globalAssignmentReason] : []) + (choices.contains(where: ambiguous) ? ["ambiguous_candidates"] : []) : ["no_candidate"])
         }
         return KMReconciliationResult(ruleVersion: ruleVersion, candidates: output, statementResults: statementResults, receiptResults: receiptResults)
+    }
+
+    private struct AssignmentComponent {
+        var rows: [Int]
+        var columns: [Int]
+    }
+
+    /// Connected components of the positive-weight bipartite graph.
+    private static func assignmentComponents(_ weights: [[Int]]) -> [AssignmentComponent] {
+        let rowCount = weights.count
+        let columnCount = weights.first?.count ?? 0
+        guard rowCount > 0, columnCount > 0 else { return [] }
+        var adjacency = Array(repeating: [Int](), count: rowCount + columnCount)
+        for row in 0..<rowCount {
+            for column in 0..<columnCount where weights[row][column] > 0 {
+                let receiptNode = rowCount + column
+                adjacency[row].append(receiptNode)
+                adjacency[receiptNode].append(row)
+            }
+        }
+        var visited = Array(repeating: false, count: rowCount + columnCount)
+        var components: [AssignmentComponent] = []
+        for start in 0..<(rowCount + columnCount) where !visited[start] {
+            var stack = [start]
+            visited[start] = true
+            var rows: [Int] = []
+            var columns: [Int] = []
+            while let node = stack.popLast() {
+                if node < rowCount { rows.append(node) } else { columns.append(node - rowCount) }
+                for next in adjacency[node] where !visited[next] {
+                    visited[next] = true
+                    stack.append(next)
+                }
+            }
+            guard !rows.isEmpty, !columns.isEmpty else { continue }
+            components.append(AssignmentComponent(rows: rows.sorted(), columns: columns.sorted()))
+        }
+        return components
     }
 
     private static func isGlobalAssignmentEligible(_ candidate: Candidate) -> Bool {
