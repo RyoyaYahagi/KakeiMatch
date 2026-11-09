@@ -25,7 +25,8 @@
     "legacy:user:create": "tsx scripts/create-user.ts",
     "legacy:actual:link-user": "tsx scripts/link-actual-budget.ts",
     "legacy:actual:map-categories": "node --conditions=react-server --import tsx scripts/map-actual-categories.ts",
-    "eval:reconciliation-380": "node --conditions=react-server --import tsx eval/run-reconciliation-eval-380.ts"
+    "eval:reconciliation-380": "node --conditions=react-server --import tsx eval/run-reconciliation-eval-380.ts",
+    "eval:reconciliation-380-benchmark": "node --conditions=react-server --import tsx eval/benchmark-reconciliation-380.ts"
   },
   "dependencies": {
     "@actual-app/api": "26.9.0",

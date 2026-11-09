@@ -25,7 +25,9 @@ const SEEDS = 100;
 const THRESHOLD = Math.round(RECONCILIATION_RULES.globalAssignmentMargin * RECONCILIATION_RULES.globalAssignmentWeightScale);
 
 type TruthClass = "separable" | "ambiguous";
-type Family = "chain-2" | "chain-3" | "chain-5" | "chain-10" | "twin" | "missing" | "extra" | "threshold" | "alias";
+type Family = "chain-2" | "chain-3" | "chain-5" | "chain-10" | "twin" | "missing" | "extra" | "threshold" | "alias"
+  | "chain-mixed-missing" | "chain-mixed-extra" | "chain-mixed-decoy" | "chain-mixed-missing-decoy"
+  | "unicode-tie";
 
 type TruthPair = {
   statementId: string;
@@ -76,7 +78,17 @@ type PairMetrics = {
   autoSetMismatchCount: number;
 };
 
-const compareText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
+const utf8Encoder = new TextEncoder();
+/** UTF-8 byte order, matching the engine's assignment tie-break. */
+const compareText = (left: string, right: string): number => {
+  const a = utf8Encoder.encode(left);
+  const b = utf8Encoder.encode(right);
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return a.length - b.length;
+};
 const pairKey = (statementId: string, receiptId: string): string => `${statementId}\u0000${receiptId}`;
 const emptyPairMetrics = (): PairMetrics => ({
   caseCount: 0, statementCount: 0, receiptCount: 0, truthPairCount: 0,
@@ -245,6 +257,28 @@ function generateAlias(seed: number): EvalCase {
   };
 }
 
+/** Non-BMP IDs where UTF-8 order differs from UTF-16 code-unit order. */
+function generateUnicodeTieCase(): EvalCase {
+  const statements = [
+    statement("s-a", "架空商店", 1000, "2026-09-10"),
+    statement("s-b", "別商店", 2000, "2026-09-10"),
+    statement("s-😀", "架空商店", 1000, "2026-09-10"),
+  ];
+  const receipts = [
+    receipt("r-a", "架空商店", 1000, "2026-09-10", "acct-a"),
+    receipt("r-b", "別商店", 2000, "2026-09-10", "acct-b"),
+    receipt("r-😀", "架空商店", 1000, "2026-09-10", "acct-emoji"),
+  ];
+  return {
+    id: "unicode-tie", family: "unicode-tie", seed: 0, statements, receipts, aliases: [],
+    truthPairs: [
+      { statementId: "s-a", receiptId: "r-a", truthClass: "separable" },
+      { statementId: "s-b", receiptId: "r-b", truthClass: "separable" },
+      { statementId: "s-😀", receiptId: "r-😀", truthClass: "separable" },
+    ],
+  };
+}
+
 export function generateCases(): EvalCase[] {
   const cases: EvalCase[] = [];
   for (const length of [2, 3, 5, 10] as const) {
@@ -255,6 +289,66 @@ export function generateCases(): EvalCase[] {
   for (let seed = 0; seed < SEEDS; seed += 1) cases.push(generateExtra(seed));
   for (let seed = 0; seed < SEEDS; seed += 1) cases.push(generateThreshold(seed));
   for (let seed = 0; seed < SEEDS; seed += 1) cases.push(generateAlias(seed));
+  return cases;
+}
+
+type RobustnessVariant = "missing" | "extra" | "decoy" | "missing-decoy";
+
+/**
+ * Reference-only robustness cases: inject a missing record, an extra duplicate,
+ * or a wrong high-score candidate into the chain family. These are reported
+ * separately and never feed the introduction gates.
+ */
+export function generateRobustnessCases(): EvalCase[] {
+  const cases: EvalCase[] = [];
+  for (const length of [5, 10] as const) {
+    for (let seed = 0; seed < SEEDS; seed += 1) {
+      for (const variant of ["missing", "extra", "decoy", "missing-decoy"] as const) {
+        const base = generateChain(length, seed);
+        const target = 2 % length;
+        const statementId = `s-chain-${length}-${seed}-${target}`;
+        const receiptId = `r-chain-${length}-${seed}-${target}`;
+        const affectedReceipt = base.receipts.find((row) => row.receiptId === receiptId)!;
+        if (variant === "missing") {
+          base.receipts = base.receipts.filter((row) => row.receiptId !== receiptId);
+          const truth = base.truthPairs.find((row) => row.statementId === statementId)!;
+          truth.truthClass = "ambiguous";
+        } else if (variant === "extra") {
+          base.receipts.push({
+            ...affectedReceipt,
+            receiptId: `${receiptId}-extra`,
+            actualTransactionId: `${affectedReceipt.actualTransactionId}-extra`,
+          });
+        } else if (variant === "decoy") {
+          // The true receipt is two days away; an exact-date decoy with the same
+          // merchant and amount has the higher score but is not the truth.
+          affectedReceipt.purchasedDate = shiftDate(affectedReceipt.purchasedDate, 2);
+          base.receipts.push({
+            ...affectedReceipt,
+            receiptId: `${receiptId}-decoy`,
+            actualTransactionId: `${affectedReceipt.actualTransactionId}-decoy`,
+            purchasedDate: shiftDate(affectedReceipt.purchasedDate, -2),
+            actualAccountId: "acct-decoy",
+          });
+        } else {
+          // Missing truth plus a wrong high-score candidate: the most dangerous
+          // combination for a false automatic match.
+          base.receipts = base.receipts.filter((row) => row.receiptId !== receiptId);
+          const truth = base.truthPairs.find((row) => row.statementId === statementId)!;
+          truth.truthClass = "ambiguous";
+          base.receipts.push({
+            ...affectedReceipt,
+            receiptId: `${receiptId}-decoy`,
+            actualTransactionId: `${affectedReceipt.actualTransactionId}-decoy`,
+            actualAccountId: "acct-decoy",
+          });
+        }
+        base.id = `chain-mixed-${variant}-${length}-${seed}`;
+        base.family = `chain-mixed-${variant}`;
+        cases.push(base);
+      }
+    }
+  }
   return cases;
 }
 
@@ -507,6 +601,26 @@ function main(): void {
     });
   }
 
+  const robustnessOverall = emptyPairMetrics();
+  const robustnessByVariant = new Map<RobustnessVariant, PairMetrics>();
+  const robustnessCases = generateRobustnessCases();
+  for (const testCase of robustnessCases) {
+    const outcome = metricsForCase(testCase);
+    addMetrics(robustnessOverall, outcome.overall);
+    const variant = testCase.family.replace("chain-mixed-", "") as RobustnessVariant;
+    const bucket = robustnessByVariant.get(variant) ?? emptyPairMetrics();
+    addMetrics(bucket, outcome.overall);
+    robustnessByVariant.set(variant, bucket);
+  }
+  const finalRobustness = finalizeMetrics(robustnessOverall);
+  const finalRobustnessByVariant: Record<string, PairMetrics> = {};
+  for (const variant of ["missing", "extra", "decoy", "missing-decoy"] as const) {
+    finalRobustnessByVariant[variant] = finalizeMetrics(robustnessByVariant.get(variant) ?? emptyPairMetrics());
+  }
+
+  const unicodeOutcome = metricsForCase(generateUnicodeTieCase());
+  const finalUnicode = finalizeMetrics(unicodeOutcome.overall);
+
   const finalOverall = finalizeMetrics(overall);
   const finalByFamily: Record<string, PairMetrics> = {};
   for (const family of ["chain-2", "chain-3", "chain-5", "chain-10", "twin", "missing", "extra", "threshold", "alias"] as const) {
@@ -536,6 +650,21 @@ function main(): void {
     overall: finalOverall,
     byClass: finalByClass,
     byFamily: finalByFamily,
+    robustness: {
+      referenceOnly: true,
+      caseCount: robustnessCases.length,
+      overall: finalRobustness,
+      byVariant: finalRobustnessByVariant,
+    },
+    unicodeOracle: {
+      referenceOnly: true,
+      caseCount: 1,
+      optimalSumMismatchCount: finalUnicode.optimalSumMismatchCount,
+      deltaMismatchCount: finalUnicode.deltaMismatchCount,
+      lexicographicMismatchCount: finalUnicode.lexicographicMismatchCount,
+      autoSetMismatchCount: finalUnicode.autoSetMismatchCount,
+      newFalseCount: finalUnicode.newFalseCount,
+    },
     chain: {
       newCorrect: chainNewCorrect,
       oldCorrect: chainOldCorrect,
