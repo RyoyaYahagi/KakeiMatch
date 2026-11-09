@@ -1,62 +1,77 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-// Method totals in seconds from run 40702769985, updated with a 2026-11-01 pull request run. These are hints, not a test list:
-// deleted methods disappear; new methods receive the default estimate.
+// Method totals in seconds measured on run 42481996769 (main, 2026-11-08) and
+// run 42713631077 (PR #381, 2026-11-09); values are the rounded mean of the two
+// runs. These are hints, not a test list: deleted methods disappear and new
+// methods receive the default estimate.
 const durations = {
-  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 15,
-  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 23,
-  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 18,
-  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 16,
-  'BudgetFlowTests/testBudgetInitialDarkScreenshot': 9,
-  'BudgetFlowTests/testBudgetInitialLightScreenshot': 9,
-  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 94,
-  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 43,
-  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 21,
-  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 36,
-  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 64,
-  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 173,
-  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 6,
-  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 20,
-  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 33,
-  'HomeFlowTests/testAttentionOpensReconciliation': 9,
-  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 65,
-  'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 11,
-  'MasterManagementFlowTests/testCreateCategoryFromSettings': 20,
-  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 26,
-  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 12,
-  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 18,
-  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 50,
-  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 10,
-  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 10,
-  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 16,
-  'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 15,
-  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 10,
-  'PayrollFlowTests/testPayrollInitialLightScreenshot': 10,
-  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 61,
-  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 29,
+  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 20,
+  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 68,
+  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 36,
+  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 22,
+  'BudgetFlowTests/testBudgetInitialDarkScreenshot': 11,
+  'BudgetFlowTests/testBudgetInitialLightScreenshot': 26,
+  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 21,
+  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 42,
+  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 24,
+  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 17,
+  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 67,
+  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 45,
+  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 112,
+  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 9,
+  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 18,
+  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 57,
+  'HomeFlowTests/testAttentionOpensReconciliation': 11,
+  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 83,
+  'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 13,
+  'MasterManagementFlowTests/testCreateCategoryFromSettings': 16,
+  'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots': 25,
+  'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark': 35,
+  'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark': 37,
+  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 37,
+  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 28,
+  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 18,
+  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 26,
+  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 54,
+  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 13,
+  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 15,
+  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 13,
+  'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 17,
+  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 13,
+  'PayrollFlowTests/testPayrollInitialLightScreenshot': 15,
+  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 23,
+  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 28,
   'ReceiptFlowTests/testPendingReceiptUsesEditorAndReturnsToRecords': 13,
-  'ReceiptFlowTests/testScreensDark': 92,
-  'ReceiptFlowTests/testScreensLight': 67,
-  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 15,
-  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 38,
-  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 15,
-  'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 14,
-  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 35,
-  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 59,
-  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 24,
-  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 22,
-  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 22,
-  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 12,
-  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 17,
-  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 12,
-  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 31,
-  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 57,
-  'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 33,
-  'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
-  'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
-  'SettingsFlowTests/testDarkSettingsRootScreenshot': 11,
-  'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 21,
+  'ReceiptFlowTests/testScreensDark': 62,
+  'ReceiptFlowTests/testScreensLight': 79,
+  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 23,
+  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 43,
+  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 23,
+  'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 13,
+  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 30,
+  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 58,
+  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 23,
+  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 24,
+  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 33,
+  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 14,
+  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 14,
+  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 13,
+  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 39,
+  'RecordsFlowTests/testSearchChipsSelectRequestedCondition': 28,
+  'RecordsFlowTests/testSearchPeriodOpensCalendar': 60,
+  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 38,
+  'RecurringFlowTests/testCatchUpDialogDarkScreenshot': 28,
+  'RecurringFlowTests/testCatchUpDialogLightScreenshot': 31,
+  'RecurringFlowTests/testCatchUpHistoryDarkScreenshot': 39,
+  'RecurringFlowTests/testCatchUpHistoryLightScreenshot': 47,
+  'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 29,
+  'RecurringFlowTests/testRecurringInitialDarkScreenshot': 8,
+  'RecurringFlowTests/testRecurringInitialLightScreenshot': 8,
+  'RecurringFlowTests/testRecurringSpendingExclusionIsSavedAndAppliedToGeneratedRecord': 39,
+  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 30,
+  'SettingsFlowTests/testDarkSettingsRootScreenshot': 12,
+  'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 20,
 };
 
 // Methods that only open a screen and attach reference screenshots. Pull requests
@@ -123,13 +138,20 @@ export function validateCoverage(tests, shards) {
   }
 }
 
-export function assignShards(tests, count, weights = durations) {
+export function assignShards(tests, count, weights = durations, { reservedSeconds = 0, reservedShard = 0 } = {}) {
   if (!Number.isInteger(count) || count < 1 || count > tests.length) {
     throw new Error('Shard count must be an integer between 1 and the test count');
+  }
+  if (!Number.isFinite(reservedSeconds) || reservedSeconds < 0
+      || !Number.isInteger(reservedShard) || reservedShard < 0 || reservedShard >= count) {
+    throw new Error('Reserved load must be non-negative and point at an existing shard');
   }
   const weight = name => weights[name] ?? 30;
   const ordered = [...tests].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b, 'en'));
   const shards = Array.from({ length: count }, () => ({ tests: [], estimatedSeconds: 0 }));
+  // Shard 0 runs the simulator unit tests and parity export before its UI tests.
+  // Starting it with that load makes the greedy assignment give it fewer UI tests.
+  shards[reservedShard].estimatedSeconds = reservedSeconds;
   for (const name of ordered) {
     const shard = shards.reduce((best, candidate) => candidate.estimatedSeconds < best.estimatedSeconds ? candidate : best);
     shard.tests.push(name);
@@ -237,7 +259,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     tests = selection.tests;
     if (!selection.all) shardCount = shardCountFor(tests, shardCount);
   }
-  const shards = assignShards(tests, shardCount);
+  // Shard 0 also runs the simulator Swift Testing suite, parity export and uploads
+  // (about 160s on PR #381). Reserve that load so it receives fewer UI tests.
+  const shards = assignShards(tests, shardCount, durations, { reservedSeconds: 160, reservedShard: 0 });
   if (index === undefined) {
     console.log(JSON.stringify(shards, null, 2));
   } else {

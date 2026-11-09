@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+select_xcode() {
+  sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
+  xcodebuild -version
+}
+
 case "${1:-}" in
-  start|select)
-    sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
-    xcodebuild -version
+  select)
+    select_xcode
+    # build-for-testing does not need a booted device. The generic destination
+    # avoids `simctl list`, which starts CoreSimulator and costs about 70s.
+    echo "DESTINATION=generic/platform=iOS Simulator" >> "$GITHUB_ENV"
+    ;;
+  start)
+    select_xcode
     device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for x in d["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-2"] if x["name"] == "iPhone 17"))')
     echo "SIMULATOR_ID=$device_id" >> "$GITHUB_ENV"
     echo "DESTINATION=platform=iOS Simulator,id=$device_id" >> "$GITHUB_ENV"
-    [[ "$1" == select ]] && exit 0
     # Detach all descriptors so the Actions step can finish while boot continues.
     nohup xcrun simctl boot "$device_id" > "$RUNNER_TEMP/simulator-boot.log" 2>&1 < /dev/null &
     ;;
