@@ -27,6 +27,14 @@ packages:
   GoogleSignIn:
     url: https://github.com/google/GoogleSignIn-iOS
     exactVersion: 9.2.0
+  # The app uses the same AppAuth session GoogleSignIn already builds to force
+  # a token refresh for the single 401 retry.
+  GTMAppAuth:
+    url: https://github.com/google/GTMAppAuth.git
+    exactVersion: 5.0.0
+  AppAuth:
+    url: https://github.com/openid/AppAuth-iOS.git
+    exactVersion: 2.1.0
 targets:
   KakeiMatch:
     type: application
@@ -36,6 +44,9 @@ targets:
       - sdk: libsqlite3.tbd
       - package: ZIPFoundation
       - package: GoogleSignIn
+      - package: GTMAppAuth
+      - package: AppAuth
+        product: AppAuthCore
     entitlements:
       path: KakeiMatch/KakeiMatch.entitlements
       properties:

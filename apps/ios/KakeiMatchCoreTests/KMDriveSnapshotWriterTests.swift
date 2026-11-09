@@ -36,10 +36,24 @@ private final class DriveRequestRecorder {
 @MainActor
 private final class DriveTokenCounter {
     private(set) var count = 0
+    private(set) var forceRefreshCalls: [Bool] = []
 
-    func next() -> String {
+    func next(forceRefresh: Bool) -> String {
         count += 1
+        forceRefreshCalls.append(forceRefresh)
         return "access-token-\(count)"
+    }
+}
+
+/// Simulates the real bug: the SDK returns its cached token on a normal call,
+/// and only a forced refresh produces a different token.
+@MainActor
+private final class DriveCachedTokenProvider {
+    private(set) var forceRefreshCalls: [Bool] = []
+
+    func next(forceRefresh: Bool) -> String {
+        forceRefreshCalls.append(forceRefresh)
+        return forceRefresh ? "fresh-token" : "stale-token"
     }
 }
 
@@ -56,7 +70,7 @@ struct KMDriveSnapshotWriterTests {
     private func makeEmptyDrive(_ recorder: DriveRequestRecorder) -> (KMDriveSnapshotWriter, DriveTokenCounter) {
         let tokens = DriveTokenCounter()
         let writer = KMDriveSnapshotWriter(
-            accessToken: { tokens.next() },
+            accessToken: { forceRefresh in tokens.next(forceRefresh: forceRefresh) },
             send: recorder.send)
         return (writer, tokens)
     }
@@ -133,8 +147,34 @@ struct KMDriveSnapshotWriterTests {
         try await writer.upload(data: jsonData("{}"))
 
         #expect(tokens.count == 2)
+        #expect(tokens.forceRefreshCalls == [false, true])
         #expect(recorder.methods == ["GET", "GET", "POST", "GET", "POST"])
         #expect(recorder.requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer access-token-2")
+    }
+
+    @Test func retryAfter401UsesAForcedRefreshInsteadOfTheCachedToken() async throws {
+        let recorder = DriveRequestRecorder { request in
+            if request.httpMethod == "GET",
+               request.value(forHTTPHeaderField: "Authorization") == "Bearer stale-token" {
+                return .status(401, Data())
+            }
+            if request.httpMethod == "GET" { return .json(#"{"files":[]}"#) }
+            if request.httpMethod == "POST", request.url!.path.hasSuffix("/upload/drive/v3/files") {
+                return .json(#"{"id":"new-file"}"#)
+            }
+            if request.httpMethod == "POST" { return .json(#"{"id":"folder-1"}"#) }
+            return .json("{}")
+        }
+        let tokens = DriveCachedTokenProvider()
+        let writer = KMDriveSnapshotWriter(
+            accessToken: { forceRefresh in tokens.next(forceRefresh: forceRefresh) },
+            send: recorder.send)
+
+        try await writer.upload(data: jsonData("{}"))
+
+        #expect(tokens.forceRefreshCalls == [false, true])
+        #expect(recorder.requests[1].value(forHTTPHeaderField: "Authorization") == "Bearer fresh-token")
+        #expect(recorder.methods == ["GET", "GET", "POST", "GET", "POST"])
     }
 
     @Test func second401StopsWithUnauthorized() async throws {

@@ -40,7 +40,10 @@ protocol KMDriveSnapshotWriting {
 /// Tokens, Authorization headers, and snapshot bodies must not be logged.
 @MainActor
 struct KMDriveSnapshotWriter: KMDriveSnapshotWriting {
-    typealias AccessTokenProvider = @MainActor () async throws -> String
+    /// The argument is false for the first attempt and true for the single 401
+    /// retry. The retry must force a refresh: the SDK keeps returning its cached
+    /// token while that token still looks unexpired.
+    typealias AccessTokenProvider = @MainActor (_ forceRefresh: Bool) async throws -> String
     typealias Send = @MainActor (URLRequest) async throws -> (Data, HTTPURLResponse)
 
     static let folderName = "KakeiMatch"
@@ -60,26 +63,24 @@ struct KMDriveSnapshotWriter: KMDriveSnapshotWriting {
         self.send = send
     }
 
-    /// The token closure itself calls `refreshTokensIfNeeded()`, so each attempt
-    /// starts from the freshest token.
+    /// Only a 401 is retried, and only once. Server errors and network failures
+    /// are reported as they are so the caller does not hammer Drive while the
+    /// user is not looking.
     func upload(data: Data) async throws {
         var didRetry = false
         while true {
             do {
-                try await uploadOnce(data: data)
+                try await uploadOnce(data: data, forceRefresh: didRetry)
                 return
             } catch KMDriveUploadError.unauthorized {
-                // Only a 401 is retried, and only once. Server errors and network
-                // failures are reported as they are so the caller does not hammer
-                // Drive while the user is not looking.
                 guard !didRetry else { throw KMDriveUploadError.unauthorized }
                 didRetry = true
             }
         }
     }
 
-    private func uploadOnce(data: Data) async throws {
-        let token = try await accessToken()
+    private func uploadOnce(data: Data, forceRefresh: Bool) async throws {
+        let token = try await accessToken(forceRefresh)
         let folderID = try await ensureFolder(accessToken: token)
         if let fileID = try await findSnapshotFile(accessToken: token, folderID: folderID) {
             try await updateFile(accessToken: token, fileID: fileID, data: data)

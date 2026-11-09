@@ -6,7 +6,9 @@ import Testing
 private final class DriveSyncLinkStub: KMDriveLinking {
     var isSignedIn: Bool
     var hasDriveScope: Bool
+    var accountID: String?
     var accountEmail: String?
+    var nextSignInAccountID = "synthetic-b"
     var signInResult = true
     var signInError: (any Error)?
     private(set) var restoreCount = 0
@@ -16,6 +18,7 @@ private final class DriveSyncLinkStub: KMDriveLinking {
     init(signedIn: Bool = true, hasScope: Bool = true) {
         isSignedIn = signedIn
         hasDriveScope = hasScope
+        accountID = signedIn ? "synthetic-a" : nil
         accountEmail = signedIn ? "synthetic@example.test" : nil
     }
 
@@ -27,6 +30,7 @@ private final class DriveSyncLinkStub: KMDriveLinking {
         guard signInResult else { return false }
         isSignedIn = true
         hasDriveScope = true
+        accountID = nextSignInAccountID
         accountEmail = "synthetic@example.test"
         return true
     }
@@ -35,12 +39,13 @@ private final class DriveSyncLinkStub: KMDriveLinking {
         signOutCount += 1
         isSignedIn = false
         hasDriveScope = false
+        accountID = nil
         accountEmail = nil
     }
 
-    func accessToken() async throws -> String {
+    func accessToken(forceRefresh: Bool) async throws -> String {
         guard isSignedIn else { throw KMDriveUploadError.notSignedIn }
-        return "synthetic-token"
+        return forceRefresh ? "synthetic-forced-token" : "synthetic-token"
     }
 }
 
@@ -304,6 +309,7 @@ struct DriveSyncModelTests {
         let oldDate = try instant("2026-11-01T00:00:00Z")
         prefs.lastSentAt = oldDate
         prefs.lastFingerprint = "previous"
+        prefs.lastAccountID = "synthetic-a"
         let base = makeBase()
         let counting = DriveSyncCountingStore(base: base)
         let repositories = repositories(transactions: counting, accounts: counting,
@@ -362,6 +368,7 @@ struct DriveSyncModelTests {
         let writer = DriveSyncWriterSpy()
         let expected = try await expectedFingerprint(repositories, today: today)
         prefs.lastFingerprint = expected
+        prefs.lastAccountID = "synthetic-a"
         let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
                                      now: { today }, appVersion: { nil })
 
@@ -493,5 +500,68 @@ struct DriveSyncModelTests {
         #expect(model.isEnabled)
         #expect(link.signOutCount == 1)
         #expect(!model.canSendNow)
+    }
+
+    @Test func switchingAccountsDoesNotSkipTheNewAccountsFirstAutomaticUpload() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let today = try instant("2026-11-15T03:00:00Z")
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        link.accountID = "account-a"
+        let writer = DriveSyncWriterSpy()
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { today }, appVersion: { nil })
+
+        await model.syncIfNeeded(repositories: repositories)
+        #expect(writer.uploads.count == 1)
+        #expect(prefs.lastAccountID == "account-a")
+        #expect(model.lastSentAt == today)
+
+        // A's history must not make B's first automatic upload look unchanged.
+        model.signOut()
+        #expect(model.lastSentAt == nil)
+        link.nextSignInAccountID = "account-b"
+        await model.signIn()
+        #expect(link.accountID == "account-b")
+        #expect(prefs.lastAccountID == nil)
+        #expect(model.lastSentAt == nil)
+
+        await model.syncIfNeeded(repositories: repositories)
+        #expect(writer.uploads.count == 2)
+        #expect(prefs.lastAccountID == "account-b")
+        #expect(model.lastSentAt == today)
+    }
+
+    @Test func signingBackIntoTheSameAccountKeepsItsUploadHistory() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let today = try instant("2026-11-15T03:00:00Z")
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        link.accountID = "account-a"
+        let writer = DriveSyncWriterSpy()
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { today }, appVersion: { nil })
+
+        await model.syncIfNeeded(repositories: repositories)
+        #expect(writer.uploads.count == 1)
+
+        model.signOut()
+        link.nextSignInAccountID = "account-a"
+        await model.signIn()
+        #expect(prefs.lastAccountID == "account-a")
+        #expect(model.lastSentAt == today)
+
+        await model.syncIfNeeded(repositories: repositories)
+        #expect(writer.uploads.count == 1, "同じアカウントで内容が同じなら再送しない")
     }
 }

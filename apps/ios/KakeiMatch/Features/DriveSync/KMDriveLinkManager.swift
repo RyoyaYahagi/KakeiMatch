@@ -1,5 +1,7 @@
+import AppAuthCore
 import Foundation
 import GoogleSignIn
+import GTMAppAuth
 import Observation
 import UIKit
 
@@ -9,11 +11,12 @@ import UIKit
 protocol KMDriveLinking: AnyObject {
     var isSignedIn: Bool { get }
     var hasDriveScope: Bool { get }
+    var accountID: String? { get }
     var accountEmail: String? { get }
     func restoreIfNeeded() async
     func signIn() async throws -> Bool
     func signOut()
-    func accessToken() async throws -> String
+    func accessToken(forceRefresh: Bool) async throws -> String
 }
 
 /// Google Sign-In wrapper for the Drive snapshot writer. Only the connection is
@@ -37,6 +40,7 @@ final class KMDriveLinkManager: KMDriveLinking {
     private var didAttemptRestore = false
 
     var isSignedIn: Bool { currentUser != nil }
+    var accountID: String? { currentUser?.userID }
     var accountEmail: String? { currentUser?.profile?.email }
 
     var hasDriveScope: Bool {
@@ -92,13 +96,50 @@ final class KMDriveLinkManager: KMDriveLinking {
 
     /// The closure handed to the writer. `refreshTokensIfNeeded()` runs on the
     /// main actor and the user object never leaves it.
-    func accessToken() async throws -> String {
+    ///
+    /// `forceRefresh` is set only for the single 401 retry. Google Sign-In
+    /// returns the cached token while it still looks unexpired, so the retry
+    /// goes through AppAuth's forced-refresh flag instead.
+    func accessToken(forceRefresh: Bool = false) async throws -> String {
         guard let currentUser else { throw KMDriveUploadError.notSignedIn }
+        if forceRefresh {
+            return try await forceRefreshAccessToken(for: currentUser)
+        }
         // A refresh failure is reported as-is; the presentation layer keeps
         // English diagnostics off the screen and shows a Japanese reason.
         let refreshed = try await currentUser.refreshTokensIfNeeded()
         self.currentUser = refreshed
         return refreshed.accessToken.tokenString
+    }
+
+    /// Forces the next AppAuth refresh even when the cached access token has not
+    /// reached its expiry. `GIDGoogleUser.refreshTokensIfNeeded()` does not do
+    /// this by itself, so a 401 shortly before expiry would otherwise retry with
+    /// the same token.
+    private func forceRefreshAccessToken(for user: GIDGoogleUser) async throws -> String {
+        guard let session = user.fetcherAuthorizer as? AuthSession else {
+            throw KMDriveUploadError.unauthorized
+        }
+        let previousToken = user.accessToken.tokenString
+        session.authState.setNeedsTokenRefresh()
+        let token: String = try await withCheckedThrowingContinuation { continuation in
+            session.authState.performAction { accessToken, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let accessToken, !accessToken.isEmpty {
+                    continuation.resume(returning: accessToken)
+                } else {
+                    continuation.resume(throwing: KMDriveUploadError.unauthorized)
+                }
+            }
+        }
+        // The retry must send a different credential; the same token would only
+        // repeat the 401 that triggered this path.
+        guard token != previousToken else { throw KMDriveUploadError.unauthorized }
+        if let updated = GIDSignIn.sharedInstance.currentUser {
+            currentUser = updated
+        }
+        return token
     }
 
     private static func topViewController() -> UIViewController? {

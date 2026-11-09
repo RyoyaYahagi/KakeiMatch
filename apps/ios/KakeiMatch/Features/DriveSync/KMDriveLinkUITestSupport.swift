@@ -27,6 +27,7 @@ enum KMDriveLinkTestSupport {
 final class KMFakeDriveLinking: KMDriveLinking {
     private(set) var isSignedIn: Bool
     private(set) var hasDriveScope: Bool
+    private(set) var accountID: String?
     private(set) var accountEmail: String?
     private(set) var restoreCount = 0
     private(set) var signInCount = 0
@@ -35,6 +36,7 @@ final class KMFakeDriveLinking: KMDriveLinking {
     init(signedIn: Bool) {
         isSignedIn = signedIn
         hasDriveScope = signedIn
+        accountID = signedIn ? "ui-account" : nil
         accountEmail = signedIn ? "ui@example.test" : nil
     }
 
@@ -46,6 +48,7 @@ final class KMFakeDriveLinking: KMDriveLinking {
         signInCount += 1
         isSignedIn = true
         hasDriveScope = true
+        accountID = "ui-account"
         accountEmail = "ui@example.test"
         return true
     }
@@ -54,12 +57,13 @@ final class KMFakeDriveLinking: KMDriveLinking {
         signOutCount += 1
         isSignedIn = false
         hasDriveScope = false
+        accountID = nil
         accountEmail = nil
     }
 
-    func accessToken() async throws -> String {
+    func accessToken(forceRefresh: Bool) async throws -> String {
         guard isSignedIn else { throw KMDriveUploadError.notSignedIn }
-        return "ui-test-token"
+        return forceRefresh ? "ui-test-forced-token" : "ui-test-token"
     }
 }
 #endif

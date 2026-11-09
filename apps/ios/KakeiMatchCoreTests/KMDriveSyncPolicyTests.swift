@@ -82,9 +82,11 @@ struct KMDriveSyncPreferencesTests {
         #expect(!preferences.isEnabled)
         #expect(preferences.lastSentAt == nil)
         #expect(preferences.lastFingerprint == nil)
+        #expect(preferences.lastAccountID == nil)
         #expect(KMDriveSyncPreferences.enabledKey == "kakeimatch.driveSync.enabled")
         #expect(KMDriveSyncPreferences.lastSentAtKey == "kakeimatch.driveSync.lastSentAt")
         #expect(KMDriveSyncPreferences.lastFingerprintKey == "kakeimatch.driveSync.lastFingerprint")
+        #expect(KMDriveSyncPreferences.lastAccountIDKey == "kakeimatch.driveSync.lastAccountID")
         #expect(defaults.object(forKey: KMDriveSyncPreferences.enabledKey) == nil)
     }
 
@@ -97,16 +99,18 @@ struct KMDriveSyncPreferencesTests {
         preferences.isEnabled = true
         preferences.lastSentAt = sentAt
         preferences.lastFingerprint = "abc123"
+        preferences.lastAccountID = "account-a"
 
         let reopened = KMDriveSyncPreferences(defaults: defaults)
         #expect(reopened.isEnabled)
         #expect(reopened.lastSentAt == sentAt)
         #expect(reopened.lastFingerprint == "abc123")
+        #expect(reopened.lastAccountID == "account-a")
 
-        reopened.lastSentAt = nil
-        reopened.lastFingerprint = nil
+        reopened.clearUploadHistory()
         #expect(reopened.lastSentAt == nil)
         #expect(reopened.lastFingerprint == nil)
+        #expect(reopened.lastAccountID == nil)
     }
 }
 

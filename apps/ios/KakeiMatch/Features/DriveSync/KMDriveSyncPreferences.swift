@@ -6,6 +6,7 @@ struct KMDriveSyncPreferences {
     static let enabledKey = "kakeimatch.driveSync.enabled"
     static let lastSentAtKey = "kakeimatch.driveSync.lastSentAt"
     static let lastFingerprintKey = "kakeimatch.driveSync.lastFingerprint"
+    static let lastAccountIDKey = "kakeimatch.driveSync.lastAccountID"
 
     private let defaults: UserDefaults
 
@@ -34,5 +35,22 @@ struct KMDriveSyncPreferences {
             if let newValue { defaults.set(newValue, forKey: Self.lastFingerprintKey) }
             else { defaults.removeObject(forKey: Self.lastFingerprintKey) }
         }
+    }
+
+    /// The Google account that produced the last successful upload. Missing
+    /// means the history cannot be attributed to a signed-in account.
+    var lastAccountID: String? {
+        get { defaults.string(forKey: Self.lastAccountIDKey) }
+        nonmutating set {
+            if let newValue { defaults.set(newValue, forKey: Self.lastAccountIDKey) }
+            else { defaults.removeObject(forKey: Self.lastAccountIDKey) }
+        }
+    }
+
+    /// Drops the "already sent" state when a different Google account connects.
+    func clearUploadHistory() {
+        lastSentAt = nil
+        lastFingerprint = nil
+        lastAccountID = nil
     }
 }

@@ -21,6 +21,7 @@ final class KMDriveSyncModel {
     @ObservationIgnored private let preferences: KMDriveSyncPreferences
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let appVersion: () -> String?
+    @ObservationIgnored private var shownAccountID: String?
 
     init(linker: (any KMDriveLinking)? = nil,
          writer: (any KMDriveSnapshotWriting)? = nil,
@@ -29,7 +30,9 @@ final class KMDriveSyncModel {
          appVersion: @escaping () -> String? = { KMMuseExportPresentation.appVersion() }) {
         let resolvedLinker = linker ?? KMDriveLinkTestSupport.make() ?? KMDriveLinkManager.shared
         self.linker = resolvedLinker
-        self.writer = writer ?? KMDriveSnapshotWriter(accessToken: { try await resolvedLinker.accessToken() })
+        self.writer = writer ?? KMDriveSnapshotWriter(accessToken: { forceRefresh in
+            try await resolvedLinker.accessToken(forceRefresh: forceRefresh)
+        })
         self.preferences = preferences
         self.now = now
         self.appVersion = appVersion
@@ -37,7 +40,11 @@ final class KMDriveSyncModel {
         isSignedIn = resolvedLinker.isSignedIn
         hasDriveScope = resolvedLinker.hasDriveScope
         accountEmail = resolvedLinker.accountEmail
-        lastSentAt = preferences.lastSentAt
+        let accountID = resolvedLinker.accountID ?? resolvedLinker.accountEmail
+        shownAccountID = accountID
+        lastSentAt = accountID.flatMap { id in
+            preferences.lastAccountID == id ? preferences.lastSentAt : nil
+        }
     }
 
     var canSendNow: Bool {
@@ -54,7 +61,6 @@ final class KMDriveSyncModel {
     /// The settings page calls this when it appears. Restoring a previous sign-in
     /// is allowed here because the user deliberately opened the page.
     func prepare() async {
-        lastSentAt = preferences.lastSentAt
         isEnabled = preferences.isEnabled
         refreshLinkState()
         await linker.restoreIfNeeded()
@@ -144,7 +150,7 @@ final class KMDriveSyncModel {
             guard KMDriveSyncPolicy.shouldUpload(
                 isEnabled: isEnabled, isSignedIn: linker.isSignedIn,
                 hasScope: linker.hasDriveScope, fingerprint: fingerprint,
-                lastUploadedFingerprint: preferences.lastFingerprint) else { return }
+                lastUploadedFingerprint: lastFingerprintForCurrentAccount) else { return }
             try await writer.upload(data: data)
             didSend(fingerprint: fingerprint)
         } catch {
@@ -208,15 +214,40 @@ final class KMDriveSyncModel {
 
     private func didSend(fingerprint: String) {
         let sentAt = now()
+        let identity = currentAccountIdentity
         preferences.lastSentAt = sentAt
         preferences.lastFingerprint = fingerprint
+        preferences.lastAccountID = identity
+        shownAccountID = identity
         lastSentAt = sentAt
         failureMessage = nil
+    }
+
+    private var currentAccountIdentity: String? {
+        linker.accountID ?? linker.accountEmail
+    }
+
+    /// The last upload belongs to one Google account. A different account must
+    /// not inherit it, or its first automatic upload would be skipped.
+    private var lastFingerprintForCurrentAccount: String? {
+        guard let identity = currentAccountIdentity,
+              preferences.lastAccountID == identity else { return nil }
+        return preferences.lastFingerprint
     }
 
     private func refreshLinkState() {
         isSignedIn = linker.isSignedIn
         hasDriveScope = linker.hasDriveScope
         accountEmail = linker.accountEmail
+        let identity = currentAccountIdentity
+        if let identity, let stored = preferences.lastAccountID, stored != identity {
+            preferences.clearUploadHistory()
+        }
+        if identity != shownAccountID {
+            shownAccountID = identity
+            lastSentAt = identity.flatMap { id in
+                preferences.lastAccountID == id ? preferences.lastSentAt : nil
+            }
+        }
     }
 }
