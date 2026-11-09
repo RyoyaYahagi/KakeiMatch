@@ -177,6 +177,32 @@ struct KMDriveSnapshotWriterTests {
         #expect(recorder.methods == ["GET", "GET", "POST", "GET", "POST"])
     }
 
+    @Test func cancelledUploadStopsBeforeTheNextRequest() async throws {
+        let cancellation = KMDriveUploadCancellation()
+        var requestCount = 0
+        let recorder = DriveRequestRecorder { request in
+            requestCount += 1
+            if requestCount == 1 { cancellation.cancel() }
+            if request.httpMethod == "GET" { return .json(#"{"files":[]}"#) }
+            return .json("{}")
+        }
+        let writer = KMDriveSnapshotWriter(
+            accessToken: { _ in "token" },
+            send: recorder.send)
+
+        do {
+            try await writer.upload(data: jsonData("{}"), cancellation: cancellation)
+            Issue.record("cancelled upload should throw")
+        } catch let error as KMDriveUploadError {
+            guard case .cancelled = error else {
+                Issue.record("expected .cancelled, got \(error)")
+                return
+            }
+        }
+
+        #expect(recorder.requests.count == 1)
+    }
+
     @Test func second401StopsWithUnauthorized() async throws {
         let recorder = DriveRequestRecorder { _ in .status(401, Data()) }
         let (writer, tokens) = makeEmptyDrive(recorder)

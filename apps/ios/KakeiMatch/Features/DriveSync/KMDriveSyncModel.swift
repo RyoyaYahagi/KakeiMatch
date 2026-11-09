@@ -22,6 +22,8 @@ final class KMDriveSyncModel {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let appVersion: () -> String?
     @ObservationIgnored private var shownAccountID: String?
+    @ObservationIgnored private var activeCancellation: KMDriveUploadCancellation?
+    @ObservationIgnored private var cancelGeneration = 0
 
     init(linker: (any KMDriveLinking)? = nil,
          writer: (any KMDriveSnapshotWriting)? = nil,
@@ -69,15 +71,19 @@ final class KMDriveSyncModel {
 
     /// The toggle turns auto-save on for the first time by starting sign-in.
     /// Cancelling or failing returns the switch to OFF and does not persist it.
+    /// Turning it off is always accepted, including while a send or sign-in is
+    /// still in progress.
     func setEnabled(_ value: Bool) async {
         guard value != isEnabled else { return }
-        guard !isSyncing, !isAuthenticating else { return }
         guard value else {
             preferences.isEnabled = false
             isEnabled = false
             failureMessage = nil
+            cancelGeneration += 1
+            activeCancellation?.cancel()
             return
         }
+        guard !isSyncing, !isAuthenticating else { return }
 
         isEnabled = true
         isAuthenticating = true
@@ -92,6 +98,8 @@ final class KMDriveSyncModel {
                     return
                 }
             }
+            // The user may have turned the toggle off while sign-in was waiting.
+            guard isEnabled else { return }
             refreshLinkState()
             guard linker.hasDriveScope else {
                 isEnabled = false
@@ -101,9 +109,10 @@ final class KMDriveSyncModel {
             preferences.isEnabled = true
             failureMessage = nil
         } catch {
+            let shouldReport = isEnabled
             isEnabled = false
             refreshLinkState()
-            failureMessage = KMDriveSyncPresentation.signInFailure
+            failureMessage = shouldReport ? KMDriveSyncPresentation.signInFailure : nil
         }
     }
 
@@ -126,6 +135,8 @@ final class KMDriveSyncModel {
     }
 
     func signOut() {
+        cancelGeneration += 1
+        activeCancellation?.cancel()
         linker.signOut()
         refreshLinkState()
         failureMessage = nil
@@ -142,7 +153,13 @@ final class KMDriveSyncModel {
 
         await linker.restoreIfNeeded()
         refreshLinkState()
+        let startIdentity = currentAccountIdentity
+        let generation = cancelGeneration
         guard let snapshot = await makeSnapshot(repositories: repositories) else { return }
+        // The user may have turned auto-save off or signed out while the snapshot
+        // was being built.
+        guard isEnabled, generation == cancelGeneration,
+              linker.isSignedIn, currentAccountIdentity == startIdentity else { return }
 
         do {
             let data = try snapshot.jsonData()
@@ -151,8 +168,10 @@ final class KMDriveSyncModel {
                 isEnabled: isEnabled, isSignedIn: linker.isSignedIn,
                 hasScope: linker.hasDriveScope, fingerprint: fingerprint,
                 lastUploadedFingerprint: lastFingerprintForCurrentAccount) else { return }
-            try await writer.upload(data: data)
+            try await runUpload(data: data, startIdentity: startIdentity, generation: generation)
             didSend(fingerprint: fingerprint)
+        } catch KMDriveUploadError.cancelled {
+            failureMessage = nil
         } catch {
             failureMessage = KMDriveSyncPresentation.failureMessage(error)
         }
@@ -168,15 +187,41 @@ final class KMDriveSyncModel {
 
         await linker.restoreIfNeeded()
         refreshLinkState()
+        let startIdentity = currentAccountIdentity
+        let generation = cancelGeneration
         guard let snapshot = await makeSnapshot(repositories: repositories) else { return }
+        guard generation == cancelGeneration,
+              linker.isSignedIn, currentAccountIdentity == startIdentity else { return }
 
         do {
             let data = try snapshot.jsonData()
             let fingerprint = try KMDriveSnapshotFingerprint.compute(snapshot)
-            try await writer.upload(data: data)
+            try await runUpload(data: data, startIdentity: startIdentity, generation: generation)
             didSend(fingerprint: fingerprint)
+        } catch KMDriveUploadError.cancelled {
+            failureMessage = nil
         } catch {
             failureMessage = KMDriveSyncPresentation.failureMessage(error)
+        }
+    }
+
+    /// Runs one upload with its own stop token. Turning auto-save off or signing
+    /// out cancels the token, and the connection is checked again before any
+    /// success state is saved.
+    private func runUpload(data: Data, startIdentity: String?, generation: Int) async throws {
+        let cancellation = KMDriveUploadCancellation()
+        activeCancellation = cancellation
+        defer {
+            if let activeCancellation, activeCancellation === cancellation {
+                self.activeCancellation = nil
+            }
+        }
+        try await writer.upload(data: data, cancellation: cancellation)
+        guard !cancellation.isCancelled,
+              generation == cancelGeneration,
+              linker.isSignedIn,
+              currentAccountIdentity == startIdentity else {
+            throw KMDriveUploadError.cancelled
         }
     }
 

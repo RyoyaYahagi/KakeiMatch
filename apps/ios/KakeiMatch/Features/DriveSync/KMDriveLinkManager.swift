@@ -36,8 +36,12 @@ final class KMDriveLinkManager: KMDriveLinking {
 
     static let driveScope = "https://www.googleapis.com/auth/drive.file"
 
+    typealias Restore = @MainActor (@escaping (GIDGoogleUser?, (any Error)?) -> Void) -> Void
+
     private(set) var currentUser: GIDGoogleUser?
-    private var didAttemptRestore = false
+    @ObservationIgnored private let restore: Restore
+    @ObservationIgnored private var restoreTask: Task<Void, Never>?
+    @ObservationIgnored private var didRestore = false
 
     var isSignedIn: Bool { currentUser != nil }
     var accountID: String? { currentUser?.userID }
@@ -47,21 +51,53 @@ final class KMDriveLinkManager: KMDriveLinking {
         currentUser?.grantedScopes?.contains(Self.driveScope) == true
     }
 
-    private init() {}
+    init(restore: @escaping Restore = { completion in
+        GIDSignIn.sharedInstance.restorePreviousSignIn(completion)
+    }) {
+        self.restore = restore
+    }
 
-    /// Called only when the toggle is ON or the settings page is opened. The
-    /// first call performs the restore; later calls are no-ops.
+    /// Called only when the toggle is ON or the settings page is opened. A
+    /// transient failure leaves the attempt retryable; concurrent callers wait
+    /// for the same attempt instead of starting another one.
     func restoreIfNeeded() async {
-        guard !didAttemptRestore else { return }
-        didAttemptRestore = true
-        await withCheckedContinuation { continuation in
-            GIDSignIn.sharedInstance.restorePreviousSignIn { [weak self] user, _ in
+        if didRestore { return }
+        if let restoreTask {
+            await restoreTask.value
+            return
+        }
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.restoreOnce()
+        }
+        restoreTask = task
+        await task.value
+        restoreTask = nil
+    }
+
+    private func restoreOnce() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            restore { [weak self] user, error in
                 // The SDK documents that this callback runs on the main queue.
                 // GIDGoogleUser is not Sendable, so hand it to the main actor
                 // explicitly instead of crossing the boundary as a checked value.
                 nonisolated(unsafe) let restoredUser = user
                 Task { @MainActor [weak self] in
-                    self?.currentUser = restoredUser
+                    guard let self, !self.didRestore else {
+                        continuation.resume()
+                        return
+                    }
+                    if let error {
+                        // A missing keychain entry is permanent; network and other
+                        // errors keep didRestore false so a later foreground call
+                        // can try again.
+                        if (error as NSError).code == GIDSignInError.hasNoAuthInKeychain.rawValue {
+                            self.didRestore = true
+                        }
+                    } else {
+                        self.currentUser = restoredUser
+                        self.didRestore = true
+                    }
                     continuation.resume()
                 }
             }
@@ -80,6 +116,7 @@ final class KMDriveLinkManager: KMDriveLinking {
                 hint: nil,
                 additionalScopes: [Self.driveScope])
             currentUser = result.user
+            didRestore = true
             return true
         } catch {
             if (error as NSError).code == GIDSignInError.canceled.rawValue {
@@ -92,6 +129,7 @@ final class KMDriveLinkManager: KMDriveLinking {
     func signOut() {
         GIDSignIn.sharedInstance.signOut()
         currentUser = nil
+        didRestore = true
     }
 
     /// The closure handed to the writer. `refreshTokensIfNeeded()` runs on the
@@ -122,20 +160,18 @@ final class KMDriveLinkManager: KMDriveLinking {
         }
         let previousToken = user.accessToken.tokenString
         session.authState.setNeedsTokenRefresh()
-        let token: String = try await withCheckedThrowingContinuation { continuation in
+        let refreshedToken: String? = try await withCheckedThrowingContinuation { continuation in
             session.authState.performAction { accessToken, _, error in
                 if let error {
                     continuation.resume(throwing: error)
-                } else if let accessToken, !accessToken.isEmpty {
-                    continuation.resume(returning: accessToken)
                 } else {
-                    continuation.resume(throwing: KMDriveUploadError.unauthorized)
+                    continuation.resume(returning: accessToken)
                 }
             }
         }
         // The retry must send a different credential; the same token would only
         // repeat the 401 that triggered this path.
-        guard token != previousToken else { throw KMDriveUploadError.unauthorized }
+        let token = try KMDriveForcedToken.validate(refreshedToken, previous: previousToken)
         if let updated = GIDSignIn.sharedInstance.currentUser {
             currentUser = updated
         }
@@ -163,5 +199,16 @@ enum KMDriveLinkError: Error, LocalizedError {
         case .noPresenter:
             return "サインイン画面を表示できませんでした。もう一度お試しください。"
         }
+    }
+}
+
+/// The forced-refresh retry may only continue with a token that is present,
+/// non-empty, and different from the one that just received a 401.
+enum KMDriveForcedToken {
+    static func validate(_ token: String?, previous: String) throws -> String {
+        guard let token, !token.isEmpty, token != previous else {
+            throw KMDriveUploadError.unauthorized
+        }
+        return token
     }
 }

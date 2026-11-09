@@ -54,9 +54,11 @@ private final class DriveSyncWriterSpy: KMDriveSnapshotWriting {
     private(set) var uploads: [Data] = []
     var error: (any Error)?
     var beforeUpload: (@MainActor () async -> Void)?
+    var ignoresCancellation = false
 
-    func upload(data: Data) async throws {
+    func upload(data: Data, cancellation: KMDriveUploadCancellation) async throws {
         if let beforeUpload { await beforeUpload() }
+        if !ignoresCancellation, cancellation.isCancelled { throw KMDriveUploadError.cancelled }
         if let error { throw error }
         uploads.append(data)
     }
@@ -563,5 +565,134 @@ struct DriveSyncModelTests {
 
         await model.syncIfNeeded(repositories: repositories)
         #expect(writer.uploads.count == 1, "同じアカウントで内容が同じなら再送しない")
+    }
+
+    @Test func turningOffWhileTheUploadIsWaitingStopsItAndPersistsOff() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        let writer = DriveSyncWriterSpy()
+        let gate = DriveSyncUploadGate()
+        writer.beforeUpload = { await gate.wait() }
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { Date() }, appVersion: { nil })
+
+        let sync = Task { await model.syncIfNeeded(repositories: repositories) }
+        await gate.waitUntilStarted()
+        #expect(model.isSyncing)
+
+        await model.setEnabled(false)
+        #expect(!model.isEnabled)
+        #expect(!prefs.isEnabled)
+
+        gate.open()
+        await sync.value
+
+        #expect(writer.uploads.isEmpty)
+        #expect(prefs.lastFingerprint == nil)
+        #expect(prefs.lastSentAt == nil)
+        #expect(model.lastSentAt == nil)
+        #expect(model.failureMessage == nil)
+        #expect(!model.isSyncing)
+    }
+
+    @Test func signingOutWhileTheUploadIsWaitingStopsItAndDoesNotSaveSuccess() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        let writer = DriveSyncWriterSpy()
+        let gate = DriveSyncUploadGate()
+        writer.beforeUpload = { await gate.wait() }
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { Date() }, appVersion: { nil })
+
+        let sync = Task { await model.syncIfNeeded(repositories: repositories) }
+        await gate.waitUntilStarted()
+        #expect(model.isSyncing)
+
+        model.signOut()
+        #expect(!model.isSignedIn)
+        #expect(model.isEnabled)
+        #expect(prefs.isEnabled)
+
+        gate.open()
+        await sync.value
+
+        #expect(writer.uploads.isEmpty)
+        #expect(prefs.lastFingerprint == nil)
+        #expect(prefs.lastSentAt == nil)
+        #expect(model.lastSentAt == nil)
+        #expect(model.failureMessage == nil)
+        #expect(!model.isSyncing)
+    }
+
+    @Test func signOutAfterTheWriterReturnsDoesNotSaveSuccessState() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        let writer = DriveSyncWriterSpy()
+        // Simulate a request that completed before the cancellation was observed.
+        writer.ignoresCancellation = true
+        let gate = DriveSyncUploadGate()
+        writer.beforeUpload = { await gate.wait() }
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { Date() }, appVersion: { nil })
+
+        let sync = Task { await model.syncIfNeeded(repositories: repositories) }
+        await gate.waitUntilStarted()
+        model.signOut()
+        gate.open()
+        await sync.value
+
+        #expect(writer.uploads.count == 1)
+        #expect(prefs.lastFingerprint == nil)
+        #expect(prefs.lastSentAt == nil)
+        #expect(model.lastSentAt == nil)
+        #expect(model.failureMessage == nil)
+    }
+
+    @Test func accountChangeAfterTheWriterReturnsDoesNotSaveSuccessState() async throws {
+        let (prefs, defaults, name) = try preferences()
+        defer { defaults.removePersistentDomain(forName: name) }
+        prefs.isEnabled = true
+        let base = makeBase()
+        let counting = DriveSyncCountingStore(base: base)
+        let repositories = repositories(transactions: counting, accounts: counting,
+                                        categories: counting, base: base)
+        let link = DriveSyncLinkStub(signedIn: true)
+        link.accountID = "account-a"
+        let writer = DriveSyncWriterSpy()
+        writer.ignoresCancellation = true
+        let gate = DriveSyncUploadGate()
+        writer.beforeUpload = { await gate.wait() }
+        let model = KMDriveSyncModel(linker: link, writer: writer, preferences: prefs,
+                                     now: { Date() }, appVersion: { nil })
+
+        let sync = Task { await model.syncIfNeeded(repositories: repositories) }
+        await gate.waitUntilStarted()
+        link.accountID = "account-b"
+        gate.open()
+        await sync.value
+
+        #expect(writer.uploads.count == 1)
+        #expect(prefs.lastFingerprint == nil)
+        #expect(prefs.lastSentAt == nil)
+        #expect(model.lastSentAt == nil)
+        #expect(model.failureMessage == nil)
     }
 }
