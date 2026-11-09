@@ -33,7 +33,7 @@ export const reconciliationEvalDataset: ReconciliationEvalCase[] = [
     expectedMatches: [],
     expectedStatementStatuses: { s: "needs_review" },
     expectedReceiptStatuses: { correct: "needs_review", a: "needs_review", b: "needs_review", c: "needs_review" },
-    expectedTopCandidates: { s: "correct" },
+    expectedTopCandidates: { s: "a" },
   },
   ...[
     ["アオゾラストア", "あおぞらストア"],
@@ -81,5 +81,5 @@ export const reconciliationEvalDataset: ReconciliationEvalCase[] = [
   pair("exact-10", "港町食堂", "港町食堂", 1740),
   pair("exact-11", "架空ホームセンター", "架空ホームセンター", 6980),
   pair("exact-12", "星空映画館", "星空映画館", 3600),
-  { id: "ambiguous-near-pair", statements: [statement("s-near-a", "青空食堂", 500), statement("s-near-b", "青空食堂", 510)], receipts: [receipt("r-near-a", "青空食堂", 500), receipt("r-near-b", "青空食堂", 510)], expectedMatches: [], expectedStatementStatuses: { "s-near-a": "needs_review", "s-near-b": "needs_review" }, expectedReceiptStatuses: { "r-near-a": "needs_review", "r-near-b": "needs_review" } },
+  { id: "near-amounts-exact-neighbors", statements: [statement("s-near-a", "青空食堂", 500), statement("s-near-b", "青空食堂", 510)], receipts: [receipt("r-near-a", "青空食堂", 500), receipt("r-near-b", "青空食堂", 510)], expectedMatches: [{ statementId: "s-near-a", receiptId: "r-near-a" }, { statementId: "s-near-b", receiptId: "r-near-b" }], expectedStatementStatuses: { "s-near-a": "matched", "s-near-b": "matched" }, expectedReceiptStatuses: { "r-near-a": "matched", "r-near-b": "matched" } },
 ];

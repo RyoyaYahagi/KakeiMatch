@@ -1,6 +1,11 @@
 /** Pure, deterministic reconciliation rules. Persistence and user scoping belong to callers. */
 
-export const RECONCILIATION_RULE_VERSION = "1.2.0";
+import { lexicographicMaximumAssignment, maximumWeight } from "./assignment";
+
+export const RECONCILIATION_RULE_VERSION = "1.3.0";
+
+/** Reason code shared by the review pair selected by the global assignment. */
+export const GLOBAL_ASSIGNMENT_REASON = "global_assignment_pair";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -19,6 +24,9 @@ export const RECONCILIATION_RULES = {
   autoMatchMerchantWeight: 0.20,
   autoMatchScore: 0.88,
   autoMatchMargin: 0.15,
+  // Global assignment uses integer weights so equal totals are exact.
+  globalAssignmentWeightScale: 1_000_000,
+  globalAssignmentMargin: 0.15,
   candidatesPerStatement: 3,
 } as const;
 
@@ -164,7 +172,32 @@ function margin(top: InternalCandidate | undefined, second: InternalCandidate | 
   return top ? top.autoScore - (second?.autoScore ?? 0) : 0;
 }
 
-export function runReconciliationEngine(input: {
+const utf8Encoder = new TextEncoder();
+
+/** UTF-8 byte order, used only by the assignment tie-break and its fixtures. */
+function compareUtf8(left: string, right: string): number {
+  const a = utf8Encoder.encode(left);
+  const b = utf8Encoder.encode(right);
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return a.length - b.length;
+}
+
+/** True only for an existing candidate that already satisfies every hard condition. */
+function isGlobalAssignmentEligible(candidate: InternalCandidate): boolean {
+  return candidate.amountDeltaYen === 0
+    && candidate.dateDistanceDays <= RECONCILIATION_RULES.autoMatchDateWindowDays
+    && (candidate.autoMerchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || candidate.aliasMatch)
+    && candidate.autoScore >= RECONCILIATION_RULES.autoMatchScore;
+}
+
+function globalAssignmentWeight(candidate: InternalCandidate): number {
+  return Math.floor(RECONCILIATION_RULES.globalAssignmentWeightScale * candidate.autoScore + 0.5);
+}
+
+export type ReconciliationEngineInput = {
   statements: ReconciliationStatement[];
   receipts: ReconciliationReceipt[];
   aliases?: ReadonlySet<string>;
@@ -172,7 +205,18 @@ export function runReconciliationEngine(input: {
   excludedReceiptIds?: ReadonlySet<string>;
   rejectedPairs?: ReadonlySet<string>;
   manualStatementIds?: ReadonlySet<string>;
-}): ReconciliationEngineResult {
+};
+
+type PreparedReconciliation = {
+  statements: ReconciliationStatement[];
+  receipts: ReconciliationReceipt[];
+  allByStatement: Map<string, InternalCandidate[]>;
+  allByReceipt: Map<string, InternalCandidate[]>;
+  compareCandidates: (a: InternalCandidate, b: InternalCandidate) => number;
+  ambiguous: (candidate: InternalCandidate) => boolean;
+};
+
+function prepareReconciliation(input: ReconciliationEngineInput): PreparedReconciliation {
   const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
   const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
 
@@ -244,27 +288,6 @@ export function runReconciliationEngine(input: {
   for (const list of allByStatement.values()) list.sort(compareCandidates);
   for (const list of allByReceipt.values()) list.sort(compareCandidates);
 
-  const matchedStatements = new Map<string, string>();
-  const matchedReceipts = new Map<string, string>();
-  for (const statement of statements) {
-    const choices = allByStatement.get(statement.statementTransactionId) ?? [];
-    const top = choices[0];
-    if (!top || input.manualStatementIds?.has(statement.statementTransactionId)) continue;
-    const receiptChoices = allByReceipt.get(top.receiptId) ?? [];
-    const receiptTop = receiptChoices[0];
-    const isMutualBest = receiptTop?.statementTransactionId === statement.statementTransactionId;
-    const statementHasMargin = margin(top, choices[1]) >= RECONCILIATION_RULES.autoMatchMargin;
-    const receiptHasMargin = margin(receiptTop, receiptChoices[1]) >= RECONCILIATION_RULES.autoMatchMargin;
-    const isExactAndStrong = top.amountDeltaYen === 0
-      && top.dateDistanceDays <= RECONCILIATION_RULES.autoMatchDateWindowDays
-      && (top.autoMerchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
-      && top.autoScore >= RECONCILIATION_RULES.autoMatchScore;
-    if (isMutualBest && statementHasMargin && receiptHasMargin && isExactAndStrong) {
-      matchedStatements.set(statement.statementTransactionId, top.receiptId);
-      matchedReceipts.set(top.receiptId, statement.statementTransactionId);
-    }
-  }
-
   const ambiguous = (candidate: InternalCandidate): boolean => {
     const s = allByStatement.get(candidate.statementTransactionId) ?? [];
     const r = allByReceipt.get(candidate.receiptId) ?? [];
@@ -276,13 +299,120 @@ export function runReconciliationEngine(input: {
       || rt?.statementTransactionId !== candidate.statementTransactionId;
   };
 
+  return { statements, receipts, allByStatement, allByReceipt, compareCandidates, ambiguous };
+}
+
+export type ReconciliationAssignmentDiagnostics = {
+  optimumWeight: number;
+  assignment: Array<{ statementTransactionId: string; receiptId: string }>;
+  deltas: Array<{ statementTransactionId: string; receiptId: string; delta: number; automatic: boolean }>;
+};
+
+type GlobalAssignment = ReconciliationAssignmentDiagnostics & {
+  assignedStatements: Map<string, InternalCandidate>;
+  assignedReceipts: Map<string, InternalCandidate>;
+  matchedStatements: Map<string, string>;
+  matchedReceipts: Map<string, string>;
+};
+
+function computeGlobalAssignment(
+  statements: ReconciliationStatement[],
+  allByStatement: Map<string, InternalCandidate[]>,
+  manualStatementIds: ReadonlySet<string> | undefined,
+): GlobalAssignment {
+  // Candidate edges E are the existing candidates that already satisfy every hard
+  // automatic-match condition. The global assignment never widens this set.
+  const assignmentCandidates = new Map<string, InternalCandidate[]>();
+  const assignmentReceiptIds = new Set<string>();
+  for (const statement of statements) {
+    if (statement.kind !== "purchase" || manualStatementIds?.has(statement.statementTransactionId)) continue;
+    const eligible = (allByStatement.get(statement.statementTransactionId) ?? []).filter(isGlobalAssignmentEligible);
+    if (eligible.length === 0) continue;
+    assignmentCandidates.set(statement.statementTransactionId, eligible);
+    for (const candidate of eligible) assignmentReceiptIds.add(candidate.receiptId);
+  }
+  const assignmentRowOrder = [...assignmentCandidates.keys()].sort(compareUtf8);
+  const assignmentReceiptOrder = [...assignmentReceiptIds].sort(compareUtf8);
+  const assignmentReceiptIndex = new Map(assignmentReceiptOrder.map((id, index) => [id, index]));
+  const assignmentWeights = assignmentRowOrder.map((statementId) => {
+    const row = new Array<number>(assignmentReceiptOrder.length).fill(0);
+    for (const candidate of assignmentCandidates.get(statementId) ?? []) {
+      row[assignmentReceiptIndex.get(candidate.receiptId)!] = globalAssignmentWeight(candidate);
+    }
+    return row;
+  });
+  const optimumWeight = assignmentWeights.length === 0 ? 0 : maximumWeight(assignmentWeights);
+  const optimalAssignment = assignmentWeights.length === 0
+    ? []
+    : lexicographicMaximumAssignment(assignmentWeights, assignmentRowOrder.map((_, index) => index), assignmentReceiptOrder.map((_, index) => index));
+
+  const assignedStatements = new Map<string, InternalCandidate>();
+  const assignedReceipts = new Map<string, InternalCandidate>();
+  const assignment: ReconciliationAssignmentDiagnostics["assignment"] = [];
+  for (let row = 0; row < assignmentRowOrder.length; row += 1) {
+    const column = optimalAssignment[row] ?? -1;
+    if (column < 0 || (assignmentWeights[row]![column] ?? 0) <= 0) continue;
+    const statementId = assignmentRowOrder[row]!;
+    const receiptId = assignmentReceiptOrder[column]!;
+    const candidate = (assignmentCandidates.get(statementId) ?? []).find((item) => item.receiptId === receiptId);
+    if (!candidate) throw new Error("global_assignment_edge_missing");
+    assignedStatements.set(statementId, candidate);
+    assignedReceipts.set(receiptId, candidate);
+    assignment.push({ statementTransactionId: statementId, receiptId });
+  }
+
+  // Δe is evaluated independently against the original E. Removing only e and
+  // re-optimizing keeps every other edge available, so an equal-total
+  // alternative produces Δe = 0.
+  const globalAssignmentThreshold = Math.round(RECONCILIATION_RULES.globalAssignmentMargin * RECONCILIATION_RULES.globalAssignmentWeightScale);
+  const matchedStatements = new Map<string, string>();
+  const matchedReceipts = new Map<string, string>();
+  const deltas: ReconciliationAssignmentDiagnostics["deltas"] = [];
+  for (let row = 0; row < assignmentRowOrder.length; row += 1) {
+    const column = optimalAssignment[row] ?? -1;
+    if (column < 0 || (assignmentWeights[row]![column] ?? 0) <= 0) continue;
+    const original = assignmentWeights[row]![column]!;
+    assignmentWeights[row]![column] = 0;
+    const withoutEdge = maximumWeight(assignmentWeights);
+    assignmentWeights[row]![column] = original;
+    const delta = optimumWeight - withoutEdge;
+    const automatic = delta >= globalAssignmentThreshold;
+    const statementId = assignmentRowOrder[row]!;
+    const receiptId = assignmentReceiptOrder[column]!;
+    deltas.push({ statementTransactionId: statementId, receiptId, delta, automatic });
+    if (!automatic) continue;
+    matchedStatements.set(statementId, receiptId);
+    matchedReceipts.set(receiptId, statementId);
+  }
+  return { optimumWeight, assignment, deltas, assignedStatements, assignedReceipts, matchedStatements, matchedReceipts };
+}
+
+/** Evaluation-only view of E, M*, Δe and the automatic decisions. */
+export function inspectReconciliationAssignment(input: ReconciliationEngineInput): ReconciliationAssignmentDiagnostics {
+  const prepared = prepareReconciliation(input);
+  const global = computeGlobalAssignment(prepared.statements, prepared.allByStatement, input.manualStatementIds);
+  return { optimumWeight: global.optimumWeight, assignment: global.assignment, deltas: global.deltas };
+}
+
+export function runReconciliationEngine(input: ReconciliationEngineInput): ReconciliationEngineResult {
+  const prepared = prepareReconciliation(input);
+  const { statements, receipts, allByStatement, allByReceipt, compareCandidates, ambiguous } = prepared;
+  const globalAssignment = computeGlobalAssignment(statements, allByStatement, input.manualStatementIds);
+  const { assignedStatements, assignedReceipts, matchedStatements, matchedReceipts } = globalAssignment;
+
   const candidates: ReconciliationCandidate[] = [];
   for (const statement of statements) {
     const choices = allByStatement.get(statement.statementTransactionId) ?? [];
     const matchedReceiptId = matchedStatements.get(statement.statementTransactionId);
-    // Always retain the automatic pair even when review ranking favors a different source.
-    [...choices].sort((a, b) => Number(b.receiptId === matchedReceiptId) - Number(a.receiptId === matchedReceiptId)
+    const assignedReceiptId = assignedStatements.get(statement.statementTransactionId)?.receiptId;
+    const preferredReceiptId = matchedReceiptId ?? assignedReceiptId;
+    // Retain the automatic or globally assigned pair even when review ranking
+    // favors a different source; the remaining slots stay in review score order.
+    [...choices].sort((a, b) => Number(b.receiptId === preferredReceiptId) - Number(a.receiptId === preferredReceiptId)
       || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement).forEach((candidate, index) => {
+      const reasons = assignedReceiptId && !matchedReceiptId && candidate.receiptId === assignedReceiptId
+        ? [...candidate.reasons, GLOBAL_ASSIGNMENT_REASON]
+        : candidate.reasons;
       candidates.push({
         statementTransactionId: candidate.statementTransactionId,
         receiptId: candidate.receiptId,
@@ -291,7 +421,7 @@ export function runReconciliationEngine(input: {
         amountDeltaYen: candidate.amountDeltaYen,
         dateDistanceDays: candidate.dateDistanceDays,
         merchantSimilarity: candidate.merchantSimilarity,
-        reasons: ambiguous(candidate) ? [...candidate.reasons, "ambiguous_candidates"] : candidate.reasons,
+        reasons: !matchedReceiptId && ambiguous(candidate) ? [...reasons, "ambiguous_candidates"] : reasons,
       });
     });
   }
@@ -302,15 +432,17 @@ export function runReconciliationEngine(input: {
     if (receiptId) return { statementTransactionId: statement.statementTransactionId, status: "matched", matchedReceiptId: receiptId, reasonCodes: ["automatic_high_confidence_match"] };
     const hasCandidate = (allByStatement.get(statement.statementTransactionId)?.length ?? 0) > 0;
     const hasAmbiguity = (allByStatement.get(statement.statementTransactionId) ?? []).some(ambiguous);
+    const assigned = assignedStatements.has(statement.statementTransactionId);
     return { statementTransactionId: statement.statementTransactionId, status: hasCandidate ? "needs_review" : "unmatched_statement", matchedReceiptId: null,
-      reasonCodes: hasCandidate ? ["candidate_requires_review", ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
+      reasonCodes: hasCandidate ? ["candidate_requires_review", ...(assigned ? [GLOBAL_ASSIGNMENT_REASON] : []), ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
   });
   const receiptResults: ReconciliationReceiptResult[] = receipts.map((receipt) => {
     const statementTransactionId = matchedReceipts.get(receipt.receiptId);
     if (statementTransactionId) return { receiptId: receipt.receiptId, status: "matched", matchedStatementTransactionId: statementTransactionId, reasonCodes: ["automatic_high_confidence_match"] };
     const hasCandidate = (allByReceipt.get(receipt.receiptId)?.length ?? 0) > 0;
     const hasAmbiguity = (allByReceipt.get(receipt.receiptId) ?? []).some(ambiguous);
-    return { receiptId: receipt.receiptId, status: hasCandidate ? "needs_review" : "unmatched_receipt", matchedStatementTransactionId: null, reasonCodes: hasCandidate ? ["candidate_requires_review", ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
+    const assigned = assignedReceipts.has(receipt.receiptId);
+    return { receiptId: receipt.receiptId, status: hasCandidate ? "needs_review" : "unmatched_receipt", matchedStatementTransactionId: null, reasonCodes: hasCandidate ? ["candidate_requires_review", ...(assigned ? [GLOBAL_ASSIGNMENT_REASON] : []), ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
   });
 
   return { ruleVersion: RECONCILIATION_RULE_VERSION, candidates, statementResults, receiptResults };

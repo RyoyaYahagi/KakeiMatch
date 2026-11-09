@@ -23,7 +23,7 @@ import {
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
 const DEFAULT_SEED = 376;
-const PINNED_RULE_VERSION = "1.2.0";
+const PINNED_RULE_VERSION = "1.3.0";
 const PINNED_RULES = {
   candidateDateWindowDays: 7,
   autoMatchDateWindowDays: 2,
@@ -32,6 +32,8 @@ const PINNED_RULES = {
   autoMatchMerchantSimilarity: 0.72,
   autoMatchScore: 0.88,
   autoMatchMargin: 0.15,
+  globalAssignmentWeightScale: 1_000_000,
+  globalAssignmentMargin: 0.15,
 } as const;
 
 type Family = "clean" | "noise" | "near-miss" | "twin" | "irreducible";
@@ -217,7 +219,7 @@ type MerchantSimilarityFixture = {
 };
 
 /**
- * Pinned values captured from rule 1.2.0, deliberately independent of the
+ * Pinned values captured from the shared 1.2.0/1.3.0 similarity contract, deliberately independent of the
  * merchant pool builder and of the engine's current similarity implementation.
  * If the engine changes similarity, these checks fail instead of silently
  * reclassifying the generated cases as still valid.

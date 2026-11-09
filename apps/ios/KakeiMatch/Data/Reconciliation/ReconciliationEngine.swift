@@ -10,7 +10,7 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    static let ruleVersion = "1.2.0"
+    static let ruleVersion = "1.3.0"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -19,6 +19,8 @@ enum KMReconciliationEngine {
     private static let autoMerchantThreshold = KMJSNumber("0.72")
     private static let autoScoreThreshold = KMJSNumber("0.88")
     private static let marginThreshold = KMJSNumber("0.15")
+    private static let globalAssignmentThreshold = 150_000
+    private static let globalAssignmentReason = "global_assignment_pair"
     private struct Candidate {
         var statementId: String
         var receiptId: String
@@ -126,18 +128,58 @@ enum KMReconciliationEngine {
         for key in byStatement.keys { byStatement[key]!.sort(by: compare) }
         for key in byReceipt.keys { byReceipt[key]!.sort(by: compare) }
 
+        // Candidate edges E are the existing candidates that already satisfy every hard
+        // automatic-match condition. Manual statements are removed from the matrix.
+        var assignmentCandidates: [String: [Candidate]] = [:]
+        var assignmentReceiptIds = Set<String>()
+        for statement in statements where statement.kind == .purchase && !manualStatementIds.contains(statement.id) {
+            let eligible = (byStatement[statement.id] ?? []).filter(isGlobalAssignmentEligible)
+            if eligible.isEmpty { continue }
+            assignmentCandidates[statement.id] = eligible
+            for candidate in eligible { assignmentReceiptIds.insert(candidate.receiptId) }
+        }
+        let assignmentRowOrder = assignmentCandidates.keys.sorted(by: utf8Less)
+        let assignmentReceiptOrder = assignmentReceiptIds.sorted(by: utf8Less)
+        let assignmentReceiptIndex = Dictionary(uniqueKeysWithValues: assignmentReceiptOrder.enumerated().map { ($0.element, $0.offset) })
+        var assignmentWeights = assignmentRowOrder.map { statementId -> [Int] in
+            var row = Array(repeating: 0, count: assignmentReceiptOrder.count)
+            for candidate in assignmentCandidates[statementId] ?? [] {
+                row[assignmentReceiptIndex[candidate.receiptId]!] = globalAssignmentWeight(candidate)
+            }
+            return row
+        }
+        let optimumWeight = assignmentWeights.isEmpty ? 0 : KMReconciliationAssignment.maximumWeight(assignmentWeights)
+        let optimalAssignment = assignmentWeights.isEmpty ? [] : KMReconciliationAssignment.lexicographicAssignment(
+            assignmentWeights, rowOrder: Array(0..<assignmentRowOrder.count), columnOrder: Array(0..<assignmentReceiptOrder.count))
+
+        var assignedStatements: [String: Candidate] = [:]
+        var assignedReceipts: [String: Candidate] = [:]
+        for row in assignmentRowOrder.indices {
+            let column = optimalAssignment[row]
+            guard column >= 0, assignmentWeights[row][column] > 0 else { continue }
+            let statementId = assignmentRowOrder[row]
+            let receiptId = assignmentReceiptOrder[column]
+            guard let candidate = (assignmentCandidates[statementId] ?? []).first(where: { $0.receiptId == receiptId }) else { continue }
+            assignedStatements[statementId] = candidate
+            assignedReceipts[receiptId] = candidate
+        }
+
+        // Δe is evaluated independently against the original E. An equal-total
+        // alternative therefore produces Δe = 0.
         var matchedStatements: [String: String] = [:]
         var matchedReceipts: [String: String] = [:]
-        for statement in statements {
-            let choices = byStatement[statement.id] ?? []
-            guard let top = choices.first, !manualStatementIds.contains(statement.id) else { continue }
-            let receiptChoices = byReceipt[top.receiptId] ?? []
-            guard let receiptTop = receiptChoices.first else { continue }
-            let strong = top.delta == 0 && top.days <= autoWindow && (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold
-            if receiptTop.statementId == statement.id && margin(top, choices.dropFirst().first) >= marginThreshold && margin(receiptTop, receiptChoices.dropFirst().first) >= marginThreshold && strong {
-                matchedStatements[statement.id] = top.receiptId
-                matchedReceipts[top.receiptId] = statement.id
-            }
+        for row in assignmentRowOrder.indices {
+            let column = optimalAssignment[row]
+            guard column >= 0, assignmentWeights[row][column] > 0 else { continue }
+            let original = assignmentWeights[row][column]
+            assignmentWeights[row][column] = 0
+            let withoutEdge = KMReconciliationAssignment.maximumWeight(assignmentWeights)
+            assignmentWeights[row][column] = original
+            if optimumWeight - withoutEdge < globalAssignmentThreshold { continue }
+            let statementId = assignmentRowOrder[row]
+            let receiptId = assignmentReceiptOrder[column]
+            matchedStatements[statementId] = receiptId
+            matchedReceipts[receiptId] = statementId
         }
         func ambiguous(_ candidate: Candidate) -> Bool {
             let s = byStatement[candidate.statementId] ?? [], r = byReceipt[candidate.receiptId] ?? []
@@ -147,13 +189,20 @@ enum KMReconciliationEngine {
         var output: [KMReconciliationCandidate] = []
         for statement in statements {
             let matched = matchedStatements[statement.id]
+            let assigned = assignedStatements[statement.id]?.receiptId
+            let preferred = matched ?? assigned
             let choices = (byStatement[statement.id] ?? []).sorted {
-                if ($0.receiptId == matched) != ($1.receiptId == matched) { return $0.receiptId == matched }
+                if ($0.receiptId == preferred) != ($1.receiptId == preferred) { return $0.receiptId == preferred }
                 if $0.score != $1.score { return $0.score > $1.score }
                 return compare($0, $1)
             }
             for (index, candidate) in choices.prefix(3).enumerated() {
-                output.append(KMReconciliationCandidate(statementTransactionId: candidate.statementId, receiptId: candidate.receiptId, rank: index + 1, score: candidate.score, amountDeltaYen: candidate.delta, dateDistanceDays: candidate.days, merchantSimilarity: candidate.similarity.decimalApproximation, reasons: candidate.reasons + (ambiguous(candidate) ? ["ambiguous_candidates"] : [])))
+                var reasons = candidate.reasons
+                if let assigned, matched == nil, candidate.receiptId == assigned {
+                    reasons.append(globalAssignmentReason)
+                }
+                if matched == nil && ambiguous(candidate) { reasons.append("ambiguous_candidates") }
+                output.append(KMReconciliationCandidate(statementTransactionId: candidate.statementId, receiptId: candidate.receiptId, rank: index + 1, score: candidate.score, amountDeltaYen: candidate.delta, dateDistanceDays: candidate.days, merchantSimilarity: candidate.similarity.decimalApproximation, reasons: reasons))
             }
         }
         let statementResults = statements.map { statement -> KMReconciliationStatementResult in
@@ -161,17 +210,33 @@ enum KMReconciliationEngine {
             if let receipt = matchedStatements[statement.id] { return .init(statementTransactionId: statement.id, status: .matched, matchedReceiptId: receipt, reasonCodes: ["automatic_high_confidence_match"]) }
             let choices = byStatement[statement.id] ?? []
             let has = !choices.isEmpty
-            return .init(statementTransactionId: statement.id, status: has ? .needsReview : .unmatchedStatement, matchedReceiptId: nil, reasonCodes: has ? ["candidate_requires_review"] + (choices.contains(where: ambiguous) ? ["ambiguous_candidates"] : []) : ["no_candidate"])
+            let assigned = assignedStatements[statement.id] != nil
+            return .init(statementTransactionId: statement.id, status: has ? .needsReview : .unmatchedStatement, matchedReceiptId: nil,
+                reasonCodes: has ? ["candidate_requires_review"] + (assigned ? [globalAssignmentReason] : []) + (choices.contains(where: ambiguous) ? ["ambiguous_candidates"] : []) : ["no_candidate"])
         }
         let receiptResults = receipts.map { receipt -> KMReconciliationReceiptResult in
             if let statement = matchedReceipts[receipt.receiptId] { return .init(receiptId: receipt.receiptId, status: .matched, matchedStatementTransactionId: statement, reasonCodes: ["automatic_high_confidence_match"]) }
             let choices = byReceipt[receipt.receiptId] ?? []
             let has = !choices.isEmpty
-            return .init(receiptId: receipt.receiptId, status: has ? .needsReview : .unmatchedReceipt, matchedStatementTransactionId: nil, reasonCodes: has ? ["candidate_requires_review"] + (choices.contains(where: ambiguous) ? ["ambiguous_candidates"] : []) : ["no_candidate"])
+            let assigned = assignedReceipts[receipt.receiptId] != nil
+            return .init(receiptId: receipt.receiptId, status: has ? .needsReview : .unmatchedReceipt, matchedStatementTransactionId: nil,
+                reasonCodes: has ? ["candidate_requires_review"] + (assigned ? [globalAssignmentReason] : []) + (choices.contains(where: ambiguous) ? ["ambiguous_candidates"] : []) : ["no_candidate"])
         }
         return KMReconciliationResult(ruleVersion: ruleVersion, candidates: output, statementResults: statementResults, receiptResults: receiptResults)
     }
 
+    private static func isGlobalAssignmentEligible(_ candidate: Candidate) -> Bool {
+        candidate.delta == 0
+            && candidate.days <= autoWindow
+            && (candidate.autoSimilarity >= autoMerchantThreshold || candidate.aliasMatch)
+            && candidate.autoScore >= autoScoreThreshold
+    }
+    private static func globalAssignmentWeight(_ candidate: Candidate) -> Int {
+        candidate.autoScore.roundedMillionInt()
+    }
+    private static func utf8Less(_ a: String, _ b: String) -> Bool {
+        a.utf8.lexicographicallyPrecedes(b.utf8)
+    }
     private static func safe(_ amount: Int) -> Bool { amount >= 0 && amount <= KMYen.maxSafe }
     private static func margin(_ top: Candidate, _ second: Candidate?) -> KMJSNumber { top.autoScore - (second?.autoScore ?? 0) }
     private static func compare(_ a: Candidate, _ b: Candidate) -> Bool {

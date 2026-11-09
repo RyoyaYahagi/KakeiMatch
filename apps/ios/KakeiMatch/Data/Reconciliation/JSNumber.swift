@@ -69,22 +69,26 @@ struct KMJSNumber: Comparable, Equatable, Sendable, ExpressibleByIntegerLiteral 
         let magnitudeLess = lhs.exponent == rhs.exponent ? lhs.significand < rhs.significand : lhs.exponent < rhs.exponent
         return lhs.negative ? lhs != rhs && !magnitudeLess : magnitudeLess
     }
-    func roundedMillion() -> (binary: Self, decimal: Decimal) {
+    private func roundedMillionInteger() -> UInt64 {
         let scaled = self * Self(1_000_000)
         precondition(!scaled.negative)
-        let integer: UInt64
-        if scaled.significand == 0 { integer = 0 }
-        else if scaled.exponent >= 0 { integer = scaled.significand << scaled.exponent }
-        else {
-            let shift = -scaled.exponent
-            if shift > 53 { integer = 0 }
-            else {
-                let whole = scaled.significand >> shift
-                let remainder = scaled.significand - (whole << shift)
-                integer = whole + (remainder >= UInt64(1) << (shift - 1) ? 1 : 0)
-            }
-        }
+        if scaled.significand == 0 { return 0 }
+        if scaled.exponent >= 0 { return scaled.significand << scaled.exponent }
+        let shift = -scaled.exponent
+        if shift > 53 { return 0 }
+        let whole = scaled.significand >> shift
+        let remainder = scaled.significand - (whole << shift)
+        return whole + (remainder >= UInt64(1) << (shift - 1) ? 1 : 0)
+    }
+
+    func roundedMillion() -> (binary: Self, decimal: Decimal) {
+        let integer = roundedMillionInteger()
         return (Self(Int(integer)) / Self(1_000_000), Decimal(integer) / 1_000_000)
+    }
+
+    /// The integer weight used by the global assignment: floor(1_000_000 × score + 0.5).
+    func roundedMillionInt() -> Int {
+        Int(roundedMillionInteger())
     }
     var decimalApproximation: Decimal {
         var result = Decimal(significand)

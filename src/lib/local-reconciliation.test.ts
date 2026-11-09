@@ -161,8 +161,9 @@ describe("LocalReconciliationService", () => {
     await seed(repo, [makeStatement("statement-1")]);
     const service = new LocalReconciliationService(repo, mock.ledger as never, async id => id === "account-2" ? "paypay" : null);
     const run = await service.run();
-    expect(run.candidates[0]).toMatchObject({ receiptId: "actual:correct", rank: 1 });
-    expect(run.candidates[0]?.reasons).toContain("payment_source_match");
+    expect(run.candidates[0]).toMatchObject({ receiptId: "actual:a", rank: 1 });
+    expect(run.candidates[0]?.reasons).toContain("global_assignment_pair");
+    expect(run.candidates[1]?.reasons).toContain("payment_source_match");
     expect(run.candidates).toHaveLength(3);
     expect(run.statementResults[0]?.status).toBe("needs_review");
     expect(mock.calls).toEqual([]);

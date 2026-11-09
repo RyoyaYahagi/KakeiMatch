@@ -9,8 +9,9 @@ struct ReconciliationEngineTests {
             receipts: [receipt("correct", merchant: "別の表記", date: "2026-09-03", account: "account-2")] + ["a", "b", "c"].map { receipt($0) },
             preferredAccountIds: ["s": ["account-2"]])
         #expect(result.candidates.count == 3)
-        #expect(result.candidates.first?.receiptId == "correct")
-        #expect(result.candidates.first?.reasons.contains("payment_source_match") == true)
+        #expect(result.candidates.first?.receiptId == "a")
+        #expect(result.candidates.first?.reasons.contains("global_assignment_pair") == true)
+        #expect(result.candidates.first?.reasons.contains("payment_source_match") == false)
         #expect(result.statementResults.first?.status == .needsReview)
 
         let amountDifference = KMReconciliationEngine.run(
@@ -61,7 +62,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.0")
+        #expect(result.ruleVersion == "1.3.0")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -180,5 +181,56 @@ struct ReconciliationEngineTests {
             let result = KMReconciliationEngine.run(statements: [statement("s-\(id)", merchant: sm, amount: sa, date: sd)], receipts: [receipt("r-\(id)", merchant: id == "unrelated" ? "海辺書房" : id == "variant" ? "北口 食堂" : sm, amount: ra, date: rd)])
             #expect(result.statementResults[0].status == status, "synthetic eval: \(id)")
         }
+    }
+
+    @Test func globalAssignmentCollectsAChainMissedByMutualBestMargin() {
+        let statements = [
+            statement("s0", merchant: "架空商店A", amount: 1000, date: "2026-09-10"),
+            statement("s1", merchant: "架空商店B", amount: 1000, date: "2026-09-12"),
+        ]
+        let receipts = [
+            receipt("r0", merchant: "架空商店A", amount: 1000, date: "2026-09-10"),
+            receipt("r1", merchant: "架空商店B", amount: 1000, date: "2026-09-12"),
+        ]
+        let result = KMReconciliationEngine.run(statements: statements, receipts: receipts)
+        #expect(result.statementResults.map(\.status) == [.matched, .matched])
+        #expect(result.statementResults.map(\.matchedReceiptId) == ["r0", "r1"])
+        #expect(result.receiptResults.map(\.status) == [.matched, .matched])
+    }
+
+    @Test func equalWeightTwinStaysInReviewWithAssignedPairFirst() {
+        let result = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r-a"), receipt("r-b")])
+        #expect(result.statementResults.first?.status == .needsReview)
+        #expect(result.statementResults.first?.reasonCodes.contains("global_assignment_pair") == true)
+        #expect(result.candidates.first?.receiptId == "r-a")
+        #expect(result.candidates.first?.reasons.contains("global_assignment_pair") == true)
+    }
+
+    @Test func manualStatementIsRemovedFromTheAssignmentMatrix() {
+        let result = KMReconciliationEngine.run(statements: [statement("s-manual"), statement("s-auto")], receipts: [receipt("r")],
+            manualStatementIds: ["s-manual"])
+        #expect(result.statementResults == [
+            .init(statementTransactionId: "s-auto", status: .matched, matchedReceiptId: "r", reasonCodes: ["automatic_high_confidence_match"]),
+            .init(statementTransactionId: "s-manual", status: .needsReview, matchedReceiptId: nil,
+                reasonCodes: ["candidate_requires_review", "ambiguous_candidates"]),
+        ])
+    }
+
+    @Test func assignmentTieBreakUsesUtf8ByteOrder() {
+        let result = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r-あ"), receipt("r-😀")])
+        #expect(result.candidates.first?.receiptId == "r-あ")
+        #expect(result.candidates.first?.reasons.contains("global_assignment_pair") == true)
+    }
+
+    @Test func competingAliasesDoNotAutoMatch() {
+        let pair = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "架空ストア", amount: 1300, date: "2026-09-10")],
+            receipts: [receipt("r-a-truth", merchant: "別名ストア", amount: 1300, date: "2026-09-10"),
+                receipt("r-b-comp", merchant: "別名商店", amount: 1300, date: "2026-09-10")],
+            aliases: [KMReconciliationEngine.aliasKey("架空ストア", "別名ストア"),
+                KMReconciliationEngine.aliasKey("架空ストア", "別名商店")])
+        #expect(pair.statementResults.first?.status == .needsReview)
+        #expect(pair.candidates.first?.receiptId == "r-a-truth")
+        #expect(pair.candidates.first?.reasons.contains("global_assignment_pair") == true)
     }
 }

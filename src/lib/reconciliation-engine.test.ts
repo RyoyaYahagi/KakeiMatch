@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  GLOBAL_ASSIGNMENT_REASON,
+  inspectReconciliationAssignment,
   merchantAliasKey,
   normalizeReconciliationMerchant,
   reconciliationMerchantSimilarity,
@@ -231,17 +233,21 @@ describe("runReconciliationEngine", () => {
     expect(result.statementResults[0]?.status).toBe("needs_review");
   });
 
-  it("retains the mapped source ahead of three same-amount alternatives with closer dates and merchants", () => {
+  it("puts the globally assigned review pair first, then keeps review score order", () => {
     const result = runReconciliationEngine({
       statements: [statement("s", { preferredAccountIds: ["account-2"] })],
       receipts: [receipt("correct", { actualAccountId: "account-2", merchant: "別の表記", purchasedDate: "2026-09-03" }),
         ...["a", "b", "c"].map(id => receipt(id))],
     });
     expect(result.candidates).toHaveLength(3);
-    expect(result.candidates[0]?.receiptId).toBe("correct");
-    expect(result.candidates[0]?.reasons).toContain("payment_source_match");
-    expect(result.candidates.slice(1).every(row => row.receiptId !== "correct")).toBe(true);
+    // The assignment tie-break selects receipt "a"; it is not automatic because
+    // b and c are equal-weight alternatives (delta = 0).
+    expect(result.candidates.map(row => row.receiptId)).toEqual(["a", "correct", "b"]);
+    expect(result.candidates[0]?.reasons).toContain("global_assignment_pair");
+    expect(result.candidates[0]?.reasons).not.toContain("payment_source_match");
+    expect(result.candidates[1]?.reasons).toContain("payment_source_match");
     expect(result.statementResults[0]?.status).toBe("needs_review");
+    expect(result.statementResults[0]?.reasonCodes).toContain("global_assignment_pair");
   });
 
   it("does not let payment source alone outweigh a maximum allowed amount difference", () => {
@@ -307,5 +313,82 @@ describe("runReconciliationEngine", () => {
     expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
     expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null,
       reasonCodes: expect.arrayContaining(["ambiguous_candidates"]) });
+  });
+});
+
+describe("global assignment automatic matching", () => {
+  it("collects a two-row chain that the mutual-best margin rule misses", () => {
+    const statements = [
+      statement("s0", { merchant: "架空商店A", amountYen: 1000, usedDate: "2026-09-10" }),
+      statement("s1", { merchant: "架空商店B", amountYen: 1000, usedDate: "2026-09-12" }),
+    ];
+    const receipts = [
+      receipt("r0", { merchant: "架空商店A", amountYen: 1000, purchasedDate: "2026-09-10" }),
+      receipt("r1", { merchant: "架空商店B", amountYen: 1000, purchasedDate: "2026-09-12" }),
+    ];
+    const diagnostics = inspectReconciliationAssignment({ statements, receipts });
+    expect(diagnostics.optimumWeight).toBe(2_000_000);
+    expect(diagnostics.deltas.map((row) => row.delta)).toEqual([225_000, 225_000]);
+    expect(diagnostics.deltas.every((row) => row.automatic)).toBe(true);
+    const result = runReconciliationEngine({ statements, receipts });
+    expect(result.statementResults.map((row) => [row.status, row.matchedReceiptId])).toEqual([["matched", "r0"], ["matched", "r1"]]);
+    expect(result.receiptResults.every((row) => row.status === "matched")).toBe(true);
+  });
+
+  it("does not auto-match an equal-weight twin and keeps the assigned pair first for review", () => {
+    const statements = [statement("s")];
+    const receipts = [receipt("r-a"), receipt("r-b")];
+    const diagnostics = inspectReconciliationAssignment({ statements, receipts });
+    expect(diagnostics.deltas).toHaveLength(1);
+    expect(diagnostics.deltas[0]?.delta).toBe(0);
+    expect(diagnostics.assignment).toEqual([{ statementTransactionId: "s", receiptId: "r-a" }]);
+    const result = runReconciliationEngine({ statements, receipts });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
+    expect(result.statementResults[0]?.reasonCodes).toContain(GLOBAL_ASSIGNMENT_REASON);
+    expect(result.candidates[0]).toMatchObject({ receiptId: "r-a", rank: 1 });
+    expect(result.candidates[0]?.reasons).toContain(GLOBAL_ASSIGNMENT_REASON);
+  });
+
+  it("removes manual statements from the assignment matrix", () => {
+    const statements = [statement("s-manual"), statement("s-auto")];
+    const receipts = [receipt("r")];
+    const result = runReconciliationEngine({ statements, receipts, manualStatementIds: new Set(["s-manual"]) });
+    expect(result.statementResults).toEqual([
+      expect.objectContaining({ statementTransactionId: "s-auto", status: "matched", matchedReceiptId: "r" }),
+      expect.objectContaining({ statementTransactionId: "s-manual", status: "needs_review", matchedReceiptId: null }),
+    ]);
+  });
+
+  it("uses UTF-8 byte order for the statement and receipt tie-break", () => {
+    const statements = [statement("s-あ"), statement("s-😀")];
+    const receipts = [receipt("r-あ"), receipt("r-😀")];
+    const diagnostics = inspectReconciliationAssignment({ statements, receipts });
+    expect(diagnostics.assignment).toEqual([
+      { statementTransactionId: "s-あ", receiptId: "r-あ" },
+      { statementTransactionId: "s-😀", receiptId: "r-😀" },
+    ]);
+  });
+
+  it("abstains when two aliases compete with equal weight", () => {
+    const statements = [statement("s", { merchant: "架空ストア", amountYen: 1300, usedDate: "2026-09-10" })];
+    const receipts = [
+      receipt("r-a-truth", { merchant: "別名ストア", amountYen: 1300, purchasedDate: "2026-09-10" }),
+      receipt("r-b-comp", { merchant: "別名商店", amountYen: 1300, purchasedDate: "2026-09-10" }),
+    ];
+    const aliases = new Set([
+      merchantAliasKey(statements[0]!.merchant, receipts[0]!.merchant),
+      merchantAliasKey(statements[0]!.merchant, receipts[1]!.merchant),
+    ]);
+    const diagnostics = inspectReconciliationAssignment({ statements, receipts, aliases });
+    expect(diagnostics.deltas).toHaveLength(1);
+    expect(diagnostics.deltas[0]?.delta).toBe(0);
+    const result = runReconciliationEngine({ statements, receipts, aliases });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
+    expect(result.candidates[0]?.receiptId).toBe("r-a-truth");
+    expect(result.candidates[0]?.reasons).toContain(GLOBAL_ASSIGNMENT_REASON);
+  });
+
+  it("pins the 1.3.0 rule version", () => {
+    expect(RECONCILIATION_RULE_VERSION).toBe("1.3.0");
   });
 });
