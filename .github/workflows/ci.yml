@@ -70,6 +70,9 @@ jobs:
         run: pnpm test
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm eval:reconciliation
+      - name: Run reconciliation property evaluation
+        if: steps.changes.outputs.skip_pwa != 'true'
+        run: pnpm eval:reconciliation-property
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm --dir apps/pwa test
       - if: steps.changes.outputs.skip_pwa != 'true'
