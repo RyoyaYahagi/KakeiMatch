@@ -20,6 +20,8 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
   const status = node('p', '', 'master-status');
   status.setAttribute('role', 'status');
   let rows: LocalCategoryRule[] = [];
+  // The list is rebuilt after every override, so remember which rule was expanded by its stable key.
+  const openRules = new Set<string>();
 
   const back = backLink('設定', '設定へ戻る', () => { page.hidden = true; options.settingsContent.hidden = false; });
   const title = node('h2', '分類ルール', 'page-title');
@@ -54,9 +56,19 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
     status.textContent = error instanceof Error && /[ぁ-んァ-ヶ一-龠]/.test(error.message) ? error.message : '分類ルールを読み込めませんでした。端末内データを確認してください。';
     status.classList.add('error');
   }
+  function ruleKey(rule: Pick<LocalCategoryRule, 'targetType' | 'normalizedName'>) {
+    return `${rule.targetType}:${rule.normalizedName}`;
+  }
+  function captureOpenRules() {
+    ul.querySelectorAll<HTMLDetailsElement>('details[data-rule-key]').forEach(detail => {
+      const key = detail.dataset.ruleKey;
+      if (key) { if (detail.open) openRules.add(key); else openRules.delete(key); }
+    });
+  }
   async function refresh() {
     const categories = await categoryChoices(options.ledger, options.ledger.listExpenseCategories());
     rows = await options.learning.listRules(categories);
+    captureOpenRules();
     ul.replaceChildren();
     if (rows.length === 0) {
       const empty = node('li', '分類ルールはまだありません。レシートを登録すると、履歴から自動で学習します。', 'empty muted');
@@ -67,7 +79,13 @@ export function initializeCategoryRulesUi(options: { entryContainer: HTMLElement
   }
   function ruleRow(rule: LocalCategoryRule, categories: Awaited<ReturnType<Ledger['listExpenseCategories']>>) {
     const item = node('li');
+    const key = ruleKey(rule);
     const detail = node('details', undefined, `category-rule${rule.enabled ? '' : ' dimmed'}`);
+    detail.dataset.ruleKey = key;
+    detail.open = openRules.has(key);
+    detail.addEventListener('toggle', () => {
+      if (detail.open) openRules.add(key); else openRules.delete(key);
+    });
     const summary = node('summary');
     summary.append(node('span', `${rule.normalizedName} → ${categories.find(category => category.id === rule.categoryId)?.name ?? '利用できないカテゴリ'}`, 'category-rule-title'));
     summary.append(node('span', rule.targetType === 'item' ? '品目' : '店舗', 'category-rule-kind'));

@@ -39,15 +39,38 @@ await context.route('**/api/ai/jev', route => {
 const click = name => page.getByRole('button', { name, exact: true }).click();
 const itemRow = index => page.locator('[data-receipt-item]').nth(index);
 async function settings(label) { await page.locator('#settings-tab').click(); await click(label); }
+const RULE_OPEN_ATTEMPTS = 4;
 async function openDetails(locator) {
-  if (await locator.getAttribute('open') === null) await locator.locator('summary').click();
-  await locator.locator('summary').waitFor({ state: 'visible' });
-  await locator.evaluate(element => element.open || new Promise(resolve => {
-    const observer = new MutationObserver(() => {
-      if (element.open) { observer.disconnect(); resolve(); }
-    });
-    observer.observe(element, { attributes: true, attributeFilter: ['open'] });
-  }));
+  const summary = locator.locator('summary');
+  await summary.waitFor({ state: 'visible' });
+  for (let attempt = 0; attempt < RULE_OPEN_ATTEMPTS; attempt++) {
+    if (await locator.getAttribute('open') !== null) return;
+    await summary.click();
+    const opened = await locator.evaluate(element => element.open || Promise.race([
+      new Promise(resolve => {
+        let observer;
+        const timer = setTimeout(() => { observer.disconnect(); resolve(false); }, 5_000);
+        observer = new MutationObserver(() => {
+          if (element.open) { clearTimeout(timer); observer.disconnect(); resolve(true); }
+        });
+        observer.observe(element, { attributes: true, attributeFilter: ['open'] });
+      }),
+    ]));
+    if (opened) return;
+  }
+  throw new Error('分類ルールの詳細を開けませんでした');
+}
+async function waitForVisibleSwitch(locator, selector) {
+  for (let attempt = 0; attempt < RULE_OPEN_ATTEMPTS; attempt++) {
+    await openDetails(locator);
+    try {
+      const control = locator.locator(selector);
+      await control.waitFor({ state: 'visible', timeout: 3_000 });
+      return control;
+    } catch (error) {
+      if (attempt === RULE_OPEN_ATTEMPTS - 1) throw error;
+    }
+  }
 }
 async function addAccount(name) {
   await settings('支払元'); await click('支払元を追加する'); await page.getByLabel('支払元の名前', { exact: true }).fill(name); await click('追加する');
@@ -148,20 +171,19 @@ try {
   await milkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
   await milkRule.getByText('synthetic same milk → Synthetic Learning Home', { exact: true }).waitFor();
-  await milkRule.locator('summary').click();
-  await milkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor();
+  assert.notEqual(await milkRule.getAttribute('open'), null, 'カテゴリ変更後も開いた詳細が維持される');
+  await waitForVisibleSwitch(milkRule, 'input[role=switch]:checked:not(:disabled)');
   await milkRule.locator('input[role=switch]').uncheck();
-  await milkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
+  await waitForVisibleSwitch(milkRule, 'input[role=switch]:not(:checked):not(:disabled)');
   await analyze('known');
   assert.deepEqual(jevRequests.at(-1).itemIndexes, [0]);
   await cancelDraft();
   await settings('分類ルール');
   const updatedMilkRule = page.locator('.category-rule').filter({ hasText: 'synthetic same milk' });
   await openDetails(updatedMilkRule);
-  await updatedMilkRule.locator('input[role=switch]:not(:checked):not(:disabled)').waitFor({ state: 'attached' });
+  await waitForVisibleSwitch(updatedMilkRule, 'input[role=switch]:not(:checked):not(:disabled)');
   await updatedMilkRule.locator('input[role=switch]').check();
-  await updatedMilkRule.locator('input[role=switch]:checked:not(:disabled)').waitFor({ state: 'attached' });
-  await updatedMilkRule.locator('summary').click();
+  await waitForVisibleSwitch(updatedMilkRule, 'input[role=switch]:checked:not(:disabled)');
   await updatedMilkRule.locator('select').selectOption(learningIds.food);
   await updatedMilkRule.getByRole('button', { name: 'カテゴリを変更' }).click();
   await page.getByText('分類を変更しました。', { exact: true }).waitFor();
