@@ -95,7 +95,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           # UI jobs download this across attempts, so the name must stay stable.
+          # A full re-run of the build job replaces the products instead of
+          # failing on the duplicate name.
           name: ios-test-products
+          overwrite: true
           path: |
             apps/ios/test-products.tar.gz
             apps/ios/ui-shards.json
