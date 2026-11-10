@@ -273,6 +273,28 @@ export function generateGateDataset(): GateCase[] {
   return [...generateGateCases(), ...generateRobustnessGateCases()];
 }
 
+/**
+ * Dedicated regression case for the sol review reproduction: four statements
+ * and four receipts share the same amount, date and merchant, so every pair is
+ * a candidate and every statement has more than three candidates. It is kept
+ * outside the 1,700-case count and checked separately for candidate-set
+ * equality against the frozen 1.2.0 engine.
+ */
+export function generateGateDedicatedCases(): GateCase[] {
+  const date = "2026-01-01";
+  const amount = 1000;
+  const merchant = "同一商店";
+  return [{
+    id: "dedicated-all-conflict-4x4",
+    family: "twin",
+    seed: 0,
+    statements: [0, 1, 2, 3].map((index) => statement(`s-dedicated-${index}`, merchant, amount, date)),
+    receipts: [0, 1, 2, 3].map((index) => receipt(`r-dedicated-${index}`, merchant, amount, date, `acct-dedicated-${index}`)),
+    aliases: [],
+    truthPairs: [],
+  }];
+}
+
 export const GATE_ROBUSTNESS_VARIANTS: readonly RobustnessVariant[] = ["missing", "extra", "decoy", "missing-decoy"];
 
 export const GATE_FAMILIES: readonly GateFamily[] = [

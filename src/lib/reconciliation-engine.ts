@@ -1,6 +1,13 @@
 /** Pure, deterministic reconciliation rules. Persistence and user scoping belong to callers. */
 
-export const RECONCILIATION_RULE_VERSION = "1.2.0";
+import { lexicographicMaximumAssignment } from "./assignment";
+
+/**
+ * 1.2.1 keeps every 1.2.0 automatic-match rule and candidate-set rule
+ * unchanged. The only addition is review-candidate ordering (Issue #380 PR A),
+ * which runs after automatic matching and never feeds back into it.
+ */
+export const RECONCILIATION_RULE_VERSION = "1.2.1";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -164,7 +171,25 @@ function margin(top: InternalCandidate | undefined, second: InternalCandidate | 
   return top ? top.autoScore - (second?.autoScore ?? 0) : 0;
 }
 
-export function runReconciliationEngine(input: {
+const utf8Encoder = new TextEncoder();
+
+/** UTF-8 byte order, shared with the Swift assignment tie-break. */
+function compareUtf8(left: string, right: string): number {
+  const a = utf8Encoder.encode(left);
+  const b = utf8Encoder.encode(right);
+  const length = Math.min(a.length, b.length);
+  for (let index = 0; index < length; index += 1) {
+    if (a[index] !== b[index]) return a[index]! - b[index]!;
+  }
+  return a.length - b.length;
+}
+
+/** Review scores already have six decimal places; keep assignment totals exact. */
+function reviewAssignmentWeight(candidate: InternalCandidate): number {
+  return Math.round(candidate.score * 1_000_000);
+}
+
+export type ReconciliationEngineInput = {
   statements: ReconciliationStatement[];
   receipts: ReconciliationReceipt[];
   aliases?: ReadonlySet<string>;
@@ -172,7 +197,121 @@ export function runReconciliationEngine(input: {
   excludedReceiptIds?: ReadonlySet<string>;
   rejectedPairs?: ReadonlySet<string>;
   manualStatementIds?: ReadonlySet<string>;
-}): ReconciliationEngineResult {
+};
+
+type ReviewAssignment = Map<string, string>;
+
+/**
+ * Assign only the still-undecided statements to still-undecided receipts.
+ * Both endpoints that automatic matching already decided are removed before
+ * the assignment, and manual statement decisions are removed as well. Callers
+ * also remove manually matched receipts through excludedReceiptIds. Edges are
+ * the existing review candidates, so this can never add a candidate or reserve
+ * a receipt. The result is used only to choose the first review row.
+ */
+function computeReviewAssignment(
+  statements: ReconciliationStatement[],
+  allByStatement: Map<string, InternalCandidate[]>,
+  matchedStatements: ReadonlyMap<string, string>,
+  matchedReceipts: ReadonlyMap<string, string>,
+  manualStatementIds: ReadonlySet<string> | undefined,
+): ReviewAssignment {
+  const rows = statements
+    .filter((statement) => statement.kind === "purchase"
+      && !matchedStatements.has(statement.statementTransactionId)
+      && !manualStatementIds?.has(statement.statementTransactionId))
+    .map((statement) => statement.statementTransactionId)
+    .filter((statementId) => (allByStatement.get(statementId) ?? [])
+      .some((candidate) => !matchedReceipts.has(candidate.receiptId)))
+    .sort(compareUtf8);
+
+  const columnIds = new Set<string>();
+  for (const statementId of rows) {
+    for (const candidate of allByStatement.get(statementId) ?? []) {
+      if (!matchedReceipts.has(candidate.receiptId)) columnIds.add(candidate.receiptId);
+    }
+  }
+  const columns = [...columnIds].sort(compareUtf8);
+  const assignment: ReviewAssignment = new Map();
+  if (rows.length === 0 || columns.length === 0) return assignment;
+
+  const rowIndex = new Map(rows.map((id, index) => [id, index]));
+  const columnIndex = new Map(columns.map((id, index) => [id, index]));
+  const weights = rows.map(() => new Array<number>(columns.length).fill(0));
+  for (const statementId of rows) {
+    for (const candidate of allByStatement.get(statementId) ?? []) {
+      if (matchedReceipts.has(candidate.receiptId)) continue;
+      const column = columnIndex.get(candidate.receiptId);
+      if (column === undefined) continue;
+      weights[rowIndex.get(statementId)!]![column] = reviewAssignmentWeight(candidate);
+    }
+  }
+
+  // Components share no rows or columns, so their lexicographic optima are
+  // exactly the monolithic optimum. This keeps the Hungarian matrix small.
+  const rowCount = rows.length;
+  const columnCount = columns.length;
+  const adjacency: number[][] = Array.from({ length: rowCount + columnCount }, () => []);
+  for (let row = 0; row < rowCount; row += 1) {
+    for (let column = 0; column < columnCount; column += 1) {
+      if ((weights[row]?.[column] ?? 0) <= 0) continue;
+      adjacency[row]!.push(rowCount + column);
+      adjacency[rowCount + column]!.push(row);
+    }
+  }
+
+  const visited = new Array<boolean>(rowCount + columnCount).fill(false);
+  for (let start = 0; start < rowCount + columnCount; start += 1) {
+    if (visited[start] || adjacency[start]!.length === 0) continue;
+    const componentRows: number[] = [];
+    const componentColumns: number[] = [];
+    const stack = [start];
+    visited[start] = true;
+    while (stack.length > 0) {
+      const node = stack.pop()!;
+      if (node < rowCount) componentRows.push(node);
+      else componentColumns.push(node - rowCount);
+      for (const next of adjacency[node]!) {
+        if (visited[next]) continue;
+        visited[next] = true;
+        stack.push(next);
+      }
+    }
+    componentRows.sort((left, right) => left - right);
+    componentColumns.sort((left, right) => left - right);
+    if (componentRows.length === 0 || componentColumns.length === 0) continue;
+    const localWeights = componentRows.map((row) => componentColumns.map((column) => weights[row]![column]!));
+    const localAssignment = lexicographicMaximumAssignment(
+      localWeights,
+      componentRows.map((_, index) => index),
+      componentColumns.map((_, index) => index),
+    );
+    for (let localRow = 0; localRow < componentRows.length; localRow += 1) {
+      const localColumn = localAssignment[localRow] ?? -1;
+      if (localColumn < 0) continue;
+      const statementId = rows[componentRows[localRow]!]!;
+      const receiptId = columns[componentColumns[localColumn]!]!;
+      assignment.set(statementId, receiptId);
+    }
+  }
+  return assignment;
+}
+
+export type ReconciliationRankingDiagnostics = {
+  assignments: Array<{ statementTransactionId: string; receiptId: string }>;
+};
+
+/** Evaluation-only view of the review assignment. It never changes the result. */
+export function inspectReconciliationRanking(input: ReconciliationEngineInput): ReconciliationRankingDiagnostics {
+  const { reviewAssignment } = reconcile(input);
+  return {
+    assignments: [...reviewAssignment]
+      .sort(([left], [right]) => compareUtf8(left, right))
+      .map(([statementTransactionId, receiptId]) => ({ statementTransactionId, receiptId })),
+  };
+}
+
+function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEngineResult; reviewAssignment: ReviewAssignment } {
   const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
   const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
 
@@ -276,13 +415,27 @@ export function runReconciliationEngine(input: {
       || rt?.statementTransactionId !== candidate.statementTransactionId;
   };
 
+  // Ranking runs strictly after automatic matching. It receives the automatic
+  // pairs as fixed endpoints and cannot change a matched/unmatched status.
+  const reviewAssignment = computeReviewAssignment(statements, allByStatement, matchedStatements, matchedReceipts, input.manualStatementIds);
+
   const candidates: ReconciliationCandidate[] = [];
   for (const statement of statements) {
     const choices = allByStatement.get(statement.statementTransactionId) ?? [];
     const matchedReceiptId = matchedStatements.get(statement.statementTransactionId);
-    // Always retain the automatic pair even when review ranking favors a different source.
-    [...choices].sort((a, b) => Number(b.receiptId === matchedReceiptId) - Number(a.receiptId === matchedReceiptId)
-      || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement).forEach((candidate, index) => {
+    const assignedReceiptId = reviewAssignment.get(statement.statementTransactionId);
+    // Fix the 1.2.0 output set first: retain the automatic pair first, then
+    // apply the ordinary score order and the per-statement cap. Ranking must
+    // never add or remove a member of this set.
+    const outputCandidates = [...choices].sort((a, b) => Number(b.receiptId === matchedReceiptId) - Number(a.receiptId === matchedReceiptId)
+      || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement);
+    // Reorder only within that fixed set. If the assignment partner is not in
+    // the old output set, leave the order untouched.
+    if (!matchedReceiptId && assignedReceiptId) {
+      const assignedIndex = outputCandidates.findIndex((candidate) => candidate.receiptId === assignedReceiptId);
+      if (assignedIndex > 0) outputCandidates.unshift(...outputCandidates.splice(assignedIndex, 1));
+    }
+    outputCandidates.forEach((candidate, index) => {
       candidates.push({
         statementTransactionId: candidate.statementTransactionId,
         receiptId: candidate.receiptId,
@@ -313,5 +466,12 @@ export function runReconciliationEngine(input: {
     return { receiptId: receipt.receiptId, status: hasCandidate ? "needs_review" : "unmatched_receipt", matchedStatementTransactionId: null, reasonCodes: hasCandidate ? ["candidate_requires_review", ...(hasAmbiguity ? ["ambiguous_candidates"] : [])] : ["no_candidate"] };
   });
 
-  return { ruleVersion: RECONCILIATION_RULE_VERSION, candidates, statementResults, receiptResults };
+  return {
+    result: { ruleVersion: RECONCILIATION_RULE_VERSION, candidates, statementResults, receiptResults },
+    reviewAssignment,
+  };
+}
+
+export function runReconciliationEngine(input: ReconciliationEngineInput): ReconciliationEngineResult {
+  return reconcile(input).result;
 }

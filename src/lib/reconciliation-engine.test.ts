@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  inspectReconciliationRanking,
   merchantAliasKey,
   normalizeReconciliationMerchant,
   reconciliationMerchantSimilarity,
@@ -307,5 +308,81 @@ describe("runReconciliationEngine", () => {
     expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
     expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null,
       reasonCodes: expect.arrayContaining(["ambiguous_candidates"]) });
+  });
+
+  it("promotes the global review assignment partner without changing automatic decisions", () => {
+    const statements = [
+      statement("s1", { merchant: "架空商店アルファ", amountYen: 1000 }),
+      statement("s2", { merchant: "無関係カフェ", amountYen: 1000, preferredAccountIds: ["acct-1"] }),
+    ];
+    const receipts = [
+      receipt("r1", { merchant: "架空商店アルファ", amountYen: 1000, actualAccountId: "acct-1" }),
+      receipt("r2", { merchant: "架空商店アルファ", amountYen: 1000, purchasedDate: "2026-09-11", actualAccountId: "acct-2" }),
+    ];
+    const input = { statements, receipts };
+    const result = runReconciliationEngine(input);
+
+    // Both rows stay in review; the assignment only reorders existing candidates.
+    expect(result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review"]);
+    expect(result.candidates.filter((candidate) => candidate.statementTransactionId === "s1").map((candidate) => candidate.receiptId)).toEqual(["r2", "r1"]);
+    expect(result.candidates.filter((candidate) => candidate.statementTransactionId === "s2").map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
+    expect(new Set(result.candidates.map((candidate) => `${candidate.statementTransactionId}\0${candidate.receiptId}`))).toEqual(new Set([
+      "s1\0r1", "s1\0r2", "s2\0r1", "s2\0r2",
+    ]));
+    expect(inspectReconciliationRanking(input)).toEqual({
+      assignments: [
+        { statementTransactionId: "s1", receiptId: "r2" },
+        { statementTransactionId: "s2", receiptId: "r1" },
+      ],
+    });
+  });
+
+  it("keeps the old candidate set when every candidate conflicts (4x4 reproduction)", () => {
+    const statements = ["s0", "s1", "s2", "s3"].map((id) => statement(id, {
+      merchant: "同額商店", amountYen: 1000, usedDate: "2026-01-01",
+    }));
+    const receipts = ["r0", "r1", "r2", "r3"].map((id) => receipt(id, {
+      merchant: "同額商店", amountYen: 1000, purchasedDate: "2026-01-01", actualAccountId: `acct-${id}`,
+    }));
+    const result = runReconciliationEngine({ statements, receipts });
+    const receiptIdsFor = (statementId: string) => result.candidates
+      .filter((candidate) => candidate.statementTransactionId === statementId)
+      .map((candidate) => candidate.receiptId);
+
+    // The assignment may reorder these rows, but the set must stay exactly the
+    // 1.2.0 output: r0, r1, r2 for every statement. r3 must not appear.
+    expect(receiptIdsFor("s0")).toEqual(["r0", "r1", "r2"]);
+    expect(new Set(receiptIdsFor("s1"))).toEqual(new Set(["r0", "r1", "r2"]));
+    expect(new Set(receiptIdsFor("s2"))).toEqual(new Set(["r0", "r1", "r2"]));
+    expect(receiptIdsFor("s3")).toEqual(["r0", "r1", "r2"]);
+    expect(result.candidates.some((candidate) => candidate.receiptId === "r3")).toBe(false);
+    expect(result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review", "needs_review", "needs_review"]);
+    // The assignment itself still chooses r3 for s3; it just cannot promote it.
+    expect(inspectReconciliationRanking({ statements, receipts }).assignments).toEqual([
+      { statementTransactionId: "s0", receiptId: "r0" },
+      { statementTransactionId: "s1", receiptId: "r1" },
+      { statementTransactionId: "s2", receiptId: "r2" },
+      { statementTransactionId: "s3", receiptId: "r3" },
+    ]);
+  });
+
+  it("keeps manual statements out of the review assignment and preserves automatic pairs", () => {
+    const statements = [
+      statement("s1", { merchant: "架空商店アルファ", amountYen: 1000 }),
+      statement("s2", { merchant: "無関係カフェ", amountYen: 1000, preferredAccountIds: ["acct-1"] }),
+    ];
+    const receipts = [
+      receipt("r1", { merchant: "架空商店アルファ", amountYen: 1000, actualAccountId: "acct-1" }),
+      receipt("r2", { merchant: "架空商店アルファ", amountYen: 1000, purchasedDate: "2026-09-11", actualAccountId: "acct-2" }),
+    ];
+    const automatic = runReconciliationEngine({ statements: [statement("auto")], receipts: [receipt("auto-r")] });
+    expect(automatic.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "auto-r" });
+    expect(automatic.candidates[0]?.receiptId).toBe("auto-r");
+
+    const manual = runReconciliationEngine({ statements, receipts, manualStatementIds: new Set(["s1"]) });
+    expect(manual.candidates.filter((candidate) => candidate.statementTransactionId === "s1").map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
+    expect(inspectReconciliationRanking({ statements, receipts, manualStatementIds: new Set(["s1"]) })).toEqual({
+      assignments: [{ statementTransactionId: "s2", receiptId: "r1" }],
+    });
   });
 });

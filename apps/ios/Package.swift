@@ -96,6 +96,7 @@ let package = Package(
                 "Data/Ledger/KMReceiptAllocation.swift",
                 "Data/MoneyForward/MoneyForwardParser.swift",
                 "Data/MuseSnapshot/KMMuseSnapshot.swift",
+                "Data/Reconciliation/Assignment.swift",
                 "Data/Reconciliation/JSNumber.swift",
                 "Data/Reconciliation/JSString.swift",
                 "Data/Reconciliation/ReconciliationEngine.swift",

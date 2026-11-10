@@ -61,7 +61,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.0")
+        #expect(result.ruleVersion == "1.2.1")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -180,5 +180,39 @@ struct ReconciliationEngineTests {
             let result = KMReconciliationEngine.run(statements: [statement("s-\(id)", merchant: sm, amount: sa, date: sd)], receipts: [receipt("r-\(id)", merchant: id == "unrelated" ? "海辺書房" : id == "variant" ? "北口 食堂" : sm, amount: ra, date: rd)])
             #expect(result.statementResults[0].status == status, "synthetic eval: \(id)")
         }
+    }
+
+    @Test func globalReviewAssignmentPromotesOnlyExistingCandidates() {
+        let result = KMReconciliationEngine.run(
+            statements: [
+                statement("s1", merchant: "架空商店アルファ", amount: 1000),
+                statement("s2", merchant: "無関係カフェ", amount: 1000),
+            ],
+            receipts: [
+                receipt("r1", merchant: "架空商店アルファ", amount: 1000, account: "acct-1"),
+                receipt("r2", merchant: "架空商店アルファ", amount: 1000, date: "2026-09-11", account: "acct-2"),
+            ],
+            preferredAccountIds: ["s2": ["acct-1"]])
+        #expect(result.statementResults.map(\.status) == [.needsReview, .needsReview])
+        #expect(result.candidates.filter { $0.statementTransactionId == "s1" }.map(\.receiptId) == ["r2", "r1"])
+        #expect(result.candidates.filter { $0.statementTransactionId == "s2" }.map(\.receiptId) == ["r1", "r2"])
+        #expect(Set(result.candidates.map { "\($0.statementTransactionId)\0\($0.receiptId)" }) == [
+            "s1\0r1", "s1\0r2", "s2\0r1", "s2\0r2",
+        ])
+    }
+
+    @Test func globalReviewAssignmentKeepsOldCandidateSetForAllConflict4x4() {
+        let result = KMReconciliationEngine.run(
+            statements: [0, 1, 2, 3].map { statement("s\($0)", merchant: "同一商店", amount: 1000, date: "2026-01-01") },
+            receipts: [0, 1, 2, 3].map { receipt("r\($0)", merchant: "同一商店", amount: 1000, date: "2026-01-01", account: "acct-\($0)") })
+        let receiptIds = { (statementId: String) in
+            result.candidates.filter { $0.statementTransactionId == statementId }.map(\.receiptId)
+        }
+        #expect(receiptIds("s0") == ["r0", "r1", "r2"])
+        #expect(Set(receiptIds("s1")) == ["r0", "r1", "r2"])
+        #expect(Set(receiptIds("s2")) == ["r0", "r1", "r2"])
+        #expect(receiptIds("s3") == ["r0", "r1", "r2"])
+        #expect(!result.candidates.contains { $0.receiptId == "r3" })
+        #expect(result.statementResults.map(\.status) == [.needsReview, .needsReview, .needsReview, .needsReview])
     }
 }
