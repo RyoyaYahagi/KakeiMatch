@@ -1,0 +1,65 @@
+name: Temp repeat RecordsFlowTests
+
+# Temporary verification workflow for PR #387. It is removed before handback.
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/386-records-flake]
+    paths:
+      - '.github/workflows/tmp-386-repeat.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tmp-386-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: apps/ios
+    shell: bash
+
+jobs:
+  repeat:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select Xcode and simulator destination
+        run: bash scripts/ci-simulator.sh select
+      - name: Generate Xcode project
+        run: |
+          curl --fail --location --silent --show-error --retry 3 \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip \
+            -o "$RUNNER_TEMP/xcodegen.zip"
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/xcodegen.zip" "$RUNNER_TEMP/xcodegen-release"
+          "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" --version
+          "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" generate
+      - name: Build for testing
+        run: |
+          xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
+            -destination "$DESTINATION" -derivedDataPath DerivedData \
+            -resultBundlePath Build.xcresult build-for-testing CODE_SIGNING_ALLOWED=NO
+      - name: Start simulator
+        run: bash scripts/ci-simulator.sh start
+      - name: Wait for simulator
+        run: bash scripts/ci-simulator.sh wait
+      - name: Run the target test 10 times
+        run: |
+          xctestruns=(DerivedData/Build/Products/*.xctestrun)
+          test "${#xctestruns[@]}" -eq 1
+          xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
+            -resultBundlePath RepeatTests.xcresult -parallel-testing-enabled NO \
+            -only-testing:KakeiMatchUITests/RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn \
+            -test-iterations 10 \
+            test-without-building
+      - name: Upload repeat results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tmp-386-repeat-attempt-${{ github.run_attempt }}
+          path: apps/ios/RepeatTests.xcresult
+          if-no-files-found: warn
+          retention-days: 7
