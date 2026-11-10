@@ -35,7 +35,7 @@ xcrun xcresulttool export attachments --path UITests.xcresult --output-path /tmp
 
 構成の正本は [`project.yml`](project.yml) です。Linux上でpbxprojを手書きして不整合を持ち込まないため、XcodeGenで生成する `KakeiMatch.xcodeproj` はgitignoreにしています。署名は既定で無効です。実機で使う場合はローカルの署名設定を指定してください。
 
-[`ios.yml`](../../.github/workflows/ios.yml) は`unit-tests` jobでmacOS上のpackageテストをSimulatorなしで実行し、`build` jobが1回の `build-for-testing` の成果物を共有して、最大5つのUIテストshardを並列実行します。`unit-tests` は `build` と並列に動くため、packageテストの時間はビルドのクリティカルパスに入りません。Simulatorで動かすSwift Testing（`KakeiMatchTests`）はshard 0がUIテストの前に同じシミュレーターで実行します。これも別ジョブにするとmacOS runnerの空き待ちとシミュレーターの起動がもう1回ずつ増えるためです。unit testだけが失敗した場合もUIテストは実行します。別の `release-build` jobが署名なしでReleaseをビルドし、Releaseでしか起きないコンパイルエラーをPRで見つけます。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
+[`ios.yml`](../../.github/workflows/ios.yml) はbuild jobでmacOS上のpackageテストをSimulatorなしで実行し、1回の `build-for-testing` の成果物を共有して、最大4つのUIテストshardを並列実行します。Simulatorで動かすSwift Testing（`KakeiMatchTests`）はshard 0がUIテストの前に同じシミュレーターで実行します。別ジョブにするとmacOS runnerの空き待ちとシミュレーターの起動がもう1回ずつ増えるためです。unit testだけが失敗した場合もUIテストは実行します。別の `release-build` jobが署名なしでReleaseをビルドし、Releaseでしか起きないコンパイルエラーをPRで見つけます。シミュレーターはバックグラウンドで起動し、テスト直前に起動完了を待って外観を設定します。最後の `ios` checkは全ジョブの成功を確認します。
 
 UIテストは `scripts/shard-ui-tests.mjs` が `KakeiMatchUITests/*.swift` の `XCTestCase` サブクラスの `test` メソッドを自動検出し、過去の実測時間が長いメソッドから見積時間の短いshard（分割先）へ割り当てます。未計測のメソッドは30秒として扱います。各メソッドがちょうど1回割り当てられることをビルドジョブで検査し、その割り当て（`ui-shards.json`）をテスト成果物と一緒に各shardへ渡します。新しいテストを手作業で一覧に追加する必要はありません。matrixの分割先一覧も同じ割り当て結果から生成します。
 
@@ -58,8 +58,8 @@ artifact（CIの保存成果物）は次のとおりです。
 | `ios-test-products` | 実行権限・シンボリックリンクを維持した `DerivedData/Build/Products` のtar。`.xctestrun` とアプリ・テストバンドルを含む | 1日 |
 | `ios-build-results` | `Build.xcresult` | 14日 |
 | `ios-test-results` | shard 0がSimulatorで実行したSwift Testingの `UnitTests.xcresult` | 14日 |
-| `ios-test-results-shard-0`〜`4` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
-| `ios-reference-screenshots-shard-0`〜`4` | 各shardのPNGと `manifest.json` | 14日 |
+| `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
+| `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
 | `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |
 | `ios-visual-regression` | PWA参照画像とiOSスクリーンショットの並列画像・差分画像・`index.html` / `index.md` / `report.json`。mainへのpushと手動実行で作成 | 14日 |
 | `parity-report` | Swift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
@@ -86,7 +86,7 @@ API keyの `.p8` は `~/.appstoreconnect/private_keys/AuthKey_<ASC_KEY_ID>.p8` �
 
 `scripts/visual-regression.mjs` は、CIが保存したiOSのスクリーンショットと、PWAの参照スクリーンショット `docs/screenshots/migration/<画面>/<状態>-<light|dark>.png` を同じ状態どうしで並べ、差分画像と一覧をartifact `ios-visual-regression` にまとめます。画素一致を合否にはしません。端末サイズ・フォント・OSの時計やsafe area・Liquid Glassの差は意図的に許容し、見比べるための材料を出す仕組みです。[HANDOFF.md 6節](HANDOFF.md)の方針どおり、字形の差は差分率に含まれます。
 
-`ios` jobはmainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）で、5 shardのPNGを統合したあとにこのレポートを作ります。Pull Requestではスクリーンショット専用テストを飛ばすため、レポートも作りません。処理はNodeの標準機能だけで、画像のデコード・拡縮・差分・PNG書き出しは `scripts/visual-regression-png.mjs` にあります。新しいnpm依存はありません。
+`ios` jobはmainへのpushと手動実行（`gh workflow run ios.yml --ref <branch>`）で、4 shardのPNGを統合したあとにこのレポートを作ります。Pull Requestではスクリーンショット専用テストを飛ばすため、レポートも作りません。処理はNodeの標準機能だけで、画像のデコード・拡縮・差分・PNG書き出しは `scripts/visual-regression-png.mjs` にあります。新しいnpm依存はありません。
 
 ### 状態の対応づけ
 
@@ -108,7 +108,6 @@ node scripts/visual-regression.mjs \
   --ios /tmp/ios-shards/ios-reference-screenshots-shard-1 \
   --ios /tmp/ios-shards/ios-reference-screenshots-shard-2 \
   --ios /tmp/ios-shards/ios-reference-screenshots-shard-3 \
-  --ios /tmp/ios-shards/ios-reference-screenshots-shard-4 \
   --reference ../../docs/screenshots/migration \
   --output /tmp/ios-visual-regression
 open /tmp/ios-visual-regression/index.html

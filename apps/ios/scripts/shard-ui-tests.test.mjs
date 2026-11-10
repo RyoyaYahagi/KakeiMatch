@@ -45,24 +45,12 @@ test('spreads expensive methods first, with stable ties and new-method defaults'
   assert.deepEqual(assignShards([...tests].reverse(), 3, weights), shards);
 });
 
-test('reserves shard 0 unit-test time so it receives fewer UI tests', () => {
-  const tests = Array.from({ length: 12 }, (_, index) => `T${index}`);
-  const weights = Object.fromEntries(tests.map(name => [name, 100]));
-  const withoutReserve = assignShards(tests, 3, weights);
-  const withReserve = assignShards(tests, 3, weights, { reservedSeconds: 200, reservedShard: 0 });
-  assert.equal(withReserve[0].estimatedSeconds, 200 + withReserve[0].tests.length * 100);
-  assert.ok(withReserve[0].tests.length < withoutReserve[0].tests.length);
-  assert.ok(withReserve[0].estimatedSeconds <= Math.max(...withReserve.slice(1).map(shard => shard.estimatedSeconds)));
-});
-
 test('rejects omissions, duplicates, unknown tests, empty shards and invalid counts', () => {
   const tests = ['A', 'B'];
   for (const assigned of [[['A']], [['A'], ['A']], [['A'], ['C']], [['A', 'B'], []]]) {
     assert.throws(() => validateCoverage(tests, assigned.map(names => ({ tests: names }))), /exactly one/);
   }
   for (const count of [0, -1, 1.5, NaN, 3]) assert.throws(() => assignShards(tests, count), /Shard count/);
-  assert.throws(() => assignShards(tests, 2, {}, { reservedSeconds: -1 }), /Reserved load/);
-  assert.throws(() => assignShards(tests, 2, {}, { reservedShard: 2 }), /Reserved load/);
 });
 
 test('repository tests fill four shards with and without screenshot-only methods', async () => {

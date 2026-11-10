@@ -32,9 +32,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Five shards are the practical maximum: the macOS runner limit is five and
-  # each shard pays about four minutes of fixed simulator setup.
-  UI_SHARD_COUNT: 5
+  UI_SHARD_COUNT: 4
   UI_SHARD_FLAGS: ${{ github.event_name == 'pull_request' && '--skip-screenshots' || '' }}
 
 defaults:
@@ -43,18 +41,6 @@ defaults:
     shell: bash
 
 jobs:
-  # Package tests need no simulator. Running them next to `build` instead of
-  # inside it removes their compile and run time from the build critical path.
-  unit-tests:
-    runs-on: macos-15
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - name: Select Xcode
-        run: bash scripts/ci-simulator.sh select-xcode
-      - name: Run macOS core tests without a simulator
-        run: swift test --package-path .
-
   build:
     runs-on: macos-15
     timeout-minutes: 15
@@ -67,10 +53,12 @@ jobs:
           fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
       # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
       # https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
-      # A concrete destination builds only the runner's arm64 slice. The generic
-      # simulator destination also built x86_64 and was much slower.
+      # build-for-testing only needs the destination, not a booted device.
+      # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
+      - name: Run macOS core tests without a simulator
+        run: swift test --package-path .
       - name: Validate UI shard coverage
         id: shards
         run: |
@@ -121,8 +109,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Shard 0 also runs the simulator Swift Testing suite. The shard assignment
-  # reserves that time so shard 0 receives fewer UI tests and stays balanced.
+  # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
+  # waited for another macOS runner and booted another simulator for about two minutes of tests.
   ui-tests:
     needs: build
     runs-on: macos-15
@@ -228,7 +216,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Select Xcode
-        run: bash scripts/ci-simulator.sh select-xcode
+        run: bash scripts/ci-simulator.sh select
       - name: Generate Xcode project
         run: |
           curl --fail --location --silent --show-error --retry 3 \
@@ -244,7 +232,7 @@ jobs:
 
   ios:
     if: always()
-    needs: [unit-tests, build, ui-tests, release-build]
+    needs: [build, ui-tests, release-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     defaults:
