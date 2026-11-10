@@ -180,6 +180,8 @@ struct ReconciliationEngineTests {
             let result = KMReconciliationEngine.run(statements: [statement("s-\(id)", merchant: sm, amount: sa, date: sd)], receipts: [receipt("r-\(id)", merchant: id == "unrelated" ? "海辺書房" : id == "variant" ? "北口 食堂" : sm, amount: ra, date: rd)])
             #expect(result.statementResults[0].status == status, "synthetic eval: \(id)")
         }
+    }
+
     @Test func globalReviewAssignmentPromotesOnlyExistingCandidates() {
         let result = KMReconciliationEngine.run(
             statements: [
