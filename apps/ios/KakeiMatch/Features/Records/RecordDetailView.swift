@@ -24,6 +24,13 @@ struct KMRecordDetailView: View {
             }
             .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.detailBack")
             .padding(.bottom, KMSpacing.space2)
+            // The page switches as soon as the row is tapped, so show progress
+            // here while the detail reads finish.
+            if model.busy && model.selected == nil {
+                ProgressView("記録を読み込んでいます。")
+                    .padding(.vertical, KMSpacing.space6)
+                    .accessibilityIdentifier("records.detail.loading")
+            }
             if let row = model.selected, let draft = model.draft {
                 Text(row.kind == .income ? "収入の記録" : row.kind == .transfer ? "振替の記録" : "支出の記録")
                     .font(KMTypography.body(18, weight: .bold)).padding(.top, KMSpacing.space1).padding(.bottom, KMSpacing.space3)

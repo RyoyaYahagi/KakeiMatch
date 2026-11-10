@@ -1,6 +1,14 @@
 import Foundation
 import Observation
 
+/// Whether a row tap reached the detail screen. The detail reads can fail or
+/// collide with another load, so callers must not treat a tap as a silent no-op.
+enum KMRecordsOpenResult: Equatable {
+    case opened
+    case busy
+    case failed(String)
+}
+
 @MainActor @Observable
 final class KMRecordsModel {
     enum Page { case list, search, detail, pending }
@@ -97,9 +105,23 @@ final class KMRecordsModel {
         await reload()
     }
 
-    func open(_ row: KMTransaction) async {
-        guard let repositories, !busy else { return }
+    /// The page switches before the reads finish so the detail screen can show
+    /// progress immediately. On failure the previous screen is restored instead
+    /// of leaving an empty detail screen.
+    @discardableResult
+    func open(_ row: KMTransaction) async -> KMRecordsOpenResult {
+        guard let repositories else {
+            let message = "家計簿を開けませんでした。アプリを開き直してください。"
+            error = message
+            return .failed(message)
+        }
+        guard !busy else {
+            message = "読み込み中です。少し待ってからもう一度お試しください。"
+            return .busy
+        }
         busy = true; error = nil; message = nil
+        let previousPage = page
+        page = .detail
         do {
             guard let current = try await repositories.transactions.transaction(id: row.id) else {
                 throw KMDataError.notFound("記録が見つかりません。記録一覧を読み込み直してください。")
@@ -111,9 +133,16 @@ final class KMRecordsModel {
             // PWA transactionDetail: the confirmed snapshot linked to this income stays visible after edits.
             selectedPayroll = payroll.first { $0.actualTransactionId == current.id }
             draft = KMRecordEditDraft(current, receipt: selectedReceipt); originalDraft = draft
-            editing = nil; page = .detail
-        } catch { self.error = error.localizedDescription }
-        busy = false
+            editing = nil
+            busy = false
+            return .opened
+        } catch {
+            let message = error.localizedDescription
+            self.error = message
+            if selected == nil { page = previousPage }
+            busy = false
+            return .failed(message)
+        }
     }
 
     func backFromDetail() async {
