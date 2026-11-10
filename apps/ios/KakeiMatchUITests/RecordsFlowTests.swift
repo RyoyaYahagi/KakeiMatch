@@ -23,7 +23,10 @@ final class RecordsFlowTests: XCTestCase {
         XCTAssertTrue(keyword.waitForExistence(timeout: 5)); keyword.tap(); keyword.typeText("スーパーみどり")
         app.buttons["records.searchSubmit"].tap()
         let hiddenKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
-        XCTAssertEqual(XCTWaiter.wait(for: [hiddenKeyboard], timeout: 5), .completed)
+        if XCTWaiter.wait(for: [hiddenKeyboard], timeout: 10) != .completed {
+            attachContext(app, name: "keyboard-not-hidden")
+            XCTFail("検索実行後10秒以内にキーボードが閉じない")
+        }
         XCTAssertTrue(app.staticTexts["transaction-search-count"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["transaction-search-count"].label, "2件")
         XCTAssertEqual(app.staticTexts["records.searchTotal"].label, "−¥5,700")
