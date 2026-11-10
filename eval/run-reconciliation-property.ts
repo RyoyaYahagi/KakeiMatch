@@ -13,6 +13,7 @@
  */
 
 import {
+  inspectReconciliationRanking,
   RECONCILIATION_RULES,
   RECONCILIATION_RULE_VERSION,
   reconciliationMerchantSimilarity,
@@ -35,7 +36,7 @@ import { runReconciliationEngine as runFrozenEngine } from "./frozen/reconciliat
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
 const DEFAULT_SEED = 376;
-const PINNED_RULE_VERSION = "1.2.0";
+const PINNED_RULE_VERSION = "1.2.1";
 const PINNED_RULES = {
   candidateDateWindowDays: 7,
   autoMatchDateWindowDays: 2,
@@ -163,6 +164,7 @@ type CaseOutcome = {
   indistinguishable: IndistinguishableMatch[];
   ruleVersions: string[];
   legacy: LegacyMetrics | null;
+  result: ReconciliationEngineResult;
 };
 
 // ---------- seeded RNG (mulberry32) ----------
@@ -1068,7 +1070,7 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (String(row.status) === "confirmed") addViolation("confirmed_status_emitted", receipt.receiptId);
   }
 
-  return { generated, metrics, violations, indistinguishable, ruleVersions, legacy };
+  return { generated, metrics, violations, indistinguishable, ruleVersions, legacy, result };
 }
 
 // ---------- CLI, contract, and report ----------
@@ -1158,6 +1160,32 @@ type GateFamilyReport = FinalMetrics & LegacyMetrics & {
   expectedCorrectMet: boolean;
 };
 
+type RankingMetrics = {
+  assignmentCount: number;
+  assignedFirstCount: number;
+  assignmentDoubleCount: number;
+  separableFirstCandidateChecks: number;
+  separableFirstCandidateHits: number;
+  reviewSeparableFirstCandidateChecks: number;
+  reviewSeparableFirstCandidateHits: number;
+};
+
+function emptyRankingMetrics(): RankingMetrics {
+  return {
+    assignmentCount: 0,
+    assignedFirstCount: 0,
+    assignmentDoubleCount: 0,
+    separableFirstCandidateChecks: 0,
+    separableFirstCandidateHits: 0,
+    reviewSeparableFirstCandidateChecks: 0,
+    reviewSeparableFirstCandidateHits: 0,
+  };
+}
+
+function rankingRate(hits: number, checks: number): number | null {
+  return checks === 0 ? null : hits / checks;
+}
+
 function gateCaseToGenerated(gateCase: GateCase): GeneratedCase {
   return {
     id: gateCase.id,
@@ -1229,8 +1257,10 @@ function main(): void {
   const gateLegacyTotals = emptyLegacy();
   const gateLegacyByFamily = new Map<GateFamily, LegacyMetrics>();
   const gateViolations: Violation[] = [];
+  const gateRanking = emptyRankingMetrics();
   for (const gateCase of gateCases) {
-    const outcome = runCase(gateCaseToGenerated(gateCase));
+    const generated = gateCaseToGenerated(gateCase);
+    const outcome = runCase(generated);
     addMetrics(gateTotals, outcome.metrics);
     const familyTotals = gateByFamily.get(gateCase.family) ?? emptyCaseMetrics();
     addMetrics(familyTotals, outcome.metrics);
@@ -1241,6 +1271,36 @@ function main(): void {
     addLegacy(legacyTotals, outcome.legacy);
     gateLegacyByFamily.set(gateCase.family, legacyTotals);
     gateViolations.push(...outcome.violations);
+
+    const candidatesByStatement = new Map<string, ReconciliationCandidate[]>();
+    for (const candidate of outcome.result.candidates) {
+      const list = candidatesByStatement.get(candidate.statementTransactionId) ?? [];
+      list.push(candidate);
+      candidatesByStatement.set(candidate.statementTransactionId, list);
+    }
+    const statementResultById = new Map(outcome.result.statementResults.map((row) => [row.statementTransactionId, row]));
+    const ranking = inspectReconciliationRanking({
+      statements: gateCase.statements, receipts: gateCase.receipts, aliases: new Set(gateCase.aliases),
+    });
+    const usedReceipts = new Set<string>();
+    for (const pair of ranking.assignments) {
+      gateRanking.assignmentCount += 1;
+      if (usedReceipts.has(pair.receiptId)) gateRanking.assignmentDoubleCount += 1;
+      usedReceipts.add(pair.receiptId);
+      const first = candidatesByStatement.get(pair.statementTransactionId)?.[0];
+      if (first?.receiptId === pair.receiptId) gateRanking.assignedFirstCount += 1;
+    }
+    for (const truth of gateCase.truthPairs) {
+      if (truth.truthClass !== "separable") continue;
+      const first = candidatesByStatement.get(truth.statementId)?.[0];
+      if (!first) continue;
+      gateRanking.separableFirstCandidateChecks += 1;
+      if (first.receiptId === truth.receiptId) gateRanking.separableFirstCandidateHits += 1;
+      if (statementResultById.get(truth.statementId)?.status !== "matched") {
+        gateRanking.reviewSeparableFirstCandidateChecks += 1;
+        if (first.receiptId === truth.receiptId) gateRanking.reviewSeparableFirstCandidateHits += 1;
+      }
+    }
   }
 
   const gateFinal = finalizeMetrics(gateTotals);
@@ -1307,6 +1367,15 @@ function main(): void {
       legacy: gateLegacyTotals,
       byFamily: gateByFamilyReport,
       checks: gateChecks,
+      ranking: {
+        ...gateRanking,
+        assignedFirstRate: rankingRate(gateRanking.assignedFirstCount, gateRanking.assignmentCount),
+        separableFirstCandidateRate: rankingRate(gateRanking.separableFirstCandidateHits, gateRanking.separableFirstCandidateChecks),
+        reviewSeparableFirstCandidateRate: rankingRate(gateRanking.reviewSeparableFirstCandidateHits, gateRanking.reviewSeparableFirstCandidateChecks),
+        candidateSetMissingCount: gateFinal.truthPairsWithoutCandidates,
+        autoDoubleMatchCount: gateFinal.doubleMatchCount,
+        autoMatchSetDifferenceCount: gateLegacyTotals.lostLegacyAutoMatchCount + gateLegacyTotals.newInvalidAutoMatchCount,
+      },
       violationCount: gateViolations.length,
       violationCounts: countViolations(gateViolations),
       violations: gateViolations.slice(0, options.maxViolations),
