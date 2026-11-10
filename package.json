@@ -20,6 +20,7 @@
     "legacy:eval:category": "node --conditions=react-server --import tsx eval/run-jev-category-eval.ts --live",
     "eval:reconciliation": "node --conditions=react-server --import tsx eval/run-reconciliation-eval.ts",
     "eval:reconciliation-property": "node --conditions=react-server --import tsx eval/run-reconciliation-property.ts",
+    "eval:reconciliation-ranking": "node --conditions=react-server --import tsx eval/run-reconciliation-ranking-eval.ts",
     "legacy:db:generate": "drizzle-kit generate",
     "legacy:db:migrate": "drizzle-kit migrate",
     "legacy:user:create": "tsx scripts/create-user.ts",
