@@ -105,14 +105,14 @@ jobs:
           mkdir -p e2e-logs
           # Keep each script's output separate so parallel logs stay readable.
           run_script() {
-            local debug=""
-            if [ "$1" = "test:category-learning-e2e" ]; then debug="pw:api"; fi
             # Bound each process group so a stuck browser cannot consume the job's 15 minutes.
-            if DEBUG="$debug" timeout --signal=TERM --kill-after=10s 180s pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
+            # 240s leaves headroom for the slowest suite (~110s) under three-way parallelism;
+            # the previous 180s limit timed out category-learning-e2e on PR #381.
+            if timeout --signal=TERM --kill-after=10s 240s pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
               echo "PASS $1"
             else
               local status=$?
-              echo "FAIL $1 (exit $status; suite limit 180s)"
+              echo "FAIL $1 (exit $status; suite limit 240s)"
               cat "e2e-logs/${1//:/-}.log"; return 1
             fi
           }
