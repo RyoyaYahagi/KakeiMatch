@@ -32,25 +32,46 @@ final class RecordsFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["records.searchTotal"].label, "−¥5,700")
     }
 
+    /// The same text is attached to the xcresult and printed to the test log.
+    /// The print keeps a failure readable from the job log, without downloading
+    /// the whole xcresult artifact (90MB in run 42799907472).
     @MainActor private func attachContext(_ app: XCUIApplication, name: String, row: XCUIElement? = nil) {
         var lines = ["records-\(name)"]
         if let row {
             if row.exists {
-                lines.append("row.exists=true row.isHittable=\(row.isHittable) row.frame=\(row.frame)")
+                lines.append("row.exists=true row.isHittable=\(row.isHittable) row.isEnabled=\(row.isEnabled) row.frame=\(row.frame)")
             } else {
                 lines.append("row.exists=false")
             }
         }
+        // While `KMRecordsModel.busy` is true the whole search screen is
+        // disabled and the submit label changes, so these separate an undo
+        // reload from a row that was simply never tappable.
+        let submit = app.buttons["records.searchSubmit"]
+        if submit.exists {
+            lines.append("searchSubmit.exists=true searchSubmit.label=\(submit.label) searchSubmit.isEnabled=\(submit.isEnabled)")
+        } else {
+            lines.append("searchSubmit.exists=false")
+        }
+        let message = app.staticTexts["records.message"]
+        if message.exists {
+            lines.append("records.message=\(message.label)")
+        } else {
+            lines.append("records.message.exists=false")
+        }
+        lines.append("deletionRestored.exists=\(app.descendants(matching: .any)["shell.deletionRestored"].exists)")
         lines.append("searchScreen.exists=\(app.descendants(matching: .any)["records.searchScreen"].exists)")
         lines.append("detailBack.exists=\(app.buttons["records.detailBack"].exists)")
         lines.append("detailScreen.exists=\(app.descendants(matching: .any)["records.detailScreen"].exists)")
         lines.append("detailLoading.exists=\(app.descendants(matching: .any)["records.detail.loading"].exists)")
         lines.append("app.debugDescription:")
         lines.append(app.debugDescription)
-        let attachment = XCTAttachment(string: lines.joined(separator: "\n"))
+        let text = lines.joined(separator: "\n")
+        let attachment = XCTAttachment(string: text)
         attachment.name = "records-\(name)-diagnostics"
         attachment.lifetime = .keepAlways
         add(attachment)
+        print("[records-diagnostics] \(name)\n\(text)")
     }
 
     @MainActor private func waitUntilHittable(_ element: XCUIElement, timeout: TimeInterval) -> Bool {
@@ -60,16 +81,23 @@ final class RecordsFlowTests: XCTestCase {
 
     /// Keep the two waits separate: the first tells a lost tap from a slow
     /// detail read, and the second gives the read time to finish.
-    @MainActor private func openSearchResult(_ app: XCUIApplication, row id: String, detail detailID: String) {
+    ///
+    /// `hittableTimeout` is wider only for the call after an undo. Undo bumps
+    /// `recordsRefreshToken`, which starts `reload()`; while `busy` is true the
+    /// search screen is `.disabled(model.busy)` and the row cannot be tapped.
+    /// That reload outlasted the 2s gate in run 42799907472, so the undo path
+    /// waits 10s. The other gates (search screen 2s, detail 10s) stay as they are.
+    @MainActor private func openSearchResult(_ app: XCUIApplication, row id: String, detail detailID: String,
+                                             hittableTimeout: TimeInterval = 2) {
         let row = app.buttons[id]
         if !row.waitForExistence(timeout: 5) {
             attachContext(app, name: "row-missing", row: row)
             XCTFail("\(id) が見つからない")
             return
         }
-        if !waitUntilHittable(row, timeout: 2) {
+        if !waitUntilHittable(row, timeout: hittableTimeout) {
             attachContext(app, name: "row-not-hittable", row: row)
-            XCTFail("\(id) が2秒以内にタップ可能にならない")
+            XCTFail("\(id) が\(Int(hittableTimeout))秒以内にタップ可能にならない")
             return
         }
         row.tap()
@@ -140,7 +168,9 @@ final class RecordsFlowTests: XCTestCase {
         let undo = app.buttons["元に戻す"]
         XCTAssertTrue(undo.waitForExistence(timeout: 5)); undo.tap()
         XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5))
-        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo")
+        // The undo reload keeps the search screen disabled while `busy`, so this
+        // second open gets 10s instead of the initial 2s.
+        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo", hittableTimeout: 10)
         app.buttons["records.detailBack"].tap()
         XCTAssertEqual(app.staticTexts["transaction-search-count"].label, "2件")
         XCTAssertEqual(app.textFields["transaction-search-keyword"].value as? String, "スーパーみどり")
