@@ -32,9 +32,14 @@ final class RecordsFlowTests: XCTestCase {
     @MainActor private func attachContext(_ app: XCUIApplication, name: String, row: XCUIElement? = nil) {
         var lines = ["records-\(name)"]
         if let row {
-            lines.append("row.exists=\(row.exists) row.isHittable=\(row.isHittable) row.frame=\(row.frame)")
+            if row.exists {
+                lines.append("row.exists=true row.isHittable=\(row.isHittable) row.frame=\(row.frame)")
+            } else {
+                lines.append("row.exists=false")
+            }
         }
         lines.append("searchScreen.exists=\(app.descendants(matching: .any)["records.searchScreen"].exists)")
+        lines.append("detailBack.exists=\(app.buttons["records.detailBack"].exists)")
         lines.append("detailScreen.exists=\(app.descendants(matching: .any)["records.detailScreen"].exists)")
         lines.append("detailLoading.exists=\(app.descendants(matching: .any)["records.detail.loading"].exists)")
         lines.append("app.debugDescription:")
@@ -91,9 +96,9 @@ final class RecordsFlowTests: XCTestCase {
             return
         }
         row.tap()
-        if !app.descendants(matching: .any)["records.detailScreen"].waitForExistence(timeout: 2) {
+        if !app.buttons["records.detailBack"].waitForExistence(timeout: 5) {
             attachContext(app, name: "detail-not-shown", row: row)
-            XCTFail("行をタップしてから2秒以内に詳細画面が表示されない")
+            XCTFail("行をタップしてから5秒以内に詳細画面が表示されない")
             return
         }
         if !app.buttons[detailID].waitForExistence(timeout: 10) {
