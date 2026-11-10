@@ -10,7 +10,10 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    static let ruleVersion = "1.2.0"
+    // 1.2.1 keeps every 1.2.0 automatic-match rule and candidate-set rule
+    // unchanged. The only addition is review-candidate ordering (Issue #380
+    // PR A), which runs after automatic matching and never feeds back into it.
+    static let ruleVersion = "1.2.1"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -144,11 +147,19 @@ enum KMReconciliationEngine {
             guard let st = s.first, let rt = r.first else { return true }
             return margin(st, s.dropFirst().first) < marginThreshold || margin(rt, r.dropFirst().first) < marginThreshold || st.receiptId != candidate.receiptId || rt.statementId != candidate.statementId
         }
+        // Ranking runs strictly after automatic matching. It receives the
+        // automatic pairs as fixed endpoints and cannot change a status.
+        let reviewRanking = computeReviewAssignment(
+            statements: statements, byStatement: byStatement,
+            matchedStatements: matchedStatements, matchedReceipts: matchedReceipts,
+            manualStatementIds: manualStatementIds)
         var output: [KMReconciliationCandidate] = []
         for statement in statements {
             let matched = matchedStatements[statement.id]
+            let assigned = reviewRanking[statement.id]
+            let preferred = matched ?? assigned
             let choices = (byStatement[statement.id] ?? []).sorted {
-                if ($0.receiptId == matched) != ($1.receiptId == matched) { return $0.receiptId == matched }
+                if ($0.receiptId == preferred) != ($1.receiptId == preferred) { return $0.receiptId == preferred }
                 if $0.score != $1.score { return $0.score > $1.score }
                 return compare($0, $1)
             }
@@ -174,6 +185,98 @@ enum KMReconciliationEngine {
 
     private static func safe(_ amount: Int) -> Bool { amount >= 0 && amount <= KMYen.maxSafe }
     private static func margin(_ top: Candidate, _ second: Candidate?) -> KMJSNumber { top.autoScore - (second?.autoScore ?? 0) }
+
+    /// Review scores already have six decimal places; keep assignment totals exact.
+    private static func reviewWeight(_ score: Decimal) -> Int {
+        var scaled = score * 1_000_000
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &scaled, 0, .plain)
+        return NSDecimalNumber(decimal: rounded).intValue
+    }
+
+    /// UTF-8 byte order, shared with the TypeScript assignment tie-break.
+    private static func utf8Less(_ left: String, _ right: String) -> Bool {
+        left.utf8.lexicographicallyPrecedes(right.utf8)
+    }
+
+    /// Assign only the still-undecided statements to still-undecided receipts.
+    /// Automatic matches and manual statement decisions are fixed endpoints.
+    /// Edges are existing review candidates, so no candidate is added and no
+    /// receipt is reserved. The result only chooses the first review row.
+    private static func computeReviewAssignment(
+        statements: [KMStatementTransaction],
+        byStatement: [String: [Candidate]],
+        matchedStatements: [String: String],
+        matchedReceipts: [String: String],
+        manualStatementIds: Set<String>
+    ) -> [String: String] {
+        let rows = statements.filter { statement in
+            statement.kind == .purchase
+                && matchedStatements[statement.id] == nil
+                && !manualStatementIds.contains(statement.id)
+                && (byStatement[statement.id] ?? []).contains { matchedReceipts[$0.receiptId] == nil }
+        }.map(\.id).sorted(by: utf8Less)
+        var columnSet = Set<String>()
+        for statementId in rows {
+            for candidate in (byStatement[statementId] ?? []) where matchedReceipts[candidate.receiptId] == nil {
+                columnSet.insert(candidate.receiptId)
+            }
+        }
+        let columns = columnSet.sorted(by: utf8Less)
+        guard !rows.isEmpty, !columns.isEmpty else { return [:] }
+
+        var rowIndex: [String: Int] = [:]
+        for (index, id) in rows.enumerated() { rowIndex[id] = index }
+        var columnIndex: [String: Int] = [:]
+        for (index, id) in columns.enumerated() { columnIndex[id] = index }
+        var weights = Array(repeating: Array(repeating: 0, count: columns.count), count: rows.count)
+        for statementId in rows {
+            for candidate in (byStatement[statementId] ?? []) where matchedReceipts[candidate.receiptId] == nil {
+                guard let row = rowIndex[statementId], let column = columnIndex[candidate.receiptId] else { continue }
+                weights[row][column] = reviewWeight(candidate.score)
+            }
+        }
+
+        // Components share no rows or columns, so their lexicographic optima
+        // are exactly the monolithic optimum.
+        let rowCount = rows.count
+        let columnCount = columns.count
+        var adjacency = Array(repeating: [Int](), count: rowCount + columnCount)
+        for row in 0..<rowCount {
+            for column in 0..<columnCount where weights[row][column] > 0 {
+                adjacency[row].append(rowCount + column)
+                adjacency[rowCount + column].append(row)
+            }
+        }
+
+        var visited = Array(repeating: false, count: rowCount + columnCount)
+        var assignment: [String: String] = [:]
+        for start in 0..<(rowCount + columnCount) where !visited[start] && !adjacency[start].isEmpty {
+            var componentRows: [Int] = []
+            var componentColumns: [Int] = []
+            var stack = [start]
+            visited[start] = true
+            while let node = stack.popLast() {
+                if node < rowCount { componentRows.append(node) } else { componentColumns.append(node - rowCount) }
+                for next in adjacency[node] where !visited[next] {
+                    visited[next] = true
+                    stack.append(next)
+                }
+            }
+            componentRows.sort()
+            componentColumns.sort()
+            guard !componentRows.isEmpty, !componentColumns.isEmpty else { continue }
+            let localWeights = componentRows.map { row in componentColumns.map { column in weights[row][column] } }
+            let localAssignment = KMReconciliationAssignment.lexicographicAssignment(
+                localWeights, rowOrder: Array(0..<componentRows.count), columnOrder: Array(0..<componentColumns.count))
+            for localRow in 0..<componentRows.count {
+                let localColumn = localAssignment[localRow]
+                guard localColumn >= 0 else { continue }
+                assignment[rows[componentRows[localRow]]] = columns[componentColumns[localColumn]]
+            }
+        }
+        return assignment
+    }
     private static func compare(_ a: Candidate, _ b: Candidate) -> Bool {
         if a.autoScore != b.autoScore { return a.autoScore > b.autoScore }
         if a.statementId != b.statementId { return less(a.statementId, b.statementId) }
