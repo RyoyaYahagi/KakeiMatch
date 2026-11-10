@@ -2,6 +2,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { runReconciliationEngine } from "../../../src/lib/reconciliation-engine.ts";
+import { runReconciliationEngine as runFrozenEngine } from "../../../eval/frozen/reconciliation-engine-1.2.0.ts";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const fixturePath = resolve(scriptDirectory, "../KakeiMatchTests/Fixtures/reconciliation-parity.json");
@@ -87,10 +88,19 @@ function rankingConflictCase() {
   };
 }
 
+function allConflictCase() {
+  const family = "global-all-conflict-4x4";
+  const date = "2026-01-01";
+  const amount = 1000;
+  const statements = [0, 1, 2, 3].map((index) => statement(`s-${family}-${index}`, "同一商店", amount, date));
+  const receipts = [0, 1, 2, 3].map((index) => receipt(`r-${family}-${index}`, "同一商店", amount, date, `acct-${index}`));
+  return { id: family, statements, receipts, preferred: Object.fromEntries(statements.map((row) => [row.id, []])) };
+}
+
 const additionalCases = [
   chainCase(2), chainCase(3), chainCase(5), chainCase(10),
   twinCase(), extraCase(), thresholdCase(), missingCase(),
-  rankingConflictCase(),
+  rankingConflictCase(), allConflictCase(),
 ];
 
 function toEngineInput(item) {
@@ -111,8 +121,30 @@ const existing = JSON.parse(await readFile(fixturePath, "utf8"));
 const byId = new Map(existing.map((item) => [item.id, item]));
 for (const item of additionalCases) byId.set(item.id, item);
 const cases = [...byId.values()];
+function candidateSets(result) {
+  const sets = new Map();
+  for (const candidate of result.candidates) {
+    const set = sets.get(candidate.statementTransactionId) ?? new Set();
+    set.add(candidate.receiptId);
+    sets.set(candidate.statementTransactionId, set);
+  }
+  return sets;
+}
 for (const item of cases) {
-  const result = runReconciliationEngine(toEngineInput(item));
+  const input = toEngineInput(item);
+  const result = runReconciliationEngine(input);
+  const old = runFrozenEngine(input);
+  const newSets = candidateSets(result);
+  const oldSets = candidateSets(old);
+  for (const row of item.statements) {
+    const newSet = newSets.get(row.id) ?? new Set();
+    const oldSet = oldSets.get(row.id) ?? new Set();
+    const missing = [...oldSet].filter((receiptId) => !newSet.has(receiptId));
+    const extra = [...newSet].filter((receiptId) => !oldSet.has(receiptId));
+    if (missing.length > 0 || extra.length > 0) {
+      throw new Error(`${item.id}/${row.id}: candidate set differs from 1.2.0 (missing=${missing.join(",")} extra=${extra.join(",")})`);
+    }
+  }
   item.expected = {
     ruleVersion: result.ruleVersion,
     candidates: result.candidates,
@@ -120,7 +152,7 @@ for (const item of cases) {
     receiptResults: result.receiptResults,
   };
 }
-if (cases.length !== 282) throw new Error(`Expected 282 parity cases, got ${cases.length}`);
+if (cases.length !== 283) throw new Error(`Expected 283 parity cases, got ${cases.length}`);
 await writeFile(fixturePath, `${JSON.stringify(cases)}\n`);
 console.log(JSON.stringify({ fixturePath, caseCount: cases.length, ruleVersion: cases[0].expected.ruleVersion,
   autoMatches: cases.reduce((sum, item) => sum + item.expected.statementResults.filter((row) => row.status === "matched").length, 0) }));

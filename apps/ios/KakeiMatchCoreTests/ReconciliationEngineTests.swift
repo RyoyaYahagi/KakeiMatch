@@ -200,4 +200,19 @@ struct ReconciliationEngineTests {
             "s1\0r1", "s1\0r2", "s2\0r1", "s2\0r2",
         ])
     }
+
+    @Test func globalReviewAssignmentKeepsOldCandidateSetForAllConflict4x4() {
+        let result = KMReconciliationEngine.run(
+            statements: [0, 1, 2, 3].map { statement("s\($0)", merchant: "同一商店", amount: 1000, date: "2026-01-01") },
+            receipts: [0, 1, 2, 3].map { receipt("r\($0)", merchant: "同一商店", amount: 1000, date: "2026-01-01", account: "acct-\($0)") })
+        let receiptIds = { (statementId: String) in
+            result.candidates.filter { $0.statementTransactionId == statementId }.map(\.receiptId)
+        }
+        #expect(receiptIds("s0") == ["r0", "r1", "r2"])
+        #expect(Set(receiptIds("s1")) == ["r0", "r1", "r2"])
+        #expect(Set(receiptIds("s2")) == ["r0", "r1", "r2"])
+        #expect(receiptIds("s3") == ["r0", "r1", "r2"])
+        #expect(!result.candidates.contains { $0.receiptId == "r3" })
+        #expect(result.statementResults.map(\.status) == [.needsReview, .needsReview, .needsReview, .needsReview])
+    }
 }

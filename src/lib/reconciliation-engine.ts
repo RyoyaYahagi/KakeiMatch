@@ -204,9 +204,10 @@ type ReviewAssignment = Map<string, string>;
 /**
  * Assign only the still-undecided statements to still-undecided receipts.
  * Both endpoints that automatic matching already decided are removed before
- * the assignment, and manual statement decisions are removed as well. Edges
- * are the existing review candidates, so this can never add a candidate or
- * reserve a receipt. The result is used only to choose the first review row.
+ * the assignment, and manual statement decisions are removed as well. Callers
+ * also remove manually matched receipts through excludedReceiptIds. Edges are
+ * the existing review candidates, so this can never add a candidate or reserve
+ * a receipt. The result is used only to choose the first review row.
  */
 function computeReviewAssignment(
   statements: ReconciliationStatement[],
@@ -423,12 +424,18 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
     const choices = allByStatement.get(statement.statementTransactionId) ?? [];
     const matchedReceiptId = matchedStatements.get(statement.statementTransactionId);
     const assignedReceiptId = reviewAssignment.get(statement.statementTransactionId);
-    const preferredReceiptId = matchedReceiptId ?? assignedReceiptId;
-    // Retain the automatic pair first. For a still-undecided statement, the
-    // global assignment's partner is promoted only when it is an existing
-    // candidate; no new pair is added and no receipt is reserved.
-    [...choices].sort((a, b) => Number(b.receiptId === preferredReceiptId) - Number(a.receiptId === preferredReceiptId)
-      || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement).forEach((candidate, index) => {
+    // Fix the 1.2.0 output set first: retain the automatic pair first, then
+    // apply the ordinary score order and the per-statement cap. Ranking must
+    // never add or remove a member of this set.
+    const outputCandidates = [...choices].sort((a, b) => Number(b.receiptId === matchedReceiptId) - Number(a.receiptId === matchedReceiptId)
+      || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement);
+    // Reorder only within that fixed set. If the assignment partner is not in
+    // the old output set, leave the order untouched.
+    if (!matchedReceiptId && assignedReceiptId) {
+      const assignedIndex = outputCandidates.findIndex((candidate) => candidate.receiptId === assignedReceiptId);
+      if (assignedIndex > 0) outputCandidates.unshift(...outputCandidates.splice(assignedIndex, 1));
+    }
+    outputCandidates.forEach((candidate, index) => {
       candidates.push({
         statementTransactionId: candidate.statementTransactionId,
         receiptId: candidate.receiptId,

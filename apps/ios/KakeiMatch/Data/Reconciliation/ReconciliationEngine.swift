@@ -157,13 +157,17 @@ enum KMReconciliationEngine {
         for statement in statements {
             let matched = matchedStatements[statement.id]
             let assigned = reviewRanking[statement.id]
-            let preferred = matched ?? assigned
-            let choices = (byStatement[statement.id] ?? []).sorted {
-                if ($0.receiptId == preferred) != ($1.receiptId == preferred) { return $0.receiptId == preferred }
+            // Fix the 1.2.0 output set first, then reorder only within it.
+            var choices = Array((byStatement[statement.id] ?? []).sorted {
+                if ($0.receiptId == matched) != ($1.receiptId == matched) { return $0.receiptId == matched }
                 if $0.score != $1.score { return $0.score > $1.score }
                 return compare($0, $1)
+            }.prefix(3))
+            if matched == nil, let assigned,
+               let assignedIndex = choices.firstIndex(where: { $0.receiptId == assigned }), assignedIndex > 0 {
+                choices.insert(choices.remove(at: assignedIndex), at: 0)
             }
-            for (index, candidate) in choices.prefix(3).enumerated() {
+            for (index, candidate) in choices.enumerated() {
                 output.append(KMReconciliationCandidate(statementTransactionId: candidate.statementId, receiptId: candidate.receiptId, rank: index + 1, score: candidate.score, amountDeltaYen: candidate.delta, dateDistanceDays: candidate.days, merchantSimilarity: candidate.similarity.decimalApproximation, reasons: candidate.reasons + (ambiguous(candidate) ? ["ambiguous_candidates"] : [])))
             }
         }
@@ -200,7 +204,8 @@ enum KMReconciliationEngine {
     }
 
     /// Assign only the still-undecided statements to still-undecided receipts.
-    /// Automatic matches and manual statement decisions are fixed endpoints.
+    /// Automatic matches and manual statement decisions are fixed endpoints;
+    /// callers also remove manually matched receipts through excludedReceiptIds.
     /// Edges are existing review candidates, so no candidate is added and no
     /// receipt is reserved. The result only chooses the first review row.
     private static func computeReviewAssignment(
