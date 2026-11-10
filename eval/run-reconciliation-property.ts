@@ -28,6 +28,7 @@ import {
   GATE_ROBUSTNESS_VARIANTS,
   GATE_SEEDS,
   generateGateDataset,
+  generateGateDedicatedCases,
   type GateCase,
   type GateFamily,
 } from "./reconciliation-gate-dataset";
@@ -155,6 +156,14 @@ type LegacyMetrics = {
   lostLegacyAutoMatchCount: number;
   /** Invalid pairs that are new relative to the frozen 1.2.0 baseline. */
   newInvalidAutoMatchCount: number;
+  /** Statements whose candidate set was compared with the frozen 1.2.0 output. */
+  candidateSetCheckedStatementCount: number;
+  /** Statements whose candidate set differs from the frozen 1.2.0 output. */
+  candidateSetMismatchStatementCount: number;
+  /** Frozen 1.2.0 candidate pairs that the current output no longer contains. */
+  candidateSetMissingCount: number;
+  /** Current candidate pairs that the frozen 1.2.0 output did not contain. */
+  candidateSetExtraCount: number;
 };
 
 type CaseOutcome = {
@@ -810,12 +819,41 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     const oldCorrect = [...oldPairs].filter((key) => acceptable.has(key));
     const oldInvalid = [...oldPairs].filter((key) => !acceptable.has(key));
     const newInvalid = [...newPairs].filter((key) => !acceptable.has(key));
+    const candidatesByStatement = (rows: ReconciliationEngineResult["candidates"]) => {
+      const sets = new Map<string, Set<string>>();
+      for (const candidate of rows) {
+        const set = sets.get(candidate.statementTransactionId) ?? new Set<string>();
+        set.add(candidate.receiptId);
+        sets.set(candidate.statementTransactionId, set);
+      }
+      return sets;
+    };
+    const oldCandidateSets = candidatesByStatement(oldResult.candidates);
+    const newCandidateSets = candidatesByStatement(result.candidates);
+    let candidateSetCheckedStatementCount = 0;
+    let candidateSetMismatchStatementCount = 0;
+    let candidateSetMissingCount = 0;
+    let candidateSetExtraCount = 0;
+    for (const statement of statements) {
+      candidateSetCheckedStatementCount += 1;
+      const oldSet = oldCandidateSets.get(statement.statementTransactionId) ?? new Set<string>();
+      const newSet = newCandidateSets.get(statement.statementTransactionId) ?? new Set<string>();
+      const missing = [...oldSet].filter((receiptId) => !newSet.has(receiptId));
+      const extra = [...newSet].filter((receiptId) => !oldSet.has(receiptId));
+      candidateSetMissingCount += missing.length;
+      candidateSetExtraCount += extra.length;
+      if (missing.length > 0 || extra.length > 0) candidateSetMismatchStatementCount += 1;
+    }
     legacy = {
       oldAutoMatchCount: oldPairs.size,
       oldCorrectAutoMatchCount: oldCorrect.length,
       oldInvalidAutoMatchCount: oldInvalid.length,
       lostLegacyAutoMatchCount: oldCorrect.filter((key) => !newPairs.has(key)).length,
       newInvalidAutoMatchCount: newInvalid.filter((key) => !oldPairs.has(key)).length,
+      candidateSetCheckedStatementCount,
+      candidateSetMismatchStatementCount,
+      candidateSetMissingCount,
+      candidateSetExtraCount,
     };
   }
 
@@ -1212,6 +1250,10 @@ function emptyLegacy(): LegacyMetrics {
     oldInvalidAutoMatchCount: 0,
     lostLegacyAutoMatchCount: 0,
     newInvalidAutoMatchCount: 0,
+    candidateSetCheckedStatementCount: 0,
+    candidateSetMismatchStatementCount: 0,
+    candidateSetMissingCount: 0,
+    candidateSetExtraCount: 0,
   };
 }
 
@@ -1304,6 +1346,28 @@ function main(): void {
   }
 
   const gateFinal = finalizeMetrics(gateTotals);
+  const dedicatedCases = generateGateDedicatedCases();
+  const dedicatedLegacyTotals = emptyLegacy();
+  const dedicatedReports: Array<Record<string, unknown>> = [];
+  for (const gateCase of dedicatedCases) {
+    const outcome = runCase(gateCaseToGenerated(gateCase));
+    if (!outcome.legacy) throw new Error(`dedicated gate case ${gateCase.id} did not produce legacy metrics`);
+    addLegacy(dedicatedLegacyTotals, outcome.legacy);
+    gateViolations.push(...outcome.violations);
+    const candidateSets = new Map<string, string[]>();
+    for (const candidate of outcome.result.candidates) {
+      const list = candidateSets.get(candidate.statementTransactionId) ?? [];
+      list.push(candidate.receiptId);
+      candidateSets.set(candidate.statementTransactionId, list);
+    }
+    dedicatedReports.push({
+      id: gateCase.id,
+      candidateSets: [...candidateSets].sort(([left], [right]) => left.localeCompare(right)),
+      candidateSetMismatchStatementCount: outcome.legacy.candidateSetMismatchStatementCount,
+      candidateSetMissingCount: outcome.legacy.candidateSetMissingCount,
+      candidateSetExtraCount: outcome.legacy.candidateSetExtraCount,
+    });
+  }
   const gateByFamilyReport: Record<string, GateFamilyReport> = {};
   let gateExpectedTotal = 0;
   let gateExpectedCorrectMet = true;
@@ -1334,6 +1398,8 @@ function main(): void {
     newInvalidZero: gateLegacyTotals.newInvalidAutoMatchCount === 0,
     lostLegacyZero: gateLegacyTotals.lostLegacyAutoMatchCount === 0,
     invariantViolationsZero: gateViolations.length === 0,
+    candidateSetMatches: gateLegacyTotals.candidateSetMismatchStatementCount === 0,
+    dedicatedCandidateSetMatches: dedicatedLegacyTotals.candidateSetMismatchStatementCount === 0,
   };
 
   const report = {
@@ -1367,12 +1433,28 @@ function main(): void {
       legacy: gateLegacyTotals,
       byFamily: gateByFamilyReport,
       checks: gateChecks,
+      candidateSet: {
+        checkedStatementCount: gateLegacyTotals.candidateSetCheckedStatementCount,
+        mismatchStatementCount: gateLegacyTotals.candidateSetMismatchStatementCount,
+        missingCount: gateLegacyTotals.candidateSetMissingCount,
+        extraCount: gateLegacyTotals.candidateSetExtraCount,
+        dedicated: {
+          caseCount: dedicatedCases.length,
+          cases: dedicatedReports,
+          mismatchStatementCount: dedicatedLegacyTotals.candidateSetMismatchStatementCount,
+          missingCount: dedicatedLegacyTotals.candidateSetMissingCount,
+          extraCount: dedicatedLegacyTotals.candidateSetExtraCount,
+        },
+      },
       ranking: {
         ...gateRanking,
         assignedFirstRate: rankingRate(gateRanking.assignedFirstCount, gateRanking.assignmentCount),
         separableFirstCandidateRate: rankingRate(gateRanking.separableFirstCandidateHits, gateRanking.separableFirstCandidateChecks),
         reviewSeparableFirstCandidateRate: rankingRate(gateRanking.reviewSeparableFirstCandidateHits, gateRanking.reviewSeparableFirstCandidateChecks),
-        candidateSetMissingCount: gateFinal.truthPairsWithoutCandidates,
+        truthPairsWithoutCandidates: gateFinal.truthPairsWithoutCandidates,
+        candidateSetMismatchStatementCount: gateLegacyTotals.candidateSetMismatchStatementCount,
+        candidateSetMissingCount: gateLegacyTotals.candidateSetMissingCount,
+        candidateSetExtraCount: gateLegacyTotals.candidateSetExtraCount,
         autoDoubleMatchCount: gateFinal.doubleMatchCount,
         autoMatchSetDifferenceCount: gateLegacyTotals.lostLegacyAutoMatchCount + gateLegacyTotals.newInvalidAutoMatchCount,
       },

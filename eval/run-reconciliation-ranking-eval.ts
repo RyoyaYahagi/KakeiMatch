@@ -63,6 +63,14 @@ const cases: RankingCase[] = [
     truthPairs: [{ statementId: "s1", receiptId: "r1", separable: true }, { statementId: "s2", receiptId: "r2", separable: true }],
   },
   {
+    id: "all-conflict-4x4",
+    statements: [0, 1, 2, 3].map((index) => statement(`s${index}`, "同一商店", "2026-01-01", 1000)),
+    receipts: [0, 1, 2, 3].map((index) => receipt(`r${index}`, "同一商店", "2026-01-01", `acct-${index}`, 1000)),
+    preferred: { s0: [], s1: [], s2: [], s3: [] },
+    // Every pair conflicts, so this case is judged only by candidate-set equality.
+    truthPairs: [],
+  },
+  {
     id: "manual-endpoint",
     statements: [statement("s1", "架空商店アルファ"), statement("s2", "無関係カフェ")],
     receipts: [receipt("r1", "架空商店アルファ", "2026-09-10", "acct-1"), receipt("r2", "架空商店アルファ", "2026-09-11", "acct-2")],
@@ -96,7 +104,11 @@ const summary = {
   assignmentCount: 0,
   assignedFirstCount: 0,
   assignmentDoubleCount: 0,
+  candidateSetCheckedStatementCount: 0,
+  candidateSetMismatchStatementCount: 0,
   candidateSetMissingCount: 0,
+  candidateSetExtraCount: 0,
+  firstCandidateMissingCount: 0,
   newSeparableChecks: 0,
   newSeparableHits: 0,
   oldSeparableChecks: 0,
@@ -107,11 +119,33 @@ const summary = {
   cases: [] as Array<Record<string, unknown>>,
 };
 
+function candidateSets(result: ReturnType<typeof runReconciliationEngine>): Map<string, Set<string>> {
+  const sets = new Map<string, Set<string>>();
+  for (const candidate of result.candidates) {
+    const set = sets.get(candidate.statementTransactionId) ?? new Set<string>();
+    set.add(candidate.receiptId);
+    sets.set(candidate.statementTransactionId, set);
+  }
+  return sets;
+}
+
 for (const item of cases) {
   const input = inputOf(item);
   const result = runReconciliationEngine(input);
   const old = runFrozenEngine(input);
   const ranking = inspectReconciliationRanking(input);
+  const newSets = candidateSets(result);
+  const oldSets = candidateSets(old);
+  for (const row of item.statements) {
+    summary.candidateSetCheckedStatementCount += 1;
+    const newSet = newSets.get(row.statementTransactionId) ?? new Set<string>();
+    const oldSet = oldSets.get(row.statementTransactionId) ?? new Set<string>();
+    const missing = [...oldSet].filter((receiptId) => !newSet.has(receiptId));
+    const extra = [...newSet].filter((receiptId) => !oldSet.has(receiptId));
+    summary.candidateSetMissingCount += missing.length;
+    summary.candidateSetExtraCount += extra.length;
+    if (missing.length > 0 || extra.length > 0) summary.candidateSetMismatchStatementCount += 1;
+  }
   const usedReceipts = new Set<string>();
   for (const pair of ranking.assignments) {
     summary.assignmentCount += 1;
@@ -131,8 +165,8 @@ for (const item of cases) {
     if (!truth.separable) continue;
     const newFirst = firstCandidate(result, truth.statementId);
     const oldFirst = firstCandidate(old, truth.statementId);
-    if (newFirst === null) summary.candidateSetMissingCount += 1;
-    if (oldFirst === null) summary.candidateSetMissingCount += 1;
+    if (newFirst === null) summary.firstCandidateMissingCount += 1;
+    if (oldFirst === null) summary.firstCandidateMissingCount += 1;
     summary.newSeparableChecks += 1;
     summary.oldSeparableChecks += 1;
     if (newFirst === truth.receiptId) summary.newSeparableHits += 1;
@@ -143,6 +177,8 @@ for (const item of cases) {
     assignments: ranking.assignments,
     newFirst: item.statements.map((row) => [row.statementTransactionId, firstCandidate(result, row.statementTransactionId)]),
     oldFirst: item.statements.map((row) => [row.statementTransactionId, firstCandidate(old, row.statementTransactionId)]),
+    newCandidateSets: item.statements.map((row) => [row.statementTransactionId, [...(newSets.get(row.statementTransactionId) ?? [])]]),
+    oldCandidateSets: item.statements.map((row) => [row.statementTransactionId, [...(oldSets.get(row.statementTransactionId) ?? [])]]),
   });
 }
 
@@ -156,4 +192,6 @@ const report = {
   oldSeparableFirstCandidateRate: rate(summary.oldSeparableHits, summary.oldSeparableChecks),
 };
 console.log(JSON.stringify(report, null, 2));
-if (summary.assignmentDoubleCount > 0 || summary.candidateSetMissingCount > 0 || summary.autoMatchSetDifferenceCount > 0) process.exitCode = 1;
+if (summary.assignmentDoubleCount > 0 || summary.candidateSetMismatchStatementCount > 0
+  || summary.candidateSetMissingCount > 0 || summary.candidateSetExtraCount > 0
+  || summary.firstCandidateMissingCount > 0 || summary.autoMatchSetDifferenceCount > 0) process.exitCode = 1;
