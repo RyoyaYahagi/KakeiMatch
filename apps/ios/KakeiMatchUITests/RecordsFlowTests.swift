@@ -54,7 +54,11 @@ final class RecordsFlowTests: XCTestCase {
     /// detail read, and the second gives the read time to finish.
     @MainActor private func openSearchResult(_ app: XCUIApplication, row id: String, detail detailID: String) {
         let row = app.buttons[id]
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "\(id) が見つからない")
+        if !row.waitForExistence(timeout: 5) {
+            attachContext(app, name: "row-missing", row: row)
+            XCTFail("\(id) が見つからない")
+            return
+        }
         if !waitUntilHittable(row, timeout: 2) {
             attachContext(app, name: "row-not-hittable", row: row)
             XCTFail("\(id) が2秒以内にタップ可能にならない")
@@ -76,7 +80,11 @@ final class RecordsFlowTests: XCTestCase {
 
     @MainActor private func openListRecord(_ app: XCUIApplication, row id: String, detail detailID: String) {
         let row = app.buttons[id]
-        XCTAssertTrue(row.waitForExistence(timeout: 5), "\(id) が見つからない")
+        if !row.waitForExistence(timeout: 5) {
+            attachContext(app, name: "row-missing", row: row)
+            XCTFail("\(id) が見つからない")
+            return
+        }
         if !waitUntilHittable(row, timeout: 2) {
             attachContext(app, name: "row-not-hittable", row: row)
             XCTFail("\(id) が2秒以内にタップ可能にならない")
