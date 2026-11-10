@@ -42,10 +42,14 @@ jobs:
           xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
             -destination "$DESTINATION" -derivedDataPath DerivedData \
             -resultBundlePath Build.xcresult build-for-testing CODE_SIGNING_ALLOWED=NO
-      - name: Start simulator
-        run: bash scripts/ci-simulator.sh start
-      - name: Wait for simulator
-        run: bash scripts/ci-simulator.sh wait
+      - name: Start and wait for simulator
+        run: |
+          bash scripts/ci-simulator.sh start
+          # bootstatus without -b only waits; with -b it races the async boot
+          # above and fails with "Unable to boot device in current state: Booted".
+          xcrun simctl bootstatus "$SIMULATOR_ID"
+          xcrun simctl status_bar "$SIMULATOR_ID" override --time '9:41' --dataNetwork wifi --wifiMode active --wifiBars 3 --batteryState charged --batteryLevel 100
+          xcrun simctl ui "$SIMULATOR_ID" appearance light
       - name: Run the target test 10 times
         run: |
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
