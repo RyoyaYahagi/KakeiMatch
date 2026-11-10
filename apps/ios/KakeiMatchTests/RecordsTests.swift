@@ -90,6 +90,29 @@ struct RecordsPresentationTests {
         #expect(model.error != nil && model.searchRows.isEmpty)
     }
 
+    @Test func openReturnsBusyInsteadOfIgnoringTheTap() async throws {
+        let repo = try KMFixtureLoader.load(named: "reconciliation")
+        let model = KMRecordsModel(); await model.configure(repo)
+        let row = try #require(model.days.first?.records.first)
+        model.busy = true
+        let result = await model.open(row)
+        #expect(result == .busy)
+        #expect(model.page == .list && model.selected == nil)
+        #expect(model.message != nil)
+    }
+
+    @Test func openRestoresTheSearchScreenWhenTheRecordDisappears() async throws {
+        let repo = try KMFixtureLoader.load(named: "reconciliation")
+        let model = KMRecordsModel(); await model.configure(repo)
+        await model.showSearch()
+        #expect(model.page == .search)
+        let missing = KMTransaction(id: "missing-record", date: KMDate(rawValue: "2026-10-01"),
+            amountYen: -100, kind: .expense, accountId: "fixture-account-1")
+        let result = await model.open(missing)
+        #expect(result == .failed("記録が見つかりません。記録一覧を読み込み直してください。"))
+        #expect(model.page == .search && model.error != nil && model.selected == nil)
+    }
+
     @Test func multiFieldSaveDeleteAndUndoUseRepositories() async throws {
         let repo = try KMFixtureLoader.load(named: "migration")
         let model = KMRecordsModel(); await model.configure(repo)
