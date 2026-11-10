@@ -5,6 +5,9 @@
  * checks safety invariants over many cases: no false automatic match, no double
  * match, no refund match, deterministic output, and rule-contract stability.
  *
+ * It also runs the Issue #380 gate: the 900 base cases and 800 robustness cases
+ * from the PR #381 harness, with expectations measured on rule 1.2.0.
+ *
  * Run with:
  *   node --conditions=react-server --import tsx eval/run-reconciliation-property.ts
  */
@@ -19,6 +22,15 @@ import {
   type ReconciliationReceipt,
   type ReconciliationStatement,
 } from "../src/lib/reconciliation-engine";
+import {
+  GATE_FAMILIES,
+  GATE_ROBUSTNESS_VARIANTS,
+  GATE_SEEDS,
+  generateGateDataset,
+  type GateCase,
+  type GateFamily,
+} from "./reconciliation-gate-dataset";
+import { runReconciliationEngine as runFrozenEngine } from "./frozen/reconciliation-engine-1.2.0";
 
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
@@ -51,11 +63,18 @@ type TruthPair = {
 type GeneratedCase = {
   id: string;
   seed: number;
-  family: Family;
+  family: Family | GateFamily;
   statements: ReconciliationStatement[];
   receipts: ReconciliationReceipt[];
   truthPairs: TruthPair[];
   refundStatementIds: Set<string>;
+  /** Aliases are only used by the gate's alias family. */
+  aliases?: ReadonlySet<string>;
+  /**
+   * Gate cases fix the separable/ambiguous class at generation time, matching
+   * the PR #381 harness. Property cases recompute it from the generated records.
+   */
+  fixedTruthClass?: boolean;
 };
 
 type Options = {
@@ -68,7 +87,7 @@ type Options = {
 type Violation = {
   seed: number;
   caseId: string;
-  family: Family;
+  family: Family | GateFamily;
   kind: string;
   detail: string;
 };
@@ -76,7 +95,7 @@ type Violation = {
 type IndistinguishableMatch = {
   seed: number;
   caseId: string;
-  family: Family;
+  family: Family | GateFamily;
   statementId: string;
   matchedReceiptId: string;
   truthReceiptId: string;
@@ -127,12 +146,23 @@ type FinalMetrics = CaseMetrics & {
   unrecoverableAbstentionRate: number | null;
 };
 
+type LegacyMetrics = {
+  oldAutoMatchCount: number;
+  oldCorrectAutoMatchCount: number;
+  oldInvalidAutoMatchCount: number;
+  /** Old correct pairs that the current engine no longer confirms. */
+  lostLegacyAutoMatchCount: number;
+  /** Invalid pairs that are new relative to the frozen 1.2.0 baseline. */
+  newInvalidAutoMatchCount: number;
+};
+
 type CaseOutcome = {
   generated: GeneratedCase;
   metrics: CaseMetrics;
   violations: Violation[];
   indistinguishable: IndistinguishableMatch[];
   ruleVersions: string[];
+  legacy: LegacyMetrics | null;
 };
 
 // ---------- seeded RNG (mulberry32) ----------
@@ -705,6 +735,18 @@ function candidatesFor(result: ReconciliationEngineResult, statementId: string):
   return result.candidates.filter((candidate) => candidate.statementTransactionId === statementId);
 }
 
+function pairKey(statementId: string, receiptId: string): string {
+  return `${statementId}\u0000${receiptId}`;
+}
+
+function autoPairKeys(result: { statementResults: Array<{ statementTransactionId: string; status: string; matchedReceiptId: string | null }> }): Set<string> {
+  const pairs = new Set<string>();
+  for (const row of result.statementResults) {
+    if (row.status === "matched" && row.matchedReceiptId) pairs.add(pairKey(row.statementTransactionId, row.matchedReceiptId));
+  }
+  return pairs;
+}
+
 function runCase(generated: GeneratedCase): CaseOutcome {
   const metrics = emptyCaseMetrics();
   const violations: Violation[] = [];
@@ -714,6 +756,7 @@ function runCase(generated: GeneratedCase): CaseOutcome {
   };
 
   const { statements, receipts, truthPairs, refundStatementIds } = generated;
+  const aliases = generated.aliases;
   metrics.caseCount = 1;
   metrics.statementCount = statements.length;
   metrics.receiptCount = receipts.length;
@@ -723,6 +766,10 @@ function runCase(generated: GeneratedCase): CaseOutcome {
   const truthByStatement = new Map(truthPairs.map((truth) => [truth.statementId, truth]));
 
   for (const truth of truthPairs) {
+    if (generated.fixedTruthClass) {
+      truth.observedClass = truth.intent;
+      continue;
+    }
     const statement = statementById.get(truth.statementId)!;
     const receipt = receiptById.get(truth.receiptId)!;
     truth.observedClass = classifyTruthPair(statement, receipt, receipts);
@@ -732,10 +779,11 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     }
   }
 
-  const result = runReconciliationEngine({ statements, receipts });
+  const result = runReconciliationEngine({ statements, receipts, aliases });
   const shuffled = runReconciliationEngine({
     statements: shuffle(makeRng((generated.seed ^ 0x5bd1e995) >>> 0), statements),
     receipts: shuffle(makeRng((generated.seed ^ 0x27d4eb2f) >>> 0), receipts),
+    aliases,
   });
   const ruleVersions = [result.ruleVersion, shuffled.ruleVersion];
   for (const [label, version] of [["base", result.ruleVersion], ["shuffled", shuffled.ruleVersion]] as const) {
@@ -747,6 +795,26 @@ function runCase(generated: GeneratedCase): CaseOutcome {
   if (canonicalResult(result) !== canonicalResult(shuffled)) {
     metrics.nondeterminismCount += 1;
     addViolation("nondeterministic_result", "shuffled input changed the full result");
+  }
+
+  let legacy: LegacyMetrics | null = null;
+  if (generated.fixedTruthClass) {
+    const oldResult = runFrozenEngine({ statements, receipts, aliases });
+    const newPairs = autoPairKeys(result);
+    const oldPairs = autoPairKeys(oldResult);
+    const acceptable = new Set(
+      truthPairs.filter((truth) => truth.observedClass === "separable").map((truth) => pairKey(truth.statementId, truth.receiptId)),
+    );
+    const oldCorrect = [...oldPairs].filter((key) => acceptable.has(key));
+    const oldInvalid = [...oldPairs].filter((key) => !acceptable.has(key));
+    const newInvalid = [...newPairs].filter((key) => !acceptable.has(key));
+    legacy = {
+      oldAutoMatchCount: oldPairs.size,
+      oldCorrectAutoMatchCount: oldCorrect.length,
+      oldInvalidAutoMatchCount: oldInvalid.length,
+      lostLegacyAutoMatchCount: oldCorrect.filter((key) => !newPairs.has(key)).length,
+      newInvalidAutoMatchCount: newInvalid.filter((key) => !oldPairs.has(key)).length,
+    };
   }
 
   const statementResultIds = result.statementResults.map((row) => row.statementTransactionId);
@@ -864,13 +932,6 @@ function runCase(generated: GeneratedCase): CaseOutcome {
       addViolation("match_without_truth", `${row.statementTransactionId} -> ${matchedReceipt.receiptId}`);
       continue;
     }
-    const truthReceipt = receiptById.get(truth.receiptId);
-    if (!truthReceipt) {
-      metrics.unexplainedAutoMatchCount += 1;
-      addViolation("truth_receipt_missing", truth.receiptId);
-      continue;
-    }
-
     if (truth.observedClass === "separable") {
       if (matchedReceipt.receiptId === truth.receiptId) {
         metrics.correctAutoMatchCount += 1;
@@ -884,6 +945,13 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (truth.observedClass === "ambiguous") {
       metrics.ambiguousAutoMatchCount += 1;
       addViolation("ambiguous_auto_match", `${row.statementTransactionId} -> ${matchedReceipt.receiptId}; truth=${truth.receiptId}`);
+      continue;
+    }
+
+    const truthReceipt = receiptById.get(truth.receiptId);
+    if (!truthReceipt) {
+      metrics.unexplainedAutoMatchCount += 1;
+      addViolation("truth_receipt_missing", truth.receiptId);
       continue;
     }
 
@@ -939,10 +1007,19 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     metrics.truthPairCount += 1;
     const statement = statementById.get(truth.statementId)!;
     const candidates = candidatesFor(result, truth.statementId);
+    const hasTruthReceipt = receiptById.has(truth.receiptId);
     if (truth.observedClass === "separable") metrics.separableTruthPairCount += 1;
     else if (truth.observedClass === "ambiguous") metrics.ambiguousTruthPairCount += 1;
     else metrics.unrecoverableTruthPairCount += 1;
 
+    const row = statementResults.get(truth.statementId);
+    if (truth.observedClass === "ambiguous" && row?.status !== "matched") metrics.ambiguousAbstentionCount += 1;
+    if (truth.observedClass === "unrecoverable" && row?.status !== "matched") metrics.unrecoverableAbstentionCount += 1;
+    if (statement.kind === "refund") addViolation("truth_statement_is_refund", truth.statementId);
+
+    // A missing truth receipt has no correct candidate to rank; abstaining is
+    // the only safe outcome and is already checked by I1.
+    if (!hasTruthReceipt) continue;
     if (candidates.length === 0) {
       metrics.truthPairsWithoutCandidates += 1;
       addViolation("expected_review_candidate_missing", `${truth.statementId} (${truth.observedClass})`);
@@ -950,11 +1027,6 @@ function runCase(generated: GeneratedCase): CaseOutcome {
       metrics.candidateChecks += 1;
       if (candidates.some((candidate) => candidate.receiptId === truth.receiptId && candidate.rank <= 3)) metrics.candidateHits += 1;
     }
-
-    const row = statementResults.get(truth.statementId);
-    if (truth.observedClass === "ambiguous" && row?.status !== "matched") metrics.ambiguousAbstentionCount += 1;
-    if (truth.observedClass === "unrecoverable" && row?.status !== "matched") metrics.unrecoverableAbstentionCount += 1;
-    if (statement.kind === "refund") addViolation("truth_statement_is_refund", truth.statementId);
   }
 
   // Status semantics for purchases and receipts.
@@ -996,7 +1068,7 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (String(row.status) === "confirmed") addViolation("confirmed_status_emitted", receipt.receiptId);
   }
 
-  return { generated, metrics, violations, indistinguishable, ruleVersions };
+  return { generated, metrics, violations, indistinguishable, ruleVersions, legacy };
 }
 
 // ---------- CLI, contract, and report ----------
@@ -1010,6 +1082,7 @@ function parseOptions(argv: readonly string[]): Options | null {
     if (argument === "--") continue;
     if (argument === "--help" || argument === "-h") {
       console.error("Usage: pnpm eval:reconciliation-property -- [--cases=1200] [--seed=376] [--family=clean|noise|near-miss|twin|irreducible] [--max-violations=50]");
+      console.error("The 1,700-case Issue #380 gate always runs in addition to the property cases.");
       return null;
     }
     if (argument.startsWith("--cases=")) {
@@ -1057,6 +1130,67 @@ function countViolations(violations: readonly Violation[]): Record<string, numbe
   return counts;
 }
 
+/**
+ * Expected correct automatic confirmations per family, measured with rule
+ * 1.2.0 on the 1,700-case gate. Treated as a floor: a future engine may add
+ * correct confirmations, but losing one fails the gate.
+ */
+const GATE_EXPECTED_CASE_COUNT = 1_700;
+
+const GATE_EXPECTED_CORRECT: Record<GateFamily, number> = {
+  "chain-2": 100,
+  "chain-3": 100,
+  "chain-5": 100,
+  "chain-10": 100,
+  twin: 100,
+  missing: 100,
+  extra: 100,
+  threshold: 100,
+  alias: 100,
+  "chain-mixed-missing": 200,
+  "chain-mixed-extra": 200,
+  "chain-mixed-decoy": 200,
+  "chain-mixed-missing-decoy": 200,
+};
+
+type GateFamilyReport = FinalMetrics & LegacyMetrics & {
+  expectedCorrect: number;
+  expectedCorrectMet: boolean;
+};
+
+function gateCaseToGenerated(gateCase: GateCase): GeneratedCase {
+  return {
+    id: gateCase.id,
+    seed: gateCase.seed,
+    family: gateCase.family,
+    statements: gateCase.statements,
+    receipts: gateCase.receipts,
+    truthPairs: gateCase.truthPairs.map((truth) => ({
+      statementId: truth.statementId,
+      receiptId: truth.receiptId,
+      intent: truth.truthClass,
+      observedClass: truth.truthClass,
+    })),
+    refundStatementIds: new Set<string>(),
+    aliases: new Set(gateCase.aliases),
+    fixedTruthClass: true,
+  };
+}
+
+function emptyLegacy(): LegacyMetrics {
+  return {
+    oldAutoMatchCount: 0,
+    oldCorrectAutoMatchCount: 0,
+    oldInvalidAutoMatchCount: 0,
+    lostLegacyAutoMatchCount: 0,
+    newInvalidAutoMatchCount: 0,
+  };
+}
+
+function addLegacy(target: LegacyMetrics, source: LegacyMetrics): void {
+  for (const key of Object.keys(target) as Array<keyof LegacyMetrics>) target[key] += source[key];
+}
+
 function main(): void {
   const options = parseOptions(process.argv.slice(2));
   if (!options) return;
@@ -1071,9 +1205,10 @@ function main(): void {
     const generated = generateCase(index, options.seed, options.family);
     const outcome = runCase(generated);
     addMetrics(totals, outcome.metrics);
-    const familyTotals = byFamily.get(generated.family) ?? emptyCaseMetrics();
+    const family = generated.family as Family;
+    const familyTotals = byFamily.get(family) ?? emptyCaseMetrics();
     addMetrics(familyTotals, outcome.metrics);
-    byFamily.set(generated.family, familyTotals);
+    byFamily.set(family, familyTotals);
     violations.push(...outcome.violations);
     indistinguishable.push(...outcome.indistinguishable);
     for (const version of outcome.ruleVersions) observedRuleVersions.add(version);
@@ -1086,6 +1221,60 @@ function main(): void {
     const familyMetrics = byFamily.get(family);
     if (familyMetrics) byFamilyReport[family] = finalizeMetrics(familyMetrics);
   }
+
+  const gateCases = generateGateDataset();
+  const robustnessCaseCount = 2 * GATE_SEEDS * GATE_ROBUSTNESS_VARIANTS.length;
+  const gateTotals = emptyCaseMetrics();
+  const gateByFamily = new Map<GateFamily, CaseMetrics>();
+  const gateLegacyTotals = emptyLegacy();
+  const gateLegacyByFamily = new Map<GateFamily, LegacyMetrics>();
+  const gateViolations: Violation[] = [];
+  for (const gateCase of gateCases) {
+    const outcome = runCase(gateCaseToGenerated(gateCase));
+    addMetrics(gateTotals, outcome.metrics);
+    const familyTotals = gateByFamily.get(gateCase.family) ?? emptyCaseMetrics();
+    addMetrics(familyTotals, outcome.metrics);
+    gateByFamily.set(gateCase.family, familyTotals);
+    if (!outcome.legacy) throw new Error(`gate case ${gateCase.id} did not produce legacy metrics`);
+    addLegacy(gateLegacyTotals, outcome.legacy);
+    const legacyTotals = gateLegacyByFamily.get(gateCase.family) ?? emptyLegacy();
+    addLegacy(legacyTotals, outcome.legacy);
+    gateLegacyByFamily.set(gateCase.family, legacyTotals);
+    gateViolations.push(...outcome.violations);
+  }
+
+  const gateFinal = finalizeMetrics(gateTotals);
+  const gateByFamilyReport: Record<string, GateFamilyReport> = {};
+  let gateExpectedTotal = 0;
+  let gateExpectedCorrectMet = true;
+  let gateExpectedComplete = true;
+  for (const family of GATE_FAMILIES) {
+    const familyMetrics = gateByFamily.get(family);
+    if (!familyMetrics) throw new Error(`gate family missing: ${family}`);
+    const legacy = gateLegacyByFamily.get(family);
+    if (!legacy) throw new Error(`gate legacy metrics missing: ${family}`);
+    const expectedCorrect = GATE_EXPECTED_CORRECT[family];
+    if (expectedCorrect === undefined) gateExpectedComplete = false;
+    const expected = expectedCorrect ?? 0;
+    gateExpectedTotal += expected;
+    const expectedCorrectMet = familyMetrics.correctAutoMatchCount >= expected;
+    if (!expectedCorrectMet) gateExpectedCorrectMet = false;
+    gateByFamilyReport[family] = {
+      ...finalizeMetrics(familyMetrics),
+      ...legacy,
+      expectedCorrect: expected,
+      expectedCorrectMet,
+    };
+  }
+  const gateChecks = {
+    caseCountExact: gateCases.length === GATE_EXPECTED_CASE_COUNT,
+    expectedComplete: gateExpectedComplete,
+    expectedCorrectMet: gateExpectedCorrectMet && gateFinal.correctAutoMatchCount >= gateExpectedTotal,
+    invalidZero: gateFinal.invalidAutoMatchCount === 0,
+    newInvalidZero: gateLegacyTotals.newInvalidAutoMatchCount === 0,
+    lostLegacyZero: gateLegacyTotals.lostLegacyAutoMatchCount === 0,
+    invariantViolationsZero: gateViolations.length === 0,
+  };
 
   const report = {
     dataset: "eval/run-reconciliation-property.ts",
@@ -1106,9 +1295,25 @@ function main(): void {
     violations: violations.slice(0, options.maxViolations),
     indistinguishableCount: indistinguishable.length,
     indistinguishable: indistinguishable.slice(0, options.maxViolations),
+    gate: {
+      dataset: "eval/reconciliation-gate-dataset.ts",
+      caseCount: gateCases.length,
+      baseCaseCount: gateCases.length - robustnessCaseCount,
+      robustnessCaseCount,
+      seedsPerFamily: GATE_SEEDS,
+      expectedCorrectTotal: gateExpectedTotal,
+      expectedByFamily: GATE_EXPECTED_CORRECT,
+      metrics: gateFinal,
+      legacy: gateLegacyTotals,
+      byFamily: gateByFamilyReport,
+      checks: gateChecks,
+      violationCount: gateViolations.length,
+      violationCounts: countViolations(gateViolations),
+      violations: gateViolations.slice(0, options.maxViolations),
+    },
   };
   console.log(JSON.stringify(report, null, 2));
-  if (violations.length > 0) process.exitCode = 1;
+  if (violations.length > 0 || Object.values(gateChecks).some((passed) => !passed)) process.exitCode = 1;
 }
 
 try {
