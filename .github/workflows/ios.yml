@@ -94,6 +94,7 @@ jobs:
         run: tar -czf test-products.tar.gz -C DerivedData/Build Products
       - uses: actions/upload-artifact@v4
         with:
+          # UI jobs download this across attempts, so the name must stay stable.
           name: ios-test-products
           path: |
             apps/ios/test-products.tar.gz
@@ -104,7 +105,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-build-results
+          # A retry gets a new attempt number, keeping the failed attempt's evidence.
+          name: ios-build-results-attempt-${{ github.run_attempt }}
           path: apps/ios/Build.xcresult
           if-no-files-found: warn
           retention-days: 14
@@ -156,7 +158,7 @@ jobs:
         if: always() && matrix.shard == 0
         uses: actions/upload-artifact@v4
         with:
-          name: parity-report
+          name: parity-report-attempt-${{ github.run_attempt }}
           path: apps/ios/parity-report.json
           if-no-files-found: warn
           retention-days: 14
@@ -164,7 +166,7 @@ jobs:
         if: always() && matrix.shard == 0
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-results
+          name: ios-test-results-attempt-${{ github.run_attempt }}
           path: apps/ios/UnitTests.xcresult
           if-no-files-found: warn
           retention-days: 14
@@ -192,7 +194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-test-results-shard-${{ matrix.shard }}
+          name: ios-test-results-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: |
             apps/ios/UITests.xcresult
             apps/ios/shard-tests.txt
@@ -202,7 +204,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ios-reference-screenshots-shard-${{ matrix.shard }}
+          name: ios-reference-screenshots-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
           path: |
             apps/ios/screenshots/*.png
             apps/ios/screenshots/manifest.json
@@ -250,7 +252,7 @@ jobs:
       - if: github.event_name != 'pull_request'
         uses: actions/download-artifact@v4
         with:
-          pattern: ios-reference-screenshots-shard-*
+          pattern: ios-reference-screenshots-shard-*-attempt-${{ github.run_attempt }}
           path: screenshot-shards
       - name: Combine screenshots for existing download commands
         if: github.event_name != 'pull_request'
@@ -282,14 +284,14 @@ jobs:
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: ios-visual-regression
+          name: ios-visual-regression-attempt-${{ github.run_attempt }}
           path: visual-regression
           if-no-files-found: error
           retention-days: 14
       - if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
-          name: ios-reference-screenshots
+          name: ios-reference-screenshots-attempt-${{ github.run_attempt }}
           path: screenshots
           if-no-files-found: error
           retention-days: 14
