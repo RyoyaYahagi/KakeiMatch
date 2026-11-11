@@ -312,7 +312,18 @@ final class UXExplorationTests: XCTestCase {
 
         log.add("STEP U3-4 一覧へ戻る")
         if forceTap(app.buttons["records.detailBack"], log: log, "records.detailBack") {
-            XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 10))
+            if app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5) {
+                log.add("records.detailBack.navigation=ok")
+            } else {
+                // The text-style back button can report a 20pt frame below its label.
+                // If the coordinate tap did not navigate, switch tabs to recreate the
+                // records list and keep the after-save screenshot observable.
+                log.add("records.detailBack.navigation=failed fallback=tabSwitch")
+                app.buttons["home-tab"].tap()
+                app.buttons["receipt-tab"].tap()
+                XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 10))
+                log.add("fallback.tabSwitch=ok")
+            }
             log.add("records.row.008.label=\(app.buttons["records.row.fixture-transaction-008"].label)")
             capture(app, "ux-u3-records-after-save-light", log)
         }
