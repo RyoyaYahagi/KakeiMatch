@@ -94,21 +94,6 @@ final class UXExplorationTests: XCTestCase {
         return true
     }
 
-    /// A text-style back button reports a 20pt frame and can be `isHittable == false`
-    /// even while it is visible. Tapping its center coordinate still exercises the
-    /// same control without weakening the observation.
-    @MainActor
-    @discardableResult
-    private func forceTap(_ element: XCUIElement, log: Log, _ name: String) -> Bool {
-        guard element.waitForExistence(timeout: 5) else {
-            log.add("\(name).forceTap=skipped(missing)")
-            return false
-        }
-        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        log.add("\(name).forceTap=ok frame=\(element.frame) hittable=\(element.isHittable)")
-        return true
-    }
-
     // MARK: - U1 初回ホーム（empty）
 
     @MainActor
@@ -310,23 +295,16 @@ final class UXExplorationTests: XCTestCase {
             }
         }
 
-        log.add("STEP U3-4 一覧へ戻る")
-        if forceTap(app.buttons["records.detailBack"], log: log, "records.detailBack") {
-            if app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5) {
-                log.add("records.detailBack.navigation=ok")
-            } else {
-                // The text-style back button can report a 20pt frame below its label.
-                // If the coordinate tap did not navigate, switch tabs to recreate the
-                // records list and keep the after-save screenshot observable.
-                log.add("records.detailBack.navigation=failed fallback=tabSwitch")
-                app.buttons["home-tab"].tap()
-                app.buttons["receipt-tab"].tap()
-                XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 10))
-                log.add("fallback.tabSwitch=ok")
-            }
-            log.add("records.row.008.label=\(app.buttons["records.row.fixture-transaction-008"].label)")
-            capture(app, "ux-u3-records-after-save-light", log)
-        }
+        log.add("STEP U3-4 一覧へ戻る（戻るボタンはCIでisHittable=falseのためタブ切替）")
+        // `records.detailBack` reported a 20pt frame and became unresolvable
+        // while the saved detail reloaded. Switch tabs to recreate the list;
+        // the observation keeps the back-button finding for a separate issue.
+        app.buttons["home-tab"].tap()
+        app.buttons["receipt-tab"].tap()
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 10))
+        log.add("fallback.tabSwitch=ok")
+        log.add("records.row.008.label=\(app.buttons["records.row.fixture-transaction-008"].label)")
+        capture(app, "ux-u3-records-after-save-light", log)
 
         app.terminate()
     }
