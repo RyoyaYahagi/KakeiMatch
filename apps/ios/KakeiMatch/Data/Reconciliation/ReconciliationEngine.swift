@@ -10,10 +10,11 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    // 1.2.1 keeps every 1.2.0 automatic-match rule and candidate-set rule
-    // unchanged. The only addition is review-candidate ordering (Issue #380
-    // PR A), which runs after automatic matching and never feeds back into it.
-    static let ruleVersion = "1.2.1"
+    // 1.2.2 keeps every 1.2.1 automatic-match rule and candidate-set rule
+    // unchanged. The only change is a review-ranking guard (Issue #389): the
+    // assignment partner leads only when its review score is nearly tied with
+    // the score leader. Automatic matching and its margin are untouched.
+    static let ruleVersion = "1.2.2"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -163,8 +164,14 @@ enum KMReconciliationEngine {
                 if $0.score != $1.score { return $0.score > $1.score }
                 return compare($0, $1)
             }.prefix(3))
+            // Promote the partner only when it is nearly tied with the score
+            // leader; otherwise the predictable score order wins. This 0.15
+            // "nearly tied" width deliberately shares marginThreshold's value,
+            // but the judgment is a review-score gap, not the automatic-match
+            // margin. The gap uses the same binary64 arithmetic as TS.
             if matched == nil, let assigned,
-               let assignedIndex = choices.firstIndex(where: { $0.receiptId == assigned }), assignedIndex > 0 {
+               let assignedIndex = choices.firstIndex(where: { $0.receiptId == assigned }), assignedIndex > 0,
+               reviewScoreGap(choices[0], choices[assignedIndex]) <= marginThreshold {
                 choices.insert(choices.remove(at: assignedIndex), at: 0)
             }
             for (index, candidate) in choices.enumerated() {
@@ -196,6 +203,14 @@ enum KMReconciliationEngine {
         var rounded = Decimal()
         NSDecimalRound(&rounded, &scaled, 0, .plain)
         return NSDecimalNumber(decimal: rounded).intValue
+    }
+
+    /// Review-score gap in the same binary64 arithmetic as TS, so the ranking
+    /// guard's "nearly tied" boundary matches the JS engine exactly.
+    private static func reviewScoreGap(_ top: Candidate, _ other: Candidate) -> KMJSNumber {
+        let topScore = KMJSNumber(reviewWeight(top.score)) / KMJSNumber(1_000_000)
+        let otherScore = KMJSNumber(reviewWeight(other.score)) / KMJSNumber(1_000_000)
+        return topScore - otherScore
     }
 
     /// UTF-8 byte order, shared with the TypeScript assignment tie-break.

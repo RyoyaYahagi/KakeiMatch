@@ -97,10 +97,60 @@ function allConflictCase() {
   return { id: family, statements, receipts, preferred: Object.fromEntries(statements.map((row) => [row.id, []])) };
 }
 
+/**
+ * Issue #389 ranking guard. The assignment pairs s1 with the lower-scored r2,
+ * so the guard decides whether r2 becomes the first row: an 82 yen amount gap
+ * is just over 0.15, an 81 yen gap is just under it. Both receipts are three
+ * days away, so automatic matching cannot absorb the case.
+ */
+function rankingGuardCases() {
+  const family = "ranking-guard";
+  const date = "2026-09-10";
+  const make = (label, delta) => ({
+    id: `${family}-${label}`,
+    statements: [
+      statement(`s-${family}-${label}-1`, "架空商店アルファ", 10000, date),
+      statement(`s-${family}-${label}-2`, "架空商店アルファ", 10000, date),
+    ],
+    receipts: [
+      receipt(`r-${family}-${label}-1`, "架空商店アルファ", 10000, shiftDate(date, -3), "acct-1"),
+      receipt(`r-${family}-${label}-2`, "架空商店アルファ", 10000 - delta, shiftDate(date, -3), "acct-2"),
+    ],
+    preferred: { [`s-${family}-${label}-1`]: [], [`s-${family}-${label}-2`]: ["acct-1"] },
+  });
+  return [make("blocked", 82), make("promoted", 81)];
+}
+
+/**
+ * Issue #389 exact-threshold evidence. At 4400 yen the tolerance is 132 yen.
+ * r1 is 108 yen off, so its amount score is 2/11 and its review score is
+ * 0.55 * 2/11 + 0.15 (date) + 0.05 (merchant) = 0.3. r2 is exactly at the
+ * tolerance (amount score 0), has zero merchant similarity, and shares the
+ * date, so its review score is exactly 0.15. The binary64 gap is exactly
+ * 0.15, which must promote. Moving r2 one day away gives 0.13125 and a
+ * 0.16875 gap, which must not promote.
+ */
+function rankingGuardBoundaryCases() {
+  const family = "ranking-guard-boundary";
+  const make = (label, partnerDate) => ({
+    id: `${family}-${label}`,
+    statements: [
+      statement(`s-${family}-${label}-1`, "架空商店アルファ", 4400, "2026-09-10"),
+      statement(`s-${family}-${label}-2`, "架空商店アルファ", 4400, "2026-09-10"),
+    ],
+    receipts: [
+      receipt(`r-${family}-${label}-1`, "架空商店アルファ", 4292, "2026-09-10", "acct-1"),
+      receipt(`r-${family}-${label}-2`, "無関係薬局", 4268, partnerDate, "acct-2"),
+    ],
+    preferred: { [`s-${family}-${label}-1`]: [], [`s-${family}-${label}-2`]: ["acct-1"] },
+  });
+  return [make("exact", "2026-09-10"), make("above", "2026-09-09")];
+}
+
 const additionalCases = [
   chainCase(2), chainCase(3), chainCase(5), chainCase(10),
   twinCase(), extraCase(), thresholdCase(), missingCase(),
-  rankingConflictCase(), allConflictCase(),
+  rankingConflictCase(), allConflictCase(), ...rankingGuardCases(), ...rankingGuardBoundaryCases(),
 ];
 
 function toEngineInput(item) {
@@ -152,7 +202,7 @@ for (const item of cases) {
     receiptResults: result.receiptResults,
   };
 }
-if (cases.length !== 283) throw new Error(`Expected 283 parity cases, got ${cases.length}`);
+if (cases.length !== 287) throw new Error(`Expected 287 parity cases, got ${cases.length}`);
 await writeFile(fixturePath, `${JSON.stringify(cases)}\n`);
 console.log(JSON.stringify({ fixturePath, caseCount: cases.length, ruleVersion: cases[0].expected.ruleVersion,
   autoMatches: cases.reduce((sum, item) => sum + item.expected.statementResults.filter((row) => row.status === "matched").length, 0) }));
