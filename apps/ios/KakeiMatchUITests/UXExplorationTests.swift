@@ -199,7 +199,7 @@ final class UXExplorationTests: XCTestCase {
             }
             log.add("entry.status.exists=\(app.staticTexts["entry.status"].exists)")
             capture(app, "ux-u2-save-failure-light", log)
-        } else if categoryCount > 0 {
+        } else {
             tap(app.buttons["manual-transaction-account"], in: app, log: log, "manual-transaction-account")
             if app.buttons["record-sheet.close"].waitForExistence(timeout: 5) {
                 let first = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "entry.account.")).firstMatch
@@ -218,7 +218,9 @@ final class UXExplorationTests: XCTestCase {
             }
             tap(app.buttons["entry.saveButton"], in: app, log: log, "entry.saveButton")
             let status = app.staticTexts["entry.status"]
-            if status.waitForExistence(timeout: 10) {
+            let statusAppeared = status.waitForExistence(timeout: 10)
+            XCTAssertTrue(statusAppeared, "支払元がある場合、保存結果のステータスが表示される")
+            if statusAppeared {
                 log.add("entry.status=\(status.label)")
                 XCTAssertEqual(status.label, "登録しました。")
                 capture(app, "ux-u2-saved-light", log)
