@@ -61,7 +61,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.1")
+        #expect(result.ruleVersion == "1.2.2")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -131,6 +131,36 @@ struct ReconciliationEngineTests {
         #expect(manual.candidates.count == 1)
         let unscoped = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", account: "other-account")])
         #expect(unscoped.statementResults[0].status == .matched)
+    }
+
+    @Test func rankingGuardPromotesAtExactlyPointOneFiveBoundary() {
+        // Same inputs as the TS boundary test: 4400 yen gives a 132 yen
+        // tolerance. r1 scores exactly 0.3, r2 scores exactly 0.15, so the
+        // binary64 gap is exactly 0.15 and the assignment partner must lead.
+        let statements = [
+            statement("s1", merchant: "架空商店アルファ", amount: 4400),
+            statement("s2", merchant: "架空商店アルファ", amount: 4400),
+        ]
+        let preferred: [String: Set<String>] = ["s2": ["acct-1"]]
+        let exact = KMReconciliationEngine.run(statements: statements, receipts: [
+            receipt("r1", merchant: "架空商店アルファ", amount: 4292, account: "acct-1"),
+            receipt("r2", merchant: "無関係薬局", amount: 4268, account: "acct-2"),
+        ], preferredAccountIds: preferred)
+        let exactCandidates = exact.candidates.filter { $0.statementTransactionId == "s1" }
+        #expect(exactCandidates.map(\.receiptId) == ["r2", "r1"])
+        #expect(exactCandidates.first(where: { $0.receiptId == "r1" })?.score == Decimal(string: "0.3")!)
+        #expect(exactCandidates.first(where: { $0.receiptId == "r2" })?.score == Decimal(string: "0.15")!)
+        #expect(exact.statementResults.allSatisfy { $0.status == .needsReview })
+
+        // One day farther gives r2 a 0.13125 score and a 0.16875 gap.
+        let above = KMReconciliationEngine.run(statements: statements, receipts: [
+            receipt("r1", merchant: "架空商店アルファ", amount: 4292, account: "acct-1"),
+            receipt("r2", merchant: "無関係薬局", amount: 4268, date: "2026-09-09", account: "acct-2"),
+        ], preferredAccountIds: preferred)
+        let aboveCandidates = above.candidates.filter { $0.statementTransactionId == "s1" }
+        #expect(aboveCandidates.map(\.receiptId) == ["r1", "r2"])
+        #expect(aboveCandidates.first(where: { $0.receiptId == "r2" })?.score == Decimal(string: "0.13125")!)
+        #expect(above.statementResults.allSatisfy { $0.status == .needsReview })
     }
 
     @Test func autoMatchMarginUsesRoundedJavaScriptBinary64() {

@@ -3,11 +3,12 @@
 import { lexicographicMaximumAssignment } from "./assignment";
 
 /**
- * 1.2.1 keeps every 1.2.0 automatic-match rule and candidate-set rule
- * unchanged. The only addition is review-candidate ordering (Issue #380 PR A),
- * which runs after automatic matching and never feeds back into it.
+ * 1.2.2 keeps every 1.2.1 automatic-match rule and candidate-set rule
+ * unchanged. The only change is a review-ranking guard (Issue #389): the
+ * assignment partner leads only when its review score is nearly tied with the
+ * score leader. Automatic matching and its margin are untouched.
  */
-export const RECONCILIATION_RULE_VERSION = "1.2.1";
+export const RECONCILIATION_RULE_VERSION = "1.2.2";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -433,7 +434,14 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
     // the old output set, leave the order untouched.
     if (!matchedReceiptId && assignedReceiptId) {
       const assignedIndex = outputCandidates.findIndex((candidate) => candidate.receiptId === assignedReceiptId);
-      if (assignedIndex > 0) outputCandidates.unshift(...outputCandidates.splice(assignedIndex, 1));
+      // Promote the partner only when it is nearly tied with the score leader;
+      // otherwise the predictable score order wins. This 0.15 "nearly tied"
+      // width deliberately shares autoMatchMargin's value, but the judgment is
+      // a review-score gap, not the automatic-match margin.
+      if (assignedIndex > 0
+        && outputCandidates[0].score - outputCandidates[assignedIndex].score <= RECONCILIATION_RULES.autoMatchMargin) {
+        outputCandidates.unshift(...outputCandidates.splice(assignedIndex, 1));
+      }
     }
     outputCandidates.forEach((candidate, index) => {
       candidates.push({

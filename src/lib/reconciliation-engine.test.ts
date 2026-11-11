@@ -337,6 +337,102 @@ describe("runReconciliationEngine", () => {
     });
   });
 
+  it("promotes the assignment partner only when its review score is nearly tied", () => {
+    const guardCase = (amountDeltaYen: number) => {
+      const statements = [
+        statement("s1", { merchant: "架空商店アルファ", amountYen: 10000 }),
+        statement("s2", { merchant: "架空商店アルファ", amountYen: 10000, preferredAccountIds: ["acct-1"] }),
+      ];
+      const receipts = [
+        receipt("r1", { merchant: "架空商店アルファ", amountYen: 10000, purchasedDate: "2026-09-07", actualAccountId: "acct-1" }),
+        receipt("r2", { merchant: "架空商店アルファ", amountYen: 10000 - amountDeltaYen, purchasedDate: "2026-09-07", actualAccountId: "acct-2" }),
+      ];
+      const input = { statements, receipts };
+      const result = runReconciliationEngine(input);
+      const candidates = result.candidates.filter((candidate) => candidate.statementTransactionId === "s1");
+      return {
+        input,
+        candidates,
+        partner: candidates.find((candidate) => candidate.receiptId === "r2")!,
+        leader: candidates.find((candidate) => candidate.receiptId === "r1")!,
+        result,
+      };
+    };
+
+    // 82 yen at a 300 yen tolerance is just over the 0.15 review-score gap.
+    const blocked = guardCase(82);
+    expect(blocked.leader.score - blocked.partner.score).toBeGreaterThan(0.15);
+    expect(blocked.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
+    expect(blocked.candidates.map((candidate) => candidate.rank)).toEqual([1, 2]);
+    expect(blocked.result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review"]);
+    expect(inspectReconciliationRanking(blocked.input).assignments).toEqual([
+      { statementTransactionId: "s1", receiptId: "r2" },
+      { statementTransactionId: "s2", receiptId: "r1" },
+    ]);
+
+    // 81 yen is just under the boundary, so the assignment partner leads.
+    const promoted = guardCase(81);
+    expect(promoted.leader.score - promoted.partner.score).toBeLessThanOrEqual(0.15);
+    expect(promoted.candidates.map((candidate) => candidate.receiptId)).toEqual(["r2", "r1"]);
+    expect(promoted.candidates.map((candidate) => candidate.rank)).toEqual([1, 2]);
+    expect(promoted.result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review"]);
+    expect(inspectReconciliationRanking(promoted.input).assignments).toEqual([
+      { statementTransactionId: "s1", receiptId: "r2" },
+      { statementTransactionId: "s2", receiptId: "r1" },
+    ]);
+  });
+
+  it("promotes at exactly the 0.15 review-score boundary and blocks just above it", () => {
+    // 4400 yen gives a 132 yen tolerance. r1 is 108 yen off, so its amount
+    // score is 2/11 and 0.55 * 2/11 + 0.15 (date) + 0.05 (merchant) = 0.3.
+    // r2 is exactly at the tolerance (amount score 0), has zero merchant
+    // similarity, and has the same date, so its review score is exactly 0.15.
+    // 0.3 - 0.15 is exactly the binary64 value of 0.15 in JS.
+    const boundaryCase = (partnerDate: string) => {
+      const statements = [
+        statement("s1", { merchant: "架空商店アルファ", amountYen: 4400 }),
+        statement("s2", { merchant: "架空商店アルファ", amountYen: 4400, preferredAccountIds: ["acct-1"] }),
+      ];
+      const receipts = [
+        receipt("r1", { merchant: "架空商店アルファ", amountYen: 4292, purchasedDate: "2026-09-10", actualAccountId: "acct-1" }),
+        receipt("r2", { merchant: "無関係薬局", amountYen: 4268, purchasedDate: partnerDate, actualAccountId: "acct-2" }),
+      ];
+      const input = { statements, receipts };
+      const result = runReconciliationEngine(input);
+      const candidates = result.candidates.filter((candidate) => candidate.statementTransactionId === "s1");
+      return {
+        input,
+        candidates,
+        leader: candidates.find((candidate) => candidate.receiptId === "r1")!,
+        partner: candidates.find((candidate) => candidate.receiptId === "r2")!,
+        result,
+      };
+    };
+
+    const exact = boundaryCase("2026-09-10");
+    expect(exact.leader.score).toBe(0.3);
+    expect(exact.partner.score).toBe(0.15);
+    expect(exact.leader.score - exact.partner.score).toBe(0.15);
+    expect(exact.candidates.map((candidate) => candidate.receiptId)).toEqual(["r2", "r1"]);
+    expect(exact.candidates.map((candidate) => candidate.rank)).toEqual([1, 2]);
+    expect(exact.result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review"]);
+    expect(inspectReconciliationRanking(exact.input).assignments).toEqual([
+      { statementTransactionId: "s1", receiptId: "r2" },
+      { statementTransactionId: "s2", receiptId: "r1" },
+    ]);
+
+    // One day farther makes the partner 0.13125, a 0.16875 gap.
+    const above = boundaryCase("2026-09-09");
+    expect(above.leader.score - above.partner.score).toBeGreaterThan(0.15);
+    expect(above.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1", "r2"]);
+    expect(above.candidates.map((candidate) => candidate.rank)).toEqual([1, 2]);
+    expect(above.result.statementResults.map((row) => row.status)).toEqual(["needs_review", "needs_review"]);
+    expect(inspectReconciliationRanking(above.input).assignments).toEqual([
+      { statementTransactionId: "s1", receiptId: "r2" },
+      { statementTransactionId: "s2", receiptId: "r1" },
+    ]);
+  });
+
   it("keeps the old candidate set when every candidate conflicts (4x4 reproduction)", () => {
     const statements = ["s0", "s1", "s2", "s3"].map((id) => statement(id, {
       merchant: "同額商店", amountYen: 1000, usedDate: "2026-01-01",
