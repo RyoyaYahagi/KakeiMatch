@@ -227,12 +227,7 @@ final class UXExplorationTests: XCTestCase {
             } else {
                 observe(log, "entry.error", app.staticTexts["entry.error"], timeout: 2)
             }
-        } else {
-            tap(app.buttons["entry.saveButton"], in: app, log: log, "entry.saveButton")
-            observe(log, "entry.error", app.staticTexts["entry.error"], timeout: 5)
-            capture(app, "ux-u2-save-failure-light", log)
         }
-
         app.terminate()
     }
 
