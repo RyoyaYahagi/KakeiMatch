@@ -1,3 +1,4 @@
+import CoreGraphics
 import XCTest
 
 /// Issue #391: exploratory UI measurements for the iOS first-run journey.
@@ -90,6 +91,21 @@ final class UXExplorationTests: XCTestCase {
         }
         element.tap()
         log.add("\(name).tap=ok")
+        return true
+    }
+
+    /// A text-style back button reports a 20pt frame and can be `isHittable == false`
+    /// even while it is visible. Tapping its center coordinate still exercises the
+    /// same control without weakening the observation.
+    @MainActor
+    @discardableResult
+    private func forceTap(_ element: XCUIElement, log: Log, _ name: String) -> Bool {
+        guard element.waitForExistence(timeout: 5) else {
+            log.add("\(name).forceTap=skipped(missing)")
+            return false
+        }
+        element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        log.add("\(name).forceTap=ok frame=\(element.frame) hittable=\(element.isHittable)")
         return true
     }
 
@@ -249,7 +265,7 @@ final class UXExplorationTests: XCTestCase {
 
         log.add("STEP U3-1 記録一覧から詳細を開く")
         if tap(app.buttons["records.row.fixture-transaction-008"], in: app, log: log, "records.row.fixture-transaction-008") {
-            XCTAssertTrue(app.descendants(matching: .any)["records.detailScreen"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.buttons["records.detail.category"].waitForExistence(timeout: 10))
             observe(log, "records.detail.category", app.buttons["records.detail.category"])
             log.add("records.detail.category.label=\(app.buttons["records.detail.category"].label)")
             capture(app, "ux-u3-record-detail-light", log)
@@ -295,8 +311,7 @@ final class UXExplorationTests: XCTestCase {
         }
 
         log.add("STEP U3-4 一覧へ戻る")
-        for _ in 0..<4 { app.swipeDown() }
-        if tap(app.buttons["records.detailBack"], in: app, log: log, "records.detailBack", swipes: 0) {
+        if forceTap(app.buttons["records.detailBack"], log: log, "records.detailBack") {
             XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 10))
             log.add("records.row.008.label=\(app.buttons["records.row.fixture-transaction-008"].label)")
             capture(app, "ux-u3-records-after-save-light", log)
