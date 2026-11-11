@@ -147,10 +147,31 @@ function rankingGuardBoundaryCases() {
   return [make("exact", "2026-09-10"), make("above", "2026-09-09")];
 }
 
+function paymentSourceWaiverCases() {
+  const date = "2026-09-10";
+  const make = (id, statements, receipts) => ({
+    id: `payment-source-waiver-${id}`,
+    statements,
+    receipts,
+    preferred: Object.fromEntries(statements.map((row) => [row.id, row.id.endsWith("-target") ? ["acct-target"] : []])),
+  });
+  return [
+    make("unique", [statement("s-waiver-unique-target", "明細不明", 1701, date)],
+      [receipt("r-waiver-unique", "内容なし", 1701, date, "acct-target")]),
+    make("receipt-conflict", [statement("s-waiver-receipt-target", "明細不明", 1702, date)],
+      [receipt("r-waiver-receipt-target", "内容なし", 1702, date, "acct-target"), receipt("r-waiver-receipt-other", "別の店", 1702, "2026-09-17", "acct-other")]),
+    make("statement-conflict", [statement("s-waiver-statement-target", "明細不明", 1703, date), statement("s-waiver-statement-other", "別の明細", 1703, "2026-09-17")],
+      [receipt("r-waiver-statement", "内容なし", 1703, date, "acct-target")]),
+    make("outside-window", [statement("s-waiver-outside-target", "明細不明", 1704, date)],
+      [receipt("r-waiver-outside", "内容なし", 1704, date, "acct-target"), receipt("r-waiver-outside-other", "別の店", 1704, "2026-09-18", "acct-other")]),
+  ];
+}
+
 const additionalCases = [
   chainCase(2), chainCase(3), chainCase(5), chainCase(10),
   twinCase(), extraCase(), thresholdCase(), missingCase(),
   rankingConflictCase(), allConflictCase(), ...rankingGuardCases(), ...rankingGuardBoundaryCases(),
+  ...paymentSourceWaiverCases(),
 ];
 
 function toEngineInput(item) {
@@ -202,7 +223,7 @@ for (const item of cases) {
     receiptResults: result.receiptResults,
   };
 }
-if (cases.length !== 287) throw new Error(`Expected 287 parity cases, got ${cases.length}`);
+if (cases.length !== 291) throw new Error(`Expected 291 parity cases, got ${cases.length}`);
 await writeFile(fixturePath, `${JSON.stringify(cases)}\n`);
 console.log(JSON.stringify({ fixturePath, caseCount: cases.length, ruleVersion: cases[0].expected.ruleVersion,
   autoMatches: cases.reduce((sum, item) => sum + item.expected.statementResults.filter((row) => row.status === "matched").length, 0) }));

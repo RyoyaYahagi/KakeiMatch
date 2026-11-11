@@ -10,11 +10,8 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    // 1.2.2 keeps every 1.2.1 automatic-match rule and candidate-set rule
-    // unchanged. The only change is a review-ranking guard (Issue #389): the
-    // assignment partner leads only when its review score is nearly tied with
-    // the score leader. Automatic matching and its margin are untouched.
-    static let ruleVersion = "1.2.2"
+    // 1.2.3 adds the guarded payment-source merchant waiver (Issue #393).
+    static let ruleVersion = "1.2.3"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -88,6 +85,23 @@ enum KMReconciliationEngine {
         excludedStatementIds: Set<String> = [], excludedReceiptIds: Set<String> = [],
         rejectedPairs: Set<String> = [], manualStatementIds: Set<String> = []
     ) -> KMReconciliationResult {
+        // Count exact-amount competitors from the full input before exclusions
+        // and rejected pairs. Only purchase statements participate. The day /
+        // amount indexes limit each count to the existing candidate window.
+        var receiptAmountCounts: [Int: [Int: Int]] = [:]
+        for receipt in receipts {
+            guard let day = dayNumber(receipt.purchasedDate.rawValue), safe(receipt.amountYen) else { continue }
+            receiptAmountCounts[day, default: [:]][receipt.amountYen, default: 0] += 1
+        }
+        var statementAmountCounts: [Int: [Int: Int]] = [:]
+        for statement in statements where statement.kind == .purchase {
+            guard let day = dayNumber(statement.usedDate.rawValue), safe(statement.amountYen) else { continue }
+            statementAmountCounts[day, default: [:]][statement.amountYen, default: 0] += 1
+        }
+        func exactCount(_ index: [Int: [Int: Int]], day: Int, amount: Int) -> Int {
+            (-candidateWindow...candidateWindow).reduce(0) { $0 + (index[day + $1]?[amount] ?? 0) }
+        }
+
         let statements = statements.filter { !excludedStatementIds.contains($0.id) }.sorted { less($0.id, $1.id) }
         let receipts = receipts.filter { !excludedReceiptIds.contains($0.receiptId) }.sorted { less($0.receiptId, $1.receiptId) }
         var receiptDays: [Int: [KMReconciliationReceipt]] = [:]
@@ -107,10 +121,14 @@ enum KMReconciliationEngine {
                     let delta = abs(statement.amountYen - receipt.amountYen)
                     let tolerance = max(KMJSNumber(amountTolerance), KMJSNumber(statement.amountYen) * amountRatio)
                     guard KMJSNumber(delta) <= tolerance else { continue }
-                    let autoSimilarity = similarityNumber(statement.merchant, receipt.merchant)
+                    let merchantAutoSimilarity = similarityNumber(statement.merchant, receipt.merchant)
                     let similarity = similarityNumber(statement.merchant, receipt.merchant, forReview: true)
                     let alias = aliases.contains(aliasKey(statement.merchant, receipt.merchant))
                     let sameSource = preferredAccountIds[statement.id]?.contains(receipt.actualAccountId) ?? false
+                    let uniqueExactAmountPair = delta == 0
+                        && exactCount(receiptAmountCounts, day: sday, amount: statement.amountYen) == 1
+                        && exactCount(statementAmountCounts, day: rday, amount: receipt.amountYen) == 1
+                    let autoSimilarity = sameSource && uniqueExactAmountPair ? KMJSNumber(1) : merchantAutoSimilarity
                     let dateScore = KMJSNumber(1) - KMJSNumber(distance) / 8
                     let amountScore = delta == 0 ? KMJSNumber(1) : max(0, KMJSNumber(1) - KMJSNumber(delta) / tolerance)
                     let merchantScore = alias ? KMJSNumber(1) : similarity

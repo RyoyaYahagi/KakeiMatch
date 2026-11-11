@@ -1,21 +1,21 @@
 /**
- * Reproducible automatic-match invariance check for Issue #389 / PR #390.
+ * Reproducible automatic-match invariance check against a pinned engine revision.
  *
- * The PR changed only review-candidate ranking, so the automatic-match pairs
- * and statuses must stay identical to rule 1.2.1. This script extracts the
- * 1.2.1 engine and assignment module from the PR's base commit, runs both
+ * The PR changed review ranking, then added a guarded merchant waiver. This
+ * script extracts the selected baseline engine and assignment module from a
+ * pinned commit, runs both
  * engines over the same 1,738 cases, and diffs the automatic-match pairs and
  * every statement/receipt status.
  *
- * The 1.2.1 engine is never checked in: it is read with `git show` from the
+ * The baseline engine is never checked in: it is read with `git show` from the
  * base commit, so the comparison is tied to an immutable revision.
  *
  * Run with:
  *   node --conditions=react-server --import tsx eval/verify-reconciliation-automatic-match-1.2.1.ts
  *   pnpm eval:reconciliation-automatic-match
  *
- * Override the base revision when the PR base changes:
- *   RECONCILIATION_1_2_1_COMMIT=<sha> pnpm eval:reconciliation-automatic-match
+ * Override the baseline revision and version when comparing a different rule:
+ *   RECONCILIATION_BASE_COMMIT=<sha> RECONCILIATION_BASE_VERSION=1.2.2 pnpm eval:reconciliation-automatic-match
  */
 
 import { execFileSync } from "node:child_process";
@@ -39,7 +39,9 @@ import {
 } from "./reconciliation-gate-dataset";
 
 const DEFAULT_BASE_COMMIT = "db5e7725a4de46b0aad10fce2790981510c22faf";
-const BASE_COMMIT = process.env.RECONCILIATION_1_2_1_COMMIT ?? DEFAULT_BASE_COMMIT;
+const DEFAULT_BASE_VERSION = "1.2.1";
+const BASE_COMMIT = process.env.RECONCILIATION_BASE_COMMIT ?? process.env.RECONCILIATION_1_2_1_COMMIT ?? DEFAULT_BASE_COMMIT;
+const BASE_VERSION = process.env.RECONCILIATION_BASE_VERSION ?? DEFAULT_BASE_VERSION;
 const BASE_FILES = ["src/lib/reconciliation-engine.ts", "src/lib/assignment.ts"] as const;
 
 type ComparisonCase = {
@@ -148,8 +150,8 @@ async function main(): Promise<void> {
     cases: number;
     statements: number;
     receipts: number;
-    automaticPairs121: number;
-    automaticPairs122: number;
+    automaticPairsBaseline: number;
+    automaticPairsCurrent: number;
   }>();
 
   try {
@@ -164,8 +166,8 @@ async function main(): Promise<void> {
         aliases?: ReadonlySet<string>;
       }) => EngineResult;
     };
-    if (oldModule.RECONCILIATION_RULE_VERSION !== "1.2.1") {
-      throw new Error(`Base commit ${BASE_COMMIT} is not rule 1.2.1: ${oldModule.RECONCILIATION_RULE_VERSION}`);
+    if (oldModule.RECONCILIATION_RULE_VERSION !== BASE_VERSION) {
+      throw new Error(`Base commit ${BASE_COMMIT} is not rule ${BASE_VERSION}: ${oldModule.RECONCILIATION_RULE_VERSION}`);
     }
 
     for (const item of cases) {
@@ -184,13 +186,13 @@ async function main(): Promise<void> {
         statusMap(after.receiptResults, "receiptId"));
 
       const row = breakdown.get(item.dataset) ?? {
-        cases: 0, statements: 0, receipts: 0, automaticPairs121: 0, automaticPairs122: 0,
+        cases: 0, statements: 0, receipts: 0, automaticPairsBaseline: 0, automaticPairsCurrent: 0,
       };
       row.cases += 1;
       row.statements += item.statements.length;
       row.receipts += item.receipts.length;
-      row.automaticPairs121 += beforePairs.size;
-      row.automaticPairs122 += afterPairs.size;
+      row.automaticPairsBaseline += beforePairs.size;
+      row.automaticPairsCurrent += afterPairs.size;
       breakdown.set(item.dataset, row);
     }
   } finally {
@@ -201,14 +203,14 @@ async function main(): Promise<void> {
     cases: sum.cases + row.cases,
     statements: sum.statements + row.statements,
     receipts: sum.receipts + row.receipts,
-    automaticPairs121: sum.automaticPairs121 + row.automaticPairs121,
-    automaticPairs122: sum.automaticPairs122 + row.automaticPairs122,
-  }), { cases: 0, statements: 0, receipts: 0, automaticPairs121: 0, automaticPairs122: 0 });
+    automaticPairsBaseline: sum.automaticPairsBaseline + row.automaticPairsBaseline,
+    automaticPairsCurrent: sum.automaticPairsCurrent + row.automaticPairsCurrent,
+  }), { cases: 0, statements: 0, receipts: 0, automaticPairsBaseline: 0, automaticPairsCurrent: 0 });
   const report = {
-    method: "Extract rule 1.2.1 from git, run both engines on the same cases, diff automatic-match pairs and statuses.",
+    method: `Extract rule ${BASE_VERSION} from git, run both engines on the same cases, diff automatic-match pairs and statuses.`,
     baseCommit: BASE_COMMIT,
     baseEngineSha256: engineSha256,
-    baseRuleVersion: "1.2.1",
+    baseRuleVersion: BASE_VERSION,
     currentRuleVersion: RECONCILIATION_RULE_VERSION,
     breakdown: Object.fromEntries(breakdown),
     totals: total,

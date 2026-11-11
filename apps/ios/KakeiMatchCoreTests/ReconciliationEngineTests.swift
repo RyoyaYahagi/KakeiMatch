@@ -61,7 +61,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.2")
+        #expect(result.ruleVersion == "1.2.3")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -73,6 +73,47 @@ struct ReconciliationEngineTests {
         }
         let outside = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", date: "2026-09-02")])
         #expect(outside.candidates.isEmpty)
+    }
+
+    @Test func paymentSourceWaiverRequiresExactAmountUniquenessOnBothSides() {
+        let preferred: [String: Set<String>] = ["s": ["account-2"]]
+        let unique = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2")],
+            preferredAccountIds: preferred)
+        #expect(unique.statementResults.first?.status == .matched)
+        #expect(unique.statementResults.first?.matchedReceiptId == "r")
+        #expect(unique.candidates.first?.merchantSimilarity == 0)
+
+        let receiptConflict = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2"), receipt("competitor", date: "2026-09-17", account: "account-3")],
+            preferredAccountIds: preferred)
+        #expect(receiptConflict.statementResults.first?.status == .needsReview)
+
+        let statementConflict = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明"), statement("competitor", merchant: "別の明細", date: "2026-09-17")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2")],
+            preferredAccountIds: preferred)
+        #expect(statementConflict.statementResults.first(where: { $0.statementTransactionId == "s" })?.status == .needsReview)
+
+        let excludedConflict = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2"), receipt("excluded", date: "2026-09-17", account: "account-3")],
+            preferredAccountIds: preferred, excludedReceiptIds: ["excluded"])
+        #expect(excludedConflict.statementResults.first?.status == .needsReview)
+
+        let rejectedConflict = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2"), receipt("rejected", date: "2026-09-17", account: "account-3")],
+            preferredAccountIds: preferred, rejectedPairs: [KMReconciliationEngine.pairKey("s", "rejected")])
+        #expect(rejectedConflict.statementResults.first?.status == .needsReview)
+
+        let outsideWindow = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "明細不明")],
+            receipts: [receipt("r", merchant: "内容なし", account: "account-2"), receipt("outside", date: "2026-09-18", account: "account-3")],
+            preferredAccountIds: preferred)
+        #expect(outsideWindow.statementResults.first?.status == .matched)
     }
 
     @Test func reviewToleranceAliasAndUnrelatedMerchant() {
