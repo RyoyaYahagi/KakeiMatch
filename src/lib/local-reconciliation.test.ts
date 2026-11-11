@@ -416,7 +416,9 @@ describe("LocalReconciliationService", () => {
     }
 
     expect(results[1]).toEqual(results[0]);
-    expect(results[0]!.statements.map(row => row.status)).toEqual(["matched", "needs_review", "unmatched_statement"]);
+    // The second row now qualifies for Issue #393's exact-amount, same-source
+    // waiver in both legacy and provider-only import paths.
+    expect(results[0]!.statements.map(row => row.status)).toEqual(["matched", "matched", "unmatched_statement"]);
   });
 
   it("reaches results with zero payment sources and asks for one only when registering an unrecorded statement", async () => {
@@ -567,7 +569,8 @@ describe("LocalReconciliationService", () => {
     mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1500,
       kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
     await seed(repo, [makeStatement("statement-1", { merchant: "別名の店", amountYen: 1500 })], [makeReceipt("receipt-1", { confirmedValue: { merchant: "架空ストア新宿", purchasedDate: "2026-09-10", totalAmountYen: 1500, accountId: "account-1" } })]);
-    const service = createLocalReconciliationService(repo, mock);
+    const service = new LocalReconciliationService(repo, mock.ledger as never,
+      async accountId => accountId === "account-2" ? "paypay" : null);
     const first = await service.run();
     expect(first.candidates).toHaveLength(1);
     await expect(service.sameExpense(first.runId, "statement-1", "not-a-candidate")).rejects.toMatchObject({ code: "candidate_unavailable" });
@@ -725,9 +728,10 @@ describe("statement registration options", () => {
 });
 
 describe('reconciliation decisions after review', () => {
-  async function manualMatch(amountYen = -1150, merchant = 'Synthetic Receipt') {
+  async function manualMatch(amountYen = -1150, merchant = 'Synthetic Receipt', includeExactCompetitor = false) {
     const repo = await repository(); const mock = makeLedger();
     mock.transactions.set('native', { id: 'native', date: '2026-09-10', amountYen, kind: 'expense', payeeName: merchant, categoryName: null, accountId: 'account-1', cleared: false });
+    if (includeExactCompetitor) mock.transactions.set('competitor', { id: 'competitor', date: '2026-09-11', amountYen, kind: 'expense', payeeName: 'Unrelated Synthetic Store', categoryName: null, accountId: 'account-2', cleared: false });
     await seed(repo, [makeStatement('statement-1', { merchant: 'Synthetic Statement' })]);
     const service = createLocalReconciliationService(repo, mock);
     const run = await service.run(); const decision = await service.sameExpense(run.runId, 'statement-1', 'actual:native');
@@ -752,7 +756,7 @@ describe('reconciliation decisions after review', () => {
   });
 
   it('never automatically rematches an undone statement, even when the original pair exactly matches', async () => {
-    const { service, decision, mock } = await manualMatch(-1200);
+    const { service, decision, mock } = await manualMatch(-1200, 'Synthetic Receipt', true);
     await service.undoSameExpense(decision.id);
     mock.transactions.set('native', { ...mock.transactions.get('native')!, payeeName: 'Synthetic Statement' });
     for (let index = 0; index < 2; index++) {

@@ -96,6 +96,62 @@ describe("runReconciliationEngine", () => {
     expect(["matched", "needs_review", "unmatched_statement"]).toContain(result.statementResults[0]?.status);
   });
 
+  it("waives the auto merchant gate for a same-source unique exact-amount pair", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant: "無関係な明細名", preferredAccountIds: ["account-2"] })],
+      receipts: [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })],
+    });
+    expect(result.ruleVersion).toBe("1.2.3");
+    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(result.candidates[0]?.merchantSimilarity).toBe(0);
+  });
+
+  it.each(["receipt", "statement", "excluded receipt", "excluded statement", "rejected pair"] as const)(
+    "does not waive the merchant gate when a same-amount %s competes within seven days",
+    (competitor) => {
+      const statementRows = [statement("s", { merchant: "明細不明", preferredAccountIds: ["account-2"] })];
+      const receiptRows = [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })];
+      const options: Parameters<typeof runReconciliationEngine>[0] = {
+        statements: statementRows,
+        receipts: receiptRows,
+      };
+      if (competitor === "receipt" || competitor === "rejected pair") {
+        receiptRows.push(receipt("r-competing", { purchasedDate: "2026-09-17", actualAccountId: "account-3" }));
+        if (competitor === "rejected pair") options.rejectedPairs = new Set(["s\0r-competing"]);
+      } else if (competitor === "statement" || competitor === "excluded statement") {
+        statementRows.push(statement("s-competing", { usedDate: "2026-09-17", merchant: "別の明細", preferredAccountIds: [] }));
+        if (competitor === "excluded statement") options.excludedStatementIds = new Set(["s-competing"]);
+      } else {
+        receiptRows.push(receipt("r-competing", { purchasedDate: "2026-09-17", actualAccountId: "account-3" }));
+        options.excludedReceiptIds = new Set(["r-competing"]);
+      }
+      const result = runReconciliationEngine(options);
+      expect(result.statementResults.find((row) => row.statementTransactionId === "s")?.status).toBe("needs_review");
+    },
+  );
+
+  it("counts only purchase statements as exact-amount competitors", () => {
+    const result = runReconciliationEngine({
+      statements: [
+        statement("s", { merchant: "明細不明", preferredAccountIds: ["account-2"] }),
+        statement("refund", { kind: "refund", usedDate: "2026-09-17" }),
+      ],
+      receipts: [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })],
+    });
+    expect(result.statementResults.find((row) => row.statementTransactionId === "s")?.status).toBe("matched");
+  });
+
+  it("does not count an exact-amount row outside the seven-day window as a competitor", () => {
+    const result = runReconciliationEngine({
+      statements: [statement("s", { merchant: "明細不明", preferredAccountIds: ["account-2"] })],
+      receipts: [
+        receipt("r", { merchant: "内容なし", actualAccountId: "account-2" }),
+        receipt("outside", { purchasedDate: "2026-09-18", actualAccountId: "account-3" }),
+      ],
+    });
+    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+  });
+
   it.each([1, 2, 3, 7])("keeps an exact amount candidate at %i day(s)", (distance) => {
     const result = runReconciliationEngine({
       statements: [statement("s1")],

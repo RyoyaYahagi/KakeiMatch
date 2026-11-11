@@ -2,13 +2,8 @@
 
 import { lexicographicMaximumAssignment } from "./assignment";
 
-/**
- * 1.2.2 keeps every 1.2.1 automatic-match rule and candidate-set rule
- * unchanged. The only change is a review-ranking guard (Issue #389): the
- * assignment partner leads only when its review score is nearly tied with the
- * score leader. Automatic matching and its margin are untouched.
- */
-export const RECONCILIATION_RULE_VERSION = "1.2.2";
+/** 1.2.3 adds the guarded payment-source merchant waiver (Issue #393). */
+export const RECONCILIATION_RULE_VERSION = "1.2.3";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -313,6 +308,33 @@ export function inspectReconciliationRanking(input: ReconciliationEngineInput): 
 }
 
 function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEngineResult; reviewAssignment: ReviewAssignment } {
+  // Count exact-amount competitors from the full input before applying caller
+  // exclusions or rejected pairs. Only purchase statements participate.
+  // Day/amount indexes keep this bounded to the existing seven-day window.
+  const receiptAmountBuckets = new Map<number, Map<number, number>>();
+  for (const receipt of input.receipts) {
+    const day = utcDay(receipt.purchasedDate);
+    if (day === null || !safeAmount(receipt.amountYen)) continue;
+    const amounts = receiptAmountBuckets.get(day) ?? new Map<number, number>();
+    amounts.set(receipt.amountYen, (amounts.get(receipt.amountYen) ?? 0) + 1);
+    receiptAmountBuckets.set(day, amounts);
+  }
+  const statementAmountBuckets = new Map<number, Map<number, number>>();
+  for (const statement of input.statements) {
+    const day = statement.kind === "purchase" ? utcDay(statement.usedDate) : null;
+    if (day === null || !safeAmount(statement.amountYen)) continue;
+    const amounts = statementAmountBuckets.get(day) ?? new Map<number, number>();
+    amounts.set(statement.amountYen, (amounts.get(statement.amountYen) ?? 0) + 1);
+    statementAmountBuckets.set(day, amounts);
+  }
+  const exactCount = (index: Map<number, Map<number, number>>, day: number, amount: number): number => {
+    let count = 0;
+    for (let offset = -RECONCILIATION_RULES.candidateDateWindowDays; offset <= RECONCILIATION_RULES.candidateDateWindowDays; offset += 1) {
+      count += index.get(day + offset)?.get(amount) ?? 0;
+    }
+    return count;
+  };
+
   const statements = input.statements.filter((item) => !input.excludedStatementIds?.has(item.statementTransactionId)).sort((a, b) => a.statementTransactionId.localeCompare(b.statementTransactionId));
   const receipts = input.receipts.filter((item) => !input.excludedReceiptIds?.has(item.receiptId)).sort((a, b) => a.receiptId.localeCompare(b.receiptId));
 
@@ -343,12 +365,16 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
         const dateDistanceDays = Math.abs(statementDay - receiptDay);
         const amountDeltaYen = Math.abs(statement.amountYen - receipt.amountYen);
         const amountExact = amountDeltaYen === 0;
-        const autoMerchantSimilarity = reconciliationMerchantSimilarity(statement.merchant, receipt.merchant);
+        const merchantAutoSimilarity = reconciliationMerchantSimilarity(statement.merchant, receipt.merchant);
         const merchantSimilarity = reconciliationMerchantSimilarity(normalizeCandidateMerchant(statement.merchant), normalizeCandidateMerchant(receipt.merchant));
         const aliasMatch = input.aliases?.has(merchantAliasKey(statement.merchant, receipt.merchant)) ?? false;
         const allowedDelta = Math.max(RECONCILIATION_RULES.amountToleranceAbsoluteYen, statement.amountYen * RECONCILIATION_RULES.amountToleranceRatio);
         if (amountDeltaYen > allowedDelta) continue;
         const samePaymentSource = statement.preferredAccountIds?.includes(receipt.actualAccountId) ?? false;
+        const uniqueExactAmountPair = amountExact
+          && exactCount(receiptAmountBuckets, statementDay, statement.amountYen) === 1
+          && exactCount(statementAmountBuckets, receiptDay, receipt.amountYen) === 1;
+        const autoMerchantSimilarity = samePaymentSource && uniqueExactAmountPair ? 1 : merchantAutoSimilarity;
 
         const reasons: string[] = [];
         if (amountExact) reasons.push("amount_exact");
