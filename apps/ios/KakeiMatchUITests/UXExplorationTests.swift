@@ -248,6 +248,9 @@ final class UXExplorationTests: XCTestCase {
         log.add("STEP U3-1 記録一覧から詳細を開く")
         if tap(app.buttons["records.row.fixture-transaction-008"], in: app, log: log, "records.row.fixture-transaction-008") {
             XCTAssertTrue(app.buttons["records.detail.category"].waitForExistence(timeout: 10))
+            let saveButton = app.buttons["records.save"]
+            XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
+            XCTAssertFalse(saveButton.isEnabled, "変更前は保存できない状態を保つ")
             observe(log, "records.detail.category", app.buttons["records.detail.category"])
             log.add("records.detail.category.label=\(app.buttons["records.detail.category"].label)")
             capture(app, "ux-u3-record-detail-light", log)
@@ -278,6 +281,7 @@ final class UXExplorationTests: XCTestCase {
         }
         let pickerAfter = app.descendants(matching: .any)["records.editor.category"]
         observe(log, "records.editor.category.after", pickerAfter, timeout: 2)
+        XCTAssertTrue(app.buttons["records.save"].isEnabled, "変更後は保存ボタンを有効な主要ボタンとして示す")
 
         log.add("STEP U3-3 保存")
         if tap(app.buttons["records.save"], in: app, log: log, "records.save") {

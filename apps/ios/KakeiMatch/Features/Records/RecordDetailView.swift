@@ -74,6 +74,18 @@ struct KMRecordDetailView: View {
                         .buttonStyle(KMButtonStyle(role: .primary)).disabled(!model.changed)
                         .accessibilityIdentifier("records.save").padding(.bottom, KMSpacing.space2)
                 }
+                if model.message == "変更を保存しました。" {
+                    HStack(spacing: KMSpacing.space2) {
+                        KMIcon(name: "check", size: 18).foregroundStyle(KMColor.success)
+                        Text(model.message ?? "").font(KMTypography.body(14, weight: .medium))
+                            .foregroundStyle(KMColor.text).accessibilityIdentifier("records.message")
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, KMSpacing.space3).padding(.vertical, KMSpacing.space3)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(KMColor.successSoft, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                    .padding(.bottom, KMSpacing.space3)
+                }
                 if row.kind == .transfer && model.editing != "transfer" {
                     Button("編集する") { model.editing = "transfer" }
                         .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("records.editTransfer")
@@ -82,6 +94,7 @@ struct KMRecordDetailView: View {
                 Button("削除する") { collapse(); confirmsDeletion = true }
                     .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity)
                     .accessibilityIdentifier("records.delete")
+                    .padding(.bottom, KMLayout.navHeight)
             }
         }
         .foregroundStyle(KMColor.text).disabled(model.busy)

@@ -160,18 +160,15 @@ struct ReconciliationView: View {
     }
     private func tiles(_ scroll: ScrollViewProxy) -> some View {
         let p = model.presentation
-        return VStack(spacing: 1) {
-            HStack(spacing: 1) {
-                tile("要確認", count: p.needsReview, status: .warning) { revealPending(.needsReview, scroll) }
-                tile("記録なし", count: p.unmatched, status: .missing) { revealPending(.unmatchedStatement, scroll) }
-            }
-            HStack(spacing: 1) {
-                tile("一致", count: p.matched.count, status: .success) { matchedExpanded = true; scroll.scrollTo("reconciliation-matched", anchor: .top) }
-                tile("不正利用？", count: p.suspected.count, status: .warning) { suspectedExpanded = true; scroll.scrollTo("reconciliation-suspected", anchor: .top) }
-            }
-        }.background(KMColor.border)
-            .clipShape(RoundedRectangle(cornerRadius: KMRadius.lg))
-            .overlay { RoundedRectangle(cornerRadius: KMRadius.lg).stroke(KMColor.border, lineWidth: 1) }
+        return VStack(spacing: 0) {
+            tile("要確認", count: p.needsReview, status: .warning) { revealPending(.needsReview, scroll) }
+            rule
+            tile("記録なし", count: p.unmatched, status: .missing) { revealPending(.unmatchedStatement, scroll) }
+            rule
+            tile("一致", count: p.matched.count, status: .success) { matchedExpanded = true; scroll.scrollTo("reconciliation-matched", anchor: .top) }
+            rule
+            tile("不正利用？", count: p.suspected.count, status: .warning) { suspectedExpanded = true; scroll.scrollTo("reconciliation-suspected", anchor: .top) }
+        }
             .accessibilityElement(children: .contain).accessibilityLabel(p.resultLabel)
             .accessibilityIdentifier("reconciliation.counts")
     }
@@ -180,15 +177,21 @@ struct ReconciliationView: View {
     }
     private func tile(_ label: String, count: Int, status: KMStatus, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 4) { KMIcon(name: status == .warning ? "warning" : status == .missing ? "unmatched" : "check", size: 16); Text(label).font(KMTypography.body(13, weight: .bold)) }
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text(String(count)).font(KMTypography.number(26, weight: .bold))
-                    Text("件").font(KMTypography.body(14, weight: .medium))
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(12)
-                .background(status == .success ? KMColor.surface : status.background)
-                .foregroundStyle(status.foreground)
+            HStack(spacing: KMSpacing.space3) {
+                KMIcon(name: status == .warning ? "warning" : status == .missing ? "unmatched" : "check", size: 18)
+                    .foregroundStyle(reconciliationSummaryForeground(status))
+                    .frame(width: 30, height: 30)
+                    .background(reconciliationSummaryBackground(status), in: Circle())
+                Text(label).font(KMTypography.body(15, weight: .medium)).foregroundStyle(KMColor.text)
+                Spacer(minLength: 0)
+                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                    Text(String(count)).font(KMTypography.number(21, weight: .bold))
+                    Text("件").font(KMTypography.body(13, weight: .medium))
+                }.foregroundStyle(reconciliationSummaryForeground(status))
+                KMIcon(name: "chevronRight", size: 16).foregroundStyle(KMColor.muted)
+            }
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+            .contentShape(Rectangle())
         }.buttonStyle(.plain).accessibilityLabel("\(label) \(count)件")
             .accessibilityIdentifier("reconciliation.count.\(label)")
     }
@@ -329,6 +332,22 @@ struct ReconciliationView: View {
     }
 }
 
+private func reconciliationSummaryForeground(_ status: KMStatus) -> Color {
+    switch status {
+    case .warning: KMColor.cUtil
+    case .missing, .danger: KMColor.muted
+    case .success: KMColor.cDaily
+    }
+}
+
+private func reconciliationSummaryBackground(_ status: KMStatus) -> Color {
+    switch status {
+    case .warning: KMColor.cUtilSoft
+    case .missing, .danger: KMColor.sunken
+    case .success: KMColor.cDailySoft
+    }
+}
+
 struct ReconciliationSummaryRow: View {
     var statement: KMStatementTransaction
     var note: String
@@ -366,8 +385,8 @@ struct ReconciliationSummaryRow: View {
 
     private var statusIcon: some View {
         KMIcon(name: status == .warning ? "warning" : status == .success ? "check" : status == nil ? "eyeOff" : "unmatched", size: 22)
-            .foregroundStyle(status?.foreground ?? KMColor.muted)
-            .frame(width: 36, height: 36).background(status?.background ?? KMColor.sunken, in: Circle())
+            .foregroundStyle(status.map(reconciliationSummaryForeground) ?? KMColor.muted)
+            .frame(width: 36, height: 36).background(status.map(reconciliationSummaryBackground) ?? KMColor.sunken, in: Circle())
     }
 
     private var noteText: some View {

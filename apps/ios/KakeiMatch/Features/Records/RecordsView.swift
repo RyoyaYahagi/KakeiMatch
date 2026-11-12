@@ -17,7 +17,7 @@ struct RecordsView: View {
                     action: model.page == .list ? { Task { await model.reload() } } : nil)
                     .padding(.bottom, KMSpacing.space3)
             }
-            if let message = model.message {
+            if let message = model.message, !(model.page == .detail && message == "変更を保存しました。") {
                 Text(message).font(KMTypography.note).foregroundStyle(KMColor.muted)
                     .accessibilityIdentifier("records.message").padding(.vertical, KMSpacing.space2)
             }
