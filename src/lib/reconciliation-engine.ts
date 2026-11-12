@@ -2,8 +2,8 @@
 
 import { lexicographicMaximumAssignment } from "./assignment";
 
-/** 1.2.4 adds confirmed statement-prefix and corporate-form normalization (Issue #397). */
-export const RECONCILIATION_RULE_VERSION = "1.2.4";
+/** 1.2.5 removes the confirmed Vpass prefix symmetrically from both merchants. */
+export const RECONCILIATION_RULE_VERSION = "1.2.5";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -96,12 +96,9 @@ export function normalizeReconciliationMerchant(merchant: string): string {
     if (withoutForm === normalized) break;
     normalized = withoutForm;
   }
-  return normalized.replace(GENERAL_SEPARATOR, "");
-}
-
-/** Vpass F3 is the only verified statement prefix; keep this one-way and exact. */
-function normalizeStatementMerchant(merchant: string): string {
-  return normalizeReconciliationMerchant(merchant).replace(/^visa国内利用vs/u, "");
+  // Vpass F3 is the only verified prefix. Normalize it symmetrically and only
+  // when it is the complete beginning of the merchant string.
+  return normalized.replace(GENERAL_SEPARATOR, "").replace(/^visa国内利用vs/u, "");
 }
 
 function bigrams(value: string): Set<string> {
@@ -379,7 +376,7 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
         const dateDistanceDays = Math.abs(statementDay - receiptDay);
         const amountDeltaYen = Math.abs(statement.amountYen - receipt.amountYen);
         const amountExact = amountDeltaYen === 0;
-        const statementMerchant = normalizeStatementMerchant(statement.merchant);
+        const statementMerchant = normalizeReconciliationMerchant(statement.merchant);
         const merchantAutoSimilarity = reconciliationMerchantSimilarity(statementMerchant, receipt.merchant);
         const merchantSimilarity = reconciliationMerchantSimilarity(normalizeCandidateMerchant(statementMerchant), normalizeCandidateMerchant(receipt.merchant));
         const aliasMatch = input.aliases?.has(merchantAliasKey(statement.merchant, receipt.merchant)) ?? false;

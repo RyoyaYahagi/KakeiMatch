@@ -96,7 +96,7 @@ describe("runReconciliationEngine", () => {
     expect(["matched", "needs_review", "unmatched_statement"]).toContain(result.statementResults[0]?.status);
   });
 
-  it("normalizes the confirmed Vpass prefix and Japanese corporate-form variants", () => {
+  it("normalizes the confirmed Vpass prefix on either side and corporate-form variants", () => {
     const variants = ["株式会社青空食堂", "（株）青空食堂", "㈱青空食堂", "カブシキガイシャ青空食堂",
       "青空食堂株式会社", "青空食堂（株）", "青空食堂㈱", "青空食堂カブシキガイシャ"];
     for (const merchant of variants) {
@@ -111,6 +111,15 @@ describe("runReconciliationEngine", () => {
     });
     expect(result.candidates[0]?.merchantSimilarity).toBe(1);
     expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+
+    const receiptPrefix = runReconciliationEngine({
+      statements: [statement("s", { merchant: "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ" })],
+      receipts: [receipt("r", { merchant: "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ" })],
+    });
+    expect(receiptPrefix.candidates[0]?.merchantSimilarity).toBe(1);
+    expect(receiptPrefix.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(normalizeReconciliationMerchant("VISA国内利用VS別の店")).toBe("別の店");
+    expect(normalizeReconciliationMerchant("prefix Visa国内利用 Vs 別の店")).toBe("prefixvisa国内利用vs別の店");
   });
 
   it("waives the auto merchant gate for a same-source unique exact-amount pair", () => {
@@ -118,7 +127,7 @@ describe("runReconciliationEngine", () => {
       statements: [statement("s", { merchant: "無関係な明細名", preferredAccountIds: ["account-2"] })],
       receipts: [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })],
     });
-    expect(result.ruleVersion).toBe("1.2.4");
+    expect(result.ruleVersion).toBe("1.2.5");
     expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
     expect(result.candidates[0]?.merchantSimilarity).toBe(0);
   });

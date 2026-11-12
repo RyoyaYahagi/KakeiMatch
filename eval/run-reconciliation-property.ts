@@ -37,7 +37,7 @@ import { runReconciliationEngine as runFrozenEngine } from "./frozen/reconciliat
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
 const DEFAULT_SEED = 376;
-const PINNED_RULE_VERSION = "1.2.4";
+const PINNED_RULE_VERSION = "1.2.5";
 const PINNED_RULES = {
   candidateDateWindowDays: 7,
   autoMatchDateWindowDays: 2,
