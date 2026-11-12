@@ -4,6 +4,7 @@ struct AppShell: View {
     @State private var tab: KMTab = .home
     @State private var showsChooser = false
     @State private var entry: KMEntryDestination? = nil
+    @State private var entryInitialValues: KMEntryInitialValues?
     @State private var budgetRouteMonth: KMYearMonth?
     @State private var settingsAccountsRoute = false
     @State private var settingsAIRoute = false
@@ -33,7 +34,7 @@ struct AppShell: View {
                                 .padding(.horizontal, KMSpacing.space4)
                         }
                         HStack {
-                            Button("キャンセル") { self.entry = nil; showsChooser = true }
+                            Button("キャンセル") { self.entry = nil; entryInitialValues = nil; showsChooser = true }
                                 .buttonStyle(KMButtonStyle(role: .text))
                                 .accessibilityIdentifier("entry.cancel")
                             Spacer()
@@ -57,7 +58,7 @@ struct AppShell: View {
                                 }
                                 if let entry {
                                     HStack {
-                                        Button("キャンセル") { self.entry = nil; showsChooser = true }
+                                        Button("キャンセル") { self.entry = nil; entryInitialValues = nil; showsChooser = true }
                                             .buttonStyle(KMButtonStyle(role: .text))
                                             .accessibilityIdentifier("entry.cancel")
                                         Spacer()
@@ -72,7 +73,10 @@ struct AppShell: View {
                                     case .records: RecordsView(refreshToken: recordsRefreshToken,
                                         onOpenAccounts: { settingsAccountsRoute = true; tab = .settings },
                                         onDeleted: { deletionNotice.show($0) })
-                                    case .reconciliation: ReconciliationView()
+                                    case .reconciliation: ReconciliationView(onCreateRecord: { initialValues in
+                                        entryInitialValues = initialValues
+                                        entry = .expense
+                                    })
                                     case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth,
                                         initialAccounts: settingsAccountsRoute,
                                         initialAI: settingsAIRoute,
@@ -108,7 +112,7 @@ struct AppShell: View {
                     if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
                     deletionNotice.clearTransientStatus()
                     tab = destination
-                    entry = nil // Reselecting the current tab also leaves an entry, like PWA.
+                    entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
                     moneyForwardRoute = false
                 }), reviewCount: reviewCount, add: { showsChooser = true })
                     .frame(maxWidth: KMLayout.contentMax)
@@ -123,6 +127,7 @@ struct AppShell: View {
             KMBottomSheet(title: "何を記録しますか？", isPresented: $showsChooser) {
                 RecordChooserView { destination in
                     tab = .records
+                    entryInitialValues = nil
                     entry = destination
                     showsChooser = false
                 }
@@ -246,6 +251,25 @@ struct AppShell: View {
         }
     }
 
+    @MainActor private func rerunAfterUnmatchedEntry() {
+        Task {
+            guard let repositories else {
+                reviewCountError = "記録は保存されましたが、照合情報を読み込めませんでした。"
+                entry = nil; entryInitialValues = nil
+                return
+            }
+            do {
+                let at = repositories.fixtureName == nil ? Date() : repositories.referenceDate
+                _ = try await repositories.reconciliation.runReconciliation(id: UUID().uuidString, at: at)
+                reviewCountError = nil
+            } catch {
+                reviewCountError = "記録は保存されましたが、照合をやり直せませんでした。\(error.localizedDescription)"
+            }
+            entry = nil; entryInitialValues = nil
+            await refreshReviewCount()
+        }
+    }
+
     private func manualEntryKind(_ destination: KMEntryDestination) -> KMEntryKind? {
         switch destination {
         case .expense: .expense
@@ -261,7 +285,8 @@ struct AppShell: View {
             ReceiptView(source: destination,
                 onSaved: { entry = nil; tab = .records },
                 onOpenAccount: { entry = nil; settingsAccountsRoute = false; settingsAIRoute = true; tab = .settings })
-        case .expense: ManualEntryView()
+        case .expense: ManualEntryView(initialValues: entryInitialValues,
+            onSaved: entryInitialValues == nil ? nil : rerunAfterUnmatchedEntry)
         case .income: IncomeView(onPayroll: { entry = .payroll })
         case .transfer: TransferView()
         case .payroll: PayrollView(onCancel: { entry = .income }, onSaved: { entry = nil; tab = .records })

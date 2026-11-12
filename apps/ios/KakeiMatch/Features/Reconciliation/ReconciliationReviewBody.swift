@@ -5,6 +5,7 @@ struct ReconciliationReviewBody: View {
     let model: KMReconciliationModel
     let perform: (KMReconciliationModel.Action) -> Void
     let suspect: () -> Void
+    let createRecord: (KMStatementTransaction) -> Void
     @State private var transfer = false
     @State private var category = ""
     @State private var destination = ""
@@ -45,43 +46,59 @@ struct ReconciliationReviewBody: View {
                 }
                 if !row.hasCandidates {
                     ReconciliationSlip(statement: row.statement)
-                    Text("記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。")
-                    HStack {
-                        Text("取引の種類"); Spacer()
-                        Picker("取引の種類", selection: $transfer) { Text("支出").tag(false); Text("振替").tag(true) }
-                            .labelsHidden().accessibilityIdentifier("kind-\(row.id)")
-                    }.frame(minHeight: 52)
-                    if transfer {
-                        HStack {
-                            Text("振替先"); Spacer()
-                            Picker("振替先", selection: $destination) {
-                                Text("振替先を選択してください").tag("")
-                                ForEach(model.accounts.filter { !$0.closed }) { account in Text(account.name).tag(account.id) }
-                            }.labelsHidden().accessibilityIdentifier("destination-\(row.id)")
-                        }.frame(minHeight: 52)
-                    } else {
-                        HStack {
-                            Text("カテゴリ").font(KMTypography.note).foregroundStyle(KMColor.muted)
-                            Text(model.categories.first { $0.id == category }?.name ?? "カテゴリを選択してください").lineLimit(1)
-                            Spacer(minLength: 0)
-                            Button("すべて ›") { categorySheet = true }.frame(minHeight: 44)
-                                .accessibilityIdentifier("category-\(row.id)")
+                    if row.status == .unmatchedStatement {
+                        Text("この利用に心当たりはありますか？")
+                            .font(KMTypography.body(16, weight: .bold))
+                            .accessibilityIdentifier("reconciliation.unmatched.question.\(row.id)")
+                        HStack(spacing: KMSpacing.space2) {
+                            Button("ある") { createRecord(row.statement) }
+                                .buttonStyle(KMButtonStyle(role: .primary))
+                                .accessibilityIdentifier("reconciliation.unmatched.yes.\(row.id)")
+                            Button("ない", action: suspect)
+                                .buttonStyle(KMButtonStyle(role: .secondary))
+                                .accessibilityIdentifier("reconciliation.unmatched.no.\(row.id)")
                         }
-                        Toggle("支出の計算に含めない", isOn: $excluded)
-                            .font(KMTypography.note).accessibilityIdentifier("excluded-\(row.id)")
+                    } else {
+                        Text("記録が見つかりません。支出・振替として登録するか、登録しないで確認を終えられます。")
+                        HStack {
+                            Text("取引の種類"); Spacer()
+                            Picker("取引の種類", selection: $transfer) { Text("支出").tag(false); Text("振替").tag(true) }
+                                .labelsHidden().accessibilityIdentifier("kind-\(row.id)")
+                        }.frame(minHeight: 52)
+                        if transfer {
+                            HStack {
+                                Text("振替先"); Spacer()
+                                Picker("振替先", selection: $destination) {
+                                    Text("振替先を選択してください").tag("")
+                                    ForEach(model.accounts.filter { !$0.closed }) { account in Text(account.name).tag(account.id) }
+                                }.labelsHidden().accessibilityIdentifier("destination-\(row.id)")
+                            }.frame(minHeight: 52)
+                        } else {
+                            HStack {
+                                Text("カテゴリ").font(KMTypography.note).foregroundStyle(KMColor.muted)
+                                Text(model.categories.first { $0.id == category }?.name ?? "カテゴリを選択してください").lineLimit(1)
+                                Spacer(minLength: 0)
+                                Button("すべて ›") { categorySheet = true }.frame(minHeight: 44)
+                                    .accessibilityIdentifier("category-\(row.id)")
+                            }
+                            Toggle("支出の計算に含めない", isOn: $excluded)
+                                .font(KMTypography.note).accessibilityIdentifier("excluded-\(row.id)")
+                        }
+                        Button(transfer ? "振替として登録" : "支出として登録") {
+                            guard !transfer || !destination.isEmpty else { model.errorMessage = "振替先を選択してください。"; return }
+                            perform(.register(statement: row.id, category: transfer ? nil : category,
+                                              destination: transfer ? destination : nil, excluded: excluded))
+                        }.buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("reconciliation.register.\(row.id)")
                     }
-                    Button(transfer ? "振替として登録" : "支出として登録") {
-                        guard !transfer || !destination.isEmpty else { model.errorMessage = "振替先を選択してください。"; return }
-                        perform(.register(statement: row.id, category: transfer ? nil : category,
-                                          destination: transfer ? destination : nil, excluded: excluded))
-                    }.buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("reconciliation.register.\(row.id)")
                 }
             }
             if let attention = model.attention.first(where: { $0.statementId == row.id }) {
                 Text("確認の理由：\(attention.reasons.joined(separator: "・"))").font(KMTypography.note).foregroundStyle(KMColor.muted)
             }
-            Button("不正利用？", action: suspect).buttonStyle(KMButtonStyle(role: .secondary))
-                .accessibilityIdentifier("reconciliation.suspect.\(row.id)")
+            if row.status != .unmatchedStatement {
+                Button("不正利用？", action: suspect).buttonStyle(KMButtonStyle(role: .secondary))
+                    .accessibilityIdentifier("reconciliation.suspect.\(row.id)")
+            }
             Button("登録しない") { perform(.ignore(row.id)) }
                 .buttonStyle(KMButtonStyle(role: .text)).frame(maxWidth: .infinity)
                 .accessibilityIdentifier("reconciliation.ignore.\(row.id)")

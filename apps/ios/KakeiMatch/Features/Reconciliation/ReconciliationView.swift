@@ -2,6 +2,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct ReconciliationView: View {
+    var onCreateRecord: (KMEntryInitialValues) -> Void = { _ in }
     @Environment(\.repositories) private var repositories
     @State private var model = KMReconciliationModel()
     @State private var analysisExpanded = false
@@ -225,6 +226,14 @@ struct ReconciliationView: View {
                         if expandedRows.contains(row.id) {
                             ReconciliationReviewBody(row: row, model: model, perform: perform, suspect: {
                                 confirmation = Confirmation(title: "不正利用？", message: "心当たりがない利用としてマークしますか？不正利用と確定する操作ではありません。", action: .suspect(row.id))
+                            }, createRecord: { statement in
+                                let sourceAccount = model.accounts.filter { !$0.closed && $0.statementProvider == statement.provider }
+                                let importedAccount = model.imports.first { $0.id == statement.importId }?.value.accountId
+                                let accountId = importedAccount.flatMap { id in
+                                    model.accounts.contains(where: { !$0.closed && $0.id == id }) ? id : nil
+                                } ?? (sourceAccount.count == 1 ? sourceAccount[0].id : nil)
+                                onCreateRecord(.init(amountYen: statement.amountYen, payee: statement.merchant,
+                                    date: statement.usedDate, accountId: accountId))
                             })
                         }
                     }.id(row.id)
