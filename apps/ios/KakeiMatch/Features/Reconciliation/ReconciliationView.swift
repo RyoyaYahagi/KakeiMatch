@@ -71,13 +71,13 @@ struct ReconciliationView: View {
                     if dynamicTypeSize.isAccessibilitySize {
                         VStack(alignment: .leading, spacing: KMSpacing.space2) {
                             Text("照合").font(KMTypography.body(22, weight: .bold)).foregroundStyle(KMColor.text)
-                            rerunButton
+                            if model.run != nil { rerunButton }
                         }
                     } else {
                         HStack {
                             Text("照合").font(KMTypography.body(22, weight: .bold)).foregroundStyle(KMColor.text)
                             Spacer(minLength: 8)
-                            rerunButton
+                            if model.run != nil { rerunButton }
                         }
                     }
                 }

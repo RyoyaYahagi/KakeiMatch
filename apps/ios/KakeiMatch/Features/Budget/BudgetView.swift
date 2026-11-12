@@ -6,6 +6,7 @@ struct KMBudgetView: View {
     @State private var total = ""
     @State private var breakdown = false
     @State private var allocations: [String: String] = [:]
+    @FocusState private var focusedBudgetField: String?
     private let onBack: () -> Void
 
     init(initialMonth: KMYearMonth?, onBack: @escaping () -> Void) {
@@ -103,7 +104,10 @@ struct KMBudgetView: View {
 
                 Text("カテゴリ別に設定する場合は、カテゴリ別予算の合計と全体予算が一致したときだけ保存できます。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-                Button { Task { await model.save(total: total, breakdown: breakdown, allocations: allocations, repositories: repositories) } } label: {
+                Button {
+                    focusedBudgetField = nil
+                    Task { await model.save(total: total, breakdown: breakdown, allocations: allocations, repositories: repositories) }
+                } label: {
                     Text(model.mode == .default ? "基本予算を保存" : "この月の予算を保存")
                         .font(KMTypography.body(16, weight: .bold)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 48).background(KMColor.primary, in: RoundedRectangle(cornerRadius: 10))
@@ -183,10 +187,15 @@ struct KMBudgetView: View {
     }
 
     private func yenField(_ id: String, value: Binding<String>, label: String, placeholder: String) -> some View {
-        HStack(spacing: 3) {
+        let fieldValue = Binding<String>(
+            get: { focusedBudgetField == id ? value.wrappedValue : KMBudgetPresentation.groupedYenInput(value.wrappedValue) },
+            set: { value.wrappedValue = String($0.filter { $0 >= "0" && $0 <= "9" }) }
+        )
+        return HStack(spacing: 3) {
             Text("¥").foregroundStyle(KMColor.muted)
-            TextField(placeholder, text: value).keyboardType(.numberPad).multilineTextAlignment(.trailing)
+            TextField(placeholder, text: fieldValue).keyboardType(.numberPad).multilineTextAlignment(.trailing)
                 .font(KMTypography.number(15)).foregroundStyle(KMColor.text).accessibilityLabel(label).accessibilityIdentifier(id)
+                .focused($focusedBudgetField, equals: id)
         }
         .padding(.horizontal, KMSpacing.space2).frame(minHeight: 44)
         .background(KMColor.bg, in: RoundedRectangle(cornerRadius: 8))

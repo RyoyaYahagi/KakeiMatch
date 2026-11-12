@@ -1,6 +1,14 @@
 import Foundation
 
 enum KMBudgetPresentation {
+    static func groupedYenInput(_ input: String) -> String {
+        guard !input.isEmpty, input.utf8.allSatisfy({ (48...57).contains($0) }) else { return input }
+        let digits = Array(input)
+        return digits.enumerated().map { index, digit in
+            (index > 0 && (digits.count - index).isMultiple(of: 3) ? "," : "") + String(digit)
+        }.joined()
+    }
+
     static func parseYen(_ input: String, label: String) throws -> Int {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, let number = Double(value), number.isFinite, number >= 0,

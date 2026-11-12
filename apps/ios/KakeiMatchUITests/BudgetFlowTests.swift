@@ -50,6 +50,7 @@ final class BudgetFlowTests: XCTestCase {
         totalField.typeText("90000")
         app.buttons["budget.save.monthly"].tap()
         XCTAssertTrue(app.staticTexts["予算を保存しました。"].waitForExistence(timeout: 5))
+        XCTAssertEqual(totalField.value as? String, "90,000", "予算欄は編集終了後に桁区切りで表示する")
         app.buttons["settings.back"].tap()
         app.buttons["home-tab"].tap()
         let updatedBudget = app.buttons.matching(NSPredicate(format: "label CONTAINS '90,000'")).firstMatch
