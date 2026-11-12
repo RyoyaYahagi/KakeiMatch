@@ -3,7 +3,7 @@
     "runId": "fixture-run",
     "createdAt": "2026-10-14T03:30:00.000Z",
     "completedAt": "2026-10-14T03:30:00.000Z",
-    "ruleVersion": "1.2.3",
+    "ruleVersion": "1.2.4",
     "candidates": [
       {
         "statementTransactionId": "fixture-statement-0",
