@@ -104,7 +104,10 @@ struct KMBudgetView: View {
 
                 Text("カテゴリ別に設定する場合は、カテゴリ別予算の合計と全体予算が一致したときだけ保存できます。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted).fixedSize(horizontal: false, vertical: true)
-                Button { Task { await model.save(total: total, breakdown: breakdown, allocations: allocations, repositories: repositories) } } label: {
+                Button {
+                    focusedBudgetField = nil
+                    Task { await model.save(total: total, breakdown: breakdown, allocations: allocations, repositories: repositories) }
+                } label: {
                     Text(model.mode == .default ? "基本予算を保存" : "この月の予算を保存")
                         .font(KMTypography.body(16, weight: .bold)).foregroundStyle(.white)
                         .frame(maxWidth: .infinity, minHeight: 48).background(KMColor.primary, in: RoundedRectangle(cornerRadius: 10))
