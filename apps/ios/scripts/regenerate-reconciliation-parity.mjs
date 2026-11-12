@@ -167,11 +167,36 @@ function paymentSourceWaiverCases() {
   ];
 }
 
+function merchantNormalizationCases() {
+  const variations = [
+    ["vpass-visa-domestic-prefix", "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ", "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ"],
+    ["corporate-kabushiki-prefix", "株式会社青空食堂", "青空食堂"],
+    ["corporate-parenthesized-prefix", "（株）青空食堂", "青空食堂"],
+    ["corporate-compatibility-prefix", "㈱青空食堂", "青空食堂"],
+    ["corporate-katakana-prefix", "カブシキガイシャ青空食堂", "青空食堂"],
+    ["corporate-kabushiki-suffix", "青空食堂株式会社", "青空食堂"],
+    ["corporate-parenthesized-suffix", "青空食堂（株）", "青空食堂"],
+    ["corporate-compatibility-suffix", "青空食堂㈱", "青空食堂"],
+    ["corporate-katakana-suffix", "青空食堂カブシキガイシャ", "青空食堂"],
+  ];
+  return variations.map(([id, statementName, receiptName], index) => {
+    const date = shiftDate("2026-09-01", index);
+    const amount = 2100 + index;
+    const statementId = `s-merchant-normalization-${id}`;
+    return {
+      id: `merchant-normalization-${id}`,
+      statements: [statement(statementId, statementName, amount, date)],
+      receipts: [receipt(`r-merchant-normalization-${id}`, receiptName, amount, date)],
+      preferred: { [statementId]: [] },
+    };
+  });
+}
+
 const additionalCases = [
   chainCase(2), chainCase(3), chainCase(5), chainCase(10),
   twinCase(), extraCase(), thresholdCase(), missingCase(),
   rankingConflictCase(), allConflictCase(), ...rankingGuardCases(), ...rankingGuardBoundaryCases(),
-  ...paymentSourceWaiverCases(),
+  ...paymentSourceWaiverCases(), ...merchantNormalizationCases(),
 ];
 
 function toEngineInput(item) {
@@ -212,7 +237,8 @@ for (const item of cases) {
     const oldSet = oldSets.get(row.id) ?? new Set();
     const missing = [...oldSet].filter((receiptId) => !newSet.has(receiptId));
     const extra = [...newSet].filter((receiptId) => !oldSet.has(receiptId));
-    if (missing.length > 0 || extra.length > 0) {
+    const expectedNormalizationExpansion = item.id.startsWith("merchant-normalization-");
+    if (missing.length > 0 || (extra.length > 0 && !expectedNormalizationExpansion)) {
       throw new Error(`${item.id}/${row.id}: candidate set differs from 1.2.0 (missing=${missing.join(",")} extra=${extra.join(",")})`);
     }
   }
@@ -223,7 +249,7 @@ for (const item of cases) {
     receiptResults: result.receiptResults,
   };
 }
-if (cases.length !== 291) throw new Error(`Expected 291 parity cases, got ${cases.length}`);
+if (cases.length !== 300) throw new Error(`Expected 300 parity cases, got ${cases.length}`);
 await writeFile(fixturePath, `${JSON.stringify(cases)}\n`);
 console.log(JSON.stringify({ fixturePath, caseCount: cases.length, ruleVersion: cases[0].expected.ruleVersion,
   autoMatches: cases.reduce((sum, item) => sum + item.expected.statementResults.filter((row) => row.status === "matched").length, 0) }));

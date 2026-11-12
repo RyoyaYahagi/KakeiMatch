@@ -284,7 +284,7 @@ export function generateGateDedicatedCases(): GateCase[] {
   const date = "2026-01-01";
   const amount = 1000;
   const merchant = "同一商店";
-  return [{
+  const cases: GateCase[] = [{
     id: "dedicated-all-conflict-4x4",
     family: "twin",
     seed: 0,
@@ -293,6 +293,39 @@ export function generateGateDedicatedCases(): GateCase[] {
     aliases: [],
     truthPairs: [],
   }];
+  const variations: Array<{ id: string; statement: string; receipt: string }> = [
+    {
+      id: "merchant-vpass-visa-domestic-prefix",
+      statement: "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ",
+      receipt: "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ",
+    },
+    ...[
+      ["corporate-kabushiki-prefix", "株式会社青空食堂"],
+      ["corporate-parenthesized-prefix", "（株）青空食堂"],
+      ["corporate-compatibility-prefix", "㈱青空食堂"],
+      ["corporate-katakana-prefix", "カブシキガイシャ青空食堂"],
+      ["corporate-kabushiki-suffix", "青空食堂株式会社"],
+      ["corporate-parenthesized-suffix", "青空食堂（株）"],
+      ["corporate-compatibility-suffix", "青空食堂㈱"],
+      ["corporate-katakana-suffix", "青空食堂カブシキガイシャ"],
+    ].map(([id, statement]) => ({ id: id!, statement: statement!, receipt: "青空食堂" })),
+  ];
+  for (const [index, variation] of variations.entries()) {
+    const statementId = `s-dedicated-${variation.id}`;
+    const receiptId = `r-dedicated-${variation.id}`;
+    const date = shiftDate(BASE_DATE, 20 + index);
+    const amount = 20_000 + index;
+    cases.push({
+      id: `dedicated-${variation.id}`,
+      family: "twin",
+      seed: index,
+      statements: [statement(statementId, variation.statement, amount, date)],
+      receipts: [receipt(receiptId, variation.receipt, amount, date, `acct-${variation.id}`)],
+      aliases: [],
+      truthPairs: [{ statementId, receiptId, truthClass: "separable" }],
+    });
+  }
+  return cases;
 }
 
 export const GATE_ROBUSTNESS_VARIANTS: readonly RobustnessVariant[] = ["missing", "extra", "decoy", "missing-decoy"];

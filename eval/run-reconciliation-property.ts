@@ -37,7 +37,7 @@ import { runReconciliationEngine as runFrozenEngine } from "./frozen/reconciliat
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
 const DEFAULT_SEED = 376;
-const PINNED_RULE_VERSION = "1.2.3";
+const PINNED_RULE_VERSION = "1.2.4";
 const PINNED_RULES = {
   candidateDateWindowDays: 7,
   autoMatchDateWindowDays: 2,
@@ -275,6 +275,8 @@ const MERCHANT_SIMILARITY_FIXTURES: readonly MerchantSimilarityFixture[] = [
   { label: "zero-lawson", statement: "ローソン", receipt: "LAWSON", expectedSimilarity: 0, expectedEligible: false },
   { label: "abbreviation", statement: "マツモトキヨシ", receipt: "マツキヨ", expectedSimilarity: 0.4444444444444444, expectedEligible: false },
   { label: "shared-prefix-different-store", statement: "アオゾラストア", receipt: "アオゾラカフェ", expectedSimilarity: 0.5, expectedEligible: false },
+  { label: "corporate-form-prefix", statement: "株式会社青空食堂", receipt: "青空食堂", expectedSimilarity: 1, expectedEligible: true },
+  { label: "corporate-form-suffix", statement: "青空食堂（株）", receipt: "青空食堂", expectedSimilarity: 1, expectedEligible: true },
 ];
 
 function checkMerchantSimilarityContract(): void {
@@ -842,7 +844,9 @@ function runCase(generated: GeneratedCase): CaseOutcome {
       const extra = [...newSet].filter((receiptId) => !oldSet.has(receiptId));
       candidateSetMissingCount += missing.length;
       candidateSetExtraCount += extra.length;
-      if (missing.length > 0 || extra.length > 0) candidateSetMismatchStatementCount += 1;
+      const expectedNormalizationExpansion = generated.id.startsWith("dedicated-merchant-")
+        || generated.id.startsWith("dedicated-corporate-");
+      if (missing.length > 0 || (extra.length > 0 && !expectedNormalizationExpansion)) candidateSetMismatchStatementCount += 1;
     }
     legacy = {
       oldAutoMatchCount: oldPairs.size,
@@ -1354,6 +1358,14 @@ function main(): void {
     if (!outcome.legacy) throw new Error(`dedicated gate case ${gateCase.id} did not produce legacy metrics`);
     addLegacy(dedicatedLegacyTotals, outcome.legacy);
     gateViolations.push(...outcome.violations);
+    if (gateCase.id.startsWith("dedicated-merchant-") || gateCase.id.startsWith("dedicated-corporate-")) {
+      const truth = gateCase.truthPairs[0];
+      const result = outcome.result.statementResults.find((row) => row.statementTransactionId === truth?.statementId);
+      if (result?.status !== "matched" || result.matchedReceiptId !== truth?.receiptId) {
+        gateViolations.push({ seed: gateCase.seed, caseId: gateCase.id, family: gateCase.family,
+          kind: "merchant_normalization_not_auto_matched", detail: `${truth?.statementId} -> ${truth?.receiptId}` });
+      }
+    }
     const candidateSets = new Map<string, string[]>();
     for (const candidate of outcome.result.candidates) {
       const list = candidateSets.get(candidate.statementTransactionId) ?? [];
@@ -1362,6 +1374,11 @@ function main(): void {
     }
     dedicatedReports.push({
       id: gateCase.id,
+      autoMatchCount: outcome.metrics.autoMatchCount,
+      correctAutoMatchCount: outcome.metrics.correctAutoMatchCount,
+      falseAutoMatchCount: outcome.metrics.falseAutoMatchCount,
+      lostLegacyAutoMatchCount: outcome.legacy.lostLegacyAutoMatchCount,
+      newInvalidAutoMatchCount: outcome.legacy.newInvalidAutoMatchCount,
       candidateSets: [...candidateSets].sort(([left], [right]) => left.localeCompare(right)),
       candidateSetMismatchStatementCount: outcome.legacy.candidateSetMismatchStatementCount,
       candidateSetMissingCount: outcome.legacy.candidateSetMissingCount,

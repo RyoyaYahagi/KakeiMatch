@@ -2,8 +2,8 @@
 
 import { lexicographicMaximumAssignment } from "./assignment";
 
-/** 1.2.3 adds the guarded payment-source merchant waiver (Issue #393). */
-export const RECONCILIATION_RULE_VERSION = "1.2.3";
+/** 1.2.4 adds confirmed statement-prefix and corporate-form normalization (Issue #397). */
+export const RECONCILIATION_RULE_VERSION = "1.2.4";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -84,10 +84,24 @@ export type ReconciliationEngineResult = {
 
 const GENERAL_SEPARATOR = /[-‐‑‒–—―・,，.．/／\\:：;；|｜_＿()（）\[\]［］{}｛｝「」『』【】]+/gu;
 
-/** Normalize only formatting; this intentionally does not infer merchant identity. */
+const CORPORATE_FORM = /^(?:株式会社|\(株\)|カブシキガイシャ)|(?:株式会社|\(株\)|カブシキガイシャ)$/u;
+
+/** Normalize confirmed Japanese corporate-form notation without guessing merchant identity. */
 export function normalizeReconciliationMerchant(merchant: string): string {
   // Collapse whitespace first, then remove it because spaces are not meaningful in store names.
-  return merchant.normalize("NFKC").trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase()).replace(/[\p{Z}\s]+/gu, " ").replace(/[\p{Z}\s]+/gu, "").replace(GENERAL_SEPARATOR, "");
+  let normalized = merchant.normalize("NFKC").trim().replace(/[A-Z]/g, (letter) => letter.toLowerCase()).replace(/[\p{Z}\s]+/gu, "");
+  // NFKC maps ㈱ and （株） to (株). Strip only complete prefix/suffix forms.
+  for (let pass = 0; pass < 2; pass += 1) {
+    const withoutForm = normalized.replace(CORPORATE_FORM, "");
+    if (withoutForm === normalized) break;
+    normalized = withoutForm;
+  }
+  return normalized.replace(GENERAL_SEPARATOR, "");
+}
+
+/** Vpass F3 is the only verified statement prefix; keep this one-way and exact. */
+function normalizeStatementMerchant(merchant: string): string {
+  return normalizeReconciliationMerchant(merchant).replace(/^visa国内利用vs/u, "");
 }
 
 function bigrams(value: string): Set<string> {
@@ -365,8 +379,9 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
         const dateDistanceDays = Math.abs(statementDay - receiptDay);
         const amountDeltaYen = Math.abs(statement.amountYen - receipt.amountYen);
         const amountExact = amountDeltaYen === 0;
-        const merchantAutoSimilarity = reconciliationMerchantSimilarity(statement.merchant, receipt.merchant);
-        const merchantSimilarity = reconciliationMerchantSimilarity(normalizeCandidateMerchant(statement.merchant), normalizeCandidateMerchant(receipt.merchant));
+        const statementMerchant = normalizeStatementMerchant(statement.merchant);
+        const merchantAutoSimilarity = reconciliationMerchantSimilarity(statementMerchant, receipt.merchant);
+        const merchantSimilarity = reconciliationMerchantSimilarity(normalizeCandidateMerchant(statementMerchant), normalizeCandidateMerchant(receipt.merchant));
         const aliasMatch = input.aliases?.has(merchantAliasKey(statement.merchant, receipt.merchant)) ?? false;
         const allowedDelta = Math.max(RECONCILIATION_RULES.amountToleranceAbsoluteYen, statement.amountYen * RECONCILIATION_RULES.amountToleranceRatio);
         if (amountDeltaYen > allowedDelta) continue;

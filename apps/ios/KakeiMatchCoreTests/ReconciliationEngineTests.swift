@@ -61,7 +61,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.3")
+        #expect(result.ruleVersion == "1.2.4")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -73,6 +73,22 @@ struct ReconciliationEngineTests {
         }
         let outside = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", date: "2026-09-02")])
         #expect(outside.candidates.isEmpty)
+    }
+
+    @Test func merchantNormalizationMatchesConfirmedVpassAndCorporateForms() {
+        let f3Merchant = "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ"
+        #expect(KMReconciliationEngine.normalizeMerchant(f3Merchant)
+            == KMReconciliationEngine.normalizeMerchant(KMReconciliationEngine.normalizeMerchant(f3Merchant)))
+        for merchant in ["株式会社青空食堂", "（株）青空食堂", "㈱青空食堂", "カブシキガイシャ青空食堂",
+                         "青空食堂株式会社", "青空食堂（株）", "青空食堂㈱", "青空食堂カブシキガイシャ"] {
+            #expect(KMReconciliationEngine.merchantSimilarity(merchant, "青空食堂") == 1)
+        }
+        #expect(KMReconciliationEngine.merchantSimilarity("架空株式会社ストア", "架空ストア") < 1)
+        let f3 = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: "Ｖｉｓａ国内利用 Vs \(f3Merchant)")],
+            receipts: [receipt("r", merchant: f3Merchant)])
+        #expect(f3.candidates.first?.merchantSimilarity == 1)
+        #expect(f3.statementResults.first?.status == .matched)
     }
 
     @Test func paymentSourceWaiverRequiresExactAmountUniquenessOnBothSides() {

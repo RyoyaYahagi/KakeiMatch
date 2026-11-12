@@ -10,8 +10,8 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    // 1.2.3 adds the guarded payment-source merchant waiver (Issue #393).
-    static let ruleVersion = "1.2.3"
+    // 1.2.4 adds confirmed statement-prefix and corporate-form normalization (Issue #397).
+    static let ruleVersion = "1.2.4"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -34,14 +34,31 @@ enum KMReconciliationEngine {
     }
 
     static func normalizeMerchant(_ merchant: String) -> String {
-        let normalized = merchant.precomposedStringWithCompatibilityMapping
+        // Compatibility folding may leave half-width voiced kana decomposed;
+        // compose canonically so a second normalization pass matches TS NFKC.
+        let normalized = merchant.precomposedStringWithCompatibilityMapping.precomposedStringWithCanonicalMapping
         let asciiLowercased = String(normalized.unicodeScalars.map { scalar -> Character in
             if scalar.value >= 65 && scalar.value <= 90 { return Character(UnicodeScalar(scalar.value + 32)!) }
             return Character(scalar)
         })
-        let noWhitespace = asciiLowercased.unicodeScalars.filter { !KMJSString.isWhitespace($0) }
+        let noWhitespace = String(asciiLowercased.unicodeScalars.filter { !KMJSString.isWhitespace($0) })
+        let forms = ["株式会社", "(株)", "カブシキガイシャ"]
+        var withoutCorporateForm = noWhitespace
+        for _ in 0..<2 {
+            let previous = withoutCorporateForm
+            for form in forms {
+                withoutCorporateForm = withoutCorporateForm.replacingOccurrences(of: form, with: "", options: .anchored)
+                withoutCorporateForm = withoutCorporateForm.replacingOccurrences(of: form, with: "", options: [.anchored, .backwards])
+            }
+            if previous == withoutCorporateForm { break }
+        }
+        let noWhitespaceScalars = withoutCorporateForm.unicodeScalars
         let separators = Set("-‐‑‒–—―・,，.．/／\\:：;；|｜_＿()（）[]［］{}｛｝「」『』【】".unicodeScalars)
-        return String(String.UnicodeScalarView(noWhitespace.filter { !separators.contains($0) }))
+        return String(String.UnicodeScalarView(noWhitespaceScalars.filter { !separators.contains($0) }))
+    }
+
+    private static func normalizeStatementMerchant(_ merchant: String) -> String {
+        normalizeMerchant(merchant).replacingOccurrences(of: "visa国内利用vs", with: "", options: .anchored)
     }
 
     static func merchantSimilarity(_ left: String, _ right: String) -> Decimal {
@@ -50,8 +67,7 @@ enum KMReconciliationEngine {
     private static func similarityNumber(_ left: String, _ right: String, forReview: Bool = false) -> KMJSNumber {
         func scalars(_ value: String) -> [Unicode.Scalar] {
             let normalized = normalizeMerchant(value)
-            // Foundation can leave half-width voiced kana decomposed after compatibility mapping.
-            let composed = forReview ? normalized.precomposedStringWithCanonicalMapping : normalized
+            let composed = normalized
             return composed.unicodeScalars.map { scalar in
                 // Review ranking only; keep automatic matching and alias identity unchanged.
                 if forReview && ((0x3041...0x3096).contains(scalar.value) || (0x309D...0x309E).contains(scalar.value)) {
@@ -121,8 +137,9 @@ enum KMReconciliationEngine {
                     let delta = abs(statement.amountYen - receipt.amountYen)
                     let tolerance = max(KMJSNumber(amountTolerance), KMJSNumber(statement.amountYen) * amountRatio)
                     guard KMJSNumber(delta) <= tolerance else { continue }
-                    let merchantAutoSimilarity = similarityNumber(statement.merchant, receipt.merchant)
-                    let similarity = similarityNumber(statement.merchant, receipt.merchant, forReview: true)
+                    let statementMerchant = normalizeStatementMerchant(statement.merchant)
+                    let merchantAutoSimilarity = similarityNumber(statementMerchant, receipt.merchant)
+                    let similarity = similarityNumber(statementMerchant, receipt.merchant, forReview: true)
                     let alias = aliases.contains(aliasKey(statement.merchant, receipt.merchant))
                     let sameSource = preferredAccountIds[statement.id]?.contains(receipt.actualAccountId) ?? false
                     let uniqueExactAmountPair = delta == 0
