@@ -22,6 +22,7 @@
     "eval:reconciliation": "node --conditions=react-server --import tsx eval/run-reconciliation-eval.ts",
     "eval:reconciliation-property": "node --conditions=react-server --import tsx eval/run-reconciliation-property.ts",
     "eval:reconciliation-ranking": "node --conditions=react-server --import tsx eval/run-reconciliation-ranking-eval.ts",
+    "eval:merchant-similarity": "node --conditions=react-server --import tsx eval/merchant-similarity-comparison.ts",
     "eval:reconciliation-automatic-match": "node --conditions=react-server --import tsx eval/verify-reconciliation-automatic-match-1.2.1.ts",
     "legacy:db:generate": "drizzle-kit generate",
     "legacy:db:migrate": "drizzle-kit migrate",
