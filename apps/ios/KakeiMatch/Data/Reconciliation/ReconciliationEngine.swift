@@ -10,8 +10,8 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    // 1.2.4 adds confirmed statement-prefix and corporate-form normalization (Issue #397).
-    static let ruleVersion = "1.2.4"
+    // 1.2.5 removes the confirmed Vpass prefix symmetrically from both merchants.
+    static let ruleVersion = "1.2.5"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
@@ -54,11 +54,9 @@ enum KMReconciliationEngine {
         }
         let noWhitespaceScalars = withoutCorporateForm.unicodeScalars
         let separators = Set("-‐‑‒–—―・,，.．/／\\:：;；|｜_＿()（）[]［］{}｛｝「」『』【】".unicodeScalars)
-        return String(String.UnicodeScalarView(noWhitespaceScalars.filter { !separators.contains($0) }))
-    }
-
-    private static func normalizeStatementMerchant(_ merchant: String) -> String {
-        normalizeMerchant(merchant).replacingOccurrences(of: "visa国内利用vs", with: "", options: .anchored)
+        let withoutSeparators = String(String.UnicodeScalarView(noWhitespaceScalars.filter { !separators.contains($0) }))
+        // Vpass F3 is the only verified prefix; remove it only at the beginning.
+        return withoutSeparators.replacingOccurrences(of: "visa国内利用vs", with: "", options: .anchored)
     }
 
     static func merchantSimilarity(_ left: String, _ right: String) -> Decimal {
@@ -137,7 +135,7 @@ enum KMReconciliationEngine {
                     let delta = abs(statement.amountYen - receipt.amountYen)
                     let tolerance = max(KMJSNumber(amountTolerance), KMJSNumber(statement.amountYen) * amountRatio)
                     guard KMJSNumber(delta) <= tolerance else { continue }
-                    let statementMerchant = normalizeStatementMerchant(statement.merchant)
+                    let statementMerchant = normalizeMerchant(statement.merchant)
                     let merchantAutoSimilarity = similarityNumber(statementMerchant, receipt.merchant)
                     let similarity = similarityNumber(statementMerchant, receipt.merchant, forReview: true)
                     let alias = aliases.contains(aliasKey(statement.merchant, receipt.merchant))

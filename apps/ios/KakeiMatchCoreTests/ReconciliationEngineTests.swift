@@ -61,7 +61,7 @@ struct ReconciliationEngineTests {
 
     @Test func exactUniqueMatchAndDateWindow() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.4")
+        #expect(result.ruleVersion == "1.2.5")
         #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
@@ -89,6 +89,13 @@ struct ReconciliationEngineTests {
             receipts: [receipt("r", merchant: f3Merchant)])
         #expect(f3.candidates.first?.merchantSimilarity == 1)
         #expect(f3.statementResults.first?.status == .matched)
+        let receiptPrefix = KMReconciliationEngine.run(
+            statements: [statement("s", merchant: f3Merchant)],
+            receipts: [receipt("r", merchant: "Ｖｉｓａ国内利用 Vs \(f3Merchant)")])
+        #expect(receiptPrefix.candidates.first?.merchantSimilarity == 1)
+        #expect(receiptPrefix.statementResults.first?.status == .matched)
+        #expect(KMReconciliationEngine.normalizeMerchant("VISA国内利用VS別の店") == "別の店")
+        #expect(KMReconciliationEngine.normalizeMerchant("prefix Visa国内利用 Vs 別の店") == "prefixvisa国内利用vs別の店")
     }
 
     @Test func paymentSourceWaiverRequiresExactAmountUniquenessOnBothSides() {

@@ -170,6 +170,7 @@ function paymentSourceWaiverCases() {
 function merchantNormalizationCases() {
   const variations = [
     ["vpass-visa-domestic-prefix", "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ", "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ"],
+    ["vpass-visa-domestic-receipt-prefix", "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ", "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ"],
     ["corporate-kabushiki-prefix", "株式会社青空食堂", "青空食堂"],
     ["corporate-parenthesized-prefix", "（株）青空食堂", "青空食堂"],
     ["corporate-compatibility-prefix", "㈱青空食堂", "青空食堂"],
@@ -249,7 +250,7 @@ for (const item of cases) {
     receiptResults: result.receiptResults,
   };
 }
-if (cases.length !== 300) throw new Error(`Expected 300 parity cases, got ${cases.length}`);
+if (cases.length !== 301) throw new Error(`Expected 301 parity cases, got ${cases.length}`);
 await writeFile(fixturePath, `${JSON.stringify(cases)}\n`);
 console.log(JSON.stringify({ fixturePath, caseCount: cases.length, ruleVersion: cases[0].expected.ruleVersion,
   autoMatches: cases.reduce((sum, item) => sum + item.expected.statementResults.filter((row) => row.status === "matched").length, 0) }));
