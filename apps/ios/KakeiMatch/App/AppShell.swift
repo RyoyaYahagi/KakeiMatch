@@ -285,8 +285,12 @@ struct AppShell: View {
             ReceiptView(source: destination,
                 onSaved: { entry = nil; tab = .records },
                 onOpenAccount: { entry = nil; settingsAccountsRoute = false; settingsAIRoute = true; tab = .settings })
-        case .expense: ManualEntryView(initialValues: entryInitialValues,
-            onSaved: entryInitialValues == nil ? nil : rerunAfterUnmatchedEntry)
+        case .expense:
+            if let entryInitialValues {
+                ManualEntryView(initialValues: entryInitialValues, onSaved: rerunAfterUnmatchedEntry)
+            } else {
+                ManualEntryView()
+            }
         case .income: IncomeView(onPayroll: { entry = .payroll })
         case .transfer: TransferView()
         case .payroll: PayrollView(onCancel: { entry = .income }, onSaved: { entry = nil; tab = .records })
