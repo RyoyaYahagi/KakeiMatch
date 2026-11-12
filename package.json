@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && pnpm --dir apps/pwa typecheck",
     "test": "vitest run --exclude src/lib/actual-gateway.live.test.ts",
+    "docs:reconciliation:generate": "node scripts/generate-reconciliation-rules.mjs",
     "legacy:test:live": "vitest run src/lib/actual-gateway.live.test.ts",
     "legacy:dev": "next dev --hostname 127.0.0.1",
     "legacy:build": "next build",
