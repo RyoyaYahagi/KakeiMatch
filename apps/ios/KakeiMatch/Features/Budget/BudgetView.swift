@@ -6,6 +6,7 @@ struct KMBudgetView: View {
     @State private var total = ""
     @State private var breakdown = false
     @State private var allocations: [String: String] = [:]
+    @FocusState private var focusedBudgetField: String?
     private let onBack: () -> Void
 
     init(initialMonth: KMYearMonth?, onBack: @escaping () -> Void) {
@@ -183,10 +184,15 @@ struct KMBudgetView: View {
     }
 
     private func yenField(_ id: String, value: Binding<String>, label: String, placeholder: String) -> some View {
+        let fieldValue = Binding<String>(
+            get: { focusedBudgetField == id ? value.wrappedValue : KMBudgetPresentation.groupedYenInput(value.wrappedValue) },
+            set: { value.wrappedValue = String($0.filter { $0 >= "0" && $0 <= "9" }) }
+        )
         HStack(spacing: 3) {
             Text("¥").foregroundStyle(KMColor.muted)
-            TextField(placeholder, text: value).keyboardType(.numberPad).multilineTextAlignment(.trailing)
+            TextField(placeholder, text: fieldValue).keyboardType(.numberPad).multilineTextAlignment(.trailing)
                 .font(KMTypography.number(15)).foregroundStyle(KMColor.text).accessibilityLabel(label).accessibilityIdentifier(id)
+                .focused($focusedBudgetField, equals: id)
         }
         .padding(.horizontal, KMSpacing.space2).frame(minHeight: 44)
         .background(KMColor.bg, in: RoundedRectangle(cornerRadius: 8))

@@ -56,6 +56,29 @@ struct EntryPresentationTests {
         }
     }
 
+    @Test func guidesExpenseSetupOnlyWhenAccountsOrCategoriesAreEmpty() {
+        func draft(account: String = "", category: String = "") -> KMEntryDraft {
+            KMEntryDraft(kind: .expense, amount: "100", payee: "店", date: "2026-10-14",
+                categoryId: category, accountId: account, destinationAccountId: "", memo: "",
+                time: nil, excludedFromSpending: false)
+        }
+        let category = KMCategory(id: "food", name: "食費")
+        let account = KMAccount(id: "cash", name: "現金", accountType: .cash)
+
+        #expect(throws: KMDataError.invalidData("支払元がまだ登録されていません。先に支払元を追加してください.")) {
+            try KMEntryPresentation.validate(draft(), categories: [category], accounts: [])
+        }
+        #expect(throws: KMDataError.invalidData("支払元を選んでください.")) {
+            try KMEntryPresentation.validate(draft(category: "food"), categories: [category], accounts: [account])
+        }
+        #expect(throws: KMDataError.invalidData("支出カテゴリがまだ登録されていません。先にカテゴリを追加してください.")) {
+            try KMEntryPresentation.validate(draft(account: "cash"), categories: [], accounts: [account])
+        }
+        #expect(throws: KMDataError.invalidData("支出カテゴリを選んでください.")) {
+            try KMEntryPresentation.validate(draft(account: "cash"), categories: [category], accounts: [account])
+        }
+    }
+
     @Test func ordersCategoriesByUsageThenPwaRankAndKeepsStableFallbackOrder() {
         let input = [KMCategory(id: "other-a", name: "独自A", usageCount: 4),
                      KMCategory(id: "daily", name: "日用品", usageCount: 1),

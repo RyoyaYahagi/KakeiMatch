@@ -100,7 +100,13 @@ enum KMEntryPresentation {
         let memo = memoText.isEmpty ? nil : memoText
 
         guard accounts.contains(where: { $0.id == draft.accountId && !$0.closed }) else {
-            throw KMDataError.invalidData(draft.kind == .transfer ? "振替元口座を選んでください。" : draft.kind == .income ? "入金先口座を選んでください。" : "支払元を選んでください。")
+            let message: String
+            if draft.kind == .expense, accounts.isEmpty {
+                message = "支払元がまだ登録されていません。先に支払元を追加してください。"
+            } else {
+                message = draft.kind == .transfer ? "振替元口座を選んでください。" : draft.kind == .income ? "入金先口座を選んでください。" : "支払元を選んでください。"
+            }
+            throw KMDataError.invalidData(message)
         }
 
         if draft.kind == .transfer {
@@ -119,7 +125,10 @@ enum KMEntryPresentation {
         }
         guard payee.utf16.count <= 200 else { throw KMDataError.invalidData("店名・内容は200文字以内で入力してください。") }
         guard categories.contains(where: { $0.id == draft.categoryId && !$0.hidden && $0.isIncome == draft.kind.categoryIsIncome }) else {
-            throw KMDataError.invalidData(draft.kind == .income ? "収入カテゴリを選んでください。" : "支出カテゴリを選んでください。")
+            let message = draft.kind == .expense && categories.isEmpty
+                ? "支出カテゴリがまだ登録されていません。先にカテゴリを追加してください。"
+                : draft.kind == .income ? "収入カテゴリを選んでください。" : "支出カテゴリを選んでください。"
+            throw KMDataError.invalidData(message)
         }
         let time: String?
         if draft.kind == .expense, let value = draft.time, !value.isEmpty {

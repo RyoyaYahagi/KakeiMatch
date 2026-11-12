@@ -55,12 +55,15 @@ final class ReconciliationFlowTests: XCTestCase {
         continueAfterFailure = false
         for appearance in ["light", "dark"] {
             let app = launch(appearance)
+            XCTAssertTrue(app.buttons["reconciliation.runAgain"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.buttons["reconciliation-matched"].waitForExistence(timeout: 10))
             if appearance == "dark" { capture(app, "needs-review-dark") }
             tap("reconciliation-matched", app: app)
             capture(app, "matched-" + appearance)
             app.terminate()
             let empty = launch(appearance, fixture: "empty")
+            XCTAssertTrue(empty.staticTexts["明細を取り込んでから照合してください。"].waitForExistence(timeout: 5))
+            XCTAssertFalse(empty.buttons["reconciliation.runAgain"].exists)
             XCTAssertTrue(empty.buttons["statement-file"].waitForExistence(timeout: 10))
             capture(empty, "empty-" + appearance)
             tap("reconciliation.importButton", app: empty)
