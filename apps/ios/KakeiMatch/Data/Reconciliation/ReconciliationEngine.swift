@@ -50,9 +50,9 @@ enum KMReconciliationEngine {
             }
             if previous == withoutCorporateForm { break }
         }
-        let noWhitespace = withoutCorporateForm.unicodeScalars
+        let noWhitespaceScalars = withoutCorporateForm.unicodeScalars
         let separators = Set("-‐‑‒–—―・,，.．/／\\:：;；|｜_＿()（）[]［］{}｛｝「」『』【】".unicodeScalars)
-        return String(String.UnicodeScalarView(noWhitespace.filter { !separators.contains($0) }))
+        return String(String.UnicodeScalarView(noWhitespaceScalars.filter { !separators.contains($0) }))
     }
 
     private static func normalizeStatementMerchant(_ merchant: String) -> String {
