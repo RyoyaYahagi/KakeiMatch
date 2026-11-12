@@ -66,6 +66,10 @@ try {
   await page.waitForFunction(() => document.querySelector('.receipt-image-viewer')?.classList.contains('is-zoomed'));
   const zoomed = await image.boundingBox();
   assert.ok(zoomed.width > fitted.width * 2, 'the photo is zoomed');
+  await page.waitForFunction(() => {
+    const node = document.querySelector('.receipt-image-viewer-stage');
+    return node?.scrollLeft > 0 && node?.scrollTop > 0;
+  });
   const stage = await page.evaluate(() => { const node = document.querySelector('.receipt-image-viewer-stage'); return { left: node.scrollLeft, top: node.scrollTop }; });
   assert.ok(stage.left > 0 && stage.top > 0, 'the tapped point is scrolled into view');
   if (process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH) await page.screenshot({ path: process.env.PWA_RECEIPT_ZOOM_SCREENSHOT_PATH });
