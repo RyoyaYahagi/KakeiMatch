@@ -122,7 +122,7 @@ final class ReconciliationFlowTests: XCTestCase {
         XCTAssertEqual(payee.value as? String, "オンラインストア ほしぞら")
         let date = app.datePickers["manual-transaction-date"]
         XCTAssertTrue(date.waitForExistence(timeout: 5))
-        XCTAssertTrue((date.value as? String ?? "").contains("10月4日"), "明細の日付を初期値にする")
+        XCTAssertEqual(date.value as? String, "2026年10月4日", "明細の日付を初期値にする")
         XCTAssertEqual(app.buttons["manual-transaction-account"].value as? String, "PayPayカード")
         XCTAssertTrue(app.staticTexts["未選択"].exists, "心当たりから開いた記録ではカテゴリを本人が選ぶ")
 

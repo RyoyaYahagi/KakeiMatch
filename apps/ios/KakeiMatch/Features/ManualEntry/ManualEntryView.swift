@@ -253,7 +253,15 @@ struct KMEntryFormView: View {
             .environment(\.calendar, KMDate.calendar)
             .environment(\.timeZone, KMDate.calendar.timeZone)
             .environment(\.locale, Locale(identifier: "ja_JP"))
+            .accessibilityValue(dateAccessibilityValue)
             .accessibilityIdentifier("manual-transaction-date")
+    }
+
+    private var dateAccessibilityValue: String {
+        guard let date = try? KMDate(model.date) else { return "" }
+        let parts = date.rawValue.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return "" }
+        return "\(parts[0])年\(parts[1])月\(parts[2])日"
     }
 
     private var dateBinding: Binding<Date> {
