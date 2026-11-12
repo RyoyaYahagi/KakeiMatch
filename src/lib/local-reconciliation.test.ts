@@ -105,7 +105,7 @@ describe("LocalReconciliationService", () => {
     const beforeRecords = await repo.list(), beforeTransactions = [...mock.transactions.values()], beforeCalls = [...mock.calls];
     const replay = await service.testRun();
     expect(replay.mode).toBe("test");
-    expect(replay.statementResults[0]?.matchedReceiptId).toBe("receipt-1");
+    expect(replay.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
     expect(replay.analysis?.candidates[0].merchant).toBe("架空ストア新宿");
     expect(replay.analysis?.events).toEqual([]);
     expect(await service.latest()).toEqual(normal);
@@ -114,7 +114,7 @@ describe("LocalReconciliationService", () => {
     expect((await repo.list()).filter(row => row.id !== `reconciliation-run:${replay.runId}`)).toEqual(beforeRecords);
     expect(await service.analysisRuns()).toEqual([normal]);
     expect(await service.analysisRuns(true)).toEqual([replay]);
-    await expect(service.sameExpense(replay.runId, "statement-1", "receipt-1")).rejects.toMatchObject({ code: "decision_conflict" });
+    await expect(service.sameExpense(replay.runId, "statement-1", "receipt-1")).rejects.toMatchObject({ code: "stale_run" });
   });
 
   it("keeps an unresolved normal result actionable after a test replay", async () => {
@@ -184,7 +184,7 @@ describe("LocalReconciliationService", () => {
     expect(mock.calls).toEqual([]);
   });
 
-  it("saves immutable snapshots and batch clears automatic matches without changing receipt amount", async () => {
+  it("keeps exact candidates for review without automatically clearing Actual", async () => {
     const repo = await repository();
     const mock = makeLedger();
     mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1200, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
@@ -193,11 +193,11 @@ describe("LocalReconciliationService", () => {
 
     const run = await service.run();
 
-    expect(run.statementResults[0]?.status).toBe("matched");
+    expect(run.statementResults[0]?.status).toBe("needs_review");
     expect(Object.isFrozen(run)).toBe(true);
-    expect(mock.calls).toEqual([[{ transactionId: "actual-receipt-1", cleared: true }]]);
+    expect(mock.calls).toEqual([]);
     expect(mock.transactions.get("actual-receipt-1")?.amountYen).toBe(-1200);
-    expect((await service.resolutions())[0]).toMatchObject({ source: "automatic", status: "applied", receiptId: "receipt-1" });
+    expect(await service.resolutions()).toEqual([]);
     expect(await service.latest()).toEqual(run);
   });
 
@@ -233,7 +233,7 @@ describe("LocalReconciliationService", () => {
     expect(await repo.list("merchant-mapping")).toEqual([]);
   });
 
-  it("uses eligible native Actual expenses as candidates and clears exact matches", async () => {
+  it("keeps eligible native Actual expenses as review candidates", async () => {
     const repo = await repository();
     const mock = makeLedger();
     mock.transactions.set("native-expense", { id: "native-expense", date: "2026-09-10", amountYen: -1200,
@@ -243,12 +243,12 @@ describe("LocalReconciliationService", () => {
 
     const run = await service.run();
 
-    expect(run.statementResults[0]?.status).toBe("matched");
-    expect((await service.resolutions())[0]).toMatchObject({ receiptId: "actual:native-expense", source: "automatic", status: "applied" });
-    expect(mock.transactions.get("native-expense")?.cleared).toBe(true);
+    expect(run.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
+    expect(await service.resolutions()).toEqual([]);
+    expect(mock.transactions.get("native-expense")?.cleared).toBe(false);
   });
 
-  it("clears an exact split transaction without changing its amount", async () => {
+  it("does not automatically clear an exact split transaction", async () => {
     const repo = await repository();
     const mock = makeLedger();
     mock.transactions.set("split-expense", { id: "split-expense", date: "2026-09-10", amountYen: -1200,
@@ -258,9 +258,9 @@ describe("LocalReconciliationService", () => {
 
     const run = await service.run();
 
-    expect(run.statementResults[0]?.status).toBe("matched");
-    expect((await service.resolutions())[0]).toMatchObject({ status: "applied", actualTransactionId: "split-expense" });
-    expect(mock.transactions.get("split-expense")).toMatchObject({ amountYen: -1200, cleared: true, isSplit: true });
+    expect(run.statementResults[0]?.status).toBe("needs_review");
+    expect(await service.resolutions()).toEqual([]);
+    expect(mock.transactions.get("split-expense")).toMatchObject({ amountYen: -1200, cleared: false, isSplit: true });
   });
 
   it("rejects amount correction for a split transaction before saving a resolution", async () => {
@@ -384,7 +384,7 @@ describe("LocalReconciliationService", () => {
     expect(mock.transactions.get("same")?.cleared).toBe(false);
   });
 
-  it("matches a provider-only import without any payment source mapping", async () => {
+  it("keeps a provider-only exact candidate for review without a payment source mapping", async () => {
     const repo = await repository();
     const mock = makeLedger();
     mock.transactions.set("actual-other-card", { id: "actual-other-card", date: "2026-09-10", amountYen: -1200,
@@ -394,10 +394,10 @@ describe("LocalReconciliationService", () => {
 
     const run = await service.run();
 
-    expect(run.statementResults).toMatchObject([{ status: "matched", matchedReceiptId: "actual:actual-other-card" }]);
+    expect(run.statementResults).toMatchObject([{ status: "needs_review", matchedReceiptId: null }]);
     expect(run.statementResults[0]?.reasonCodes).not.toContain("provider_account_unmapped");
-    expect((await service.resolutions())[0]).toMatchObject({ source: "automatic", status: "applied", accountId: null });
-    expect(mock.transactions.get("actual-other-card")).toMatchObject({ accountId: "account-2", amountYen: -1200, cleared: true });
+    expect(await service.resolutions()).toEqual([]);
+    expect(mock.transactions.get("actual-other-card")).toMatchObject({ accountId: "account-2", amountYen: -1200, cleared: false });
   });
 
   it("returns the same matching result for legacy account-scoped and provider-only imports", async () => {
@@ -416,9 +416,9 @@ describe("LocalReconciliationService", () => {
     }
 
     expect(results[1]).toEqual(results[0]);
-    // The second row now qualifies for Issue #393's exact-amount, same-source
-    // waiver in both legacy and provider-only import paths.
-    expect(results[0]!.statements.map(row => row.status)).toEqual(["matched", "matched", "unmatched_statement"]);
+    // Same-source uniqueness is retained as a candidate signal, while the
+    // calibrated fail-closed rule keeps both rows available for review.
+    expect(results[0]!.statements.map(row => row.status)).toEqual(["needs_review", "needs_review", "unmatched_statement"]);
   });
 
   it("reaches results with zero payment sources and asks for one only when registering an unrecorded statement", async () => {
@@ -636,7 +636,7 @@ describe("LocalReconciliationService", () => {
     await expect(service.sameExpense(second.runId, "statement-b", "receipt-1")).rejects.toMatchObject({ code: "candidate_unavailable" });
   });
 
-  it("persists batch automatic-match failures and retries them", async () => {
+  it("does not attempt automatic updates when calibration is fail-closed", async () => {
     const repo = await repository();
     const mock = makeLedger();
     mock.transactions.set("actual-receipt-1", { id: "actual-receipt-1", date: "2026-09-10", amountYen: -1200, kind: "expense", payeeName: "架空ストア新宿", categoryName: null, accountId: "account-1", cleared: false });
@@ -644,15 +644,10 @@ describe("LocalReconciliationService", () => {
     await seed(repo, [makeStatement("statement-1")], [makeReceipt("receipt-1")]);
     const service = createLocalReconciliationService(repo, mock);
     const run = await service.run();
-    const failed = (await service.resolutions())[0]!;
-    expect(run.statementResults[0]?.status).toBe("matched");
-    expect(failed.status).toBe("failed");
+    expect(run.statementResults[0]?.status).toBe("needs_review");
+    expect(await service.resolutions()).toEqual([]);
+    expect(mock.calls).toEqual([]);
     expect(mock.transactions.get("actual-receipt-1")?.cleared).toBe(false);
-
-    const retried = await service.retry(failed.id);
-
-    expect(retried.status).toBe("applied");
-    expect(mock.transactions.get("actual-receipt-1")?.cleared).toBe(true);
   });
 
   it("never offers a refund as a no receipt expense and rejects stale runs and duplicate decisions", async () => {
@@ -796,8 +791,15 @@ describe('reconciliation decisions after review', () => {
     await expect(service.undoSameExpense(decision.id)).rejects.toMatchObject({ code: 'undo_record_changed' });
     const repo = await repository(); const autoMock = makeLedger();
     autoMock.transactions.set('native', { id: 'native', date: '2026-09-10', amountYen: -1200, kind: 'expense', payeeName: '架空ストア新宿', categoryName: null, accountId: 'account-1', cleared: false });
-    await seed(repo, [makeStatement('auto')]); const automatic = createLocalReconciliationService(repo, autoMock); await automatic.run();
-    await expect(automatic.undoSameExpense((await automatic.resolutions())[0].id)).rejects.toMatchObject({ code: 'undo_unavailable' });
+    await seed(repo, [makeStatement('auto')]); const automatic = createLocalReconciliationService(repo, autoMock); const run = await automatic.run();
+    const automaticResolution: LocalResolution = {
+      id: 'reconciliation-resolution:auto', runId: run.runId, statementId: 'auto', resolution: 'same_expense',
+      source: 'automatic', receiptId: 'actual:native', categoryId: null, accountId: null, statementAmountYen: 1200,
+      importedId: null, status: 'applied', actualTransactionId: 'native', errorCode: null,
+      createdAt: timestamp, updatedAt: timestamp,
+    };
+    await repo.put({ id: automaticResolution.id, kind: 'reconciliation-resolution', value: automaticResolution, updatedAt: timestamp });
+    await expect(automatic.undoSameExpense(automaticResolution.id)).rejects.toMatchObject({ code: 'undo_unavailable' });
   });
 
   it('retains a shared alias until all supporting manual decisions have been undone', async () => {

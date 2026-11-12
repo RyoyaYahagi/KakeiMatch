@@ -59,17 +59,17 @@ struct ReconciliationEngineTests {
         #expect(KMReconciliationEngine.pairKey("s", "r") == "s\0r")
     }
 
-    @Test func exactUniqueMatchAndDateWindow() {
+    @Test func exactUniqueCandidateWaitsForValidatedScoreThreshold() {
         let result = KMReconciliationEngine.run(statements: [statement("s1")], receipts: [receipt("r1")])
-        #expect(result.ruleVersion == "1.2.5")
-        #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .matched, matchedReceiptId: "r1", reasonCodes: ["automatic_high_confidence_match"])])
+        #expect(result.ruleVersion == "1.3.0")
+        #expect(result.statementResults == [.init(statementTransactionId: "s1", status: .needsReview, matchedReceiptId: nil, reasonCodes: ["candidate_requires_review"])])
         #expect(result.candidates.first?.score == Decimal(string: "0.75")!)
         #expect(result.candidates.first?.reasons == ["amount_exact", "date_close", "merchant_similar"])
         for distance in 1...7 {
             let day = String(format: "2026-09-%02d", 10 - distance)
             let candidate = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", date: day)])
             #expect(candidate.candidates.count == 1)
-            #expect(candidate.statementResults[0].status == (distance <= 2 ? .matched : .needsReview))
+            #expect(candidate.statementResults[0].status == .needsReview)
         }
         let outside = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", date: "2026-09-02")])
         #expect(outside.candidates.isEmpty)
@@ -88,12 +88,12 @@ struct ReconciliationEngineTests {
             statements: [statement("s", merchant: "Ｖｉｓａ国内利用 Vs \(f3Merchant)")],
             receipts: [receipt("r", merchant: f3Merchant)])
         #expect(f3.candidates.first?.merchantSimilarity == 1)
-        #expect(f3.statementResults.first?.status == .matched)
+        #expect(f3.statementResults.first?.status == .needsReview)
         let receiptPrefix = KMReconciliationEngine.run(
             statements: [statement("s", merchant: f3Merchant)],
             receipts: [receipt("r", merchant: "Ｖｉｓａ国内利用 Vs \(f3Merchant)")])
         #expect(receiptPrefix.candidates.first?.merchantSimilarity == 1)
-        #expect(receiptPrefix.statementResults.first?.status == .matched)
+        #expect(receiptPrefix.statementResults.first?.status == .needsReview)
         #expect(KMReconciliationEngine.normalizeMerchant("VISA国内利用VS別の店") == "別の店")
         #expect(KMReconciliationEngine.normalizeMerchant("prefix Visa国内利用 Vs 別の店") == "prefixvisa国内利用vs別の店")
     }
@@ -104,8 +104,8 @@ struct ReconciliationEngineTests {
             statements: [statement("s", merchant: "明細不明")],
             receipts: [receipt("r", merchant: "内容なし", account: "account-2")],
             preferredAccountIds: preferred)
-        #expect(unique.statementResults.first?.status == .matched)
-        #expect(unique.statementResults.first?.matchedReceiptId == "r")
+        #expect(unique.statementResults.first?.status == .needsReview)
+        #expect(unique.statementResults.first?.matchedReceiptId == nil)
         #expect(unique.candidates.first?.merchantSimilarity == 0)
 
         let receiptConflict = KMReconciliationEngine.run(
@@ -136,7 +136,7 @@ struct ReconciliationEngineTests {
             statements: [statement("s", merchant: "明細不明")],
             receipts: [receipt("r", merchant: "内容なし", account: "account-2"), receipt("outside", date: "2026-09-18", account: "account-3")],
             preferredAccountIds: preferred)
-        #expect(outsideWindow.statementResults.first?.status == .matched)
+        #expect(outsideWindow.statementResults.first?.status == .needsReview)
     }
 
     @Test func reviewToleranceAliasAndUnrelatedMerchant() {
@@ -146,7 +146,7 @@ struct ReconciliationEngineTests {
         let unrelated = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", merchant: "全く別の薬局")])
         #expect(unrelated.statementResults[0].status == .needsReview)
         let pair = KMReconciliationEngine.run(statements: [statement("s", merchant: "青空ストア")], receipts: [receipt("r", merchant: "青空商店")], aliases: [KMReconciliationEngine.aliasKey("青空ストア", "青空商店")])
-        #expect(pair.statementResults[0].status == .matched)
+        #expect(pair.statementResults[0].status == .needsReview)
         #expect(pair.candidates[0].reasons.contains("merchant_alias_match"))
     }
 
@@ -157,7 +157,7 @@ struct ReconciliationEngineTests {
         #expect(result.statementResults.allSatisfy { $0.status == .needsReview && $0.reasonCodes.contains("ambiguous_candidates") })
         #expect(result.receiptResults.allSatisfy { $0.status == .needsReview })
         let unique = KMReconciliationEngine.run(statements: [statement("s1"), statement("s2", merchant: "無関係カフェ", date: "2026-09-11")], receipts: [receipt("r1")])
-        #expect(unique.statementResults.filter { $0.status == .matched }.count == 1)
+        #expect(unique.statementResults.filter { $0.status == .matched }.count == 0)
     }
 
     @Test func refundsPreferencesTopThreeAndFilters() {
@@ -175,7 +175,7 @@ struct ReconciliationEngineTests {
         #expect(filtered.candidates.isEmpty)
     }
 
-    @Test func rankingManualSuppressionAndAutomaticPairRetention() {
+    @Test func rankingManualSuppressionAndCandidateVisibility() {
         let priority = KMReconciliationEngine.run(statements: [statement("s")], receipts: [
             receipt("merchant", merchant: "架空ストア新宿", amount: 1160, date: "2026-09-09"),
             receipt("date-amount", merchant: "無関係カフェ")
@@ -186,7 +186,7 @@ struct ReconciliationEngineTests {
             receipt("automatic"), receipt("other-a", merchant: "別店舗A", date: "2026-09-09"),
             receipt("other-b", merchant: "別店舗B", date: "2026-09-11"), receipt("other-c", merchant: "別店舗C", date: "2026-09-12")
         ])
-        #expect(automaticRetained.statementResults[0].status == .matched)
+        #expect(automaticRetained.statementResults[0].status == .needsReview)
         #expect(automaticRetained.candidates.count == 3)
         #expect(automaticRetained.candidates[0].receiptId == "automatic")
 
@@ -194,7 +194,7 @@ struct ReconciliationEngineTests {
         #expect(manual.statementResults[0].status == .needsReview)
         #expect(manual.candidates.count == 1)
         let unscoped = KMReconciliationEngine.run(statements: [statement("s")], receipts: [receipt("r", account: "other-account")])
-        #expect(unscoped.statementResults[0].status == .matched)
+        #expect(unscoped.statementResults[0].status == .needsReview)
     }
 
     @Test func rankingGuardPromotesAtExactlyPointOneFiveBoundary() {
@@ -231,15 +231,15 @@ struct ReconciliationEngineTests {
         let result = KMReconciliationEngine.run(statements: [statement("s", merchant: "abcdx")], receipts: [
             receipt("top", merchant: "abcdx"), receipt("runner-up", merchant: "abxyz"),
         ])
-        #expect(result.statementResults.first?.status == .matched)
-        #expect(result.statementResults.first?.matchedReceiptId == "top")
+        #expect(result.statementResults.first?.status == .needsReview)
+        #expect(result.statementResults.first?.matchedReceiptId == nil)
         #expect(KMReconciliationEngine.merchantSimilarity("abcdx", "abxyz") == Decimal(string: "0.25")!)
     }
 
     @Test func reconciliationAmountsMustBeSafeIntegers() {
         let maximum = KMReconciliationEngine.run(statements: [statement("safe", amount: KMYen.maxSafe)],
             receipts: [receipt("safe", amount: KMYen.maxSafe)])
-        #expect(maximum.statementResults.first?.status == .matched)
+        #expect(maximum.statementResults.first?.status == .needsReview)
         let unsafeStatement = KMReconciliationEngine.run(statements: [statement("unsafe", amount: KMYen.maxSafe + 1)],
             receipts: [receipt("safe", amount: KMYen.maxSafe)])
         #expect(unsafeStatement.candidates.isEmpty)
@@ -261,14 +261,14 @@ struct ReconciliationEngineTests {
 
     @Test func syntheticEvaluationDatasetScenarios() {
         let scenarios: [(String, String, Int, String, Int, String, KMReconciliationStatementResult.Status)] = [
-            ("exact", "青空食堂", 1280, "2026-09-29", 1280, "2026-09-29", .matched),
+            ("exact", "青空食堂", 1280, "2026-09-29", 1280, "2026-09-29", .needsReview),
             ("plus3", "青空食堂", 1280, "2026-09-29", 1280, "2026-10-02", .needsReview),
             ("plus7", "青空食堂", 1280, "2026-09-29", 1280, "2026-10-06", .needsReview),
             ("plus8", "青空食堂", 1280, "2026-09-29", 1280, "2026-10-07", .unmatchedStatement),
             ("amountDelta", "青空食堂", 1280, "2026-09-29", 1230, "2026-09-29", .needsReview),
             ("unrelated", "山川電器", 1280, "2026-09-29", 1280, "2026-09-29", .needsReview),
             ("noCandidate", "青空食堂", 1280, "2026-09-01", 3000, "2026-09-29", .unmatchedStatement),
-            ("variant", "北口食堂", 1380, "2026-09-29", 1380, "2026-09-29", .matched),
+            ("variant", "北口食堂", 1380, "2026-09-29", 1380, "2026-09-29", .needsReview),
         ]
         for (id, sm, sa, sd, ra, rd, status) in scenarios {
             let result = KMReconciliationEngine.run(statements: [statement("s-\(id)", merchant: sm, amount: sa, date: sd)], receipts: [receipt("r-\(id)", merchant: id == "unrelated" ? "海辺書房" : id == "variant" ? "北口 食堂" : sm, amount: ra, date: rd)])

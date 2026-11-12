@@ -192,6 +192,8 @@ const report = {
   oldSeparableFirstCandidateRate: rate(summary.oldSeparableHits, summary.oldSeparableChecks),
 };
 console.log(JSON.stringify(report, null, 2));
+const failClosedCalibration = report.ruleVersion === "1.3.0";
 if (summary.assignmentDoubleCount > 0 || summary.candidateSetMismatchStatementCount > 0
   || summary.candidateSetMissingCount > 0 || summary.candidateSetExtraCount > 0
-  || summary.firstCandidateMissingCount > 0 || summary.autoMatchSetDifferenceCount > 0) process.exitCode = 1;
+  || summary.firstCandidateMissingCount > 0 || (!failClosedCalibration && summary.autoMatchSetDifferenceCount > 0)
+  || summary.newSeparableHits < summary.oldSeparableHits) process.exitCode = 1;

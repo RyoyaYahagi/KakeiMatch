@@ -1,9 +1,15 @@
 /** Pure, deterministic reconciliation rules. Persistence and user scoping belong to callers. */
 
 import { lexicographicMaximumAssignment } from "./assignment";
+import {
+  reconciliationFSFeatures,
+  reconciliationFSScore,
+  RECONCILIATION_FS_WEIGHTS,
+  type ReconciliationFSWeights,
+} from "./reconciliation-fs";
 
-/** 1.2.5 removes the confirmed Vpass prefix symmetrically from both merchants. */
-export const RECONCILIATION_RULE_VERSION = "1.2.5";
+/** 1.3.0 applies offline-fitted Fellegi–Sunter evidence to automatic matching. */
+export const RECONCILIATION_RULE_VERSION = "1.3.0";
 
 export const RECONCILIATION_RULES = {
   candidateDateWindowDays: 7,
@@ -17,10 +23,10 @@ export const RECONCILIATION_RULES = {
   merchantWeight: 0.05,
   // At equal amounts, source evidence outweighs the full date/merchant variation.
   paymentSourceWeight: 0.25,
-  autoMatchAmountWeight: 0.55,
-  autoMatchDateWeight: 0.25,
-  autoMatchMerchantWeight: 0.20,
-  autoMatchScore: 0.88,
+  // No held-out threshold met the 0.5% upper-bound target; fail closed.
+  autoMatchScore: 1000000,
+  waiverAutoMatchScore: 1000000,
+  waiverAutoMatchEnabled: false,
   autoMatchMargin: 0.15,
   candidatesPerStatement: 3,
 } as const;
@@ -144,7 +150,14 @@ function safeAmount(amount: number): boolean {
   return Number.isSafeInteger(amount) && amount >= 0;
 }
 
-type InternalCandidate = ReconciliationCandidate & { aliasMatch: boolean; autoScore: number; autoMerchantSimilarity: number };
+type InternalCandidate = ReconciliationCandidate & { aliasMatch: boolean; autoScore: number; reviewTieBreak: number; autoMerchantSimilarity: number; waiver: boolean };
+
+export type ReconciliationFSEvaluation = {
+  weights: ReconciliationFSWeights;
+  normalThreshold: number;
+  waiverThreshold: number;
+  waiverEnabled: boolean;
+};
 
 function scoreCandidate(input: {
   amountExact: boolean;
@@ -152,10 +165,14 @@ function scoreCandidate(input: {
   statementAmountYen: number;
   dateDistanceDays: number;
   merchantSimilarity: number;
+  fsMerchantSimilarity: number;
   autoMerchantSimilarity: number;
   aliasMatch: boolean;
   samePaymentSource: boolean;
-}): { score: number; autoScore: number } {
+  paymentSourceKnown: boolean;
+  waiver: boolean;
+  fsWeights: ReconciliationFSWeights;
+}): { score: number; autoScore: number; reviewTieBreak: number } {
   const amountTolerance = Math.max(
     RECONCILIATION_RULES.amountToleranceAbsoluteYen,
     input.statementAmountYen * RECONCILIATION_RULES.amountToleranceRatio,
@@ -163,14 +180,23 @@ function scoreCandidate(input: {
   const amountScore = input.amountExact ? 1 : Math.max(0, 1 - input.amountDeltaYen / amountTolerance);
   const dateScore = 1 - input.dateDistanceDays / (RECONCILIATION_RULES.candidateDateWindowDays + 1);
   const merchantScore = input.aliasMatch ? 1 : input.merchantSimilarity;
-  const autoMerchantScore = input.aliasMatch ? 1 : input.autoMerchantSimilarity;
+  const reviewTieBreakMerchant = input.aliasMatch ? 1 : input.autoMerchantSimilarity;
   const round = (score: number) => Math.round(score * 1_000_000) / 1_000_000;
   return {
     score: round(amountScore * RECONCILIATION_RULES.amountWeight + dateScore * RECONCILIATION_RULES.dateWeight
       + merchantScore * RECONCILIATION_RULES.merchantWeight + Number(input.samePaymentSource) * RECONCILIATION_RULES.paymentSourceWeight),
-    // Keep automatic confidence conservative, independently of the review candidate ranking.
-    autoScore: round(amountScore * RECONCILIATION_RULES.autoMatchAmountWeight
-      + dateScore * RECONCILIATION_RULES.autoMatchDateWeight + autoMerchantScore * RECONCILIATION_RULES.autoMatchMerchantWeight),
+    // Keep the calibrated automatic evidence score separate from review ranking.
+    autoScore: reconciliationFSScore(reconciliationFSFeatures({
+      amountDeltaYen: input.amountDeltaYen,
+      amountToleranceYen: amountTolerance,
+      dateDistanceDays: input.dateDistanceDays,
+      merchantSimilarity: input.fsMerchantSimilarity,
+      samePaymentSource: input.samePaymentSource,
+      paymentSourceKnown: input.paymentSourceKnown,
+      aliasMatch: input.aliasMatch,
+      waiver: input.waiver,
+    }), input.fsWeights),
+    reviewTieBreak: round(amountScore * 0.55 + dateScore * 0.25 + reviewTieBreakMerchant * 0.20),
   };
 }
 
@@ -318,7 +344,13 @@ export function inspectReconciliationRanking(input: ReconciliationEngineInput): 
   };
 }
 
-function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEngineResult; reviewAssignment: ReviewAssignment } {
+function reconcile(input: ReconciliationEngineInput, fsEvaluation?: ReconciliationFSEvaluation): { result: ReconciliationEngineResult; reviewAssignment: ReviewAssignment } {
+  const fs = fsEvaluation ?? {
+    weights: RECONCILIATION_FS_WEIGHTS,
+    normalThreshold: RECONCILIATION_RULES.autoMatchScore,
+    waiverThreshold: RECONCILIATION_RULES.waiverAutoMatchScore,
+    waiverEnabled: RECONCILIATION_RULES.waiverAutoMatchEnabled,
+  };
   // Count exact-amount competitors from the full input before applying caller
   // exclusions or rejected pairs. Only purchase statements participate.
   // Day/amount indexes keep this bounded to the existing seven-day window.
@@ -383,10 +415,12 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
         const allowedDelta = Math.max(RECONCILIATION_RULES.amountToleranceAbsoluteYen, statement.amountYen * RECONCILIATION_RULES.amountToleranceRatio);
         if (amountDeltaYen > allowedDelta) continue;
         const samePaymentSource = statement.preferredAccountIds?.includes(receipt.actualAccountId) ?? false;
+        const paymentSourceKnown = (statement.preferredAccountIds?.length ?? 0) > 0;
         const uniqueExactAmountPair = amountExact
           && exactCount(receiptAmountBuckets, statementDay, statement.amountYen) === 1
           && exactCount(statementAmountBuckets, receiptDay, receipt.amountYen) === 1;
-        const autoMerchantSimilarity = samePaymentSource && uniqueExactAmountPair ? 1 : merchantAutoSimilarity;
+        const waiver = samePaymentSource && uniqueExactAmountPair;
+        const autoMerchantSimilarity = waiver ? 1 : merchantAutoSimilarity;
 
         const reasons: string[] = [];
         if (amountExact) reasons.push("amount_exact");
@@ -400,11 +434,12 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
           statementTransactionId: statement.statementTransactionId,
           receiptId: receipt.receiptId,
           rank: 0,
-          ...scoreCandidate({ amountExact, amountDeltaYen, statementAmountYen: statement.amountYen, dateDistanceDays, merchantSimilarity, autoMerchantSimilarity, aliasMatch, samePaymentSource }),
+      ...scoreCandidate({ amountExact, amountDeltaYen, statementAmountYen: statement.amountYen, dateDistanceDays, merchantSimilarity, fsMerchantSimilarity: merchantAutoSimilarity, autoMerchantSimilarity, aliasMatch, samePaymentSource, paymentSourceKnown, waiver, fsWeights: fs.weights }),
           amountDeltaYen,
           dateDistanceDays,
           merchantSimilarity,
           autoMerchantSimilarity,
+          waiver,
           reasons,
           aliasMatch,
         };
@@ -419,6 +454,11 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
   }
 
   const compareCandidates = (a: InternalCandidate, b: InternalCandidate) => b.autoScore - a.autoScore || a.statementTransactionId.localeCompare(b.statementTransactionId) || a.receiptId.localeCompare(b.receiptId);
+  const compareLegacyAutoTieBreak = (a: InternalCandidate, b: InternalCandidate) => b.reviewTieBreak - a.reviewTieBreak
+    || a.statementTransactionId.localeCompare(b.statementTransactionId)
+    || a.receiptId.localeCompare(b.receiptId);
+  const compareReviewCandidates = (a: InternalCandidate, b: InternalCandidate) => b.score - a.score
+    || compareLegacyAutoTieBreak(a, b);
   for (const list of allByStatement.values()) list.sort(compareCandidates);
   for (const list of allByReceipt.values()) list.sort(compareCandidates);
 
@@ -435,8 +475,8 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
     const receiptHasMargin = margin(receiptTop, receiptChoices[1]) >= RECONCILIATION_RULES.autoMatchMargin;
     const isExactAndStrong = top.amountDeltaYen === 0
       && top.dateDistanceDays <= RECONCILIATION_RULES.autoMatchDateWindowDays
-      && (top.autoMerchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
-      && top.autoScore >= RECONCILIATION_RULES.autoMatchScore;
+      && (top.waiver ? fs.waiverEnabled : top.autoMerchantSimilarity >= RECONCILIATION_RULES.autoMatchMerchantSimilarity || top.aliasMatch)
+      && top.autoScore >= (top.waiver ? fs.waiverThreshold : fs.normalThreshold);
     if (isMutualBest && statementHasMargin && receiptHasMargin && isExactAndStrong) {
       matchedStatements.set(statement.statementTransactionId, top.receiptId);
       matchedReceipts.set(top.receiptId, statement.statementTransactionId);
@@ -456,7 +496,9 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
 
   // Ranking runs strictly after automatic matching. It receives the automatic
   // pairs as fixed endpoints and cannot change a matched/unmatched status.
-  const reviewAssignment = computeReviewAssignment(statements, allByStatement, matchedStatements, matchedReceipts, input.manualStatementIds);
+  const reviewCandidatesByStatement = new Map([...allByStatement].map(([statementId, candidates]) =>
+    [statementId, [...candidates].sort(compareLegacyAutoTieBreak)]));
+  const reviewAssignment = computeReviewAssignment(statements, reviewCandidatesByStatement, matchedStatements, matchedReceipts, input.manualStatementIds);
 
   const candidates: ReconciliationCandidate[] = [];
   for (const statement of statements) {
@@ -467,7 +509,7 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
     // apply the ordinary score order and the per-statement cap. Ranking must
     // never add or remove a member of this set.
     const outputCandidates = [...choices].sort((a, b) => Number(b.receiptId === matchedReceiptId) - Number(a.receiptId === matchedReceiptId)
-      || b.score - a.score || compareCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement);
+      || compareReviewCandidates(a, b)).slice(0, RECONCILIATION_RULES.candidatesPerStatement);
     // Reorder only within that fixed set. If the assignment partner is not in
     // the old output set, leave the order untouched.
     if (!matchedReceiptId && assignedReceiptId) {
@@ -520,4 +562,12 @@ function reconcile(input: ReconciliationEngineInput): { result: ReconciliationEn
 
 export function runReconciliationEngine(input: ReconciliationEngineInput): ReconciliationEngineResult {
   return reconcile(input).result;
+}
+
+/** Offline evaluator hook; application callers use `runReconciliationEngine`. */
+export function runReconciliationEngineForFSCalibration(
+  input: ReconciliationEngineInput,
+  evaluation: ReconciliationFSEvaluation,
+): ReconciliationEngineResult {
+  return reconcile(input, evaluation).result;
 }

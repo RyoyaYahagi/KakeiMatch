@@ -10,26 +10,50 @@ struct KMReconciliationReceipt: Equatable, Sendable {
 }
 
 enum KMReconciliationEngine {
-    // 1.2.5 removes the confirmed Vpass prefix symmetrically from both merchants.
-    static let ruleVersion = "1.2.5"
+    // 1.3.0 uses fixed offline-fitted agreement weights; matching is fail-closed
+    // because no validation threshold met the committed 0.5% upper-bound target.
+    static let ruleVersion = "1.3.0"
     private static let candidateWindow = 7
     private static let autoWindow = 2
     private static let amountTolerance = 100
     private static let amountRatio = KMJSNumber("0.03")
     private static let candidateMerchantThreshold = KMJSNumber("0.7")
     private static let autoMerchantThreshold = KMJSNumber("0.72")
-    private static let autoScoreThreshold = KMJSNumber("0.88")
+    private static let autoScoreThreshold = KMJSNumber("1000000")
+    private static let waiverAutoScoreThreshold = KMJSNumber("1000000")
+    private static let waiverAutoMatchEnabled = false
+    private static let fsWeights: [String: KMJSNumber] = [
+        "amount:exact": KMJSNumber("-0.009888543929522566"),
+        "amount:close": KMJSNumber("1.2186210334322527"),
+        "amount:mid": KMJSNumber("1.1367141956443065"),
+        "amount:edge": KMJSNumber("-1.625141754638835"),
+        "date:same": KMJSNumber("2.1604844371235155"),
+        "date:auto": KMJSNumber("-0.5311453091487714"),
+        "date:near": KMJSNumber("-2.8602712413931917"),
+        "date:edge": KMJSNumber("-2.2693663678735825"),
+        "merchant:alias": KMJSNumber("0.8687724418107423"),
+        "merchant:exact": KMJSNumber("2.4134281980713483"),
+        "merchant:high": KMJSNumber("0.8687724418107421"),
+        "merchant:auto": KMJSNumber("-3.1444510186512784"),
+        "merchant:candidate": KMJSNumber("0.2996779099207757"),
+        "merchant:low": KMJSNumber("-0.026365915058186154"),
+        "source:match": KMJSNumber("4"),
+        "source:mismatch": KMJSNumber("0.22104340987250465"),
+        "source:unknown": KMJSNumber("-1.2637993299595196"),
+    ]
     private static let marginThreshold = KMJSNumber("0.15")
     private struct Candidate {
         var statementId: String
         var receiptId: String
         var score: Decimal
         var autoScore: KMJSNumber
+        var reviewTieBreak: KMJSNumber
         var delta: Int
         var days: Int
         var similarity: KMJSNumber
         var autoSimilarity: KMJSNumber
         var aliasMatch: Bool
+        var waiver: Bool
         var reasons: [String]
     }
 
@@ -85,6 +109,25 @@ enum KMReconciliationEngine {
         let aa = bigrams(a), bb = bigrams(b)
         guard !aa.isEmpty, !bb.isEmpty else { return 0 }
         return KMJSNumber(2 * aa.intersection(bb).count) / KMJSNumber(aa.count + bb.count)
+    }
+
+    private static func fsScore(amountDelta: Int, amountScore: KMJSNumber,
+                                dateDistance: Int, merchantSimilarity: KMJSNumber, alias: Bool,
+                                sameSource: Bool, sourceKnown: Bool, waiver: Bool) -> KMJSNumber {
+        let amount: String = amountDelta == 0 ? "amount:exact"
+            : amountScore >= KMJSNumber("0.8") ? "amount:close"
+            : amountScore >= KMJSNumber("0.5") ? "amount:mid" : "amount:edge"
+        let date: String = dateDistance == 0 ? "date:same"
+            : dateDistance <= autoWindow ? "date:auto"
+            : dateDistance <= 4 ? "date:near" : "date:edge"
+        let merchant: String = alias ? "merchant:alias"
+            : merchantSimilarity == 1 ? "merchant:exact"
+            : merchantSimilarity >= KMJSNumber("0.85") ? "merchant:high"
+            : merchantSimilarity >= autoMerchantThreshold ? "merchant:auto"
+            : merchantSimilarity >= candidateMerchantThreshold ? "merchant:candidate" : "merchant:low"
+        let source = !sourceKnown ? "source:unknown" : sameSource ? "source:match" : "source:mismatch"
+        let categories = waiver ? [amount, date, source] : [amount, date, merchant, source]
+        return categories.reduce(KMJSNumber(0)) { $0 + fsWeights[$1]! }
     }
 
     static func aliasKey(_ left: String, _ right: String) -> String {
@@ -143,18 +186,24 @@ enum KMReconciliationEngine {
                     let uniqueExactAmountPair = delta == 0
                         && exactCount(receiptAmountCounts, day: sday, amount: statement.amountYen) == 1
                         && exactCount(statementAmountCounts, day: rday, amount: receipt.amountYen) == 1
-                    let autoSimilarity = sameSource && uniqueExactAmountPair ? KMJSNumber(1) : merchantAutoSimilarity
+                    let waiver = sameSource && uniqueExactAmountPair
+                    let autoSimilarity = waiver ? KMJSNumber(1) : merchantAutoSimilarity
                     let dateScore = KMJSNumber(1) - KMJSNumber(distance) / 8
                     let amountScore = delta == 0 ? KMJSNumber(1) : max(0, KMJSNumber(1) - KMJSNumber(delta) / tolerance)
                     let merchantScore = alias ? KMJSNumber(1) : similarity
-                    let autoMerchantScore = alias ? KMJSNumber(1) : autoSimilarity
                     let score = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.15") + merchantScore * KMJSNumber("0.05") + (sameSource ? KMJSNumber("0.25") : 0)).roundedMillion().decimal
-                    let autoScore = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25") + autoMerchantScore * KMJSNumber("0.20")).roundedMillion().binary
+                    let reviewTieBreak = (amountScore * KMJSNumber("0.55") + dateScore * KMJSNumber("0.25")
+                        + (alias ? KMJSNumber(1) : autoSimilarity) * KMJSNumber("0.20")).roundedMillion().binary
+                    let autoScore = fsScore(amountDelta: delta, amountScore: amountScore,
+                        dateDistance: distance, merchantSimilarity: merchantAutoSimilarity, alias: alias,
+                        sameSource: sameSource, sourceKnown: !(preferredAccountIds[statement.id]?.isEmpty ?? true), waiver: waiver)
                     var reasons = [delta == 0 ? "amount_exact" : "amount_close", distance <= autoWindow ? "date_close" : "date_within_window"]
                     if similarity >= candidateMerchantThreshold { reasons.append("merchant_similar") }
                     if alias { reasons.append("merchant_alias_match") }
                     if sameSource { reasons.append("payment_source_match") }
-                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore, delta: delta, days: distance, similarity: similarity, autoSimilarity: autoSimilarity, aliasMatch: alias, reasons: reasons)
+                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore,
+                        reviewTieBreak: reviewTieBreak, delta: delta, days: distance, similarity: similarity,
+                        autoSimilarity: autoSimilarity, aliasMatch: alias, waiver: waiver, reasons: reasons)
                     byStatement[statement.id, default: []].append(candidate)
                     byReceipt[receipt.receiptId, default: []].append(candidate)
                 }
@@ -170,7 +219,9 @@ enum KMReconciliationEngine {
             guard let top = choices.first, !manualStatementIds.contains(statement.id) else { continue }
             let receiptChoices = byReceipt[top.receiptId] ?? []
             guard let receiptTop = receiptChoices.first else { continue }
-            let strong = top.delta == 0 && top.days <= autoWindow && (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold
+            let merchantAllowed = top.waiver ? waiverAutoMatchEnabled : (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch)
+            let threshold = top.waiver ? waiverAutoScoreThreshold : autoScoreThreshold
+            let strong = top.delta == 0 && top.days <= autoWindow && merchantAllowed && top.autoScore >= threshold
             if receiptTop.statementId == statement.id && margin(top, choices.dropFirst().first) >= marginThreshold && margin(receiptTop, receiptChoices.dropFirst().first) >= marginThreshold && strong {
                 matchedStatements[statement.id] = top.receiptId
                 matchedReceipts[top.receiptId] = statement.id
@@ -195,7 +246,7 @@ enum KMReconciliationEngine {
             var choices = Array((byStatement[statement.id] ?? []).sorted {
                 if ($0.receiptId == matched) != ($1.receiptId == matched) { return $0.receiptId == matched }
                 if $0.score != $1.score { return $0.score > $1.score }
-                return compare($0, $1)
+                return compareReview($0, $1)
             }.prefix(3))
             // Promote the partner only when it is nearly tied with the score
             // leader; otherwise the predictable score order wins. This 0.15
@@ -332,6 +383,11 @@ enum KMReconciliationEngine {
     }
     private static func compare(_ a: Candidate, _ b: Candidate) -> Bool {
         if a.autoScore != b.autoScore { return a.autoScore > b.autoScore }
+        if a.statementId != b.statementId { return less(a.statementId, b.statementId) }
+        return less(a.receiptId, b.receiptId)
+    }
+    private static func compareReview(_ a: Candidate, _ b: Candidate) -> Bool {
+        if a.reviewTieBreak != b.reviewTieBreak { return a.reviewTieBreak > b.reviewTieBreak }
         if a.statementId != b.statementId { return less(a.statementId, b.statementId) }
         return less(a.receiptId, b.receiptId)
     }

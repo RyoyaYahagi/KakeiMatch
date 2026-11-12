@@ -87,11 +87,12 @@ describe("runReconciliationEngine", () => {
     expect(merchantAliasKey("アオゾラストア", "別名")).not.toBe(merchantAliasKey("あおぞらストア", "別名"));
   });
 
-  it("matches an exact unique amount, date, and merchant and returns the version", () => {
+  it("keeps an exact unique pair for review when calibration has no qualifying threshold", () => {
     const result = runReconciliationEngine({ statements: [statement("s1")], receipts: [receipt("r1")] });
     expect(result.ruleVersion).toBe(RECONCILIATION_RULE_VERSION);
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r1" });
-    expect(result.receiptResults[0]).toMatchObject({ status: "matched", matchedStatementTransactionId: "s1" });
+    expect(result.ruleVersion).toBe("1.3.0");
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
+    expect(result.receiptResults[0]).toMatchObject({ status: "needs_review", matchedStatementTransactionId: null });
     expect(result.candidates[0]).toMatchObject({ rank: 1, score: 0.75, amountDeltaYen: 0, dateDistanceDays: 0, merchantSimilarity: 1 });
     expect(["matched", "needs_review", "unmatched_statement"]).toContain(result.statementResults[0]?.status);
   });
@@ -110,25 +111,25 @@ describe("runReconciliationEngine", () => {
       receipts: [receipt("r", { merchant: "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ" })],
     });
     expect(result.candidates[0]?.merchantSimilarity).toBe(1);
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
 
     const receiptPrefix = runReconciliationEngine({
       statements: [statement("s", { merchant: "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ" })],
       receipts: [receipt("r", { merchant: "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ" })],
     });
     expect(receiptPrefix.candidates[0]?.merchantSimilarity).toBe(1);
-    expect(receiptPrefix.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(receiptPrefix.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
     expect(normalizeReconciliationMerchant("VISA国内利用VS別の店")).toBe("別の店");
     expect(normalizeReconciliationMerchant("prefix Visa国内利用 Vs 別の店")).toBe("prefixvisa国内利用vs別の店");
   });
 
-  it("waives the auto merchant gate for a same-source unique exact-amount pair", () => {
+  it("keeps a waiver pair for review because its validation threshold failed", () => {
     const result = runReconciliationEngine({
       statements: [statement("s", { merchant: "無関係な明細名", preferredAccountIds: ["account-2"] })],
       receipts: [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })],
     });
-    expect(result.ruleVersion).toBe("1.2.5");
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(result.ruleVersion).toBe("1.3.0");
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
     expect(result.candidates[0]?.merchantSimilarity).toBe(0);
   });
 
@@ -164,7 +165,7 @@ describe("runReconciliationEngine", () => {
       ],
       receipts: [receipt("r", { merchant: "内容なし", actualAccountId: "account-2" })],
     });
-    expect(result.statementResults.find((row) => row.statementTransactionId === "s")?.status).toBe("matched");
+    expect(result.statementResults.find((row) => row.statementTransactionId === "s")?.status).toBe("needs_review");
   });
 
   it("does not count an exact-amount row outside the seven-day window as a competitor", () => {
@@ -175,7 +176,8 @@ describe("runReconciliationEngine", () => {
         receipt("outside", { purchasedDate: "2026-09-18", actualAccountId: "account-3" }),
       ],
     });
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r" });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
+    expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r"]);
   });
 
   it.each([1, 2, 3, 7])("keeps an exact amount candidate at %i day(s)", (distance) => {
@@ -185,7 +187,7 @@ describe("runReconciliationEngine", () => {
     });
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.dateDistanceDays).toBe(distance);
-    expect(result.statementResults[0]?.status).toBe(distance <= 2 ? "matched" : "needs_review");
+    expect(result.statementResults[0]?.status).toBe("needs_review");
   });
 
   it("excludes candidates more than seven days apart", () => {
@@ -215,7 +217,7 @@ describe("runReconciliationEngine", () => {
     expect(result.statementResults[0]?.status).toBe("needs_review");
   });
 
-  it("accepts an explicit alias as a review candidate and a conservative auto-match signal", () => {
+  it("keeps an explicit alias as a review candidate without unvalidated auto-matching", () => {
     const pair = {
       statements: [statement("s1", { merchant: "青空ストア" })],
       receipts: [receipt("r1", { merchant: "青空商店" })],
@@ -224,7 +226,7 @@ describe("runReconciliationEngine", () => {
     expect(withoutAlias.candidates).toHaveLength(1);
     expect(withoutAlias.statementResults[0]?.status).toBe("needs_review");
     const withAlias = runReconciliationEngine({ ...pair, aliases: new Set([merchantAliasKey("青空ストア", "青空商店")]) });
-    expect(withAlias.statementResults[0]?.status).toBe("matched");
+    expect(withAlias.statementResults[0]?.status).toBe("needs_review");
     expect(withAlias.candidates[0]?.reasons).toContain("merchant_alias_match");
   });
 
@@ -259,14 +261,14 @@ describe("runReconciliationEngine", () => {
 
   it("never assigns one receipt to two statements", () => {
     const result = runReconciliationEngine({ statements: [statement("s1"), statement("s2", { usedDate: "2026-09-11", merchant: "無関係カフェ" })], receipts: [receipt("r1")] });
-    expect(result.statementResults.filter((row) => row.status === "matched")).toHaveLength(1);
-    expect(new Set(result.statementResults.flatMap((row) => row.matchedReceiptId ? [row.matchedReceiptId] : [])).size).toBe(1);
+    expect(result.statementResults.filter((row) => row.status === "matched")).toHaveLength(0);
+    expect(new Set(result.statementResults.flatMap((row) => row.matchedReceiptId ? [row.matchedReceiptId] : [])).size).toBeLessThanOrEqual(1);
   });
 
   it("never assigns one statement to two receipts", () => {
     const result = runReconciliationEngine({ statements: [statement("s1")], receipts: [receipt("r1"), receipt("r2", { purchasedDate: "2026-09-11", merchant: "無関係カフェ" })] });
-    expect(result.receiptResults.filter((row) => row.status === "matched")).toHaveLength(1);
-    expect(new Set(result.receiptResults.flatMap((row) => row.matchedStatementTransactionId ? [row.matchedStatementTransactionId] : [])).size).toBe(1);
+    expect(result.receiptResults.filter((row) => row.status === "matched")).toHaveLength(0);
+    expect(new Set(result.receiptResults.flatMap((row) => row.matchedStatementTransactionId ? [row.matchedStatementTransactionId] : [])).size).toBeLessThanOrEqual(1);
   });
 
   it("leaves refund rows unmatched and identifies the unsupported reason", () => {
@@ -336,16 +338,15 @@ describe("runReconciliationEngine", () => {
     expect(result.candidates.map(row => row.receiptId)).toEqual(["exact", "mapped"]);
   });
 
-  it("retains an automatic pair when more than three review candidates outrank it", () => {
+  it("keeps the high-scoring pair visible among the top three review candidates", () => {
     const result = runReconciliationEngine({
       statements: [statement("s1", { preferredAccountIds: ["account-2"] })],
       receipts: [receipt("automatic", { purchasedDate: "2026-09-09" }),
         ...["a", "b", "c"].map(id => receipt(id, { actualAccountId: "account-2", merchant: "別表記" }))],
     });
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "automatic" });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
     expect(result.candidates).toHaveLength(3);
-    expect(result.candidates[0]?.receiptId).toBe("automatic");
-    expect(result.candidates[1]!.score).toBeGreaterThan(result.candidates[0]!.score);
+    expect(result.candidates.map((row) => row.score)).toEqual([...result.candidates].map((row) => row.score).sort((a, b) => b - a));
   });
 
   it.each([100, 101, 300, 301])("applies the amount tolerance at %i yen without merchant evidence", delta => {
@@ -378,7 +379,7 @@ describe("runReconciliationEngine", () => {
     });
 
     expect(result.candidates.map((candidate) => candidate.receiptId)).toEqual(["r1"]);
-    expect(result.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "r1" });
+    expect(result.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
   });
 
   it("keeps identical records in different payment sources for review instead of auto-matching", () => {
@@ -544,7 +545,7 @@ describe("runReconciliationEngine", () => {
     ]);
   });
 
-  it("keeps manual statements out of the review assignment and preserves automatic pairs", () => {
+  it("keeps manual statements out of the review assignment when automatic matching is disabled", () => {
     const statements = [
       statement("s1", { merchant: "架空商店アルファ", amountYen: 1000 }),
       statement("s2", { merchant: "無関係カフェ", amountYen: 1000, preferredAccountIds: ["acct-1"] }),
@@ -554,7 +555,7 @@ describe("runReconciliationEngine", () => {
       receipt("r2", { merchant: "架空商店アルファ", amountYen: 1000, purchasedDate: "2026-09-11", actualAccountId: "acct-2" }),
     ];
     const automatic = runReconciliationEngine({ statements: [statement("auto")], receipts: [receipt("auto-r")] });
-    expect(automatic.statementResults[0]).toMatchObject({ status: "matched", matchedReceiptId: "auto-r" });
+    expect(automatic.statementResults[0]).toMatchObject({ status: "needs_review", matchedReceiptId: null });
     expect(automatic.candidates[0]?.receiptId).toBe("auto-r");
 
     const manual = runReconciliationEngine({ statements, receipts, manualStatementIds: new Set(["s1"]) });

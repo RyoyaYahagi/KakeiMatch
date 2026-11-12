@@ -39,7 +39,7 @@ docs/update-ux
 
 GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、workflowやジョブ自体のpath filterは設けません。`ci` は毎回起動し、PR差分が `apps/ios/**`、`.github/workflows/ios.yml`、`.github/workflows/ci.yml`、`scripts/testflight.test.mjs` だけの場合に限ってPWA検査のステップを省略します。TestFlightスクリプトの構文検査と回帰テスト、CI選択ルールのテストは実行します。PWAの静的解析・型検査・単体テスト・照合評価（`eval:reconciliation` と `eval:reconciliation-property`）・ビルドは維持し、重いブラウザー操作テストは変更モジュールに応じて選びます。
 
-`eval:reconciliation-property` は既存1,200ケースに加えて、Issue #380 の1,700ケース（基本900＋堅牢性800）を同じ不変条件で検証します。家族別の期待自動確定数は1.2.0で実測した下限で、誤確定・旧方式の正しい確定の喪失・I1〜I6違反が1件でもあれば失敗します。
+`eval:reconciliation-property` は既存1,200ケースに加えて、Issue #380 の1,700ケース（基本900＋堅牢性800）を同じ不変条件で検証します。家族別の期待自動確定数は1.2.0で実測した下限です。通常版では誤確定・旧方式の正しい確定の喪失・I1〜I6違反が1件でもあれば失敗します。1.3.0で較正検証が目標を満たさず fail-closed の自動確定閾値を使う場合は、旧方式の正しい自動確定を要確認へ戻すことを許容しますが、誤確定・新規の不正確定・候補集合差分・I1〜I6違反は引き続き失敗します。抑止件数は評価結果に記録します。
 
 初回設定は `gh api --method POST repos/RyoyaYahagi/KakeiMatch/rulesets --input .github/main-ruleset.json` で作成します。更新時は `gh api repos/RyoyaYahagi/KakeiMatch/rulesets` で対象IDを確認し、同じJSONを `PUT repos/RyoyaYahagi/KakeiMatch/rulesets/<id>` へ渡します。
 
