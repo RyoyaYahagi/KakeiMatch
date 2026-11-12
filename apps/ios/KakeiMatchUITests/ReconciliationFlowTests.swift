@@ -94,7 +94,7 @@ final class ReconciliationFlowTests: XCTestCase {
         continueAfterFailure = false
         let app = launch("light")
         tap("review-statement-fixture-statement-2", app: app)
-        tap("reconciliation.suspect.fixture-statement-2", app: app)
+        tap("reconciliation.unmatched.no.fixture-statement-2", app: app)
         XCTAssertTrue(app.alerts["不正利用？"].waitForExistence(timeout: 5))
         app.alerts.buttons["不正利用？"].tap()
         tap("reconciliation-suspected", app: app)
@@ -104,6 +104,34 @@ final class ReconciliationFlowTests: XCTestCase {
         XCTAssertTrue(app.buttons["reconciliation.count.不正利用？"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.buttons["reconciliation.count.不正利用？"].label, "不正利用？ 0件")
         XCTAssertEqual(app.buttons["reconciliation.count.記録なし"].label, "記録なし 2件")
+        app.terminate()
+    }
+
+    @MainActor func testUnmatchedWithKnownUseCreatesPrefilledRecordAndRerunsReconciliation() {
+        continueAfterFailure = false
+        let app = launch("light")
+        tap("review-statement-fixture-statement-2", app: app)
+        XCTAssertTrue(app.staticTexts["この利用に心当たりはありますか？"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["reconciliation.ignore.fixture-statement-2"].exists, "登録しない操作を詳細から残す")
+        tap("reconciliation.unmatched.yes.fixture-statement-2", app: app)
+
+        let amount = app.textFields["manual-transaction-amount"]
+        let payee = app.textFields["manual-transaction-payee"]
+        XCTAssertTrue(amount.waitForExistence(timeout: 10))
+        XCTAssertEqual(amount.value as? String, "3960")
+        XCTAssertEqual(payee.value as? String, "オンラインストア ほしぞら")
+        let date = app.datePickers["manual-transaction-date"]
+        XCTAssertTrue(date.waitForExistence(timeout: 5))
+        XCTAssertEqual(date.value as? String, "2026年10月4日", "明細の日付を初期値にする")
+        XCTAssertEqual(app.buttons["manual-transaction-account"].value as? String, "PayPayカード")
+        XCTAssertTrue(app.staticTexts["未選択"].exists, "心当たりから開いた記録ではカテゴリを本人が選ぶ")
+
+        tap("entry.categorySheet", app: app)
+        tap("entry.category.fixture-category-0", app: app)
+        tap("entry.saveButton", app: app)
+        XCTAssertTrue(app.buttons["reconciliation.count.一致"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.buttons["reconciliation.count.一致"].label, "一致 5件")
+        XCTAssertEqual(app.buttons["reconciliation.count.記録なし"].label, "記録なし 1件")
         app.terminate()
     }
 }

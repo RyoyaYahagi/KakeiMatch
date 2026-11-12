@@ -1,6 +1,13 @@
 import Foundation
 import Observation
 
+struct KMEntryInitialValues: Equatable, Sendable {
+    var amountYen: Int
+    var payee: String
+    var date: KMDate
+    var accountId: String?
+}
+
 @MainActor @Observable
 final class KMEntryFormModel {
     enum AccountField: Equatable { case source, destination }
@@ -34,8 +41,12 @@ final class KMEntryFormModel {
 
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private let started = ProcessInfo.processInfo.systemUptime
+    private let initialValues: KMEntryInitialValues?
 
-    init(kind: KMEntryKind) { self.kind = kind }
+    init(kind: KMEntryKind, initialValues: KMEntryInitialValues? = nil) {
+        self.kind = kind
+        self.initialValues = initialValues
+    }
 
     var now: Date {
         guard let repositories, repositories.fixtureName != nil else { return Date() }
@@ -64,11 +75,17 @@ final class KMEntryFormModel {
             self.today = today
             self.categories = KMEntryPresentation.sortedCategories(categories.filter { $0.isIncome == kind.categoryIsIncome })
             self.accounts = KMEntryPresentation.orderedAccounts(accounts, for: kind)
-            self.date = today.rawValue
+            self.date = initialValues?.date.rawValue ?? today.rawValue
+            self.amount = initialValues.map { String($0.amountYen) } ?? ""
+            self.payee = initialValues?.payee ?? ""
             self.lastUsedCategoryId = KMEntryPresentation.lastUsedCategory(kind: kind, recent: recent,
                 availableIds: Set(self.categories.map(\.id)))
-            self.categoryId = self.lastUsedCategoryId ?? ""
-            if self.accounts.count == 1 { self.accountId = self.accounts[0].id }
+            self.categoryId = initialValues == nil ? (self.lastUsedCategoryId ?? "") : ""
+            if let accountId = initialValues?.accountId, self.accounts.contains(where: { $0.id == accountId }) {
+                self.accountId = accountId
+            } else if initialValues == nil, self.accounts.count == 1 {
+                self.accountId = self.accounts[0].id
+            }
             loading = false
         } catch {
             self.error = error.localizedDescription

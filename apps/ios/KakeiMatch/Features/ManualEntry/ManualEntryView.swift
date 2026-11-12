@@ -24,10 +24,13 @@ struct KMEntryFormView: View {
     @FocusState private var focusedField: String?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     private let onPayroll: (() -> Void)?
+    private let onSaved: (() -> Void)?
 
-    init(kind: KMEntryKind, onPayroll: (() -> Void)? = nil) {
-        _model = State(initialValue: KMEntryFormModel(kind: kind))
+    init(kind: KMEntryKind, initialValues: KMEntryInitialValues? = nil,
+         onPayroll: (() -> Void)? = nil, onSaved: (() -> Void)? = nil) {
+        _model = State(initialValue: KMEntryFormModel(kind: kind, initialValues: initialValues))
         self.onPayroll = onPayroll
+        self.onSaved = onSaved
     }
 
     var body: some View {
@@ -102,6 +105,7 @@ struct KMEntryFormView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(screenIdentifier)
         .task { if model.loading { await model.load(repositories) } }
+        .onChange(of: model.didSave) { _, didSave in if didSave { onSaved?() } }
         .fullScreenCover(item: $sheet) { current in
             KMBottomSheet(title: current.title, isPresented: sheetBinding) {
                 sheetContent(current)
@@ -249,7 +253,15 @@ struct KMEntryFormView: View {
             .environment(\.calendar, KMDate.calendar)
             .environment(\.timeZone, KMDate.calendar.timeZone)
             .environment(\.locale, Locale(identifier: "ja_JP"))
+            .accessibilityValue(dateAccessibilityValue)
             .accessibilityIdentifier("manual-transaction-date")
+    }
+
+    private var dateAccessibilityValue: String {
+        guard let date = try? KMDate(model.date) else { return "" }
+        let parts = date.rawValue.split(separator: "-").compactMap { Int($0) }
+        guard parts.count == 3 else { return "" }
+        return "\(parts[0])年\(parts[1])月\(parts[2])日"
     }
 
     private var dateBinding: Binding<Date> {
@@ -755,7 +767,9 @@ struct KMEntryFormView: View {
 }
 
 struct ManualEntryView: View {
-    var body: some View { KMEntryFormView(kind: .expense) }
+    var initialValues: KMEntryInitialValues? = nil
+    var onSaved: (() -> Void)? = nil
+    var body: some View { KMEntryFormView(kind: .expense, initialValues: initialValues, onSaved: onSaved) }
 }
 
 #if DEBUG
