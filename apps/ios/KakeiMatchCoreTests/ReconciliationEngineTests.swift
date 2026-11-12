@@ -76,14 +76,17 @@ struct ReconciliationEngineTests {
     }
 
     @Test func merchantNormalizationMatchesConfirmedVpassAndCorporateForms() {
+        let f3Merchant = "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ"
+        #expect(KMReconciliationEngine.normalizeMerchant(f3Merchant)
+            == KMReconciliationEngine.normalizeMerchant(KMReconciliationEngine.normalizeMerchant(f3Merchant)))
         for merchant in ["株式会社青空食堂", "（株）青空食堂", "㈱青空食堂", "カブシキガイシャ青空食堂",
                          "青空食堂株式会社", "青空食堂（株）", "青空食堂㈱", "青空食堂カブシキガイシャ"] {
             #expect(KMReconciliationEngine.merchantSimilarity(merchant, "青空食堂") == 1)
         }
         #expect(KMReconciliationEngine.merchantSimilarity("架空株式会社ストア", "架空ストア") < 1)
         let f3 = KMReconciliationEngine.run(
-            statements: [statement("s", merchant: "Ｖｉｓａ国内利用 Vs ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ")],
-            receipts: [receipt("r", merchant: "ﾀﾞｲﾄﾞ-ﾄﾞﾘﾝｺ ｶ")])
+            statements: [statement("s", merchant: "Ｖｉｓａ国内利用 Vs \(f3Merchant)")],
+            receipts: [receipt("r", merchant: f3Merchant)])
         #expect(f3.candidates.first?.merchantSimilarity == 1)
         #expect(f3.statementResults.first?.status == .matched)
     }

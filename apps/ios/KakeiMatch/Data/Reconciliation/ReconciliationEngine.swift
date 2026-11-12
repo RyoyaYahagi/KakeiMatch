@@ -34,7 +34,9 @@ enum KMReconciliationEngine {
     }
 
     static func normalizeMerchant(_ merchant: String) -> String {
-        let normalized = merchant.precomposedStringWithCompatibilityMapping
+        // Compatibility folding may leave half-width voiced kana decomposed;
+        // compose canonically so a second normalization pass matches TS NFKC.
+        let normalized = merchant.precomposedStringWithCompatibilityMapping.precomposedStringWithCanonicalMapping
         let asciiLowercased = String(normalized.unicodeScalars.map { scalar -> Character in
             if scalar.value >= 65 && scalar.value <= 90 { return Character(UnicodeScalar(scalar.value + 32)!) }
             return Character(scalar)
@@ -65,8 +67,7 @@ enum KMReconciliationEngine {
     private static func similarityNumber(_ left: String, _ right: String, forReview: Bool = false) -> KMJSNumber {
         func scalars(_ value: String) -> [Unicode.Scalar] {
             let normalized = normalizeMerchant(value)
-            // Foundation can leave half-width voiced kana decomposed after compatibility mapping.
-            let composed = forReview ? normalized.precomposedStringWithCanonicalMapping : normalized
+            let composed = normalized
             return composed.unicodeScalars.map { scalar in
                 // Review ranking only; keep automatic matching and alias identity unchanged.
                 if forReview && ((0x3041...0x3096).contains(scalar.value) || (0x309D...0x309E).contains(scalar.value)) {
