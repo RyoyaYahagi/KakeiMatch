@@ -188,7 +188,7 @@ struct KMBudgetView: View {
             get: { focusedBudgetField == id ? value.wrappedValue : KMBudgetPresentation.groupedYenInput(value.wrappedValue) },
             set: { value.wrappedValue = String($0.filter { $0 >= "0" && $0 <= "9" }) }
         )
-        HStack(spacing: 3) {
+        return HStack(spacing: 3) {
             Text("¥").foregroundStyle(KMColor.muted)
             TextField(placeholder, text: fieldValue).keyboardType(.numberPad).multilineTextAlignment(.trailing)
                 .font(KMTypography.number(15)).foregroundStyle(KMColor.text).accessibilityLabel(label).accessibilityIdentifier(id)

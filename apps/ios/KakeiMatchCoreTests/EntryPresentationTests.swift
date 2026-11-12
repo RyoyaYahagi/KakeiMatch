@@ -65,16 +65,16 @@ struct EntryPresentationTests {
         let category = KMCategory(id: "food", name: "食費")
         let account = KMAccount(id: "cash", name: "現金", accountType: .cash)
 
-        #expect(throws: KMDataError.invalidData("支払元がまだ登録されていません。先に支払元を追加してください.")) {
+        #expect(throws: KMDataError.invalidData("支払元がまだ登録されていません。先に支払元を追加してください。")) {
             try KMEntryPresentation.validate(draft(), categories: [category], accounts: [])
         }
-        #expect(throws: KMDataError.invalidData("支払元を選んでください.")) {
+        #expect(throws: KMDataError.invalidData("支払元を選んでください。")) {
             try KMEntryPresentation.validate(draft(category: "food"), categories: [category], accounts: [account])
         }
-        #expect(throws: KMDataError.invalidData("支出カテゴリがまだ登録されていません。先にカテゴリを追加してください.")) {
+        #expect(throws: KMDataError.invalidData("支出カテゴリがまだ登録されていません。先にカテゴリを追加してください。")) {
             try KMEntryPresentation.validate(draft(account: "cash"), categories: [], accounts: [account])
         }
-        #expect(throws: KMDataError.invalidData("支出カテゴリを選んでください.")) {
+        #expect(throws: KMDataError.invalidData("支出カテゴリを選んでください。")) {
             try KMEntryPresentation.validate(draft(account: "cash"), categories: [category], accounts: [account])
         }
     }
