@@ -14,6 +14,7 @@
 
 import {
   inspectReconciliationRanking,
+  merchantAliasKey,
   RECONCILIATION_RULES,
   RECONCILIATION_RULE_VERSION,
   reconciliationMerchantSimilarity,
@@ -33,6 +34,8 @@ import {
   type GateFamily,
 } from "./reconciliation-gate-dataset";
 import { runReconciliationEngine as runFrozenEngine } from "./frozen/reconciliation-engine-1.2.0";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const DAY = 86_400_000;
 const DEFAULT_CASES = 1_200;
@@ -50,6 +53,33 @@ const PINNED_RULES = {
 
 type Family = "clean" | "noise" | "near-miss" | "twin" | "irreducible";
 type TruthClass = "separable" | "ambiguous" | "unrecoverable";
+type ReviewDateProfile = "off" | "1-2" | "3-7" | "5-10" | "8-14" | "15-21" | "22-30";
+
+type SensitivityParameters = {
+  normalDateMaxDays: number;
+  reviewDateProfile: ReviewDateProfile;
+  lowMerchantRatePercent: number;
+  twinCaseRatePercent: number;
+  allTruthPairsTwin: boolean;
+};
+
+const SENSITIVITY_BASELINE: SensitivityParameters = {
+  normalDateMaxDays: 2,
+  reviewDateProfile: "3-7",
+  lowMerchantRatePercent: 0,
+  twinCaseRatePercent: 10,
+  allTruthPairsTwin: false,
+};
+
+const REVIEW_DATE_RANGES: Record<ReviewDateProfile, readonly [number, number] | null> = {
+  off: null,
+  "1-2": [1, 2],
+  "3-7": [3, 7],
+  "5-10": [5, 10],
+  "8-14": [8, 14],
+  "15-21": [15, 21],
+  "22-30": [22, 30],
+};
 
 const FAMILIES: readonly Family[] = ["clean", "noise", "near-miss", "twin", "irreducible"];
 
@@ -60,6 +90,10 @@ type TruthPair = {
   intent: TruthClass;
   /** Class recomputed from the generated records before assertions. */
   observedClass: TruthClass;
+  currentAutoEligible?: boolean;
+  lowMerchantRateSelected?: boolean;
+  normalDateJitterDays?: number;
+  reviewOnlyDateJitterDays?: number | null;
 };
 
 type GeneratedCase = {
@@ -77,6 +111,7 @@ type GeneratedCase = {
    * the PR #381 harness. Property cases recompute it from the generated records.
    */
   fixedTruthClass?: boolean;
+  sensitivity?: boolean;
 };
 
 type Options = {
@@ -84,6 +119,7 @@ type Options = {
   seed: number;
   family: Family | null;
   maxViolations: number;
+  gateOnly: boolean;
 };
 
 type Violation = {
@@ -133,6 +169,21 @@ type CaseMetrics = {
   candidateChecks: number;
   candidateHits: number;
   truthPairsWithoutCandidates: number;
+  candidateEligibleTruthPairCount: number;
+  candidateEligibleRecallHitCount: number;
+  candidateEligibleNoCandidateCount: number;
+  candidateEligibleRecallMissCount: number;
+  candidateOutsideDateWindowTruthPairCount: number;
+  candidateOutsideAmountToleranceTruthPairCount: number;
+  candidateOutsideBothTruthPairCount: number;
+  candidateOutsideWindowNoCandidateCount: number;
+  unconditionalTruthCandidateHitCount: number;
+  currentRuleEligibleTruthPairCount: number;
+  lowSimilarityTruthPairCount: number;
+  safetyViolationCaseCount: number;
+  safetyViolationCount: number;
+  measurementIntegrityCaseCount: number;
+  measurementIntegrityViolationCount: number;
   ambiguousAbstentionCount: number;
   unrecoverableAbstentionCount: number;
 };
@@ -217,15 +268,26 @@ function formatDay(day: number): string {
   return new Date(day * DAY).toISOString().slice(0, 10);
 }
 
-function normalDateJitter(rng: () => number): number {
-  const roll = rng();
-  if (roll < 0.7) return 0;
-  if (roll < 0.9) return pick(rng, [-1, 1]);
-  return pick(rng, [-2, 2]);
+function normalDateJitter(rng: () => number, maxDays: number): number {
+  if (maxDays === 0 || rng() < 0.7) return 0;
+  const totalWeight = (maxDays * (maxDays + 1)) / 2;
+  let roll = rng() * totalWeight;
+  let magnitude = maxDays;
+  for (let days = 1; days <= maxDays; days += 1) {
+    const weight = maxDays + 1 - days;
+    if (roll < weight) {
+      magnitude = days;
+      break;
+    }
+    roll -= weight;
+  }
+  return magnitude * (rng() < 0.5 ? -1 : 1);
 }
 
-function reviewOnlyDateJitter(rng: () => number): number {
-  return pick(rng, [3, 4, 5, 6, 7]) * (rng() < 0.5 ? -1 : 1);
+function reviewOnlyDateJitter(rng: () => number, profile: ReviewDateProfile): number {
+  const range = REVIEW_DATE_RANGES[profile];
+  if (!range) return 0;
+  return int(rng, range[0], range[1]) * (rng() < 0.5 ? -1 : 1);
 }
 
 // ---------- merchant pool ----------
@@ -362,12 +424,17 @@ function pickLowCompetitorMerchant(rng: () => number, statementMerchant: string)
 
 const ACCOUNTS = ["acct-rakuten", "acct-smcc", "acct-paypay"] as const;
 
-function familyFor(index: number): Family {
+function familyFor(index: number, twinCaseRatePercent: number): Family {
   const bucket = index % 100;
-  if (bucket < 45) return "clean";
-  if (bucket < 75) return "noise";
-  if (bucket < 85) return "near-miss";
-  if (bucket < 95) return "twin";
+  const nonTwinPercent = 100 - twinCaseRatePercent;
+  const cleanEnd = nonTwinPercent * 0.5;
+  const noiseEnd = cleanEnd + nonTwinPercent / 3;
+  const nearMissEnd = noiseEnd + nonTwinPercent / 9;
+  const twinEnd = nearMissEnd + twinCaseRatePercent;
+  if (bucket < cleanEnd) return "clean";
+  if (bucket < noiseEnd) return "noise";
+  if (bucket < nearMissEnd) return "near-miss";
+  if (bucket < twinEnd) return "twin";
   return "irreducible";
 }
 
@@ -408,8 +475,13 @@ function makeReceipt(id: string, merchant: string, amountYen: number, purchasedD
   };
 }
 
-function generateCase(caseIndex: number, baseSeed: number, familyOverride: Family | null): GeneratedCase {
-  const family = familyOverride ?? familyFor(caseIndex);
+function generateCase(
+  caseIndex: number,
+  baseSeed: number,
+  familyOverride: Family | null,
+  sensitivity: SensitivityParameters = SENSITIVITY_BASELINE,
+): GeneratedCase {
+  const family = familyOverride ?? familyFor(caseIndex, sensitivity.twinCaseRatePercent);
   const seed = (baseSeed + Math.imul(caseIndex + 1, 0x9e3779b1)) >>> 0;
   const rng = makeRng(seed);
   const startDay = dayNumber("2026-09-01") + int(rng, 0, 40);
@@ -456,7 +528,7 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
       return;
     }
     if (kind === "date") {
-      receipts.push(makeReceipt(id, receipt.merchant, receipt.amountYen, formatDay(dayNumber(statement.usedDate) + reviewOnlyDateJitter(rng)), otherAccount(rng, receipt.actualAccountId)));
+      receipts.push(makeReceipt(id, receipt.merchant, receipt.amountYen, formatDay(dayNumber(statement.usedDate) + reviewOnlyDateJitter(rng, sensitivity.reviewDateProfile)), otherAccount(rng, receipt.actualAccountId)));
       return;
     }
     receipts.push(makeReceipt(id, pickLowCompetitorMerchant(rng, statement.merchant), receipt.amountYen, receipt.purchasedDate, otherAccount(rng, receipt.actualAccountId)));
@@ -466,9 +538,14 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
     const receiptAmount = takeAmount();
     const receiptDay = startDay + int(rng, 0, 60);
     const account = pick(rng, ACCOUNTS);
-    let merchantPair = pickEligibleMerchantPair(rng);
+    const lowMerchantRateSelected = rng() * 100 < sensitivity.lowMerchantRatePercent;
+    let merchantPair = lowMerchantRateSelected
+      ? pickLowMerchantPair(rng)
+      : pickEligibleMerchantPair(rng);
     let statementAmount = receiptAmount;
-    let statementDay = receiptDay + normalDateJitter(rng);
+    const normalJitter = normalDateJitter(rng, sensitivity.normalDateMaxDays);
+    let statementDay = receiptDay + normalJitter;
+    let reviewJitter: number | null = null;
     let intent: TruthClass = "separable";
 
     if (family === "noise") {
@@ -476,7 +553,8 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
       forcedNoiseAdded = true;
       const roll = forceMode ? (caseIndex % 2 === 0 ? 0 : 1) : rng();
       if (roll < 0.1) {
-        statementDay = receiptDay + reviewOnlyDateJitter(rng);
+        reviewJitter = reviewOnlyDateJitter(rng, sensitivity.reviewDateProfile);
+        statementDay = receiptDay + reviewJitter;
         intent = "unrecoverable";
       } else if (roll < 0.2) {
         const delta = int(rng, 1, 99) * (rng() < 0.5 ? -1 : 1);
@@ -492,7 +570,8 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
         const delta = int(rng, 1, 99) * (rng() < 0.5 ? -1 : 1);
         statementAmount = Math.max(1, receiptAmount + delta);
       } else if (mode === "date") {
-        statementDay = receiptDay + reviewOnlyDateJitter(rng);
+        reviewJitter = reviewOnlyDateJitter(rng, sensitivity.reviewDateProfile);
+        statementDay = receiptDay + reviewJitter;
       } else {
         merchantPair = pickLowMerchantPair(rng);
       }
@@ -505,7 +584,15 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
     const receipt = makeReceipt(receiptId, merchantPair.receipt, receiptAmount, formatDay(receiptDay), account);
     statements.push(statement);
     receipts.push(receipt);
-    const truthPair: TruthPair = { statementId, receiptId, intent, observedClass: intent };
+    const truthPair: TruthPair = {
+      statementId,
+      receiptId,
+      intent,
+      observedClass: intent,
+      lowMerchantRateSelected,
+      normalDateJitterDays: normalJitter,
+      reviewOnlyDateJitterDays: reviewJitter,
+    };
     truthPairs.push(truthPair);
 
     if (family === "irreducible") {
@@ -513,7 +600,7 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
       receipts.push(makeReceipt(decoyId, statement.merchant, statement.amountYen, statement.usedDate, otherAccount(rng, account)));
     }
 
-    if (family === "twin" && (!twinAdded || rng() < 0.3)) {
+    if (family === "twin" && (sensitivity.allTruthPairsTwin || !twinAdded || rng() < 0.3)) {
       addTwin(receipt, account);
       truthPair.intent = "ambiguous";
       twinAdded = true;
@@ -560,6 +647,7 @@ function generateCase(caseIndex: number, baseSeed: number, familyOverride: Famil
     receipts,
     truthPairs,
     refundStatementIds,
+    sensitivity: sensitivity !== SENSITIVITY_BASELINE,
   };
   assertGeneratedCase(generated);
   return generated;
@@ -628,6 +716,34 @@ function isAutoEligible(statement: ReconciliationStatement, receipt: Reconciliat
     && features.merchantSimilarity >= PINNED_RULES.autoMatchMerchantSimilarity;
 }
 
+function currentRuleAutoEligible(
+  statement: ReconciliationStatement,
+  receipt: ReconciliationReceipt,
+  statementAmountDayCounts: ReadonlyMap<string, number>,
+  receiptAmountDayCounts: ReadonlyMap<string, number>,
+  aliases?: ReadonlySet<string>,
+): boolean {
+  if (statement.kind !== "purchase") return false;
+  const features = autoFeatures(statement, receipt);
+  if (features.amountDeltaYen !== 0 || features.dateDistanceDays > PINNED_RULES.autoMatchDateWindowDays) return false;
+  const aliasMatch = aliases?.has(merchantAliasKey(statement.merchant, receipt.merchant)) ?? false;
+  if (aliasMatch || features.merchantSimilarity >= PINNED_RULES.autoMatchMerchantSimilarity) return true;
+  const samePaymentSource = statement.preferredAccountIds?.includes(receipt.actualAccountId) ?? false;
+  if (!samePaymentSource) return false;
+  const statementDay = dayNumber(statement.usedDate);
+  const receiptDay = dayNumber(receipt.purchasedDate);
+  const countInWindow = (index: ReadonlyMap<string, number>, day: number, amount: number): number => {
+    let count = 0;
+    for (let offset = -PINNED_RULES.candidateDateWindowDays; offset <= PINNED_RULES.candidateDateWindowDays; offset += 1) {
+      count += index.get(`${day + offset}:${amount}`) ?? 0;
+    }
+    return count;
+  };
+  const receiptExactAmountCount = countInWindow(receiptAmountDayCounts, statementDay, statement.amountYen);
+  const statementExactAmountCount = countInWindow(statementAmountDayCounts, receiptDay, receipt.amountYen);
+  return receiptExactAmountCount === 1 && statementExactAmountCount === 1;
+}
+
 function dominates(statement: ReconciliationStatement, candidate: ReconciliationReceipt, truth: ReconciliationReceipt): boolean {
   if (!isAutoEligible(statement, candidate)) return false;
   const candidateFeatures = autoFeatures(statement, candidate);
@@ -649,6 +765,22 @@ function classifyTruthPair(
   }
   return "separable";
 }
+
+const MEASUREMENT_INTEGRITY_KINDS = new Set([
+  "statement_results_count_mismatch",
+  "receipt_results_count_mismatch",
+  "duplicate_statement_result_rows",
+  "duplicate_receipt_result_rows",
+  "statement_result_id_set_mismatch",
+  "receipt_result_id_set_mismatch",
+  "statement_result_missing",
+  "receipt_result_missing",
+  "truth_receipt_missing",
+  "accounting_mismatch",
+  "truth_statement_is_refund",
+  "refund_kind_mismatch",
+  "classification_mismatch",
+]);
 
 function emptyCaseMetrics(): CaseMetrics {
   return {
@@ -675,6 +807,21 @@ function emptyCaseMetrics(): CaseMetrics {
     candidateChecks: 0,
     candidateHits: 0,
     truthPairsWithoutCandidates: 0,
+    candidateEligibleTruthPairCount: 0,
+    candidateEligibleRecallHitCount: 0,
+    candidateEligibleNoCandidateCount: 0,
+    candidateEligibleRecallMissCount: 0,
+    candidateOutsideDateWindowTruthPairCount: 0,
+    candidateOutsideAmountToleranceTruthPairCount: 0,
+    candidateOutsideBothTruthPairCount: 0,
+    candidateOutsideWindowNoCandidateCount: 0,
+    unconditionalTruthCandidateHitCount: 0,
+    currentRuleEligibleTruthPairCount: 0,
+    lowSimilarityTruthPairCount: 0,
+    safetyViolationCaseCount: 0,
+    safetyViolationCount: 0,
+    measurementIntegrityCaseCount: 0,
+    measurementIntegrityViolationCount: 0,
     ambiguousAbstentionCount: 0,
     unrecoverableAbstentionCount: 0,
   };
@@ -760,7 +907,7 @@ function autoPairKeys(result: { statementResults: Array<{ statementTransactionId
   return pairs;
 }
 
-function runCase(generated: GeneratedCase): CaseOutcome {
+function runCase(generated: GeneratedCase, sensitivityMode = false): CaseOutcome {
   const metrics = emptyCaseMetrics();
   const violations: Violation[] = [];
   const indistinguishable: IndistinguishableMatch[] = [];
@@ -777,10 +924,39 @@ function runCase(generated: GeneratedCase): CaseOutcome {
   const statementById = new Map(statements.map((statement) => [statement.statementTransactionId, statement]));
   const receiptById = new Map(receipts.map((receipt) => [receipt.receiptId, receipt]));
   const truthByStatement = new Map(truthPairs.map((truth) => [truth.statementId, truth]));
+  const statementAmountDayCounts = new Map<string, number>();
+  const receiptAmountDayCounts = new Map<string, number>();
+  if (sensitivityMode) {
+    for (const statement of statements) {
+      if (statement.kind !== "purchase") continue;
+      const key = `${dayNumber(statement.usedDate)}:${statement.amountYen}`;
+      statementAmountDayCounts.set(key, (statementAmountDayCounts.get(key) ?? 0) + 1);
+    }
+    for (const receipt of receipts) {
+      const key = `${dayNumber(receipt.purchasedDate)}:${receipt.amountYen}`;
+      receiptAmountDayCounts.set(key, (receiptAmountDayCounts.get(key) ?? 0) + 1);
+    }
+  }
 
   for (const truth of truthPairs) {
     if (generated.fixedTruthClass) {
       truth.observedClass = truth.intent;
+      continue;
+    }
+    if (sensitivityMode) {
+      // Preserve intent separately, while classifying this perturbation under
+      // the current automatic feature gates. Declared twins remain ambiguous.
+      const statement = statementById.get(truth.statementId)!;
+      const receipt = receiptById.get(truth.receiptId)!;
+      truth.currentAutoEligible = currentRuleAutoEligible(statement, receipt,
+        statementAmountDayCounts, receiptAmountDayCounts, aliases);
+      if (truth.intent === "ambiguous") truth.observedClass = "ambiguous";
+      else if (!truth.currentAutoEligible) truth.observedClass = "unrecoverable";
+      else {
+        const hasEligibleCompetitor = receipts.some((candidate) => candidate.receiptId !== receipt.receiptId
+          && currentRuleAutoEligible(statement, candidate, statementAmountDayCounts, receiptAmountDayCounts, aliases));
+        truth.observedClass = hasEligibleCompetitor ? "ambiguous" : "separable";
+      }
       continue;
     }
     const statement = statementById.get(truth.statementId)!;
@@ -1061,12 +1237,35 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (truth.observedClass === "unrecoverable" && row?.status !== "matched") metrics.unrecoverableAbstentionCount += 1;
     if (statement.kind === "refund") addViolation("truth_statement_is_refund", truth.statementId);
 
-    // A missing truth receipt has no correct candidate to rank; abstaining is
-    // the only safe outcome and is already checked by I1.
+    // Sensitivity distinguishes expected candidate-window rejection from
+    // safety failures. The unconditional metric retains those misses.
     if (!hasTruthReceipt) continue;
+    const truthReceipt = receiptById.get(truth.receiptId)!;
+    const features = autoFeatures(statement, truthReceipt);
+    const outsideDate = statement.kind !== "purchase" || features.dateDistanceDays > PINNED_RULES.candidateDateWindowDays;
+    const allowedAmountDelta = Math.max(PINNED_RULES.amountToleranceAbsoluteYen,
+      statement.amountYen * PINNED_RULES.amountToleranceRatio);
+    const outsideAmount = features.amountDeltaYen > allowedAmountDelta;
+    const ordinarilyAutoEligible = isAutoEligible(statement, truthReceipt);
+    if (truth.currentAutoEligible ?? ordinarilyAutoEligible) metrics.currentRuleEligibleTruthPairCount += 1;
+    if (features.merchantSimilarity < PINNED_RULES.autoMatchMerchantSimilarity) metrics.lowSimilarityTruthPairCount += 1;
+    const truthCandidateHit = candidates.some((candidate) => candidate.receiptId === truth.receiptId && candidate.rank <= 3);
+    if (truthCandidateHit) metrics.unconditionalTruthCandidateHitCount += 1;
+    if (outsideDate && outsideAmount) metrics.candidateOutsideBothTruthPairCount += 1;
+    else if (outsideDate) metrics.candidateOutsideDateWindowTruthPairCount += 1;
+    else if (outsideAmount) metrics.candidateOutsideAmountToleranceTruthPairCount += 1;
+    else {
+      metrics.candidateEligibleTruthPairCount += 1;
+      if (truthCandidateHit) metrics.candidateEligibleRecallHitCount += 1;
+      if (candidates.length === 0) metrics.candidateEligibleNoCandidateCount += 1;
+      if (!truthCandidateHit) metrics.candidateEligibleRecallMissCount += 1;
+    }
+    if ((outsideDate || outsideAmount) && candidates.length === 0) metrics.candidateOutsideWindowNoCandidateCount += 1;
     if (candidates.length === 0) {
       metrics.truthPairsWithoutCandidates += 1;
-      addViolation("expected_review_candidate_missing", `${truth.statementId} (${truth.observedClass})`);
+      if (!sensitivityMode || (!outsideDate && !outsideAmount)) {
+        if (!sensitivityMode) addViolation("expected_review_candidate_missing", `${truth.statementId} (${truth.observedClass})`);
+      }
     } else {
       metrics.candidateChecks += 1;
       if (candidates.some((candidate) => candidate.receiptId === truth.receiptId && candidate.rank <= 3)) metrics.candidateHits += 1;
@@ -1112,7 +1311,619 @@ function runCase(generated: GeneratedCase): CaseOutcome {
     if (String(row.status) === "confirmed") addViolation("confirmed_status_emitted", receipt.receiptId);
   }
 
+  if (sensitivityMode) {
+    const measurementIntegrityViolationCount = violations.filter((violation) => MEASUREMENT_INTEGRITY_KINDS.has(violation.kind)).length;
+    const safetyViolationCount = violations.length - measurementIntegrityViolationCount;
+    metrics.safetyViolationCount = safetyViolationCount;
+    metrics.safetyViolationCaseCount = safetyViolationCount > 0 ? 1 : 0;
+    metrics.measurementIntegrityViolationCount = measurementIntegrityViolationCount;
+    metrics.measurementIntegrityCaseCount = measurementIntegrityViolationCount > 0 ? 1 : 0;
+  }
   return { generated, metrics, violations, indistinguishable, ruleVersions, legacy, result };
+}
+
+type MetricEstimate = {
+  numerator: number;
+  denominator: number;
+  value: number | null;
+  status: "estimable" | "not_estimable";
+};
+
+type SensitivitySetting = {
+  id: string;
+  kind: "baseline" | "single-factor" | "pairwise" | "joint-stress" | "boundary-refine";
+  parameters: SensitivityParameters;
+  roles: string[];
+};
+
+type SensitivityRun = {
+  settingId: string;
+  kind: SensitivitySetting["kind"];
+  parameters: SensitivityParameters;
+  seed: number;
+  caseCount: number;
+  metrics: FinalMetrics;
+  metricEstimates: Record<string, MetricEstimate>;
+  candidateWindowClassification: {
+    eligibleTruthPairs: number;
+    eligibleTruthPairsWithoutCandidate: number;
+    eligibleTruthRecallMisses: number;
+    eligibleTruthRecallHits: number;
+    outsideDateWindow: number;
+    outsideAmountTolerance: number;
+    outsideBoth: number;
+    outsideWindowWithoutCandidate: number;
+  };
+  realizedNoise: {
+    normalDateJitterDays: Record<string, number>;
+    reviewOnlyDateJitterDays: Record<string, number>;
+    finalTruthDateDistanceDays: Record<string, number>;
+    generatedIntentClassCounts: Record<TruthClass, number>;
+    lowSimilarityTruthPairs: number;
+    lowSimilarityTruthPairRate: MetricEstimate;
+    lowMerchantRateSelections: number;
+    lowMerchantRateSelectionRate: MetricEstimate;
+    generatedTwinTruthPairs: number;
+    generatedTwinTruthPairRate: MetricEstimate;
+    twinFamilyCaseCount: number;
+  };
+  byFamily: Record<string, FinalMetrics>;
+  byFamilyMetricEstimates: Record<string, Record<string, MetricEstimate>>;
+  safety: { violatingCaseCount: number; violationCount: number; violationCounts: Record<string, number> };
+  measurementIntegrity: { invalidCaseCount: number; violationCount: number; violationCounts: Record<string, number> };
+  violations: Violation[];
+  indistinguishable: IndistinguishableMatch[];
+};
+
+function estimate(numerator: number, denominator: number): MetricEstimate {
+  return {
+    numerator,
+    denominator,
+    value: denominator === 0 ? null : numerator / denominator,
+    status: denominator === 0 ? "not_estimable" : "estimable",
+  };
+}
+
+function sensitivityEstimates(metrics: CaseMetrics): Record<string, MetricEstimate> {
+  const invalidAutoMatches = metrics.falseAutoMatchCount + metrics.ambiguousAutoMatchCount
+    + metrics.ineligibleTruthAutoMatchCount + metrics.unexplainedAutoMatchCount + metrics.matchWithoutTruthCount;
+  return {
+    autoMatchPrecision: estimate(metrics.correctAutoMatchCount, metrics.correctAutoMatchCount + invalidAutoMatches),
+    autoMatchPrecisionAll: estimate(metrics.correctAutoMatchCount, metrics.autoMatchCount),
+    eligibleTruthRecallAt3: estimate(metrics.candidateEligibleRecallHitCount, metrics.candidateEligibleTruthPairCount),
+    unconditionalTruthCandidateCoverage: estimate(metrics.unconditionalTruthCandidateHitCount, metrics.truthPairCount),
+    truthAutoMatchCoverage: estimate(metrics.correctAutoMatchCount, metrics.truthPairCount),
+    currentRuleAutoEligibilityRate: estimate(metrics.currentRuleEligibleTruthPairCount, metrics.truthPairCount),
+    ambiguousAbstentionRate: estimate(metrics.ambiguousAbstentionCount, metrics.ambiguousTruthPairCount),
+    unrecoverableAbstentionRate: estimate(metrics.unrecoverableAbstentionCount, metrics.unrecoverableTruthPairCount),
+  };
+}
+
+function runSensitivitySetting(setting: SensitivitySetting, seed: number, cases: number): SensitivityRun {
+  const totals = emptyCaseMetrics();
+  const byFamily = new Map<Family, CaseMetrics>();
+  const violations: Violation[] = [];
+  const indistinguishable: IndistinguishableMatch[] = [];
+  const dateDistanceHistogram: Record<string, number> = {};
+  const normalJitterHistogram: Record<string, number> = {};
+  const reviewJitterHistogram: Record<string, number> = {};
+  let twinFamilyCaseCount = 0;
+  let lowMerchantRateSelections = 0;
+  const generatedIntentClassCounts: Record<TruthClass, number> = { separable: 0, ambiguous: 0, unrecoverable: 0 };
+  for (let index = 0; index < cases; index += 1) {
+    const generated = generateCase(index, seed, null, setting.parameters);
+    if (generated.family === "twin") twinFamilyCaseCount += 1;
+    const statementById = new Map(generated.statements.map((row) => [row.statementTransactionId, row]));
+    const receiptById = new Map(generated.receipts.map((row) => [row.receiptId, row]));
+    for (const truth of generated.truthPairs) {
+      generatedIntentClassCounts[truth.intent] += 1;
+      if (truth.lowMerchantRateSelected) lowMerchantRateSelections += 1;
+      if (truth.normalDateJitterDays !== undefined) {
+        const key = String(truth.normalDateJitterDays);
+        normalJitterHistogram[key] = (normalJitterHistogram[key] ?? 0) + 1;
+      }
+      if (truth.reviewOnlyDateJitterDays !== undefined && truth.reviewOnlyDateJitterDays !== null) {
+        const key = String(truth.reviewOnlyDateJitterDays);
+        reviewJitterHistogram[key] = (reviewJitterHistogram[key] ?? 0) + 1;
+      }
+      const statement = statementById.get(truth.statementId)!;
+      const receipt = receiptById.get(truth.receiptId)!;
+      const distance = Math.abs(dayNumber(statement.usedDate) - dayNumber(receipt.purchasedDate));
+      dateDistanceHistogram[String(distance)] = (dateDistanceHistogram[String(distance)] ?? 0) + 1;
+    }
+    const outcome = runCase(generated, true);
+    addMetrics(totals, outcome.metrics);
+    const family = generated.family as Family;
+    const familyTotals = byFamily.get(family) ?? emptyCaseMetrics();
+    addMetrics(familyTotals, outcome.metrics);
+    byFamily.set(family, familyTotals);
+    violations.push(...outcome.violations);
+    indistinguishable.push(...outcome.indistinguishable);
+  }
+  const familyMetrics: Record<string, FinalMetrics> = {};
+  const familyEstimates: Record<string, Record<string, MetricEstimate>> = {};
+  for (const family of FAMILIES) {
+    const metrics = byFamily.get(family);
+    if (metrics) {
+      familyMetrics[family] = finalizeMetrics(metrics);
+      familyEstimates[family] = sensitivityEstimates(metrics);
+    }
+  }
+  return {
+    settingId: setting.id,
+    kind: setting.kind,
+    parameters: setting.parameters,
+    seed,
+    caseCount: cases,
+    metrics: finalizeMetrics(totals),
+    metricEstimates: sensitivityEstimates(totals),
+    candidateWindowClassification: {
+      eligibleTruthPairs: totals.candidateEligibleTruthPairCount,
+      eligibleTruthPairsWithoutCandidate: totals.candidateEligibleNoCandidateCount,
+      eligibleTruthRecallMisses: totals.candidateEligibleRecallMissCount,
+      eligibleTruthRecallHits: totals.candidateEligibleRecallHitCount,
+      outsideDateWindow: totals.candidateOutsideDateWindowTruthPairCount,
+      outsideAmountTolerance: totals.candidateOutsideAmountToleranceTruthPairCount,
+      outsideBoth: totals.candidateOutsideBothTruthPairCount,
+      outsideWindowWithoutCandidate: totals.candidateOutsideWindowNoCandidateCount,
+    },
+    realizedNoise: {
+      normalDateJitterDays: Object.fromEntries(Object.entries(normalJitterHistogram).sort(([left], [right]) => Number(left) - Number(right))),
+      reviewOnlyDateJitterDays: Object.fromEntries(Object.entries(reviewJitterHistogram).sort(([left], [right]) => Number(left) - Number(right))),
+      finalTruthDateDistanceDays: Object.fromEntries(Object.entries(dateDistanceHistogram).sort(([left], [right]) => Number(left) - Number(right))),
+      generatedIntentClassCounts,
+      lowSimilarityTruthPairs: totals.lowSimilarityTruthPairCount,
+      lowSimilarityTruthPairRate: estimate(totals.lowSimilarityTruthPairCount, totals.truthPairCount),
+      lowMerchantRateSelections,
+      lowMerchantRateSelectionRate: estimate(lowMerchantRateSelections, totals.truthPairCount),
+      generatedTwinTruthPairs: generatedIntentClassCounts.ambiguous,
+      generatedTwinTruthPairRate: estimate(generatedIntentClassCounts.ambiguous, totals.truthPairCount),
+      twinFamilyCaseCount,
+    },
+    byFamily: familyMetrics,
+    byFamilyMetricEstimates: familyEstimates,
+    safety: {
+      violatingCaseCount: totals.safetyViolationCaseCount,
+      violationCount: totals.safetyViolationCount,
+      violationCounts: countViolations(violations.filter((violation) => !MEASUREMENT_INTEGRITY_KINDS.has(violation.kind))),
+    },
+    measurementIntegrity: {
+      invalidCaseCount: totals.measurementIntegrityCaseCount,
+      violationCount: totals.measurementIntegrityViolationCount,
+      violationCounts: countViolations(violations.filter((violation) => MEASUREMENT_INTEGRITY_KINDS.has(violation.kind))),
+    },
+    violations,
+    indistinguishable,
+  };
+}
+
+function parameterKey(parameters: SensitivityParameters): string {
+  return [parameters.normalDateMaxDays, parameters.reviewDateProfile, parameters.lowMerchantRatePercent,
+    parameters.twinCaseRatePercent, Number(parameters.allTruthPairsTwin)].join("|");
+}
+
+function sensitivitySetting(
+  id: string,
+  kind: SensitivitySetting["kind"],
+  overrides: Partial<SensitivityParameters> = {},
+): SensitivitySetting {
+  return { id, kind, parameters: { ...SENSITIVITY_BASELINE, ...overrides }, roles: [id] };
+}
+
+function buildSensitivitySettings(): { coarse: SensitivitySetting[]; fiveSeed: SensitivitySetting[]; endpoints: string[] } {
+  const coarse: SensitivitySetting[] = [sensitivitySetting("baseline", "baseline")];
+  for (const days of [0, 1, 3, 5, 7, 10, 14, 21, 30]) {
+    coarse.push(sensitivitySetting(`single-date-${days}`, "single-factor", { normalDateMaxDays: days }));
+  }
+  for (const profile of ["off", "1-2", "5-10", "8-14", "15-21", "22-30"] as const) {
+    coarse.push(sensitivitySetting(`single-review-${profile}`, "single-factor", { reviewDateProfile: profile }));
+  }
+  for (const percent of [5, 10, 20, 40, 60, 80, 100]) {
+    coarse.push(sensitivitySetting(`single-low-merchant-${percent}`, "single-factor", { lowMerchantRatePercent: percent }));
+  }
+  for (const percent of [0, 1, 5, 20, 40, 70, 100]) {
+    coarse.push(sensitivitySetting(`single-twin-${percent}`, "single-factor", { twinCaseRatePercent: percent }));
+  }
+  coarse.push(sensitivitySetting("joint-extreme", "joint-stress", {
+    normalDateMaxDays: 30,
+    reviewDateProfile: "22-30",
+    lowMerchantRatePercent: 100,
+    twinCaseRatePercent: 100,
+    allTruthPairsTwin: true,
+  }));
+
+  const pairwise: SensitivitySetting[] = [];
+  const dateLevels = [3, 7] as const;
+  const reviewLevels = ["5-10", "8-14"] as const;
+  const lowLevels = [20, 60] as const;
+  const twinLevels = [20, 70] as const;
+  const pair = (name: string, left: readonly unknown[], right: readonly unknown[], leftKey: keyof SensitivityParameters,
+    rightKey: keyof SensitivityParameters) => {
+    for (const a of left) for (const b of right) {
+      pairwise.push(sensitivitySetting(`pair-${name}-${String(a)}-${String(b)}`, "pairwise", {
+        [leftKey]: a,
+        [rightKey]: b,
+      }));
+    }
+  };
+  pair("date-review", dateLevels, reviewLevels, "normalDateMaxDays", "reviewDateProfile");
+  pair("date-low", dateLevels, lowLevels, "normalDateMaxDays", "lowMerchantRatePercent");
+  pair("date-twin", dateLevels, twinLevels, "normalDateMaxDays", "twinCaseRatePercent");
+  pair("review-low", reviewLevels, lowLevels, "reviewDateProfile", "lowMerchantRatePercent");
+  pair("review-twin", reviewLevels, twinLevels, "reviewDateProfile", "twinCaseRatePercent");
+  pair("low-twin", lowLevels, twinLevels, "lowMerchantRatePercent", "twinCaseRatePercent");
+  coarse.push(...pairwise);
+  if (coarse.length !== 55) throw new Error(`sensitivity design expected 55 settings, got ${coarse.length}`);
+
+  const endpointSettings = [
+    coarse.find((item) => item.id === "single-date-0")!,
+    coarse.find((item) => item.id === "single-date-30")!,
+    coarse.find((item) => item.id === "single-review-off")!,
+    coarse.find((item) => item.id === "single-review-22-30")!,
+    coarse.find((item) => item.id === "baseline")!, // q=0 and twin=10 share the baseline setting.
+    coarse.find((item) => item.id === "single-low-merchant-100")!,
+    coarse.find((item) => item.id === "single-twin-0")!,
+    coarse.find((item) => item.id === "single-twin-100")!,
+    coarse.find((item) => item.id === "joint-extreme")!,
+  ];
+  const controls = [
+    ...dateLevels.map((value) => coarse.find((item) => item.id === `single-date-${value}`)!),
+    ...reviewLevels.map((value) => coarse.find((item) => item.id === `single-review-${value}`)!),
+    ...lowLevels.map((value) => coarse.find((item) => item.id === `single-low-merchant-${value}`)!),
+    ...twinLevels.map((value) => coarse.find((item) => item.id === `single-twin-${value}`)!),
+  ];
+  const distinct = new Map<string, SensitivitySetting>();
+  for (const setting of [...endpointSettings, ...controls, ...pairwise]) {
+    const key = parameterKey(setting.parameters);
+    const prior = distinct.get(key);
+    if (prior) prior.roles.push(setting.id);
+    else distinct.set(key, { ...setting, roles: [...setting.roles] });
+  }
+  if (distinct.size !== 41) throw new Error(`sensitivity multi-seed design expected 41 unique settings, got ${distinct.size}`);
+  return { coarse, fiveSeed: [...distinct.values()], endpoints: endpointSettings.map((setting) => setting.id) };
+}
+
+function classifySensitivityRun(run: SensitivityRun, fixedGatePassed: boolean): "held_observed" | "broken_observed" | "inconclusive" {
+  const precision = run.metricEstimates.autoMatchPrecision;
+  const recall = run.metricEstimates.eligibleTruthRecallAt3;
+  if (run.measurementIntegrity.violationCount > 0) return "inconclusive";
+  if (run.safety.violationCount > 0 || !fixedGatePassed
+    || (precision.value !== null && precision.value < 1)
+    || (recall.value !== null && recall.value < 1)) return "broken_observed";
+  if (precision.status === "not_estimable" || recall.status === "not_estimable") return "inconclusive";
+  return "held_observed";
+}
+
+function getSensitivityRun(runs: Map<string, SensitivityRun>, parameters: SensitivityParameters, seed: number): SensitivityRun | undefined {
+  return runs.get(`${parameterKey(parameters)}@${seed}`);
+}
+
+function putSensitivityRun(runs: Map<string, SensitivityRun>, run: SensitivityRun): void {
+  runs.set(`${parameterKey(run.parameters)}@${run.seed}`, run);
+}
+
+function buildSensitivityBoundaries(
+  settings: readonly SensitivitySetting[],
+  runs: Map<string, SensitivityRun>,
+  fixedGatePassed: boolean,
+): { factors: Record<string, unknown>; refine: SensitivitySetting[] } {
+  const settingByKey = new Map(settings.map((setting) => [parameterKey(setting.parameters), setting]));
+  const factorLevels: Array<{ factor: string; values: Array<string | number>; parameter: keyof SensitivityParameters }> = [
+    { factor: "normalDateMaxDays", values: [0, 1, 2, 3, 5, 7, 10, 14, 21, 30], parameter: "normalDateMaxDays" },
+    { factor: "reviewDateProfile", values: ["off", "1-2", "3-7", "5-10", "8-14", "15-21", "22-30"], parameter: "reviewDateProfile" },
+    { factor: "lowMerchantRatePercent", values: [0, 5, 10, 20, 40, 60, 80, 100], parameter: "lowMerchantRatePercent" },
+    { factor: "twinCaseRatePercent", values: [0, 1, 5, 10, 20, 40, 70, 100], parameter: "twinCaseRatePercent" },
+  ];
+  const refine: SensitivitySetting[] = [];
+  const factors: Record<string, unknown> = {};
+  for (const spec of factorLevels) {
+    const points = spec.values.map((value) => {
+      const parameters = { ...SENSITIVITY_BASELINE, [spec.parameter]: value } as SensitivityParameters;
+      const run = getSensitivityRun(runs, parameters, DEFAULT_SEED);
+      if (!run) throw new Error(`missing seed-376 coarse setting for ${spec.factor}=${String(value)}`);
+      return { value, run, status: classifySensitivityRun(run, fixedGatePassed) };
+    });
+    const transitions: Array<{ from: string | number; to: string | number; fromStatus: string; toStatus: string }> = [];
+    for (let index = 1; index < points.length; index += 1) {
+      const before = points[index - 1]!;
+      const after = points[index]!;
+      if (before.status === "held_observed" && after.status !== "held_observed") {
+        transitions.push({ from: before.value, to: after.value, fromStatus: before.status, toStatus: after.status });
+      }
+    }
+    const firstTransition = transitions[0];
+    const refinedValues: Array<string | number> = [];
+    if (firstTransition && spec.factor !== "reviewDateProfile") {
+      const left = Number(firstTransition.from);
+      const right = Number(firstTransition.to);
+      for (let value = left + 1; value < right; value += 1) refinedValues.push(value);
+      for (const value of refinedValues) {
+        const parameters = { ...SENSITIVITY_BASELINE, [spec.parameter]: value } as SensitivityParameters;
+        const key = parameterKey(parameters);
+        const existing = settingByKey.get(key);
+        if (existing) continue;
+        const setting = sensitivitySetting(`boundary-${spec.factor}-${value}`, "boundary-refine", { [spec.parameter]: value } as Partial<SensitivityParameters>);
+        settingByKey.set(key, setting);
+        refine.push(setting);
+      }
+    }
+    factors[spec.factor] = {
+      orderedLevels: points.map(({ value, status, run }) => ({
+        value,
+        status,
+        safetyViolationCount: run.safety.violationCount,
+        knownPrecision: run.metricEstimates.autoMatchPrecision,
+        eligibleTruthRecallAt3: run.metricEstimates.eligibleTruthRecallAt3,
+        unconditionalTruthCandidateCoverage: run.metricEstimates.unconditionalTruthCandidateCoverage,
+      })),
+      heldRange: points.filter((point) => point.status === "held_observed").map((point) => point.value),
+      transitions,
+      firstTransition,
+      refinedValues,
+      nonMonotonic: transitions.length > 1,
+      upperRangeStatus: points.at(-1)?.status,
+    };
+  }
+  return { factors, refine };
+}
+
+function runFixedGateOnce(): Record<string, unknown> {
+  const script = fileURLToPath(import.meta.url);
+  const child = spawnSync(process.execPath, ["--conditions=react-server", "--import", "tsx", script,
+    "--gate-only", "--max-violations=100000"], { encoding: "utf8" });
+  if (child.error) throw child.error;
+  if (child.status !== 0) throw new Error(`fixed gate process failed (${child.status}): ${child.stderr.slice(-4000)}`);
+  const report = JSON.parse(child.stdout) as { gate: Record<string, unknown>; generatorVersion: string; ruleVersion: string };
+  return {
+    dataset: "eval/reconciliation-gate-dataset.ts",
+    caseCount: 1_700,
+    executionCount: 1,
+    generatorVersion: report.generatorVersion,
+    ruleVersion: report.ruleVersion,
+    ...report.gate,
+  };
+}
+
+function mainSensitivityBatch(): void {
+  checkRuleContract();
+  const smoke = process.argv.includes("--sensitivity-smoke");
+  const startedAt = new Date().toISOString();
+  const startMs = Date.now();
+  const cases = smoke ? 10 : 1_200;
+  const seeds = smoke ? [376] : [376, 1376, 2376, 3376, 4376];
+  const extraSeeds = smoke ? [] : [5376, 6376, 7376, 8376, 9376];
+  const { coarse, fiveSeed, endpoints } = buildSensitivitySettings();
+  const runs = new Map<string, SensitivityRun>();
+  const runSetting = (setting: SensitivitySetting, seed: number) => {
+    const key = `${parameterKey(setting.parameters)}@${seed}`;
+    if (runs.has(key)) return;
+    const t0 = Date.now();
+    const run = runSensitivitySetting(setting, seed, cases);
+    (run as SensitivityRun & { elapsedMs?: number }).elapsedMs = Date.now() - t0;
+    putSensitivityRun(runs, run);
+    process.stderr.write(`sensitivity ${runs.size}: ${setting.id} seed=${seed} elapsedMs=${(run as SensitivityRun & { elapsedMs: number }).elapsedMs}\n`);
+  };
+
+  for (const setting of coarse) runSetting(setting, DEFAULT_SEED);
+  const fixedGate = runFixedGateOnce();
+  const fixedGatePassed = Object.values(fixedGate.checks as Record<string, boolean>).every(Boolean);
+  const firstBoundaryScan = buildSensitivityBoundaries(coarse, runs, fixedGatePassed);
+  for (const setting of firstBoundaryScan.refine) runSetting(setting, DEFAULT_SEED);
+
+  // Add the declared endpoint, pairwise, singleton-control, and baseline seeds.
+  for (const setting of fiveSeed) for (const seed of seeds) runSetting(setting, seed);
+
+  const boundaryRows: Array<Record<string, unknown>> = [];
+  const factorParameters: Record<string, keyof SensitivityParameters> = {
+    normalDateMaxDays: "normalDateMaxDays",
+    reviewDateProfile: "reviewDateProfile",
+    lowMerchantRatePercent: "lowMerchantRatePercent",
+    twinCaseRatePercent: "twinCaseRatePercent",
+  };
+  for (const [factor, parameter] of Object.entries(factorParameters)) {
+    const factorData = firstBoundaryScan.factors[factor] as { firstTransition?: { from: string | number; to: string | number } | null };
+    if (!factorData.firstTransition) {
+      boundaryRows.push({ factor, status: "no_held_to_nonheld_transition_in_coarse_scan" });
+      continue;
+    }
+    const from = { ...SENSITIVITY_BASELINE, [parameter]: factorData.firstTransition.from } as SensitivityParameters;
+    const to = { ...SENSITIVITY_BASELINE, [parameter]: factorData.firstTransition.to } as SensitivityParameters;
+    const leftRun = getSensitivityRun(runs, from, DEFAULT_SEED)!;
+    const rightRun = getSensitivityRun(runs, to, DEFAULT_SEED)!;
+    const refinedBetween = [...firstBoundaryScan.refine]
+      .filter((setting) => parameterKey(setting.parameters) !== parameterKey(from)
+        && parameterKey(setting.parameters) !== parameterKey(to)
+        && (parameter === "reviewDateProfile"
+          ? false
+          : Number(setting.parameters[parameter] as number) > Number(from[parameter] as number)
+            && Number(setting.parameters[parameter] as number) < Number(to[parameter] as number)))
+      .sort((a, b) => Number(a.parameters[parameter] as number) - Number(b.parameters[parameter] as number));
+    const ordered = [
+      { setting: sensitivitySetting(`boundary-anchor-${factor}-from`, "boundary-refine", { [parameter]: from[parameter] } as Partial<SensitivityParameters>), run: leftRun },
+      ...refinedBetween.map((setting) => ({ setting, run: getSensitivityRun(runs, setting.parameters, DEFAULT_SEED)! })),
+      { setting: sensitivitySetting(`boundary-anchor-${factor}-to`, "boundary-refine", { [parameter]: to[parameter] } as Partial<SensitivityParameters>), run: rightRun },
+    ];
+    let lastHeld = ordered[0]!;
+    let firstNonHeld = ordered.at(-1)!;
+    for (const point of ordered) {
+      const status = classifySensitivityRun(point.run, fixedGatePassed);
+      if (status === "held_observed") lastHeld = point;
+      else {
+        firstNonHeld = point;
+        break;
+      }
+    }
+    const boundarySettings = [lastHeld.setting, firstNonHeld.setting];
+    for (const setting of boundarySettings) for (const seed of seeds) runSetting(setting, seed);
+    const fiveStatuses = boundarySettings.map((setting) => ({
+      settingId: setting.id,
+      seedStatuses: seeds.map((seed) => ({
+        seed,
+        status: classifySensitivityRun(getSensitivityRun(runs, setting.parameters, seed)!, fixedGatePassed),
+      })),
+    }));
+    const mixed = fiveStatuses.some((entry) => new Set(entry.seedStatuses.map((item) => item.status)).size > 1);
+    if (mixed) {
+      for (const setting of boundarySettings) for (const seed of extraSeeds) runSetting(setting, seed);
+    }
+    const allBoundarySeeds = mixed ? [...seeds, ...extraSeeds] : seeds;
+    boundaryRows.push({
+      factor,
+      status: mixed ? `expanded_to_${seeds.length + extraSeeds.length}_seeds` : `confirmed_on_${seeds.length}_seeds`,
+      lastHeldSetting: lastHeld.setting.id,
+      firstNonHeldSetting: firstNonHeld.setting.id,
+      seedStatuses: boundarySettings.map((setting) => ({
+        settingId: setting.id,
+        statuses: allBoundarySeeds.map((seed) => ({
+          seed,
+          status: classifySensitivityRun(getSensitivityRun(runs, setting.parameters, seed)!, fixedGatePassed),
+        })),
+      })),
+      unstableBoundaryInterval: mixed,
+    });
+  }
+
+  const pairwiseNames = ["date-review", "date-low", "date-twin", "review-low", "review-twin", "low-twin"] as const;
+  const pairwise = pairwiseNames.map((name) => {
+    const group = coarse.filter((setting) => setting.kind === "pairwise" && setting.id.startsWith(`pair-${name}-`));
+    const cells = group.map((setting) => ({
+      settingId: setting.id,
+      parameters: setting.parameters,
+      bySeed: seeds.map((seed) => {
+        const run = getSensitivityRun(runs, setting.parameters, seed)!;
+        const singletonA = sensitivitySingleton(name, setting.parameters, "A", coarse);
+        const singletonB = sensitivitySingleton(name, setting.parameters, "B", coarse);
+        const metric = (key: string) => run.metricEstimates[key]?.value ?? null;
+        const base = getSensitivityRun(runs, SENSITIVITY_BASELINE, seed)!;
+        const aRun = getSensitivityRun(runs, singletonA.parameters, seed)!;
+        const bRun = getSensitivityRun(runs, singletonB.parameters, seed)!;
+        const did = (metricKey: string): number | null => {
+          const vals = [metric(metricKey), aRun.metricEstimates[metricKey]?.value ?? null,
+            bRun.metricEstimates[metricKey]?.value ?? null, base.metricEstimates[metricKey]?.value ?? null];
+          if (vals.some((value) => value === null)) return null;
+          return vals[0]! - vals[1]! - vals[2]! + vals[3]!;
+        };
+        const comboUnsafe = run.safety.violationCount > 0;
+        const singleAUnsafe = aRun.safety.violationCount > 0;
+        const singleBUnsafe = bRun.safety.violationCount > 0;
+        return {
+          seed,
+          status: classifySensitivityRun(run, fixedGatePassed),
+          differenceInDifferences: {
+            truthAutoMatchCoverage: did("truthAutoMatchCoverage"),
+            eligibleTruthRecallAt3: did("eligibleTruthRecallAt3"),
+          },
+          safetyCombinationOnly: comboUnsafe && !singleAUnsafe && !singleBUnsafe,
+          safetyViolationCount: run.safety.violationCount,
+        };
+      }),
+    }));
+    return { factorPair: name, cells };
+  });
+
+  const runRows = [...runs.values()].sort((left, right) => compareText(left.settingId, right.settingId) || left.seed - right.seed);
+  const summaryBySetting = coarse.map((setting) => {
+    const rows = seeds.map((seed) => getSensitivityRun(runs, setting.parameters, seed)).filter((run): run is SensitivityRun => Boolean(run));
+    const seed376 = getSensitivityRun(runs, setting.parameters, DEFAULT_SEED)!;
+    return {
+      id: setting.id,
+      kind: setting.kind,
+      roles: setting.roles,
+      parameters: setting.parameters,
+      seedStatuses: rows.map((run) => ({ seed: run.seed, status: classifySensitivityRun(run, fixedGatePassed) })),
+      seed376Metrics: seed376.metricEstimates,
+      seed376CandidateWindowClassification: seed376.candidateWindowClassification,
+      seed376Safety: seed376.safety,
+      seed376NotEstimable: Object.entries(seed376.metricEstimates).filter(([, metric]) => metric.status === "not_estimable").map(([key]) => key),
+    };
+  });
+  const totalPropertyCases = runRows.reduce((sum, run) => sum + run.caseCount, 0);
+  const report = {
+    schemaVersion: 2,
+    generatorVersion: "2",
+    ruleVersion: PINNED_RULE_VERSION,
+    evaluationSourceCommitSHA: gitOutput(["rev-parse", "HEAD"]),
+    resultsCommitSHA: null as string | null,
+    generatedAt: startedAt,
+    completedAt: new Date().toISOString(),
+    elapsedMs: Date.now() - startMs,
+    environment: {
+      nodeVersion: process.version,
+      pnpmVersion: commandOutput("pnpm", ["--version"]),
+      packageManager: "pnpm@10.15.0",
+      prng: "mulberry32",
+      caseSeedFormula: "(masterSeed + imul(caseIndex + 1, 0x9e3779b1)) >>> 0",
+      command: "pnpm eval:reconciliation-property:sensitivity",
+      casesPerSettingSeed: cases,
+      masterSeeds: seeds,
+      additionalSeedsIfBoundaryMixed: extraSeeds,
+      smokeMode: smoke,
+    },
+    design: {
+      coarseSettingCount: coarse.length,
+      coarseSettings: coarse.map((setting) => ({ id: setting.id, kind: setting.kind, roles: setting.roles, parameters: setting.parameters })),
+      fiveSeedSettingIds: fiveSeed.map((setting) => ({ id: setting.id, roles: setting.roles, parameters: setting.parameters })),
+      endpointSettingIds: endpoints,
+      boundaryRefinementSettingIds: firstBoundaryScan.refine.map((setting) => setting.id),
+      stopRules: {
+        firstHeldToNonHeldTransitionPerFactorRefined: true,
+        normalDateStepDays: 1,
+        lowMerchantAndTwinStepPercentagePoints: 1,
+        reviewDateProfilesAreCategorical: true,
+        seedsPerBoundaryPoint: 5,
+        maxSeedsIfMixed: seeds.length + extraSeeds.length === 1 ? 1 : 10,
+        mixedAtTenSeedsReportedAsUnstableAndStopped: true,
+        noPopulationGuaranteeFromZeroObservedViolations: true,
+      },
+    },
+    fixedGate,
+    totals: {
+      uniqueSettingSeedRuns: runRows.length,
+      propertyCases: totalPropertyCases,
+      fixedGateExecutions: 1,
+      fixedGateCases: 1_700,
+      totalEngineEvaluatedCases: totalPropertyCases + 1_700,
+      propertyCaseSeedRuns: runRows.length,
+      boundaryExtraSeedRuns: runRows.filter((run) => extraSeeds.includes(run.seed)).length,
+    },
+    baselineV2: summaryBySetting.find((setting) => setting.id === "baseline"),
+    coarseSummary: summaryBySetting,
+    factorSensitivity: firstBoundaryScan.factors,
+    refinedBoundaryConfirmation: boundaryRows,
+    pairwiseInteractions: pairwise,
+    runs: runRows,
+  };
+  console.log(JSON.stringify(report, null, 2));
+}
+
+function sensitivitySingleton(name: string, parameters: SensitivityParameters, side: "A" | "B", settings: readonly SensitivitySetting[]): SensitivitySetting {
+  const factorNames: Record<string, [keyof SensitivityParameters, keyof SensitivityParameters]> = {
+    "date-review": ["normalDateMaxDays", "reviewDateProfile"],
+    "date-low": ["normalDateMaxDays", "lowMerchantRatePercent"],
+    "date-twin": ["normalDateMaxDays", "twinCaseRatePercent"],
+    "review-low": ["reviewDateProfile", "lowMerchantRatePercent"],
+    "review-twin": ["reviewDateProfile", "twinCaseRatePercent"],
+    "low-twin": ["lowMerchantRatePercent", "twinCaseRatePercent"],
+  };
+  const key = factorNames[name]?.[side === "A" ? 0 : 1];
+  if (!key) throw new Error(`unknown pairwise factor ${name}`);
+  const overrides = { [key]: parameters[key] } as Partial<SensitivityParameters>;
+  const expected = { ...SENSITIVITY_BASELINE, ...overrides };
+  const setting = settings.find((item) => item.kind === "single-factor" && parameterKey(item.parameters) === parameterKey(expected));
+  if (!setting) throw new Error(`missing ${side} singleton control for ${name}`);
+  return setting;
+}
+
+function gitOutput(args: string[]): string {
+  const result = spawnSync("git", args, { encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+function commandOutput(command: string, args: string[]): string {
+  const result = spawnSync(command, args, { encoding: "utf8" });
+  if (result.status !== 0) return "unavailable";
+  return result.stdout.trim();
 }
 
 // ---------- CLI, contract, and report ----------
@@ -1122,10 +1933,11 @@ function parseOptions(argv: readonly string[]): Options | null {
   let seed = DEFAULT_SEED;
   let family: Family | null = null;
   let maxViolations = 50;
+  let gateOnly = false;
   for (const argument of argv) {
     if (argument === "--") continue;
     if (argument === "--help" || argument === "-h") {
-      console.error("Usage: pnpm eval:reconciliation-property -- [--cases=1200] [--seed=376] [--family=clean|noise|near-miss|twin|irreducible] [--max-violations=50]");
+      console.error("Usage: pnpm eval:reconciliation-property -- [--cases=1200] [--seed=376] [--family=clean|noise|near-miss|twin|irreducible] [--max-violations=50] [--gate-only]");
       console.error("The 1,700-case Issue #380 gate always runs in addition to the property cases.");
       return null;
     }
@@ -1147,12 +1959,16 @@ function parseOptions(argv: readonly string[]): Options | null {
       maxViolations = Number(argument.slice("--max-violations=".length));
       continue;
     }
+    if (argument === "--gate-only") {
+      gateOnly = true;
+      continue;
+    }
     throw new Error(`unknown argument: ${argument}`);
   }
-  if (!Number.isInteger(cases) || cases <= 0) throw new Error("--cases must be a positive integer");
+  if (!Number.isInteger(cases) || (gateOnly ? cases < 0 : cases <= 0)) throw new Error("--cases must be a positive integer");
   if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) throw new Error("--seed must be a 32-bit unsigned integer");
   if (!Number.isInteger(maxViolations) || maxViolations < 0) throw new Error("--max-violations must be a non-negative integer");
-  return { cases, seed, family, maxViolations };
+  return { cases, seed, family, maxViolations, gateOnly };
 }
 
 function checkRuleContract(): void {
@@ -1266,6 +2082,10 @@ function addLegacy(target: LegacyMetrics, source: LegacyMetrics): void {
 }
 
 function main(): void {
+  if (process.argv.includes("--sensitivity-batch")) {
+    mainSensitivityBatch();
+    return;
+  }
   const options = parseOptions(process.argv.slice(2));
   if (!options) return;
   checkRuleContract();
@@ -1275,17 +2095,19 @@ function main(): void {
   const violations: Violation[] = [];
   const indistinguishable: IndistinguishableMatch[] = [];
   const observedRuleVersions = new Set<string>();
-  for (let index = 0; index < options.cases; index += 1) {
-    const generated = generateCase(index, options.seed, options.family);
-    const outcome = runCase(generated);
-    addMetrics(totals, outcome.metrics);
-    const family = generated.family as Family;
-    const familyTotals = byFamily.get(family) ?? emptyCaseMetrics();
-    addMetrics(familyTotals, outcome.metrics);
-    byFamily.set(family, familyTotals);
-    violations.push(...outcome.violations);
-    indistinguishable.push(...outcome.indistinguishable);
-    for (const version of outcome.ruleVersions) observedRuleVersions.add(version);
+  if (!options.gateOnly) {
+    for (let index = 0; index < options.cases; index += 1) {
+      const generated = generateCase(index, options.seed, options.family);
+      const outcome = runCase(generated);
+      addMetrics(totals, outcome.metrics);
+      const family = generated.family as Family;
+      const familyTotals = byFamily.get(family) ?? emptyCaseMetrics();
+      addMetrics(familyTotals, outcome.metrics);
+      byFamily.set(family, familyTotals);
+      violations.push(...outcome.violations);
+      indistinguishable.push(...outcome.indistinguishable);
+      for (const version of outcome.ruleVersions) observedRuleVersions.add(version);
+    }
   }
 
   const metrics = finalizeMetrics(totals);
@@ -1421,12 +2243,15 @@ function main(): void {
 
   const report = {
     dataset: "eval/run-reconciliation-property.ts",
-    generatorVersion: "1",
+    generatorVersion: "2",
     seed: options.seed,
-    ruleVersion: observedRuleVersionList.length === 0 ? null : observedRuleVersionList.join(", "),
+    ruleVersion: observedRuleVersionList.length === 0
+      ? (options.gateOnly ? PINNED_RULE_VERSION : null)
+      : observedRuleVersionList.join(", "),
     observedRuleVersions: observedRuleVersionList,
     config: {
-      cases: options.cases,
+      cases: options.gateOnly ? 0 : options.cases,
+      gateOnly: options.gateOnly,
       family: options.family,
       maxViolations: options.maxViolations,
       expectedRuleVersion: PINNED_RULE_VERSION,
