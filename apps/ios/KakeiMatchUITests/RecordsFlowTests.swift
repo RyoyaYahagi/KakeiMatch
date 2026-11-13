@@ -188,8 +188,11 @@ final class RecordsFlowTests: XCTestCase {
         let cancelledPrompt = assertDeletionPrompt(app)
         cancelledPrompt.buttons["キャンセル"].tap()
         assertPromptDismissed(cancelledPrompt)
-        XCTAssertTrue(app.descendants(matching: .any)["records.detailScreen"].exists,
-                      "キャンセル後に記録詳細が閉じています")
+        let detailBack = app.buttons["records.detailBack"]
+        XCTAssertTrue(detailBack.waitForExistence(timeout: 5) && detailBack.isHittable,
+                      "キャンセル後に記録詳細へ留まって操作できません")
+        XCTAssertTrue(app.buttons["records.detail.memo"].waitForExistence(timeout: 5),
+                      "キャンセル後に対象記録の詳細項目が表示されていません")
         app.buttons["records.detailBack"].tap()
         XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5),
                       "キャンセル後に検索結果の記録が残っていません")
