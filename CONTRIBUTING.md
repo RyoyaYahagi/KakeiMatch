@@ -41,6 +41,8 @@ GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` ch
 
 `eval:reconciliation-property` は既存1,200ケースに加えて、Issue #380 の1,700ケース（基本900＋堅牢性800）を同じ不変条件で検証します。家族別の期待自動確定数は1.2.0で実測した下限で、誤確定・旧方式の正しい確定の喪失・I1〜I6違反が1件でもあれば失敗します。
 
+`eval:reconciliation-property:sensitivity` はIssue #414の合成ノイズ感度分析です。固定seedで単因子・相互作用・境界確認を実行し、JSONを標準出力へ出します。測定結果とseedの再現方法は[合成評価とノイズ感度](docs/RECONCILIATION_SYNTHETIC_EVALUATION.md)を参照してください。
+
 初回設定は `gh api --method POST repos/RyoyaYahagi/KakeiMatch/rulesets --input .github/main-ruleset.json` で作成します。更新時は `gh api repos/RyoyaYahagi/KakeiMatch/rulesets` で対象IDを確認し、同じJSONを `PUT repos/RyoyaYahagi/KakeiMatch/rulesets/<id>` へ渡します。
 
 ## Pull Request
