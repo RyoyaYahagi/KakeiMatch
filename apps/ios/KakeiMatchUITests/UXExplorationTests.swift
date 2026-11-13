@@ -251,6 +251,13 @@ final class UXExplorationTests: XCTestCase {
             let saveButton = app.buttons["records.save"]
             XCTAssertTrue(saveButton.waitForExistence(timeout: 5))
             XCTAssertFalse(saveButton.isEnabled, "変更前は保存できない状態を保つ")
+            let deleteButton = app.buttons["records.delete"]
+            let backButton = app.buttons["records.detailBack"]
+            let window = app.windows.firstMatch
+            XCTAssertTrue(deleteButton.waitForExistence(timeout: 5))
+            XCTAssertTrue(deleteButton.isHittable, "初期表示で削除ボタンが操作できません")
+            XCTAssertTrue(window.frame.contains(deleteButton.frame), "初期表示で削除ボタン全体が画面内にありません")
+            XCTAssertFalse(deleteButton.frame.intersects(backButton.frame), "戻る操作と削除操作の領域が重なっています")
             observe(log, "records.detail.category", app.buttons["records.detail.category"])
             log.add("records.detail.category.label=\(app.buttons["records.detail.category"].label)")
             capture(app, "ux-u3-record-detail-light", log)
