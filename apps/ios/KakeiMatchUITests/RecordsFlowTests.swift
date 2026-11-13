@@ -138,6 +138,34 @@ final class RecordsFlowTests: XCTestCase {
         }
     }
 
+    @MainActor private func assertDeleteButtonVisibleWithoutScroll(_ app: XCUIApplication) -> XCUIElement {
+        let delete = app.buttons["records.delete"]
+        let window = app.windows.firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 5), "詳細画面に削除ボタンがありません")
+        XCTAssertTrue(delete.isHittable, "スクロールせずに削除ボタンを操作できません")
+        XCTAssertTrue(window.frame.contains(delete.frame), "削除ボタン全体が画面内にありません")
+        XCTAssertFalse(delete.frame.intersects(app.buttons["records.detailBack"].frame),
+                        "戻る操作と削除操作のタップ領域が重なっています")
+        return delete
+    }
+
+    @MainActor private func assertDeletionPrompt(_ app: XCUIApplication) -> XCUIElement {
+        let prompt = app.alerts.firstMatch
+        XCTAssertTrue(prompt.waitForExistence(timeout: 5), "削除確認が表示されません")
+        XCTAssertTrue(prompt.label.contains("この取引を削除しますか？レシート画像などの原本は残ります。"),
+                      "削除確認の文言が変わっています")
+        XCTAssertTrue(prompt.buttons["削除する"].exists)
+        XCTAssertTrue(prompt.buttons["キャンセル"].exists)
+        return prompt
+    }
+
+    @MainActor private func assertPromptDismissed(_ prompt: XCUIElement) {
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: prompt)
+        if XCTWaiter.wait(for: [dismissed], timeout: 5) != .completed {
+            XCTFail("操作後も削除確認が閉じていません")
+        }
+    }
+
     @MainActor func testRecordsSearchDetailEditDeleteUndoAndReturn() {
         continueAfterFailure = false
         let app = launch("light")
@@ -153,6 +181,38 @@ final class RecordsFlowTests: XCTestCase {
         capture(app, "search-light")
         openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo")
         capture(app, "detail-light")
+
+        // The first delete attempt must be tappable from the freshly opened detail,
+        // with no scroll gesture that could make an off-screen control hittable.
+        assertDeleteButtonVisibleWithoutScroll(app).tap()
+        let cancelledPrompt = assertDeletionPrompt(app)
+        cancelledPrompt.buttons["キャンセル"].tap()
+        assertPromptDismissed(cancelledPrompt)
+        let detailBackAfterCancel = app.buttons["records.detailBack"]
+        XCTAssertTrue(
+            detailBackAfterCancel.waitForExistence(timeout: 5) && detailBackAfterCancel.isHittable,
+            "キャンセル後に記録詳細へ留まって操作できません"
+        )
+        XCTAssertTrue(app.buttons["records.detail.memo"].waitForExistence(timeout: 5),
+                      "キャンセル後に対象記録の詳細項目が表示されていません")
+        app.buttons["records.detailBack"].tap()
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5),
+                      "キャンセル後に検索結果の記録が残っていません")
+
+        // Reopen the record to make the confirm path start from its initial view too.
+        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo")
+        assertDeleteButtonVisibleWithoutScroll(app).tap()
+        let confirmedPrompt = assertDeletionPrompt(app)
+        confirmedPrompt.buttons["削除する"].tap()
+        assertPromptDismissed(confirmedPrompt)
+        let undo = app.buttons["元に戻す"]
+        XCTAssertTrue(undo.waitForExistence(timeout: 5)); undo.tap()
+        XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5),
+                      "undo 後に記録が復元されていません")
+
+        // The existing edit flow runs after deletion has been cancelled and undone.
+        // Scrolling for the memo editor is unrelated to the initial delete checks above.
+        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo", hittableTimeout: 10)
         app.buttons["records.detail.memo"].tap()
         let memo = app.textFields["records.editor.memo"]
         // A multiline SwiftUI field is exposed as a text view by some OS versions.
@@ -162,15 +222,9 @@ final class RecordsFlowTests: XCTestCase {
         app.buttons["records.save"].tap()
         XCTAssertTrue(app.staticTexts["records.message"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["records.message"].label, "変更を保存しました。")
-        app.swipeUp()
-        app.buttons["records.delete"].tap()
-        app.alerts.buttons["削除する"].tap()
-        let undo = app.buttons["元に戻す"]
-        XCTAssertTrue(undo.waitForExistence(timeout: 5)); undo.tap()
-        XCTAssertTrue(app.buttons["records.row.fixture-transaction-008"].waitForExistence(timeout: 5))
-        // The undo reload keeps the search screen disabled while `busy`, so this
-        // second open gets 10s instead of the initial 2s.
-        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo", hittableTimeout: 10)
+        let detailBack = app.buttons["records.detailBack"]
+        for _ in 0..<4 where !detailBack.isHittable { app.swipeDown(velocity: .slow) }
+        XCTAssertTrue(detailBack.isHittable, "保存後に検索結果へ戻れません")
         app.buttons["records.detailBack"].tap()
         XCTAssertEqual(app.staticTexts["transaction-search-count"].label, "2件")
         XCTAssertEqual(app.textFields["transaction-search-keyword"].value as? String, "スーパーみどり")
@@ -280,8 +334,7 @@ final class RecordsFlowTests: XCTestCase {
         app.buttons["receipt-tab"].tap()
         XCTAssertTrue(app.buttons["records.row.fixture-transaction-010"].waitForExistence(timeout: 5))
         openListRecord(app, row: "records.row.fixture-transaction-010", detail: "records.detail.memo")
-        app.swipeUp()
-        app.buttons["records.delete"].tap()
+        assertDeleteButtonVisibleWithoutScroll(app).tap()
         app.alerts.buttons["削除する"].tap()
 
         let undo = app.buttons["元に戻す"]

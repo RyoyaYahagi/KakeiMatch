@@ -32,6 +32,10 @@ struct KMRecordDetailView: View {
                     .accessibilityIdentifier("records.detail.loading")
             }
             if let row = model.selected, let draft = model.draft {
+                Button("削除する") { collapse(); confirmsDeletion = true }
+                    .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("records.delete")
+                    .padding(.bottom, KMSpacing.space2)
                 Text(row.kind == .income ? "収入の記録" : row.kind == .transfer ? "振替の記録" : "支出の記録")
                     .font(KMTypography.body(18, weight: .bold)).padding(.top, KMSpacing.space1).padding(.bottom, KMSpacing.space3)
                     .onTapGesture { collapse() }
@@ -91,10 +95,6 @@ struct KMRecordDetailView: View {
                         .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("records.editTransfer")
                         .padding(.bottom, KMSpacing.space2)
                 }
-                Button("削除する") { collapse(); confirmsDeletion = true }
-                    .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("records.delete")
-                    .padding(.bottom, KMLayout.navHeight)
             }
         }
         .foregroundStyle(KMColor.text).disabled(model.busy)
