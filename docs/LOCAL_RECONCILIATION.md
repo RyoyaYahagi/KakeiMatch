@@ -83,6 +83,10 @@ flowchart LR
 
 この変更は設計文書だけの更新です。照合エンジンの挙動と `RECONCILIATION_RULE_VERSION`／Swiftの `ruleVersion` は変更せず、1.2.5のままにします。版の差はGitの文書差分で追跡します。将来エンジンの条件を変える場合はルール版を更新し、1.2.5と同じ実データ全件版・フィルタ版、合成eval、性質ゲートで比較します。
 
+### 合成評価のノイズ感度
+
+合成evalの指標は生成モデル内の値であり、実データの分布確認が済むまで絶対値の公称や誤り率保証には使いません。現行ルール1.2.5・生成器v2の感度分析、基準値、判定基準、seedと再現方法は[合成評価とノイズ感度](RECONCILIATION_SYNTHETIC_EVALUATION.md)に記録しています。全設定seedの測定値とケース記録は、同ページからリンクするJSON成果物を参照してください。
+
 **参考文献**
 
 - [Chow (1970/01), pp. 41–46](https://doi.org/10.1109/TIT.1970.1054406) C. K. Chow. “On optimum recognition error and reject tradeoff.” *IEEE Transactions on Information Theory*, 16(1), 1970.
