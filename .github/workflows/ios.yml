@@ -23,6 +23,15 @@ on:
       - '!apps/ios/**/*.md'
       - '!apps/ios/scripts/testflight.sh'
   workflow_dispatch:
+    inputs:
+      simulator:
+        description: Simulator device used by the iOS build and UI tests
+        type: choice
+        required: false
+        default: iPhone 17
+        options:
+          - iPhone 17
+          - iPhone SE (3rd generation)
 
 permissions:
   contents: read
@@ -34,6 +43,7 @@ concurrency:
 env:
   UI_SHARD_COUNT: 4
   UI_SHARD_FLAGS: ${{ github.event_name == 'pull_request' && '--skip-screenshots' || '' }}
+  SIMULATOR_NAME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.simulator || '' }}
 
 defaults:
   run:

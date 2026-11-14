@@ -16,13 +16,30 @@ struct KMRecordDetailView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { focus = nil; Task { await model.backFromDetail() } } label: {
-                HStack(spacing: 2) {
-                    KMIcon(name: "chevronLeft", size: 20)
-                    Text(model.searchOrigin ? "検索結果へ戻る" : "記録一覧へ戻る")
+            HStack(spacing: 0) {
+                Button { focus = nil; Task { await model.backFromDetail() } } label: {
+                    HStack(spacing: 2) {
+                        KMIcon(name: "chevronLeft", size: 20)
+                        Text(model.searchOrigin ? "検索結果へ戻る" : "記録一覧へ戻る")
+                    }
+                }
+                .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.detailBack")
+
+                Spacer(minLength: KMSpacing.space2)
+
+                if model.selected != nil && model.draft != nil {
+                    Button { collapse(); confirmsDeletion = true } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 20))
+                            .frame(minWidth: KMLayout.minimumHit, minHeight: KMLayout.minimumHit)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(KMButtonStyle(role: .destructive, width: .intrinsic))
+                    .accessibilityLabel("削除する")
+                    .accessibilityIdentifier("records.delete")
                 }
             }
-            .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.detailBack")
+            .padding(.top, KMSpacing.space4)
             .padding(.bottom, KMSpacing.space2)
             // The page switches as soon as the row is tapped, so show progress
             // here while the detail reads finish.
@@ -32,12 +49,9 @@ struct KMRecordDetailView: View {
                     .accessibilityIdentifier("records.detail.loading")
             }
             if let row = model.selected, let draft = model.draft {
-                Button("削除する") { collapse(); confirmsDeletion = true }
-                    .buttonStyle(KMButtonStyle(role: .destructive)).frame(maxWidth: .infinity)
-                    .accessibilityIdentifier("records.delete")
-                    .padding(.bottom, KMSpacing.space2)
                 Text(row.kind == .income ? "収入の記録" : row.kind == .transfer ? "振替の記録" : "支出の記録")
                     .font(KMTypography.body(18, weight: .bold)).padding(.top, KMSpacing.space1).padding(.bottom, KMSpacing.space3)
+                    .accessibilityIdentifier("records.detail.heading")
                     .onTapGesture { collapse() }
                 VStack(spacing: 0) {
                     detailRow("金額", id: "amount", value: KMAmountFormatter.yen(Int(draft.amount) ?? 0), amount: true)

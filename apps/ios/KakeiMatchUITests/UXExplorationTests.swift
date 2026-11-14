@@ -253,11 +253,20 @@ final class UXExplorationTests: XCTestCase {
             XCTAssertFalse(saveButton.isEnabled, "変更前は保存できない状態を保つ")
             let deleteButton = app.buttons["records.delete"]
             let backButton = app.buttons["records.detailBack"]
+            let heading = app.descendants(matching: .any)["records.detail.heading"]
             let window = app.windows.firstMatch
             XCTAssertTrue(deleteButton.waitForExistence(timeout: 5))
+            XCTAssertEqual(deleteButton.label, "削除する", "削除アイコンのアクセシビリティラベルが正しくありません")
+            XCTAssertGreaterThanOrEqual(deleteButton.frame.width, 44, "削除ボタンの幅が44pt未満です")
+            XCTAssertGreaterThanOrEqual(deleteButton.frame.height, 44, "削除ボタンの高さが44pt未満です")
             XCTAssertTrue(deleteButton.isHittable, "初期表示で削除ボタンが操作できません")
             XCTAssertTrue(window.frame.contains(deleteButton.frame), "初期表示で削除ボタン全体が画面内にありません")
             XCTAssertFalse(deleteButton.frame.intersects(backButton.frame), "戻る操作と削除操作の領域が重なっています")
+            XCTAssertGreaterThanOrEqual(deleteButton.frame.minX - backButton.frame.maxX, 8,
+                                        "戻る操作と削除操作のタップ領域が8pt未満です")
+            XCTAssertTrue(heading.waitForExistence(timeout: 5), "詳細見出しが表示されていません")
+            XCTAssertGreaterThanOrEqual(heading.frame.minY, max(deleteButton.frame.maxY, backButton.frame.maxY),
+                                        "削除または戻るボタンが見出しに重なっています")
             observe(log, "records.detail.category", app.buttons["records.detail.category"])
             log.add("records.detail.category.label=\(app.buttons["records.detail.category"].label)")
             capture(app, "ux-u3-record-detail-light", log)

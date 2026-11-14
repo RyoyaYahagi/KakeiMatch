@@ -1,9 +1,13 @@
 import XCTest
 
 final class RecordsFlowTests: XCTestCase {
-    @MainActor private func launch(_ appearance: String, fixture: String = "reconciliation") -> XCUIApplication {
+    @MainActor private func launch(_ appearance: String, fixture: String = "reconciliation",
+                                  preferredContentSizeCategory: String? = nil) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["-UITestFixture", fixture, "-AppleLanguages", "(ja)", "-AppleLocale", "ja_JP"]
+        if let preferredContentSizeCategory {
+            app.launchArguments += ["-UIPreferredContentSizeCategoryName", preferredContentSizeCategory]
+        }
         app.launchEnvironment["KM_UI_TEST_APPEARANCE"] = appearance
         app.launch()
         XCTAssertTrue(app.buttons["receipt-tab"].waitForExistence(timeout: 10))
@@ -140,13 +144,31 @@ final class RecordsFlowTests: XCTestCase {
 
     @MainActor private func assertDeleteButtonVisibleWithoutScroll(_ app: XCUIApplication) -> XCUIElement {
         let delete = app.buttons["records.delete"]
+        let back = app.buttons["records.detailBack"]
         let window = app.windows.firstMatch
         XCTAssertTrue(delete.waitForExistence(timeout: 5), "詳細画面に削除ボタンがありません")
+        XCTAssertEqual(delete.label, "削除する", "削除アイコンのアクセシビリティラベルが正しくありません")
+        XCTAssertGreaterThanOrEqual(delete.frame.width, 44, "削除ボタンの幅が44pt未満です")
+        XCTAssertGreaterThanOrEqual(delete.frame.height, 44, "削除ボタンの高さが44pt未満です")
         XCTAssertTrue(delete.isHittable, "スクロールせずに削除ボタンを操作できません")
         XCTAssertTrue(window.frame.contains(delete.frame), "削除ボタン全体が画面内にありません")
-        XCTAssertFalse(delete.frame.intersects(app.buttons["records.detailBack"].frame),
+        XCTAssertFalse(delete.frame.intersects(back.frame),
                         "戻る操作と削除操作のタップ領域が重なっています")
+        XCTAssertGreaterThanOrEqual(delete.frame.minX - back.frame.maxX, 8,
+                                    "戻る操作と削除操作のタップ領域が8pt未満です")
         return delete
+    }
+
+    @MainActor private func openSearchDetailAndAssertDeleteLayout(_ app: XCUIApplication) {
+        search(app)
+        openSearchResult(app, row: "records.row.fixture-transaction-008", detail: "records.detail.memo")
+        let delete = assertDeleteButtonVisibleWithoutScroll(app)
+        let back = app.buttons["records.detailBack"]
+        let heading = app.descendants(matching: .any)["records.detail.heading"]
+        XCTAssertEqual(back.label, "検索結果へ戻る", "検索結果から開いた詳細の戻るラベルが正しくありません")
+        XCTAssertTrue(heading.waitForExistence(timeout: 5), "詳細見出しが表示されていません")
+        XCTAssertGreaterThanOrEqual(heading.frame.minY, max(delete.frame.maxY, back.frame.maxY),
+                                    "削除または戻るボタンが見出しに重なっています")
     }
 
     @MainActor private func assertDeletionPrompt(_ app: XCUIApplication) -> XCUIElement {
@@ -232,6 +254,25 @@ final class RecordsFlowTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["transaction-search-count"].label, "11件")
         app.buttons["records.searchBack"].tap()
         XCTAssertTrue(app.buttons["records.search"].exists)
+        app.terminate()
+    }
+
+    @MainActor func testDeleteLayoutOnIPhoneSE3FromSearchResult() throws {
+        continueAfterFailure = false
+        let app = launch("light")
+        let screen = app.windows.firstMatch.frame
+        try XCTSkipUnless(Int(screen.width.rounded()) == 375 && Int(screen.height.rounded()) == 667,
+                          "Run this layout check on iPhone SE (3rd generation), 375 × 667 pt")
+        openSearchDetailAndAssertDeleteLayout(app)
+        capture(app, "delete-layout-iphone-se3")
+        app.terminate()
+    }
+
+    @MainActor func testDeleteLayoutAtAccessibilityXLFromSearchResult() {
+        continueAfterFailure = false
+        let app = launch("light", preferredContentSizeCategory: "UICTContentSizeCategoryAccessibilityXL")
+        openSearchDetailAndAssertDeleteLayout(app)
+        capture(app, "delete-layout-accessibility-xl")
         app.terminate()
     }
 
