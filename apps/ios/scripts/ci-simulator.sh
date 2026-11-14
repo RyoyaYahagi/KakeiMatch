@@ -5,7 +5,12 @@ case "${1:-}" in
   start|select)
     sudo xcode-select --switch /Applications/Xcode_26.2.app/Contents/Developer
     xcodebuild -version
-    device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for x in d["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-2"] if x["name"] == "iPhone 17"))')
+    simulator_name="${SIMULATOR_NAME:-iPhone 17}"
+    case "$simulator_name" in
+      "iPhone 17"|"iPhone SE (3rd generation)") ;;
+      *) echo "Unsupported simulator: $simulator_name" >&2; exit 2 ;;
+    esac
+    device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-2"]; m=[x for x in d if x["name"] == sys.argv[1]]; len(m) == 1 or sys.exit(f"Expected one {sys.argv[1]} simulator in iOS 26.2, found {len(m)}"); print(m[0]["udid"])' "$simulator_name")
     echo "SIMULATOR_ID=$device_id" >> "$GITHUB_ENV"
     echo "DESTINATION=platform=iOS Simulator,id=$device_id" >> "$GITHUB_ENV"
     [[ "$1" == select ]] && exit 0
