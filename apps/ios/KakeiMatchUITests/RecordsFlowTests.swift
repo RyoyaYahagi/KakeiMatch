@@ -151,8 +151,7 @@ final class RecordsFlowTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(delete.frame.width, 44, "削除ボタンの幅が44pt未満です")
         XCTAssertGreaterThanOrEqual(delete.frame.height, 44, "削除ボタンの高さが44pt未満です")
         XCTAssertTrue(delete.isHittable, "スクロールせずに削除ボタンを操作できません")
-        XCTAssertTrue(window.frame.contains(delete.frame),
-                      "削除ボタン全体が画面内にありません window=\(window.frame) delete=\(delete.frame) back=\(back.frame)")
+        XCTAssertTrue(window.frame.contains(delete.frame), "削除ボタン全体が画面内にありません")
         XCTAssertFalse(delete.frame.intersects(back.frame),
                         "戻る操作と削除操作のタップ領域が重なっています")
         XCTAssertGreaterThanOrEqual(delete.frame.minX - back.frame.maxX, 8,

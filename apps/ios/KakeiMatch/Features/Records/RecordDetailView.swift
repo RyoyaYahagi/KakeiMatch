@@ -39,6 +39,7 @@ struct KMRecordDetailView: View {
                     .accessibilityIdentifier("records.delete")
                 }
             }
+            .padding(.top, KMSpacing.space4)
             .padding(.bottom, KMSpacing.space2)
             // The page switches as soon as the row is tapped, so show progress
             // here while the detail reads finish.
