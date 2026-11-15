@@ -108,28 +108,36 @@ struct AppShell: View {
                         }
                     }
                 }
-                // Reserve the existing row height while rendering the actual bar
-                // at the root, where the raised add tile remains inside hit-test bounds.
-                KMBottomNavigationSlot()
-                    .frame(maxWidth: KMLayout.contentMax)
-                    .anchorPreference(key: KMBottomNavigationBoundsKey.self, value: .bounds) { $0 }
+                KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
+                    if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
+                    deletionNotice.clearTransientStatus()
+                    tab = destination
+                    entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
+                    moneyForwardRoute = false
+                }), reviewCount: reviewCount)
             }
         }
-        // Anchor to the measured row rather than deriving a screen position from
-        // device height or safe-area constants. The overlay follows layout changes.
+        // Keep only the raised add button in the root overlay. The four tabs and
+        // bar material remain in their original 64pt row; the measured anchor
+        // tracks safe-area and width changes without screen-height arithmetic.
         .overlayPreferenceValue(KMBottomNavigationBoundsKey.self) { anchor in
             GeometryReader { proxy in
                 if let anchor {
                     let row = proxy[anchor]
-                    KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
-                        if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
-                        deletionNotice.clearTransientStatus()
-                        tab = destination
-                        entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
-                        moneyForwardRoute = false
-                    }), reviewCount: reviewCount, add: { showsChooser = true })
-                        .frame(width: row.width, height: row.height + 22)
-                        .position(x: row.midX, y: row.maxY - (row.height + 22) / 2)
+                    Button { showsChooser = true } label: {
+                        KMIcon(name: "add", size: 28)
+                            .foregroundStyle(KMColor.onPrimary)
+                            .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                            .glassEffect(.regular.tint(KMColor.primary).interactive(),
+                                         in: RoundedRectangle(cornerRadius: KMRadius.xl))
+                    }
+                    .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                    .buttonStyle(.plain)
+                    .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                    .accessibilityLabel("記録を追加")
+                    .accessibilityIdentifier("add-record")
+                    .accessibilitySortPriority(3)
+                    .position(x: row.midX, y: row.minY - 22 + KMLayout.addSize / 2)
                 }
             }
         }

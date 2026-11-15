@@ -8,15 +8,6 @@ struct KMBottomNavigationBoundsKey: PreferenceKey {
     }
 }
 
-struct KMBottomNavigationSlot: View {
-    var body: some View {
-        Color.clear
-            .frame(height: KMLayout.navHeight)
-            .accessibilityHidden(true)
-            .allowsHitTesting(false)
-    }
-}
-
 enum KMTab: String, CaseIterable {
     case home, records, reconciliation, settings
     var label: String {
@@ -38,42 +29,30 @@ enum KMTab: String, CaseIterable {
 struct KMBottomNavigation: View {
     @Binding var selection: KMTab
     var reviewCount = 0
-    let add: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             tab(.home)
             tab(.records)
             ZStack(alignment: .top) {
-                Button(action: add) {
-                    KMIcon(name: "add", size: 28)
-                        .foregroundStyle(KMColor.onPrimary)
-                        .frame(width: KMLayout.addSize, height: KMLayout.addSize)
-                        .glassEffect(.regular.tint(KMColor.primary).interactive(),
-                                     in: RoundedRectangle(cornerRadius: KMRadius.xl))
-                }
-                .frame(width: KMLayout.addSize, height: KMLayout.addSize)
-                .buttonStyle(.plain)
-                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
-                .accessibilityLabel("記録を追加")
-                .accessibilityIdentifier("add-record")
-                .accessibilitySortPriority(3)
-
+                Color.clear.frame(maxWidth: .infinity, minHeight: KMLayout.navHeight)
+                    .accessibilityHidden(true)
+                    .allowsHitTesting(false)
                 Text("追加").font(KMTypography.body(12, weight: .bold))
                     .foregroundStyle(KMColor.primary)
-                    .padding(.top, KMLayout.addSize + KMSpacing.space1)
+                    .padding(.top, 38)
                     .accessibilityHidden(true)
             }
-            .frame(maxWidth: .infinity, minHeight: KMLayout.navHeight + 22, alignment: .top)
+            .frame(maxWidth: .infinity, minHeight: KMLayout.navHeight, alignment: .top)
             tab(.reconciliation)
             tab(.settings)
         }
         .padding(.horizontal, KMSpacing.space2)
-        .frame(height: KMLayout.navHeight + 22)
-        // Material is a separate background layer: nesting the FAB inside the
-        // bar's glassEffect lets the bar's specular edge cross the FAB.
+        .frame(height: KMLayout.navHeight)
+        .anchorPreference(key: KMBottomNavigationBoundsKey.self, value: .bounds) { $0 }
+        // Keep the bar material in its original row; the raised tile owns its glass surface.
         .overlay(alignment: .top) {
-            Rectangle().fill(KMColor.border).frame(height: 1).padding(.top, 22)
+            Rectangle().fill(KMColor.border).frame(height: 1)
         }
         .background {
             Color.clear
@@ -111,7 +90,6 @@ struct KMBottomNavigation: View {
             }
             .contentShape(Rectangle())
         }
-        .padding(.top, 22)
         .buttonStyle(.plain)
         .accessibilityLabel(tab == .reconciliation && reviewCount > 0 ? "照合（確認が必要 \(reviewCount)件）" : tab.label)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
