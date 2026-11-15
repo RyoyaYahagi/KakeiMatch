@@ -87,7 +87,7 @@ struct AppShell: View {
                                         onShowHome: { tab = .home })
                                     }
                                 }
-                            }
+                    }
                             // On portrait iPhones the OS top inset already exceeds 16pt:
                             // PWA main uses max(16px, safe-area-inset-top), not their sum.
                             .padding(.horizontal, KMSpacing.space4)
@@ -114,10 +114,36 @@ struct AppShell: View {
                     tab = destination
                     entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
                     moneyForwardRoute = false
-                }), reviewCount: reviewCount, add: { showsChooser = true })
-                    .frame(maxWidth: KMLayout.contentMax)
+                }), reviewCount: reviewCount)
             }
         }
+        // Keep only the raised add button in the root overlay. The four tabs and
+        // bar material remain in their original 64pt row; the measured anchor
+        // tracks safe-area and width changes without screen-height arithmetic.
+        .overlayPreferenceValue(KMBottomNavigationBoundsKey.self) { anchor in
+            GeometryReader { proxy in
+                if let anchor {
+                    let row = proxy[anchor]
+                    Button { showsChooser = true } label: {
+                        KMIcon(name: "add", size: 28)
+                            .foregroundStyle(KMColor.onPrimary)
+                            .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                            .glassEffect(.regular.tint(KMColor.primary).interactive(),
+                                         in: RoundedRectangle(cornerRadius: KMRadius.xl))
+                            // Shape the label itself: Button uses it for interaction hit testing.
+                            .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                    }
+                    .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("記録を追加")
+                    .accessibilityIdentifier("add-record")
+                    .accessibilitySortPriority(3)
+                    .position(x: row.midX, y: row.minY - 22 + KMLayout.addSize / 2)
+                }
+            }
+        }
+        // Sort all five navigation actions in the same accessibility container.
+        .accessibilityElement(children: .contain)
         .font(KMTypography.text)
         .tint(KMColor.primary)
         .preferredColorScheme(selectedColorScheme)
