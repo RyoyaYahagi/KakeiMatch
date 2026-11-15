@@ -62,8 +62,6 @@ struct KMBottomNavigation: View {
                 .ignoresSafeArea(edges: .bottom)
                 .accessibilityHidden(true)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("アプリ")
     }
 
     private func tab(_ tab: KMTab) -> some View {

@@ -87,7 +87,7 @@ struct AppShell: View {
                                         onShowHome: { tab = .home })
                                     }
                                 }
-                            }
+                    }
                             // On portrait iPhones the OS top inset already exceeds 16pt:
                             // PWA main uses max(16px, safe-area-inset-top), not their sum.
                             .padding(.horizontal, KMSpacing.space4)
@@ -130,10 +130,11 @@ struct AppShell: View {
                             .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                             .glassEffect(.regular.tint(KMColor.primary).interactive(),
                                          in: RoundedRectangle(cornerRadius: KMRadius.xl))
+                            // Shape the label itself: Button uses it for interaction hit testing.
+                            .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
                     }
                     .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                     .buttonStyle(.plain)
-                    .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
                     .accessibilityLabel("記録を追加")
                     .accessibilityIdentifier("add-record")
                     .accessibilitySortPriority(3)
@@ -141,6 +142,8 @@ struct AppShell: View {
                 }
             }
         }
+        // Sort all five navigation actions in the same accessibility container.
+        .accessibilityElement(children: .contain)
         .font(KMTypography.text)
         .tint(KMColor.primary)
         .preferredColorScheme(selectedColorScheme)
