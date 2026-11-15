@@ -108,14 +108,29 @@ struct AppShell: View {
                         }
                     }
                 }
-                KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
-                    if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
-                    deletionNotice.clearTransientStatus()
-                    tab = destination
-                    entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
-                    moneyForwardRoute = false
-                }), reviewCount: reviewCount, add: { showsChooser = true })
+                // Reserve the existing row height while rendering the actual bar
+                // at the root, where the raised add tile remains inside hit-test bounds.
+                KMBottomNavigationSlot()
                     .frame(maxWidth: KMLayout.contentMax)
+                    .anchorPreference(key: KMBottomNavigationBoundsKey.self, value: .bounds) { $0 }
+            }
+        }
+        // Anchor to the measured row rather than deriving a screen position from
+        // device height or safe-area constants. The overlay follows layout changes.
+        .overlayPreferenceValue(KMBottomNavigationBoundsKey.self) { anchor in
+            GeometryReader { proxy in
+                if let anchor {
+                    let row = proxy[anchor]
+                    KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
+                        if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
+                        deletionNotice.clearTransientStatus()
+                        tab = destination
+                        entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
+                        moneyForwardRoute = false
+                    }), reviewCount: reviewCount, add: { showsChooser = true })
+                        .frame(width: row.width, height: row.height + 22)
+                        .position(x: row.midX, y: row.maxY - (row.height + 22) / 2)
+                }
             }
         }
         .font(KMTypography.text)

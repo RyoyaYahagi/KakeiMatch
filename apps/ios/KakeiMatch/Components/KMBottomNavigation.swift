@@ -1,5 +1,22 @@
 import SwiftUI
 
+struct KMBottomNavigationBoundsKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>? = nil
+
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+struct KMBottomNavigationSlot: View {
+    var body: some View {
+        Color.clear
+            .frame(height: KMLayout.navHeight)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+    }
+}
+
 enum KMTab: String, CaseIterable {
     case home, records, reconciliation, settings
     var label: String {
@@ -27,33 +44,43 @@ struct KMBottomNavigation: View {
         HStack(alignment: .top, spacing: 0) {
             tab(.home)
             tab(.records)
-            Button(action: add) {
-                ZStack(alignment: .top) {
+            ZStack(alignment: .top) {
+                Button(action: add) {
                     KMIcon(name: "add", size: 28)
                         .foregroundStyle(KMColor.onPrimary)
                         .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                         .glassEffect(.regular.tint(KMColor.primary).interactive(),
                                      in: RoundedRectangle(cornerRadius: KMRadius.xl))
-                        .offset(y: -22)
-                    Text("追加").font(KMTypography.body(12, weight: .bold))
-                        .foregroundStyle(KMColor.primary).padding(.top, 38)
+                        .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
                 }
-                .frame(maxWidth: .infinity, minHeight: KMLayout.navHeight, alignment: .top)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                .accessibilityLabel("記録を追加")
+                .accessibilityIdentifier("add-record")
+                .accessibilitySortPriority(3)
+
+                Text("追加").font(KMTypography.body(12, weight: .bold))
+                    .foregroundStyle(KMColor.primary)
+                    .padding(.top, KMLayout.addSize + KMSpacing.space1)
+                    .accessibilityHidden(true)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("記録を追加")
-            .accessibilityIdentifier("add-record")
+            .frame(maxWidth: .infinity, minHeight: KMLayout.navHeight + 22, alignment: .top)
             tab(.reconciliation)
             tab(.settings)
         }
         .padding(.horizontal, KMSpacing.space2)
-        .frame(height: KMLayout.navHeight)
+        .frame(height: KMLayout.navHeight + 22)
         // Material is a separate background layer: nesting the FAB inside the
         // bar's glassEffect lets the bar's specular edge cross the FAB.
-        .background(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+        .overlay(alignment: .top) {
+            Rectangle().fill(KMColor.border).frame(height: 1).padding(.top, 22)
+        }
         .background {
-            Color.clear.glassEffect(.regular, in: Rectangle()).ignoresSafeArea(edges: .bottom).accessibilityHidden(true)
+            Color.clear
+                .frame(height: KMLayout.navHeight)
+                .glassEffect(.regular, in: Rectangle())
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .ignoresSafeArea(edges: .bottom)
+                .accessibilityHidden(true)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("アプリ")
@@ -83,9 +110,22 @@ struct KMBottomNavigation: View {
             }
             .contentShape(Rectangle())
         }
+        .padding(.top, 22)
         .buttonStyle(.plain)
         .accessibilityLabel(tab == .reconciliation && reviewCount > 0 ? "照合（確認が必要 \(reviewCount)件）" : tab.label)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
         .accessibilityIdentifier(tab.identifier)
+        .accessibilitySortPriority(tab.accessibilityOrder)
+    }
+}
+
+private extension KMTab {
+    var accessibilityOrder: Double {
+        switch self {
+        case .home: 5
+        case .records: 4
+        case .reconciliation: 2
+        case .settings: 1
+        }
     }
 }
