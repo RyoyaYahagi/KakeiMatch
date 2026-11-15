@@ -30,7 +30,7 @@ final class AddButtonHitAreaTests: XCTestCase {
         let add = app.buttons["add-record"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let rowTop = homeTab.frame.minY
-        let x = add.frame.midX - 30 // 2pt outside the tile, inside the full-width row.
+        let x = app.frame.midX - 30 // 2pt outside the centered tile, inside the full-width row.
         let y = rowTop - 18 // the top-edge test point, within the raised tile's vertical span.
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "records.row."))
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10), "テスト用の記録行がありません")
@@ -144,7 +144,7 @@ final class AddButtonHitAreaTests: XCTestCase {
         XCTAssertTrue(homeTab.waitForExistence(timeout: 5))
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let rowTop = homeTab.frame.minY
-        let centerX = add.frame.midX
+        let centerX = app.frame.midX
         let top = rowTop - 22
 
         for y in [top + 4, rowTop + 6, top + 52] {
@@ -170,7 +170,7 @@ final class AddButtonHitAreaTests: XCTestCase {
     @MainActor
     private func assertTopTileTap(_ app: XCUIApplication) {
         let rowTop = app.buttons["home-tab"].frame.minY
-        let centerX = app.buttons["add-record"].frame.midX
+        let centerX = app.frame.midX
         tap(app, x: centerX, y: rowTop - 22 + 4)
         XCTAssertTrue(app.buttons["chooser.receipt"].waitForExistence(timeout: 5),
                       "タイル上端の内側をタップしても記録方法選択が開きません")

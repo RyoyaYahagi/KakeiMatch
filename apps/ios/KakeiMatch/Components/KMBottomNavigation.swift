@@ -51,9 +51,10 @@ struct KMBottomNavigation: View {
                         .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                         .glassEffect(.regular.tint(KMColor.primary).interactive(),
                                      in: RoundedRectangle(cornerRadius: KMRadius.xl))
-                        .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
                 }
+                .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                 .buttonStyle(.plain)
+                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
                 .accessibilityLabel("記録を追加")
                 .accessibilityIdentifier("add-record")
                 .accessibilitySortPriority(3)
