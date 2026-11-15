@@ -56,9 +56,7 @@ struct KMBottomNavigation: View {
         }
         .background {
             Color.clear
-                .frame(height: KMLayout.navHeight)
                 .glassEffect(.regular, in: Rectangle())
-                .frame(maxHeight: .infinity, alignment: .bottom)
                 .ignoresSafeArea(edges: .bottom)
                 .accessibilityHidden(true)
         }
