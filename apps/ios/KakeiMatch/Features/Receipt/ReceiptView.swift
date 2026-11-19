@@ -79,7 +79,10 @@ struct ReceiptView: View {
                         Button(model.phase == .categorizing ? "分類を待たずに自分で選ぶ" : "待たずに手で入力する") { model.stopWaiting() }
                             .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.stopWaiting")
                     } else if case .failed(let failure) = model.phase, KMReceiptPresentation.retryable(failure) {
-                        Button("もう一度読み取る") { confirmsReread = model.receipt?.extraction != nil; if !confirmsReread { model.startReading() } }
+                        Button("もう一度読み取る") {
+                            confirmsReread = model.receipt?.extraction != nil
+                            if !confirmsReread { KMNativeAIConsent.shared.request { model.startReading() } }
+                        }
                             .buttonStyle(KMButtonStyle(role: .primary)).accessibilityIdentifier("receipt.retryButton")
                         Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
                             .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.manualButton")
@@ -122,7 +125,7 @@ struct ReceiptView: View {
             UIAccessibility.post(notification: .announcement, argument: message)
         }
         .alert("もう一度読み取りますか？", isPresented: $confirmsReread) {
-            Button("読み取る") { model.startReading() }
+            Button("読み取る") { KMNativeAIConsent.shared.request { model.startReading() } }
             Button("キャンセル", role: .cancel) {}
         } message: {
             Text("もう一度読み取るとAIの利用枠を消費し、入力内容を読み取り結果で置き換えます。続けますか？")
@@ -293,7 +296,8 @@ struct ReceiptView: View {
                         .buttonStyle(KMButtonStyle(role: .text)).accessibilityElement(children: .contain).accessibilityIdentifier("receipt.failure")
                 } else if !model.isReading {
                     Button(model.receipt?.extraction == nil ? "AIで読み取る" : "再読み取り") {
-                        if model.receipt?.extraction != nil { confirmsReread = true } else { model.startReading() }
+                        if model.receipt?.extraction != nil { confirmsReread = true }
+                        else { KMNativeAIConsent.shared.request { model.startReading() } }
                     }
                         .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("receipt.aiButton")
                         .disabled(!model.imageIsSaved || model.didSave)

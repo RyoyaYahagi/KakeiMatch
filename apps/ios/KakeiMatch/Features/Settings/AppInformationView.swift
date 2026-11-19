@@ -35,6 +35,16 @@ struct KMAppInformationView: View {
                 .font(KMTypography.text)
                 .accessibilityIdentifier("app-info-version")
 
+            heading("ポリシー・お問い合わせ")
+            Link("プライバシーポリシー", destination: URL(string: "https://ryoyayahagi.github.io/KakeiMatch/privacy.html")!)
+                .font(KMTypography.text)
+                .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+                .accessibilityIdentifier("settings.privacyPolicy")
+            Link("サポートへメールする", destination: URL(string: "mailto:yappapp.support@gmail.com")!)
+                .font(KMTypography.text)
+                .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
+                .accessibilityIdentifier("settings.supportEmail")
+
             heading("端末内の診断")
             Text("不具合を調べるためのアプリの版と処理結果です。家計内容・入力文字・認証情報は含めません。自動送信せず、アプリを開いている間の直近15分・最大40件だけをメモリに保持します。アプリの終了でも消えます。表示・共有する操作履歴は直近20件までです。")
                 .font(KMTypography.note)

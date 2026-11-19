@@ -52,6 +52,8 @@ final class SettingsFlowTests: XCTestCase {
             about.tap()
             XCTAssertTrue(app.staticTexts["settings-page-app-title"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.staticTexts["app-info-version"].exists)
+            XCTAssertTrue(app.links["settings.privacyPolicy"].exists)
+            XCTAssertTrue(app.links["settings.supportEmail"].exists)
             XCTAssertTrue(app.staticTexts["端末内の診断"].exists)
             XCTAssertTrue(app.staticTexts["オープンソースライセンス"].exists)
             XCTAssertTrue(app.descendants(matching: .any)["Actual Budget"].firstMatch.exists)
@@ -61,6 +63,22 @@ final class SettingsFlowTests: XCTestCase {
             XCTAssertTrue(app.buttons["settings.theme"].waitForExistence(timeout: 5))
             app.terminate()
         }
+    }
+
+    @MainActor func testGuestCanReachPolicyAndSupportFromSettings() {
+        continueAfterFailure = false
+        let app = launch("light")
+        let about = app.buttons["settings.appInfo"]
+        for _ in 0..<4 where !about.isHittable { app.swipeUp() }
+        about.tap()
+        let policy = app.links["settings.privacyPolicy"]
+        let support = app.links["settings.supportEmail"]
+        XCTAssertTrue(policy.waitForExistence(timeout: 5))
+        XCTAssertTrue(support.exists)
+        XCTAssertEqual(policy.label, "プライバシーポリシー")
+        XCTAssertEqual(support.label, "サポートへメールする")
+        capture(app, "guest-policy-support")
+        app.terminate()
     }
 
     @MainActor func testDarkSettingsRootScreenshot() {

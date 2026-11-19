@@ -20,6 +20,7 @@ struct AppShell: View {
     @AppStorage(KMAppSettingsPreferences.themePreferenceKey) private var themePreferenceRaw = KMThemePreference.system.rawValue
     @State private var networkMonitor = KMNetworkMonitor()
     @State private var recordedInitialDiagnostic = false
+    @State private var aiConsent = KMNativeAIConsent.shared
 
     var body: some View {
         ZStack {
@@ -147,6 +148,14 @@ struct AppShell: View {
         .font(KMTypography.text)
         .tint(KMColor.primary)
         .preferredColorScheme(selectedColorScheme)
+        .alert("AIへの送信について", isPresented: $aiConsent.isPresented) {
+            Button("同意して続ける") { aiConsent.accept() }
+                .accessibilityIdentifier("ai-consent.accept")
+            Button("同意しない", role: .cancel) { aiConsent.decline() }
+                .accessibilityIdentifier("ai-consent.decline")
+        } message: {
+            Text(KMNativeAIConsent.disclosure)
+        }
         // A transparent native modal host traps accessibility focus without changing
         // the PWA-shaped sheet or removing the underlying page from the screen.
         .fullScreenCover(isPresented: $showsChooser) {

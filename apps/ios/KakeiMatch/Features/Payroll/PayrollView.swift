@@ -28,7 +28,9 @@ struct PayrollView: View {
                         if let image = model.image {
                             maskingPreview(image)
                             checkbox("不要な個人情報を隠しました。必要な部分をAIへ送信します", isOn: model.reviewed, toggle: { model.reviewed.toggle() }, id: "payroll.maskingConsent")
-                            Button(model.reading ? "読み取り中…" : "AIで読み取る") { model.readImage() }
+                            Button(model.reading ? "読み取り中…" : "AIで読み取る") {
+                                KMNativeAIConsent.shared.request { model.readImage() }
+                            }
                                 .buttonStyle(KMButtonStyle(role: .secondary))
                                 .disabled(model.reading)
                                 .accessibilityIdentifier("payroll.aiButton")

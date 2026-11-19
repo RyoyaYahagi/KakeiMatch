@@ -3,6 +3,32 @@ import Testing
 @testable import KakeiMatch
 
 struct AppInformationTests {
+    @Test @MainActor func aiConsentMustBeAcceptedBeforeActionAndPersistsOnDevice() throws {
+        let suiteName = "KMNativeAIConsentTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let consent = KMNativeAIConsent(defaults: defaults)
+        var actionCount = 0
+
+        consent.request { actionCount += 1 }
+        #expect(consent.isPresented)
+        #expect(actionCount == 0)
+        consent.decline()
+        #expect(actionCount == 0)
+        #expect(!consent.hasConsented)
+
+        consent.request { actionCount += 1 }
+        consent.accept()
+        #expect(actionCount == 1)
+        #expect(consent.hasConsented)
+        #expect(!consent.isPresented)
+
+        let restored = KMNativeAIConsent(defaults: defaults)
+        restored.request { actionCount += 1 }
+        #expect(actionCount == 2)
+        #expect(!restored.isPresented)
+    }
+
     @Test @MainActor func clearingDiagnosticsPreservesScreenAndNetwork() {
         let recorder = KMContactDiagnosticRecorder(now: { Date(timeIntervalSince1970: 1_800_000_000) })
         recorder.recordScreen(.settings)
