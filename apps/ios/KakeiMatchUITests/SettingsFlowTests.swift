@@ -52,8 +52,8 @@ final class SettingsFlowTests: XCTestCase {
             about.tap()
             XCTAssertTrue(app.staticTexts["settings-page-app-title"].waitForExistence(timeout: 5))
             XCTAssertTrue(app.staticTexts["app-info-version"].exists)
-            XCTAssertTrue(app.links["settings.privacyPolicy"].exists)
-            XCTAssertTrue(app.links["settings.supportEmail"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["settings.privacyPolicy"].exists)
+            XCTAssertTrue(app.descendants(matching: .any)["settings.supportEmail"].exists)
             XCTAssertTrue(app.staticTexts["端末内の診断"].exists)
             XCTAssertTrue(app.staticTexts["オープンソースライセンス"].exists)
             XCTAssertTrue(app.descendants(matching: .any)["Actual Budget"].firstMatch.exists)
@@ -71,10 +71,12 @@ final class SettingsFlowTests: XCTestCase {
         let about = app.buttons["settings.appInfo"]
         for _ in 0..<4 where !about.isHittable { app.swipeUp() }
         about.tap()
-        let policy = app.links["settings.privacyPolicy"]
-        let support = app.links["settings.supportEmail"]
+        let policy = app.descendants(matching: .any)["settings.privacyPolicy"]
+        let support = app.descendants(matching: .any)["settings.supportEmail"]
         XCTAssertTrue(policy.waitForExistence(timeout: 5))
         XCTAssertTrue(support.exists)
+        XCTAssertTrue(policy.isHittable)
+        XCTAssertTrue(support.isHittable)
         XCTAssertEqual(policy.label, "プライバシーポリシー")
         XCTAssertEqual(support.label, "サポートへメールする")
         capture(app, "guest-policy-support")

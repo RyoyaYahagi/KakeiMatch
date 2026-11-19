@@ -150,8 +150,10 @@ struct AppShell: View {
         .preferredColorScheme(selectedColorScheme)
         .alert("AIへの送信について", isPresented: $aiConsent.isPresented) {
             Button("同意して続ける") { aiConsent.accept() }
+                .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("ai-consent.accept")
             Button("同意しない", role: .cancel) { aiConsent.decline() }
+                .accessibilityElement(children: .ignore)
                 .accessibilityIdentifier("ai-consent.decline")
         } message: {
             Text(KMNativeAIConsent.disclosure)
