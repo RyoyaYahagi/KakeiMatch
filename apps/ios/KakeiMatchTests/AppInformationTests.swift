@@ -7,12 +7,14 @@ struct AppInformationTests {
         let suiteName = "KMNativeAIConsentTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set(true, forKey: "km.nativeAIConsent.v1")
         let consent = KMNativeAIConsent(defaults: defaults)
         var actionCount = 0
 
         consent.request { actionCount += 1 }
         #expect(consent.isPresented)
         #expect(actionCount == 0)
+        #expect(!consent.hasConsented)
         consent.decline()
         #expect(actionCount == 0)
         #expect(!consent.hasConsented)
@@ -21,6 +23,7 @@ struct AppInformationTests {
         consent.accept()
         #expect(actionCount == 1)
         #expect(consent.hasConsented)
+        #expect(defaults.integer(forKey: KMNativeAIConsent.preferenceKey) == KMNativeAIConsent.disclosureVersion)
         #expect(!consent.isPresented)
 
         let restored = KMNativeAIConsent(defaults: defaults)

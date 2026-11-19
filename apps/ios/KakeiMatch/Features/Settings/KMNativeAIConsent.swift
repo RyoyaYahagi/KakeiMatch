@@ -4,7 +4,8 @@ import Observation
 @MainActor @Observable
 final class KMNativeAIConsent {
     static let shared = KMNativeAIConsent()
-    static let preferenceKey = "km.nativeAIConsent.v1"
+    static let preferenceKey = "km.nativeAIConsent.disclosureVersion"
+    static let disclosureVersion = 2
 
     var isPresented = false
     @ObservationIgnored private let defaults: UserDefaults
@@ -14,7 +15,9 @@ final class KMNativeAIConsent {
         self.defaults = defaults
     }
 
-    var hasConsented: Bool { defaults.bool(forKey: Self.preferenceKey) }
+    var hasConsented: Bool {
+        defaults.integer(forKey: Self.preferenceKey) >= Self.disclosureVersion
+    }
 
     func request(_ action: @escaping @MainActor () -> Void) {
         guard !hasConsented else { action(); return }
@@ -24,7 +27,7 @@ final class KMNativeAIConsent {
 
     func accept() {
         guard isPresented else { return }
-        defaults.set(true, forKey: Self.preferenceKey)
+        defaults.set(Self.disclosureVersion, forKey: Self.preferenceKey)
         isPresented = false
         let action = pendingAction
         pendingAction = nil
@@ -39,10 +42,10 @@ final class KMNativeAIConsent {
     static let disclosure = """
     同意すると、次の情報をKakeiMatchのサーバー経由で外部AIへ送ります。拒否しても手入力で使い続けられます。
 
-    レシート: 写真をGoogle Geminiへ送り、分類が必要な場合は店名・合計金額・品目名と各金額・候補カテゴリを分類AIにも送ります。
+    レシート: 写真をGoogle Geminiへ送り、分類が必要な場合は店名・合計金額・品目名と各金額・候補カテゴリをGoogle Geminiにも送ります。
     給与明細: 個人情報を隠した画像をGoogle Geminiへ送ります。
-    分類（MoneyForwardを含む）: 店名・金額・品目名と金額、または取込元カテゴリ名と候補カテゴリを分類AIへ送ります。分類先は運営設定で選ばれ、現在はOpenCode Consoleを使用し、障害時にOpenRouterへ切り替わる場合があります。
+    分類（MoneyForwardを含む）: 店名・金額・品目名と金額、または取込元カテゴリ名と候補カテゴリをGoogle Geminiへ送ります。
 
-    同意はこの端末に保存し、次回から確認しません。
+    この説明文の版への同意を端末に保存します。説明文の版が変わると、次回の送信前に改めて確認します。
     """
 }
