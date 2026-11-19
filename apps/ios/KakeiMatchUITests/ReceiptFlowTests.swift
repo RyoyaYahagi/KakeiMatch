@@ -54,7 +54,8 @@ final class ReceiptFlowTests: XCTestCase {
         XCTAssertTrue(app.alerts["AIへの送信について"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.alerts.staticTexts.matching(
             NSPredicate(format: "label CONTAINS %@", "Google Gemini")).firstMatch.exists)
-        let decline = app.alerts["AIへの送信について"].buttons.matching(identifier: "ai-consent.decline")
+        let decline = app.alerts["AIへの送信について"].buttons.matching(
+            NSPredicate(format: "label == %@", "同意しない"))
         XCTAssertEqual(decline.count, 1, "拒否操作はアクセシビリティ上も一つだけ表示します")
         decline.firstMatch.tap()
         XCTAssertFalse(app.alerts["AIへの送信について"].exists)
