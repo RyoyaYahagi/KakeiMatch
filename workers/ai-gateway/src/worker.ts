@@ -42,7 +42,7 @@ export interface RateLimitBinding { limit(input: { key: string }): Promise<{ suc
 export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
 export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT"> {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
-  OPENCODE_API_KEY?: string; OPENROUTER_API_KEY?: string; JEV_PROVIDER?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
+  OPENROUTER_API_KEY?: string; JEV_PROVIDER?: string; AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
   FEEDBACK_ENCRYPTION_KEY?: string;
   // Contact AI features are not counted against a plan; this per-minute limit is their abuse guard.
@@ -367,36 +367,27 @@ function geminiOutputText(value: unknown): string | null {
   return text.length > 0 ? text.map((part) => part.text as string).join("") : null;
 }
 
-type JevProvider = "opencode" | "openrouter";
-/**
- * Every Jev provider is one complete upstream: endpoint, model and key belong
- * together. Switching providers is therefore JEV_PROVIDER alone, and a model
- * change (for example when the free model is withdrawn) is edited here.
- * Prices for both models live in the server-only pricing catalog.
- */
+type JevProvider = "openrouter";
 const JEV_PROVIDERS: Record<JevProvider, { apiUrl: string; model: string }> = {
-  opencode: { apiUrl: "https://opencode.ai/inference/systemone/v1/systemone", model: "jev-1.13-free" },
   openrouter: { apiUrl: "https://openrouter.ai/api/alpha/decisions", model: "typesafe/jev-1.13" },
 };
 type JevUpstream = { name: JevProvider; apiUrl: string; model: string; headers: Record<string, string> };
 /** Resolves one upstream. A missing key for that provider means it is not configured. */
 function jevUpstreamFor(env: GatewayEnv, name: JevProvider): JevUpstream | null {
-  const apiKey = name === "opencode" ? env.OPENCODE_API_KEY : env.OPENROUTER_API_KEY;
+  const apiKey = env.OPENROUTER_API_KEY;
   if (!apiKey) return null;
   const { apiUrl, model } = JEV_PROVIDERS[name];
   return { name, apiUrl, model, headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` } };
 }
 /**
- * The configured upstream first, then the other one as a fallback. An unknown
- * provider name, or a missing key for the configured one, fails closed.
+ * Only the paid OpenRouter Jev endpoint is supported. Unknown providers or a
+ * missing key fail closed before category facts can be sent anywhere.
  */
 function jevUpstreams(env: GatewayEnv): JevUpstream[] {
-  const name = env.JEV_PROVIDER?.trim() || "opencode";
-  if (name !== "opencode" && name !== "openrouter") return [];
-  const primary = jevUpstreamFor(env, name);
-  if (!primary) return [];
-  const other = jevUpstreamFor(env, name === "opencode" ? "openrouter" : "opencode");
-  return other ? [primary, other] : [primary];
+  const name = env.JEV_PROVIDER?.trim() || "openrouter";
+  if (name !== "openrouter") return [];
+  const upstream = jevUpstreamFor(env, name);
+  return upstream ? [upstream] : [];
 }
 /** Jev metering stays provider='jev'; the circuit follows the upstream that can fail. */
 const jevScope = (upstream: JevUpstream): CircuitScope => ({ key: `jev:${upstream.name}`, model: upstream.model });

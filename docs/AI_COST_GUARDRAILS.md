@@ -67,7 +67,7 @@ GROUP BY provider;
 3. 原因を解消した後、下記SQLで対象providerの停止を解除します。`resumed_after_event` に現在の最終イベント番号を保存し、再開前の障害を再計上しません。同じ秒に送られた新しい要求も番号で区別します。
 4. 緊急停止を `false` に戻し、合成要求1件でAPIと手入力の両方を確認します。日・月予算や不明要求の予約額が上限に達している場合、停止状態だけを解除しても送信は再開しません。費用の確認なしに履歴・予約を削除しません。
 
-Geminiを再開するSQLです。Jevはupstream単位で再開します。主系の `jev:opencode` だけを戻し、`jev:openrouter` は停止したままにできます。再開するupstreamに対応するモデルでイベントを絞り、`resumed_after_event` をそろえます。
+Geminiと現在のJev providerを再開するSQLです。Jevは有料OpenRouterだけを使います。再開対象のモデルでイベントを絞り、`resumed_after_event` をそろえます。旧 `jev:opencode` circuit行が残っていても、現行Workerは参照しません。
 
 ```sql
 -- Gemini
@@ -77,13 +77,6 @@ SET opened_at=NULL, reason=NULL, resumed_at=unixepoch(),
     FROM ai_provider_cost_events WHERE provider='gemini')
 WHERE provider='gemini';
 
--- Jev / OpenCode Console
-UPDATE ai_provider_circuits
-SET opened_at=NULL, reason=NULL, resumed_at=unixepoch(),
-  resumed_after_event=(SELECT COALESCE(MAX(rowid),0)
-    FROM ai_provider_cost_events WHERE provider='jev' AND requested_model='jev-1.13-free')
-WHERE provider='jev:opencode';
-
 -- Jev / OpenRouter
 UPDATE ai_provider_circuits
 SET opened_at=NULL, reason=NULL, resumed_at=unixepoch(),
@@ -92,7 +85,7 @@ SET opened_at=NULL, reason=NULL, resumed_at=unixepoch(),
 WHERE provider='jev:openrouter';
 ```
 
-移行 `0017_jev_upstream_circuits.sql` の適用時点で `jev` circuitが開いていた場合は、`jev:opencode` と `jev:openrouter` の両方へ引き継がれます。どちらを再開するかを選んでください。
+移行 `0017_jev_upstream_circuits.sql` の適用時点で `jev` circuitが開いていた場合は、`jev:opencode` と `jev:openrouter` の両方へ引き継がれます。現在はOpenRouter circuitだけを運用し、旧 `jev:opencode` 行は残っていても再開しません。
 
 `cf d1 query` は `--sql` と `--params` または構造化した `--body` / `--batch` を受け付けます。実行先には本番専用 `ACCOUNT_D1_ID` を選びます。共有する調査結果には合計値・状態だけを含め、個別user/flow IDを公開しません。[Cloudflare D1 SQL API](https://developers.cloudflare.com/d1/sql-api/)
 

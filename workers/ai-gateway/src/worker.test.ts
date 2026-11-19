@@ -92,7 +92,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       for (const migration of migrations) await d1.exec(migration.replace(/^--.*$/gm, "").replace(/\s+/g, " "));
     } else { ({ db, dispose } = sqliteDb()); }
     for (const user of ["synthetic-user", "other-user"]) await db.prepare("INSERT INTO user(id, name, email, createdAt, updatedAt) VALUES (?, 'Test', ?, 0, 0)").bind(user, `${user}@example.invalid`).run();
-    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", OPENCODE_API_KEY: "synthetic-opencode-key", OPENROUTER_API_KEY: "synthetic-openrouter-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
+    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", JEV_PROVIDER: "openrouter", OPENROUTER_API_KEY: "synthetic-openrouter-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
   });
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
@@ -231,10 +231,10 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const result = await handleRequest(request("category-suggestion", { flowId, sourceCategoryName: "スーパーマーケット", categories: choices }), env, options(provider));
     expect(result.status).toBe(200);
     expect(await result.json()).toEqual({ categoryId: "local-food" });
-    expect(vi.mocked(provider).mock.calls[0]?.[0]).toBe("https://opencode.ai/inference/systemone/v1/systemone");
-    expect(vi.mocked(provider).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-opencode-key" });
+    expect(vi.mocked(provider).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(vi.mocked(provider).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
     const providerPayload = JSON.parse(String(vi.mocked(provider).mock.calls[0]?.[1]?.body));
-    expect(providerPayload.model).toBe("jev-1.13-free");
+    expect(providerPayload.model).toBe("typesafe/jev-1.13");
     expect(providerPayload.state).toEqual({ sourceCategoryName: "スーパーマーケット" });
     expect(providerPayload.state).not.toHaveProperty("receipt");
     expect(providerPayload.questions.category.criteria).toEqual({ "local-food": "食費", "local-home": "日用品" });
@@ -605,19 +605,18 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     env.AI_GUARDRAILS_JSON = JSON.stringify({ jev: { unknownThreshold: 1 } });
     const unknownJev = await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(fetchOk(jev), now + 3));
     expect(unknownJev.status, await unknownJev.clone().text()).toBe(200);
-    const jevCircuit = await db.prepare("SELECT opened_at, reason FROM ai_provider_circuits WHERE provider='jev:opencode'").bind().first<{ opened_at: number; reason: string }>();
+    const jevCircuit = await db.prepare("SELECT opened_at, reason FROM ai_provider_circuits WHERE provider='jev:openrouter'").bind().first<{ opened_at: number; reason: string }>();
     expect(jevCircuit).toEqual({ opened_at: now + 3, reason: "unknown_metering" });
     const geminiWhileJevPaused = await gemini(crypto.randomUUID(), now + 4);
     expect(geminiWhileJevPaused.status).toBe(200);
-    // The paused upstream is skipped, so the other one serves the request instead of pausing Jev.
-    const fallback = fetchOk(jev);
-    const jevFallback = await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(fallback, now + 5));
-    expect(jevFallback.status, await jevFallback.clone().text()).toBe(200);
-    expect(vi.mocked(fallback).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
-    await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='jev' AND requested_model='jev-1.13-free') WHERE provider='jev:opencode'").bind(now + 6).run();
+    // No alternate provider is available while OpenRouter is paused.
+    const pausedJev = fetchOk(jev);
+    expect((await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(pausedJev, now + 5))).status).toBe(503);
+    expect(pausedJev).not.toHaveBeenCalled();
+    await db.prepare("UPDATE ai_provider_circuits SET opened_at=NULL, reason=NULL, resumed_at=?, resumed_after_event=(SELECT COALESCE(MAX(rowid),0) FROM ai_provider_cost_events WHERE provider='jev' AND requested_model='typesafe/jev-1.13') WHERE provider='jev:openrouter'").bind(now + 6).run();
     const resumed = fetchOk(jev);
     expect((await handleRequest(request("jev", { ...category, flowId: recoveredFlow }), env, options(resumed, now + 7))).status).toBe(200);
-    expect(vi.mocked(resumed).mock.calls[0]?.[0]).toBe("https://opencode.ai/inference/systemone/v1/systemone");
+    expect(vi.mocked(resumed).mock.calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
   });
   it("counts a schema-invalid response as a circuit failure while retaining measured cost", async () => {
     env.AI_GUARDRAILS_JSON = JSON.stringify({ gemini: { failureThreshold: 1 } });
@@ -716,14 +715,11 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(vi.mocked(openrouter).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
     expect(JSON.parse(String(vi.mocked(openrouter).mock.calls[0]?.[1]?.body)).model).toBe("typesafe/jev-1.13");
 
-    const opencode = fetchOk(answer("jev-1.13-free"));
+    // Legacy and unknown provider values fail closed and never dispatch to a free endpoint.
     env.JEV_PROVIDER = "opencode";
-    expect((await handleRequest(suggestion(), env, options(opencode))).status).toBe(200);
-    expect(vi.mocked(opencode).mock.calls[0]?.[0]).toBe("https://opencode.ai/inference/systemone/v1/systemone");
-    expect(vi.mocked(opencode).mock.calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-opencode-key" });
-    expect(JSON.parse(String(vi.mocked(opencode).mock.calls[0]?.[1]?.body)).model).toBe("jev-1.13-free");
-
-    // An unknown provider name must not silently fall back to a working upstream.
+    const legacy = fetchOk(answer("jev-1.13-free"));
+    expect((await handleRequest(suggestion(), env, options(legacy))).status).toBe(503);
+    expect(legacy).not.toHaveBeenCalled();
     env.JEV_PROVIDER = "gemini";
     const unknown = fetchOk(answer("jev-1.13-free"));
     const blocked = await handleRequest(suggestion(), env, options(unknown));
@@ -731,51 +727,42 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await blocked.json()).toEqual({ error: "not_configured" });
     expect(unknown).not.toHaveBeenCalled();
   });
-  it("retries once on the other Jev upstream when the first one fails", async () => {
+  it("does not retry Jev on another provider when OpenRouter fails", async () => {
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
     const answer = { model: "typesafe/jev-1.13", answers: { item_0: choice }, usage: { input_tokens: 20, output_tokens: 3 } };
-    const provider = vi.fn(async (url: string) => String(url).includes("opencode.ai")
-      ? Response.json({ private: "upstream detail" }, { status: 503 })
-      : Response.json(answer)) as unknown as typeof fetch;
+    const provider = vi.fn(async () => Response.json({ private: "upstream detail" }, { status: 503 })) as unknown as typeof fetch;
     const result = await handleRequest(request("jev", { ...category, flowId }), env, options(provider));
-    expect(result.status, await result.clone().text()).toBe(200);
-    expect(await result.json()).toEqual({ model: "typesafe/jev-1.13", answers: { item_0: choice } });
+    expect(result.status).toBe(503);
     const calls = vi.mocked(provider).mock.calls;
-    expect(calls.map(call => call[0])).toEqual([
-      "https://opencode.ai/inference/systemone/v1/systemone",
-      "https://openrouter.ai/api/alpha/decisions",
-    ]);
-    expect(calls[1]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
-    expect(JSON.parse(String(calls[1]?.[1]?.body)).model).toBe("typesafe/jev-1.13");
-    // Both calls are metered on their own upstream, but the flow counts once for the user.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(calls[0]?.[1]?.headers).toMatchObject({ authorization: "Bearer synthetic-openrouter-key" });
+    expect(JSON.parse(String(calls[0]?.[1]?.body)).model).toBe("typesafe/jev-1.13");
+    // The failed paid upstream records an unknown cost; failure usage semantics are unchanged.
     const jevEvents = async (where: string) => (await db.prepare(`SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE flow_id=? AND provider='jev' AND ${where}`).bind(flowId).first<{ count: number }>())?.count ?? 0;
     expect(await jevEvents("safe_error_code='provider_http_503'")).toBe(1);
-    expect(await jevEvents("metering_status='metered'")).toBe(1);
+    expect(await jevEvents("metering_status='unknown'")).toBe(1);
     expect(await usage()).toMatchObject({ used: 1 });
   });
-  it("retries on the other Jev upstream after a timeout", async () => {
+  it("does not retry Jev on another upstream after a timeout", async () => {
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
-    let call = 0;
-    const provider = vi.fn(async () => {
-      if (call++ === 0) throw new Error("private timeout detail");
-      return Response.json({ model: "typesafe/jev-1.13", answers: { item_0: choice }, usage: { input_tokens: 20, output_tokens: 3 } });
-    }) as unknown as typeof fetch;
-    expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(200);
-    expect(provider).toHaveBeenCalledTimes(2);
+    const provider = vi.fn(async () => { throw new Error("private timeout detail"); }) as unknown as typeof fetch;
+    expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(504);
+    expect(provider).toHaveBeenCalledTimes(1);
   });
-  it("does not retry without a key for the other Jev upstream", async () => {
+  it("does not dispatch when the paid Jev provider key is missing", async () => {
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
     env.OPENROUTER_API_KEY = undefined;
     const provider = fetchOk({ private: "upstream detail" }, 503);
     const result = await handleRequest(request("jev", { ...category, flowId }), env, options(provider));
     expect(result.status).toBe(503);
-    expect(await result.json()).toEqual({ error: "provider_unavailable" });
-    expect(provider).toHaveBeenCalledTimes(1);
+    expect(await result.json()).toEqual({ error: "not_configured" });
+    expect(provider).not.toHaveBeenCalled();
   });
-  it("does not retry a rejection the other Jev upstream would share", async () => {
+  it("does not retry a rejection on the paid Jev provider", async () => {
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
     const provider = fetchOk({ private: "upstream detail" }, 422);
@@ -787,17 +774,12 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   it("does not dispatch either classification route without the selected provider's key", async () => {
     const flowId = crypto.randomUUID();
     await gemini(flowId);
-    env.OPENCODE_API_KEY = undefined;
+    env.OPENROUTER_API_KEY = undefined;
     const provider = fetchOk(jev);
     const receiptResponse = await handleRequest(request("jev", { ...category, flowId }), env, options(provider));
     expect(receiptResponse.status).toBe(503);
     expect(await receiptResponse.json()).toEqual({ error: "not_configured" });
     expect((await handleRequest(request("category-suggestion", { flowId: crypto.randomUUID(), sourceCategoryName: "合成カテゴリ", categories: [{ id: "food", name: "食費" }] }), env, options(provider))).status).toBe(503);
-    expect(provider).not.toHaveBeenCalled();
-    // The key of the other provider must never be used as a fallback.
-    env.JEV_PROVIDER = "openrouter";
-    env.OPENROUTER_API_KEY = undefined;
-    expect((await handleRequest(request("jev", { ...category, flowId }), env, options(provider))).status).toBe(503);
     expect(provider).not.toHaveBeenCalled();
   });
   it("maintains the separate per-user/provider rate limit for retries and Family", async () => {
