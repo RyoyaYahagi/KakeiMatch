@@ -12,7 +12,7 @@ The `.kmb` portable backup includes local household records and retained receipt
 
 ## Secrets
 
-Never commit API keys, passwords, production environment files, Actual credentials, authentication secrets, real card statements, or real receipt images. Gemini, TypeSafe, Better Auth, and AI gateway signing secrets belong in Cloudflare secret bindings. Secret values must not appear in configuration source, logs, or browser bundles. Resource identifiers used to select production D1 are configuration values, not secrets; the production database must still be selected explicitly.
+Never commit API keys, passwords, production environment files, Actual credentials, authentication secrets, real card statements, or real receipt images. Gemini, Better Auth, and AI gateway signing secrets belong in Cloudflare secret bindings. Secret values must not appear in configuration source, logs, or browser bundles. Resource identifiers used to select production D1 are configuration values, not secrets; the production database must still be selected explicitly.
 
 ## Cloud account and AI
 
@@ -22,7 +22,7 @@ AI quota checks run independently of short-window abuse limits. The monthly coun
 
 Receipt analysis is an explicit user action. The browser sends the selected, locally saved image to the same-origin AI gateway, which forwards it to Gemini. The PWA accepts JPEG, PNG, or WebP images up to 10 MiB for local storage; the gateway accepts at most 6 MiB. The gateway does not persist request or response bodies, and the Gemini request uses `store: false`. Do not send a user's name, email, Actual data, household history, or other receipts.
 
-Category classification sends only validated merchant, total amount in yen, and at most 30 item names and amounts to TypeSafe Jev through the paid OpenRouter Decisions API (`typesafe/jev-1.13`). The Worker has no OpenCode endpoint or alternate-provider fallback; unknown provider settings and missing OpenRouter credentials fail closed. Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Provider responses are schema-validated before application code can save a suggestion. Failures leave the user's confirmed data intact and the category available for review.
+Category classification sends only validated merchant, total amount in yen, and at most 30 item names and amounts to Gemini through the same `GEMINI_API_KEY` and `GEMINI_MODEL` bindings used by receipt extraction. Classification uses the same Gemini Interactions API, cost admission, metering, rate limit, and circuit controls. It has no OpenCode or OpenRouter route and no alternate-provider fallback; missing Gemini credentials or a provider failure stops classification. Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Responses are schema-validated before application code can save a suggestion. Failures leave the user's confirmed data intact and the category available for review.
 
 ### Native iOS boundary
 
@@ -32,7 +32,7 @@ All native identity/origin/environment settings must be explicitly configured; m
 
 ## Files and logs
 
-Receipt images and statement files are untrusted input. The PWA validates image signatures and size before local storage. It parses the complete supported PayPayカード CSV before saving the original file and canonical rows. Unsupported card formats remain disabled until their columns are verified. Statement CSV files and canonical rows never leave the device for Cloudflare, Gemini, Jev, or an Actual Sync Server. Confirmed statement-derived transactions can be registered in the device-local Actual browser engine.
+Receipt images and statement files are untrusted input. The PWA validates image signatures and size before local storage. It parses the complete supported PayPayカード CSV before saving the original file and canonical rows. Unsupported card formats remain disabled until their columns are verified. Statement CSV files and canonical rows never leave the device for Cloudflare, Gemini, or an Actual Sync Server. Confirmed statement-derived transactions can be registered in the device-local Actual browser engine.
 
 Avoid logging financial data, raw AI request/response bodies, provider errors that may contain user data, and secrets. Use synthetic or thoroughly anonymized fixtures; never commit family financial records. The PWA support Flight Recorder is an exception only for fixed, non-user-authored metadata: whitelisted screen/action names, safe error codes, network state, and relative event age. It must remain memory-only, must not accept free-form strings or stack traces, and is attached to support requests only after explicit user opt-in.
 

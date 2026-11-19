@@ -90,7 +90,7 @@ AIは曖昧さを含む処理だけに使います。
 | 処理 | 担当 |
 | --- | --- |
 | レシート画像の読み取り | Gemini |
-| 選択肢からのカテゴリ分類 | Jev（OpenCode Console経由。設定でOpenRouterへ切り替え可） |
+| 選択肢からのカテゴリ分類 | Gemini API（レシート読み取りと同じ設定） |
 | 明細の照合、重複判定、状態遷移、金額計算、認可 | 通常のTypeScriptコード |
 
 AIの応答はZodのschemaで検証し、不正な応答は保存しません。金額は整数の円で扱い、浮動小数点を使いません。照合ロジックには、合成データの評価セット（`pnpm eval:reconciliation`）を用意しています。
@@ -127,7 +127,7 @@ flowchart TB
   UI -- "AIを使うときだけ" --> AI
   UI -- "ログイン" --> Auth
   AI --> Gemini["Gemini API"]
-  AI --> Jev["OpenCode Console / Jev API"]
+  AI --> Gemini["Gemini API"]
   AI --> GH["GitHub Issues"]
 ```
 
@@ -143,7 +143,7 @@ flowchart TB
 | サーバー | Cloudflare Workers、Cloudflare Vite Plugin、`cf` CLI |
 | データベース | Cloudflare D1（アカウントとAI利用量のみ） |
 | 認証 | Better Auth、Passkey（WebAuthn） |
-| AI | Gemini API（レシート読み取り、文字起こし）、Jev（カテゴリ分類） |
+| AI | Gemini API（レシート読み取り、文字起こし、カテゴリ分類） |
 | 検証・解析 | Zod、csv-parse |
 | テスト | Vitest、Playwright（合成データによるブラウザーE2E）、GitHub Actions |
 
