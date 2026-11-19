@@ -19,41 +19,84 @@
 <body>
 <main>
   <h1>プライバシーポリシー</h1>
-  <p class="meta">KakeiMatch（以下「本アプリ」）における情報の取り扱いについて定めます。制定日: 2026年11月9日</p>
+  <p class="meta">KakeiMatch（以下「本アプリ」）における情報の取り扱いについて定めます。制定日: 2026年11月19日</p>
 
-  <h2>基本方針</h2>
-  <p>本アプリは、開発者が運用するサーバーを持ちません。家計データは利用者の端末に保存され、開発者が利用者のデータを収集・閲覧することはありません。</p>
+  <h2>運営者とサービスの構成</h2>
+  <p>本アプリは Ryoya Yahagi が運営します。本アプリは家計データを利用者の端末に保存しますが、認証、AI機能、利用量管理、お問い合わせのために運営者が管理する Cloudflare Worker と D1 データベースも使用します。これらのサーバー機能に送られる情報と、端末内に保存される情報を以下に説明します。</p>
 
-  <h2>端末に保存される情報</h2>
-  <p>本アプリは、家計簿の記録（口座、取引、日付、金額、カテゴリ、店名、メモなど）を端末内のデータベースに保存します。これらの情報が開発者に送信されることはありません。</p>
+  <h2>端末内の家計データとバックアップ</h2>
+  <p>台帳、レシートの取込結果、明細の取込結果、照合結果などの家計データは利用者の端末内に保存されます。これらは通常の家計簿利用のために運営者のサーバーへ送信されません。</p>
+  <p>復元用バックアップは、利用者が操作してファイルとして書き出し、利用者自身が保存・管理します。ファイルをどこに保存または共有するかは利用者が選びます。運営者はこのバックアップファイルを受け取りません。</p>
 
-  <h2>データの書き出し</h2>
-  <p>本アプリには、家計データのスナップショットを JSON 形式で書き出す機能があります。書き出しは利用者自身の操作によってのみ行われ、保存先も利用者が選択します。</p>
-
-  <h2>Google Drive 連携（任意機能）</h2>
+  <h2>AI によるレシート読み取りと分類</h2>
   <ul>
-    <li>この連携は任意であり、既定では無効です。利用者がアプリ内で有効にした場合にのみ動作します。</li>
-    <li>有効にすると、Google サインインによる認証のうえ、書き出しデータ（snapshot.json）を利用者本人の Google Drive に自動保存します。保存先は、本アプリが作成する「KakeiMatch」フォルダです。</li>
-    <li>本アプリが要求する Google の権限（スコープ）は <code>drive.file</code> のみです。本アプリが作成したファイルだけにアクセスでき、利用者の Drive 内の他のファイルにはアクセスしません。</li>
-    <li>Google サインインで取得する情報（メールアドレスなど）は、本人の認証と画面表示のためにのみ使用します。開発者のサーバーは存在しないため、これらの情報が開発者に送信・保存されることもありません。</li>
-    <li>連携はアプリの設定からいつでも無効化でき、サインアウトも可能です。保存済みのファイルは、利用者が Google Drive 上で直接削除できます。</li>
+    <li><strong>レシート読み取り:</strong> 利用者が読み取り機能を実行したとき、レシート画像を Cloudflare Worker 経由で Google Gemini に送信します。画像は処理中に使用され、Worker の AI ゲートウェイには画像、AI へのリクエスト本文、AI の応答本文を保存しません。</li>
+    <li><strong>分類:</strong> 利用者が分類機能を実行したとき、店名、合計金額、品目名・金額、カテゴリ候補など、分類に必要な情報を Cloudflare Worker 経由で外部 AI 提供者へ送信します。利用量の記録には識別用の値や処理量などのメタデータを使い、家計情報や AI 応答そのものは保存しません。</li>
+    <li>送信は各 AI 機能を利用者が実行した場合に行われます。AI の処理結果を保存する場合は端末内です。AI 提供者側の処理・保持条件は、各提供者の条件に従います。</li>
   </ul>
 
-  <h2>第三者への提供・外部送信</h2>
+  <h2>認証、セッション、利用量</h2>
+  <p>Passkey の登録・ログイン、ゲスト認証（App Attest）、および AI 機能の利用時に、アカウント識別情報、公開鍵、セッション関連情報、認証確認情報、利用量・処理量などを Cloudflare Worker と D1 に送信・保存します。ネイティブアプリのセッションは最大14日有効で、AI 利用トークンは600秒で失効します。保存期間に上限は設けていません。アカウントを削除すると、クラウド側のアカウント、認証情報、セッション、利用権限、AI 利用量・費用記録、お問い合わせ送信の重複防止状態を削除し、古い認証情報によるアカウント再作成を防ぐための不透明な削除済み識別子を残します。この識別子の保存期間は定めていません。家計データは端末内にあるため、この削除では端末内データは削除されません。</p>
+
+  <h2>お問い合わせ</h2>
+  <p>利用者が送信したお問い合わせ本文と、送信に同意して選択した診断情報を Cloudflare Worker 経由で D1 の運営者用 Inbox に保存します。お問い合わせ本文は受付から90日で削除されます。運営者が必要と判断して操作した場合に限り、保存された内容を AI で分析したり、内容を加工して GitHub Issue を作成したりすることがあります。お問い合わせの送信時に、診断情報を添付するかどうかを利用者が選択できます。</p>
+
+  <h2>Google Drive 連携</h2>
   <ul>
-    <li>利用者のデータを第三者に提供・販売することはありません。</li>
-    <li>広告 SDK や行動解析（アナリティクス）SDK は使用していません。</li>
-    <li>上記の Google Drive 連携を利用者が有効にした場合を除き、本アプリが外部のサービスへデータを送信することはありません。</li>
+    <li>この連携は既定で無効です。利用者が有効にして書き出しを実行した場合、参照用スナップショットを本アプリから利用者本人の Google Drive へ直接保存します。</li>
+    <li>権限は <code>drive.file</code> のみです。本アプリが作成したファイルに限ってアクセスします。</li>
+    <li>Drive のスナップショットは参照用で、アプリから復元するためのバックアップではありません。復元用バックアップとは別の機能です。</li>
+    <li>Drive ファイルは利用者が Google Drive 上で管理・削除します。アカウントを削除しても、Drive に保存済みのファイルが削除されるとは限りません。</li>
   </ul>
+
+  <h2>第三者への送信</h2>
+  <p>本アプリは、上記の AI 処理のため Google Gemini および分類に用いる外部 AI 提供者へ情報を送信し、利用者が有効にした場合は Google Drive へスナップショットを保存します。これらの送信は各機能の提供に必要な範囲で行います。広告 SDK と行動解析 SDK は使用していません。</p>
 
   <h2>ポリシーの変更</h2>
   <p>本ポリシーを変更した場合は、このページで告知します。重要な変更がある場合は、アプリの更新情報などでもお知らせします。</p>
 
-  <h2>お問い合わせ</h2>
+  <h2>お問い合わせ先</h2>
   <p>メール: <a href="mailto:yappapp.support@gmail.com">yappapp.support@gmail.com</a></p>
 
-  <h2>Summary (English)</h2>
-  <p>KakeiMatch is a household budgeting app. All financial records are stored locally on the user's device; the developer operates no server and collects no user data. An optional Google Drive integration (disabled by default) signs the user in with Google and saves a JSON snapshot of the user's data into a folder the app creates in the user's own Google Drive. The app requests only the <code>drive.file</code> scope, which limits access to files created by the app itself. Sign-in information (such as the email address) is used solely for authentication and display within the app and is never sent to the developer. The app contains no advertising or analytics SDKs and never sells or shares user data with third parties. Contact: yappapp.support@gmail.com</p>
+  <h2>Privacy Policy (English)</h2>
+  <p>This policy describes how KakeiMatch (the “App”) handles information. Operator: Ryoya Yahagi. Effective date: November 19, 2026.</p>
+
+  <h2>Operator and service components</h2>
+  <p>The App stores household records on the user's device. It also uses a Cloudflare Worker and D1 database operated for authentication, AI features, usage management, and support requests. The sections below explain what stays on the device and what is sent to these server services.</p>
+
+  <h2>Local household data and backups</h2>
+  <p>Ledger records, receipt import results, statement import results, and reconciliation results are stored on the user's device. They are not sent to the operator's server for ordinary use of the ledger.</p>
+  <p>A recovery backup is exported to a file by the user's action and is stored and managed by the user. The user chooses where to save or share that file. The operator does not receive the backup file.</p>
+
+  <h2>AI receipt reading and categorization</h2>
+  <ul>
+    <li><strong>Receipt reading:</strong> When the user starts receipt reading, the receipt image is sent through the Cloudflare Worker to Google Gemini. The image is used during processing. The Worker's AI gateway does not store the image, the AI request body, or the AI response body.</li>
+    <li><strong>Categorization:</strong> When the user starts categorization, information needed for categorization, such as merchant name, total amount, item names and amounts, and candidate categories, is sent through the Cloudflare Worker to an external AI provider. Usage records use identifiers and processing metadata; household facts and AI responses are not stored.</li>
+    <li>These transmissions occur when the user runs the corresponding AI feature. Any AI results saved by the App are stored on the device. Processing and retention by AI providers are subject to each provider's terms.</li>
+  </ul>
+
+  <h2>Authentication, sessions, and usage</h2>
+  <p>For Passkey registration and sign-in, guest authentication (App Attest), and use of AI features, account identifiers, public keys, session-related information, authentication verification data, and usage or processing amounts are sent to and stored by the Cloudflare Worker and D1. Native app sessions are valid for up to 14 days, and AI usage tokens expire after 600 seconds. No maximum retention period is set. When an account is deleted, the cloud account, authentication credentials, sessions, entitlements, AI usage and cost records, and support request idempotency state are deleted. An opaque deleted-account identifier is retained indefinitely to prevent stale credentials from recreating the account. Household data remains on the device and is not deleted by account deletion.</p>
+
+  <h2>Support requests</h2>
+  <p>The support message and diagnostic information that the user chooses to include are sent through the Cloudflare Worker and stored in the operator's D1 inbox. The support message is deleted 90 days after receipt. If the operator decides it is necessary and takes action, the stored content may be analyzed with AI or processed into a GitHub issue. The user can choose whether to attach diagnostic information when submitting a request.</p>
+
+  <h2>Google Drive integration</h2>
+  <ul>
+    <li>This integration is off by default. If the user enables it and exports data, the App writes a reference snapshot directly to the user's own Google Drive.</li>
+    <li>The App requests only the <code>drive.file</code> permission and accesses only files it creates.</li>
+    <li>The Drive snapshot is for reference and cannot be restored through the App. It is separate from the recovery backup.</li>
+    <li>The user manages and deletes Drive files in Google Drive. Deleting an App account does not necessarily delete files already stored in Drive.</li>
+  </ul>
+
+  <h2>Disclosure to third parties</h2>
+  <p>The App sends information to Google Gemini and the external AI provider used for categorization to provide the AI features described above. If enabled by the user, it also writes a snapshot to Google Drive. These transmissions are limited to information needed for the respective features. The App does not use advertising or behavioral analytics SDKs.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>Changes to this policy will be announced on this page. Important changes may also be announced in App update information.</p>
+
+  <h2>Contact</h2>
+  <p>Email: <a href="mailto:yappapp.support@gmail.com">yappapp.support@gmail.com</a></p>
 
   <footer>© 2026 Ryoya Yahagi</footer>
 </main>
