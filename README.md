@@ -127,7 +127,6 @@ flowchart TB
   UI -- "AIを使うときだけ" --> AI
   UI -- "ログイン" --> Auth
   AI --> Gemini["Gemini API"]
-  AI --> Gemini["Gemini API"]
   AI --> GH["GitHub Issues"]
 ```
 

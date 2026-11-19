@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flowUsage, guestDayUsage, monthKey, reserveCategorySuggestionFlow, reserveFlow } from "./receipt-ai-usage";
+import { requestReservation } from "./ai-global-guardrails";
 import { deleteAccountData } from "./account-auth";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
 import { sqliteD1 } from "./test-support/sqlite-d1";
@@ -245,7 +246,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const facts = JSON.parse(providerPayload.input[1].text);
     expect(facts).toEqual({ sourceCategoryName: "スーパーマーケット", categories: { "local-food": "食費", "local-home": "日用品" } });
     expect(providerPayload.response_format.schema.properties.answers.required).toEqual(["category"]);
-    expect(providerPayload.response_format.schema.properties.answers.properties.category.properties.probabilities.required).toEqual(["local-food", "local-home"]);
+    expect(providerPayload.response_format.schema.properties.answers.additionalProperties.properties.probabilities.required).toEqual(["local-food", "local-home"]);
     expect(providerPayload.store).toBe(false);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE provider='gemini'").bind().first()).toEqual({ count: 1 });
   });
@@ -853,6 +854,58 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(facts.categories).toEqual({ groceries: "食料品", home: "住まい用品" });
     expect(JSON.stringify(payload)).not.toContain("Synthetic Bread");
     expect(JSON.stringify(payload)).not.toContain("Synthetic Soap");
+  });
+  it("validates the complete 30-item by 100-category response within the reserved Gemini output cap", async () => {
+    const flowId = crypto.randomUUID();
+    const categories = Array.from({ length: 100 }, (_, index) => ({
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      name: `Synthetic Category ${String(index).padStart(3, "0")}`,
+    }));
+    const items = Array.from({ length: 30 }, (_, index) => ({ name: `Synthetic Receipt Item ${String(index).padStart(2, "0")}`, amountYen: index + 1 }));
+    const extraction = { ...receipt, items };
+    expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify(extraction) }))).status).toBe(200);
+
+    const probabilities = Object.fromEntries(categories.map((category, index) => [category.id, index === 0 ? 1 : 0]));
+    const answers = Object.fromEntries(items.map((_, index) => [`item_${index}`, {
+      type: "choice", choice: categories[0]!.id, probabilities, confidence: 1,
+    }]));
+    const outputText = JSON.stringify({ answers });
+    expect(new TextEncoder().encode(outputText).byteLength).toBe(126_273);
+    const provider = fetchOk({
+      model: "gemini-3.5-flash-lite",
+      output_text: outputText,
+      usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 40_000, thoughtsTokenCount: 0, cachedContentTokenCount: 0, totalTokenCount: 41_000 },
+    });
+    const itemIndexes = items.map((_, index) => index);
+    const response = await handleRequest(request("jev", {
+      flowId,
+      receipt: { merchant: extraction.merchant, totalAmountYen: extraction.totalAmountYen, items },
+      itemIndexes,
+      categories,
+    }), env, options(provider));
+
+    expect(response.status, await response.clone().text()).toBe(200);
+    const result = await response.json() as { model: string; answers: Record<string, { choice: string; probabilities: Record<string, number> }> };
+    expect(result.model).toBe("gemini-3.5-flash-lite");
+    expect(Object.keys(result.answers)).toEqual(itemIndexes.map(index => `item_${index}`));
+    for (const answer of Object.values(result.answers)) {
+      expect(answer.choice).toBe(categories[0]!.id);
+      expect(Object.keys(answer.probabilities)).toHaveLength(100);
+      expect(Object.keys(answer.probabilities)).toEqual(categories.map(category => category.id));
+    }
+
+    const [, init] = vi.mocked(provider).mock.calls[0]!;
+    const payload = JSON.parse(String(init?.body));
+    expect(payload.generation_config.max_output_tokens).toBe(65_536);
+    const schema = payload.response_format.schema.properties.answers;
+    expect(schema.required).toEqual(itemIndexes.map(index => `item_${index}`));
+    expect(schema.properties).toBeUndefined();
+    expect(schema.additionalProperties.properties.probabilities.required).toEqual(categories.map(category => category.id));
+    expect(JSON.stringify(payload.response_format.schema).length).toBeLessThan(15_000);
+
+    const reservation = await db.prepare("SELECT reserved_cost_usd_micros FROM ai_provider_cost_events WHERE flow_id=? AND provider='gemini' ORDER BY rowid DESC LIMIT 1")
+      .bind(flowId).first<{ reserved_cost_usd_micros: number }>();
+    expect(reservation?.reserved_cost_usd_micros).toBe(requestReservation("gemini", payload.model, JSON.stringify(payload), 50_000, now));
   });
   it("rejects invalid item indexes and invalid custom category lists before calling Jev", async () => {
     const flowId = crypto.randomUUID();

@@ -13,6 +13,7 @@ import { getAccountSession, isAccountActive, type AccountD1BatchResult, type Acc
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
 const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
+const CATEGORY_MAX_OUTPUT_TOKENS = 65_536;
 const TOKEN_LIFETIME_SECONDS = 10 * 60;
 const DEFAULT_FREE_MONTHLY_AI_LIMIT = 30;
 const DEFAULT_GUEST_DAILY_AI_LIMIT = 5;
@@ -371,13 +372,15 @@ function categoryResponseSchema(expected: string[], categoryIds: string[]) {
     type: "object",
     properties: {
       type: { type: "string", enum: ["choice"] },
-      choice: { type: "string", enum: categoryIds },
-      probabilities: { type: "object", properties: Object.fromEntries(categoryIds.map(id => [id, { type: "number", minimum: 0, maximum: 1 }])), required: categoryIds, additionalProperties: false },
+      // Category IDs and exact probability keys are validated after decoding.
+      // A shared answer schema avoids repeating the full matrix for every item.
+      choice: { type: "string" },
+      probabilities: { type: "object", additionalProperties: { type: "number", minimum: 0, maximum: 1 }, required: categoryIds },
       confidence: { type: "number", minimum: 0, maximum: 1 },
     },
     required: ["type", "choice", "probabilities", "confidence"], additionalProperties: false,
   };
-  return { type: "object", properties: { answers: { type: "object", properties: Object.fromEntries(expected.map(key => [key, answer])), required: expected, additionalProperties: false } }, required: ["answers"], additionalProperties: false };
+  return { type: "object", properties: { answers: { type: "object", required: expected, additionalProperties: answer } }, required: ["answers"], additionalProperties: false };
 }
 function categoryPayload(model: string, facts: unknown, expected: string[], categoryIds: string[], instructions: string) {
   return {
@@ -388,7 +391,7 @@ function categoryPayload(model: string, facts: unknown, expected: string[], cate
     ],
     response_format: { type: "text", mime_type: "application/json", schema: categoryResponseSchema(expected, categoryIds) },
     service_tier: "standard",
-    generation_config: { max_output_tokens: 4096 },
+    generation_config: { max_output_tokens: CATEGORY_MAX_OUTPUT_TOKENS },
     store: false,
   };
 }
