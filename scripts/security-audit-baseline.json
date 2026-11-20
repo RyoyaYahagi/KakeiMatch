@@ -1,56 +1,5 @@
 {
-  "reviewedAt": "2026-10-04",
-  "findings": [
-    {
-      "audit": "pnpm-prod",
-      "package": "postcss",
-      "version": "8.4.31",
-      "advisoryId": "GHSA-6g55-p6wh-862q",
-      "path": "apps__pwa>better-auth>next>postcss",
-      "expiresAt": "2026-11-02",
-      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
-      "severity": "high"
-    },
-    {
-      "audit": "pnpm-prod",
-      "package": "postcss",
-      "version": "8.4.31",
-      "advisoryId": "GHSA-r28c-9q8g-f849",
-      "path": "apps__pwa>better-auth>next>postcss",
-      "expiresAt": "2026-11-02",
-      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
-      "severity": "high"
-    },
-    {
-      "audit": "pnpm-all",
-      "package": "postcss",
-      "version": "8.4.31",
-      "advisoryId": "GHSA-6g55-p6wh-862q",
-      "path": ".>next>postcss",
-      "expiresAt": "2026-11-02",
-      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
-      "severity": "high"
-    },
-    {
-      "audit": "pnpm-all",
-      "package": "postcss",
-      "version": "8.4.31",
-      "advisoryId": "GHSA-r28c-9q8g-f849",
-      "path": ".>next>postcss",
-      "expiresAt": "2026-11-02",
-      "reason": "Legacy Next.js package is not imported by the production PWA/Worker. Attacker-controlled production requests cannot reach this package; the production module-graph guard rejects Next.js in the browser bundle. Deferred while the reference dependency remains installed; no runtime control required because it is non-deployable.",
-      "severity": "high"
-    },
-    {
-      "audit": "pnpm-all",
-      "package": "braces",
-      "version": "3.0.3",
-      "advisoryId": "GHSA-vfj7-8cjw-p6xm",
-      "path": ".>eslint-config-next>@next/eslint-plugin-next>fast-glob>micromatch>braces",
-      "expiresAt": "2026-11-02",
-      "reason": "Lint-only legacy eslint-config-next path is not imported by the production PWA/Worker. Only repository contributors control lint inputs; the reviewed PWA/Worker bundles contain no lint tool implementation. Deferred as legacy tooling with no remote user input path.",
-      "severity": "high"
-    }
-  ],
+  "reviewedAt": "2026-11-19",
+  "findings": [],
   "owner": "repository maintainer"
 }

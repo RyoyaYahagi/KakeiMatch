@@ -60,9 +60,17 @@ export function requestReservation(provider: Provider, model: string, body: stri
   // Conservative request-size heuristic, not an invoice guarantee. Gemini image
   // bytes are included; Jev state can be repeated across independent questions.
   const bytes = new TextEncoder().encode(body).byteLength;
-  const questions = provider === "jev" ? Object.keys((JSON.parse(body) as { questions: object }).questions).length : 1;
+  const payload: unknown = JSON.parse(body);
+  const questions = provider === "jev" ? Object.keys((payload as { questions: object }).questions).length : 1;
   const input = Math.ceil(bytes / 4) * Math.max(1, questions);
-  const output = provider === "gemini" ? 8192 : 0;
+  const generationConfig = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as { generation_config?: unknown }).generation_config : undefined;
+  const configuredOutput = generationConfig && typeof generationConfig === "object" && !Array.isArray(generationConfig)
+    ? (generationConfig as { max_output_tokens?: unknown }).max_output_tokens : undefined;
+  if (configuredOutput !== undefined && (!Number.isSafeInteger(configuredOutput) || (configuredOutput as number) < 0)) throw new AiPausedError();
+  // Reserve the configured Gemini generation cap; requests without an explicit
+  // cap retain the prior conservative 8192-token estimate.
+  const output = provider === "gemini" ? (configuredOutput as number | undefined) ?? 8192 : 0;
   const cost = costUsdMicros({ input, output, thinking: 0, cached: 0, total: input + output }, price);
   if (cost === null) throw new AiPausedError();
   return Math.max(cost, floor);
