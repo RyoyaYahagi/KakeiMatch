@@ -40,6 +40,8 @@ targets:
     type: application
     platform: iOS
     sources: [KakeiMatch]
+    resources:
+      - path: KakeiMatch/PrivacyInfo.xcprivacy
     dependencies:
       - sdk: libsqlite3.tbd
       - package: ZIPFoundation
