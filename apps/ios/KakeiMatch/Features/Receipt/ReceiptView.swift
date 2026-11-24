@@ -105,6 +105,26 @@ struct ReceiptView: View {
             if !showsImage && !showsCamera && !showsPhotos { model.stopWaiting() }
             Task { await model.flushDraft() }
         }
+        .sheet(item: $model.redactionPreview) { preview in
+            NavigationStack {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("写真の送信を止めました。隠した箇所を確認し、写真を撮り直すか、手で入力してください。")
+                        if let image = UIImage(data: preview.data) {
+                            Image(uiImage: image).resizable().scaledToFit()
+                                .accessibilityLabel("マスク処理後のレシート写真")
+                        }
+                    }
+                    .padding()
+                }
+                .navigationTitle("写真の確認")
+                .toolbar {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("閉じる") { model.redactionPreview = nil }
+                    }
+                }
+            }
+        }
         .onChange(of: model.draftSnapshot) { _, _ in model.scheduleDraftSave() }
         .onChange(of: model.didSave) { _, saved in
             // PWA local-ui.ts: an edited receipt returns to its detail after the save.

@@ -480,8 +480,8 @@ actor KMWorkerAPI {
         return result
     }
 
-    func readReceipt(image: KMUploadImage, flowID: UUID = UUID()) async throws -> KMReceiptExtraction {
-        let body = try imageBody(image, flowID: flowID, maskingConfirmed: nil)
+    func readReceipt(image: KMRedactedReceiptImage, flowID: UUID = UUID()) async throws -> KMReceiptExtraction {
+        let body = try imageBody(image.upload, flowID: flowID, maskingConfirmed: nil)
         let token = try await accessToken()
         let result: KMReceiptExtraction = try await send("POST", "/api/ai/gemini", body: body, authorization: "Bearer \(token)", shape: KMAPIShapes.receipt)
         try KMAPIShapes.validateReceipt(result)
