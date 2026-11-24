@@ -1,23 +1,26 @@
 import Foundation
 
 enum KMRedactionRules {
+    private static let sensitiveLabel = #"(?:会員(?:番号|No\.?|ID)|承認(?:番号|No\.?)|レシート(?:番号|No\.?)|端末(?:番号|No\.?|ID)|取引(?:番号|No\.?)|伝票(?:番号|No\.?)|カード番号|下4桁|電話番号|郵便番号|(?<![A-Z])Member\s*(?:ID|No\.?)|(?<![A-Z])TEL)"#
+    private static let labelSeparator = #"[ :#]*"#
+    private static let labeledValue = #"[A-Z0-9+(*][A-Z0-9+() *./-]*"#
     private static let sensitive = [
         #"(?i)(?:https?://|www\.)[^\s]+"#,
         #"(?i)[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}"#,
         #"(?i)\b[a-z0-9\-]+(?:\.[a-z0-9\-]+)*\.(?:jp|com|net|org|co|io)(?:/\S*)?\b"#,
-        #"(?<!\d)(?:\+81[ -]?\d|0\d{1,4})[ -]?\(?\d{1,4}\)?[ -]\d{4}(?!\d)"#,
+        #"(?<!\d)(?:(?:\+81[ -]?\d|0\d{1,4})[ -]?(?:\(\s*\d{1,4}\s*\)[ -]*|\d{1,4}[ -])|\(\s*0\d{1,4}\s*\)[ -]*\d{1,4}[ -]*)\d{4}(?!\d)"#,
         #"(?<!\d)\d{3}[-－]\d{4}(?!\d)"#,
         #"[^\s:：]+(?:[ 　][^\s:：]+)?(?=[ 　]*[様殿](?:\s|$))"#,
         #"[*＊Xx●•]{2,}(?:[ -]*[*＊Xx●•]+)*[ -]*\d{1,6}"#,
         #"(?i)(?:(?<=visa)|(?<=mastercard)|(?<=jcb)|(?<=amex)|(?<=diners)|(?<=カード))[ :：#*＊Xx・-]*\d{4}(?!\d)"#,
-        #"(?:会員(?:番号|No\.?|ID)|承認(?:番号|No\.?)|レシート(?:番号|No\.?)|端末(?:番号|No\.?|ID)|取引(?:番号|No\.?)|伝票(?:番号|No\.?)|カード番号|下[４4]桁|電話番号|郵便番号|Member\s*(?:ID|No\.?)|TEL)[ :：#]*[A-Z0-9０-９+(*＊][A-Z0-9０-９+() *＊./－-]*"#,
+        sensitiveLabel + labelSeparator + labeledValue,
     ]
-    private static let labelOnly = #"(?i)(?:会員|承認|レシート|端末|伝票|取引|カード|Member)(?:番号|\s*No\.?|\s*ID)\s*[:：]?\s*$"#
+    private static let labelOnly = sensitiveLabel + labelSeparator + #"$"#
     private static let allowed = #"(?i)\d{2,4}(?:\s*[/.-]\s*\d{1,2}){2}(?!\d)|\d{2,4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}:\d{2}(?::\d{2})?|[¥￥]\s*\d[\d,]*|\d[\d,]*\s*(?:円|点|個|本|枚)|\d{1,3}(?:,\d{3})+|^\s*(?:合計|小計|total|subtotal)\s*[:：]?\s*[¥￥]?\s*\d{1,7}\s*(?:円)?\s*$"#
     private static let numeric = #"\d(?:[ -]?\d)*"#
 
     static func expectsValue(_ text: String) -> Bool {
-        normalized(text).range(of: labelOnly, options: .regularExpression) != nil
+        normalized(text).range(of: labelOnly, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     static func ranges(in text: String, confidence: Float, afterLabel: Bool) -> [Range<String.Index>] {
@@ -28,7 +31,7 @@ enum KMRedactionRules {
         let allowedRanges = matches(allowed, in: value)
         var found = sensitive.flatMap { matches($0, in: value) }
         if afterLabel {
-            found += matches(#"(?i)^\s*[a-z0-9][a-z0-9 -]*"#, in: value)
+            found += matches(#"^\s*"# + labeledValue, in: value)
         }
         found += matches(numeric, in: value).filter { range in
             let digits = (value as NSString).substring(with: range).compactMap(\.wholeNumberValue)

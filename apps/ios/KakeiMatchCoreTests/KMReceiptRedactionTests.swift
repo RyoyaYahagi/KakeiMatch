@@ -33,16 +33,38 @@ struct KMReceiptRedactionTests {
             #expect(!KMRedactionRules.ranges(in: text, confidence: 1, afterLabel: false).isEmpty)
         }
         for text in ["2026/11/24", "2026 / 11 / 24", "2026年11月24日", "12:34:59",
-                     "¥10000000", "12,345,678円", "2個", "TOTAL 1200", "合計：1200"] {
+                     "¥10000000", "12,345,678円", "2個", "りんご(2個)", "TOTAL 1200", "合計：1200"] {
             #expect(KMRedactionRules.ranges(in: text, confidence: 0.5, afterLabel: false).isEmpty)
         }
         #expect(KMRedactionRules.expectsValue("会員番号："))
+        #expect(!KMRedactionRules.expectsValue("HOTEL:"))
         #expect(!KMRedactionRules.ranges(in: "A041", confidence: 1, afterLabel: true).isEmpty)
         #expect(!KMRedactionRules.ranges(in: "4321", confidence: 0.5, afterLabel: false).isEmpty)
         #expect(!KMRedactionRules.ranges(in: "TOTAL 12345678", confidence: 0.5, afterLabel: false).isEmpty)
         let branded = "VISA 1234"
         let brandMasks = KMRedactionRules.ranges(in: branded, confidence: 1, afterLabel: false)
         #expect(brandMasks.map { String(branded[$0]) } == [" 1234"])
+    }
+
+    @Test(arguments: ["03(1234)5678", "０３（１２３４）５６７８", "03 (1234)-5678", "(03)1234-5678",
+                      "+81 3(1234)5678", "090(1234)5678"])
+    func masksEntireParenthesizedPhoneNumber(_ text: String) {
+        let line = "お問い合わせ " + text
+        let masks = KMRedactionRules.ranges(in: line, confidence: 0.99, afterLabel: false)
+        #expect(masks.contains { String(line[$0]) == text })
+    }
+
+    @Test(arguments: ["会員番号", "承認No.", "レシート番号", "端末ID", "取引番号", "伝票No",
+                      "カード番号", "下４桁", "電話番号", "郵便番号", "Member ID", "tel"])
+    func masksHighConfidenceValueAfterSensitiveLabel(_ label: String) {
+        let labelLine = label + "："
+        let value = "1234"
+        let expectsValue = KMRedactionRules.expectsValue(labelLine)
+        #expect(expectsValue)
+        #expect(KMRedactionRules.ranges(in: value, confidence: 0.99, afterLabel: false).isEmpty)
+        let masks = KMRedactionRules.ranges(in: value, confidence: 0.99, afterLabel: expectsValue)
+        #expect(masks.contains { String(value[$0]) == value })
+        #expect(!KMRedactionRules.ranges(in: labelLine + value, confidence: 0.99, afterLabel: false).isEmpty)
     }
 
     @Test
