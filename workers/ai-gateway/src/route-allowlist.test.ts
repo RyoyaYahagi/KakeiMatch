@@ -52,7 +52,7 @@ describe('worker route allowlist', () => {
 
   it('serves admin documents and admin static files only after the Access check passes', async () => {
     state.status = 200;
-    const assets = vi.fn(async (_request: Request) => new Response('asset'));
+    const assets = vi.fn<(request: Request) => Promise<Response>>(async () => new Response('asset'));
     expect((await run('/admin/feedback', assets)).status).toBe(200);
     expect((await run('/theme.js', assets)).status).toBe(200);
     expect((await run('/assets/admin-abc123.js', assets)).status).toBe(200);
