@@ -1189,6 +1189,27 @@ struct APIClientTests {
         return (pixels[offset], pixels[offset + 1], pixels[offset + 2])
     }
 
+    private static func hasJPEGApp1Segment(_ data: Data) -> Bool {
+        let bytes = [UInt8](data)
+        guard bytes.count >= 4, bytes[0] == 0xff, bytes[1] == 0xd8 else { return true }
+        var index = 2
+        while index < bytes.count {
+            guard bytes[index] == 0xff else { return true }
+            while index < bytes.count, bytes[index] == 0xff { index += 1 }
+            guard index < bytes.count else { return true }
+            let marker = bytes[index]
+            index += 1
+            if marker == 0xd9 || marker == 0xda { return false }
+            if (0xd0...0xd7).contains(marker) || marker == 0x01 || marker == 0xd8 { continue }
+            guard index + 2 <= bytes.count else { return true }
+            let length = (Int(bytes[index]) << 8) | Int(bytes[index + 1])
+            guard length >= 2, index + length <= bytes.count else { return true }
+            if marker == 0xe1 { return true }
+            index += length
+        }
+        return true
+    }
+
     @Test
     func receiptPrepareStripsExifGpsAndPreservesResolution() throws {
         let sourceImage = try Self.makeQuadrantCGImage(
@@ -1230,6 +1251,7 @@ struct APIClientTests {
         #expect(prepared.contentType == "image/jpeg")
         #expect(KMUploadImage.matches(prepared.data, contentType: "image/jpeg"))
         #expect(prepared.data.count <= KMUploadImage.maxUploadBytes)
+        #expect(!Self.hasJPEGApp1Segment(prepared.data))
 
         let decoded = try #require(CGImageSourceCreateWithData(prepared.data as CFData, nil))
         let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])

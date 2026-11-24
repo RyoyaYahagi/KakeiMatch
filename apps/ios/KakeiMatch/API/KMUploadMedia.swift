@@ -108,7 +108,62 @@ struct KMUploadImage: Sendable {
             guard CGImageDestinationFinalize(destination) else {
                 throw KMAPIError.invalidRequest
             }
-            return destinationData as Data
+            return try Self.stripJPEGMetadataSegments(destinationData as Data)
+        }
+    }
+
+    /// Removes APP1 (EXIF/XMP), APP3-13, APP15, and COM segments (including ImageIO's minimal sRGB APP1) before SOS.
+    private static func stripJPEGMetadataSegments(_ data: Data) throws -> Data {
+        try data.withUnsafeBytes { rawBuffer in
+            let bytes = rawBuffer.bindMemory(to: UInt8.self)
+            guard bytes.count >= 4, bytes[0] == 0xff, bytes[1] == 0xd8 else {
+                throw KMAPIError.invalidRequest
+            }
+            var output = Data()
+            output.reserveCapacity(bytes.count)
+            output.append(contentsOf: [0xff, 0xd8])
+
+            var index = 2
+            var sawStartOfScan = false
+            while index < bytes.count {
+                guard bytes[index] == 0xff else { throw KMAPIError.invalidRequest }
+                while index < bytes.count, bytes[index] == 0xff { index += 1 }
+                guard index < bytes.count else { throw KMAPIError.invalidRequest }
+                let marker = bytes[index]
+                index += 1
+
+                if marker == 0x00 { throw KMAPIError.invalidRequest }
+                if marker == 0xd9 {
+                    output.append(contentsOf: [0xff, 0xd9])
+                    break
+                }
+                if marker == 0xda {
+                    sawStartOfScan = true
+                    output.append(contentsOf: [0xff, 0xda])
+                    if let base = bytes.baseAddress, index < bytes.count {
+                        output.append(base.advanced(by: index), count: bytes.count - index)
+                    }
+                    break
+                }
+                if (0xd0...0xd7).contains(marker) || marker == 0x01 || marker == 0xd8 {
+                    output.append(contentsOf: [0xff, marker])
+                    continue
+                }
+
+                guard index + 2 <= bytes.count else { throw KMAPIError.invalidRequest }
+                let length = (Int(bytes[index]) << 8) | Int(bytes[index + 1])
+                guard length >= 2, index + length <= bytes.count else { throw KMAPIError.invalidRequest }
+
+                let isMetadata = marker == 0xe1 || (0xe3...0xed).contains(marker) || marker == 0xef || marker == 0xfe
+                if !isMetadata, let base = bytes.baseAddress {
+                    output.append(contentsOf: [0xff, marker])
+                    output.append(base.advanced(by: index), count: length)
+                }
+                index += length
+            }
+
+            guard sawStartOfScan else { throw KMAPIError.invalidRequest }
+            return output
         }
     }
 
