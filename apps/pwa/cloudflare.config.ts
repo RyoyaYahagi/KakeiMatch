@@ -45,6 +45,7 @@ export default defineConfig(({ mode, isPreview }) => {
         GITHUB_ISSUES_TOKEN: bindings.secret(),
         GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
         ADMIN_USER_IDS: bindings.secret(),
+        ADMIN_ACCESS_EMAILS: bindings.secret(),
         CF_ACCESS_TEAM_DOMAIN: bindings.secret(),
         CF_ACCESS_AUD: bindings.secret(),
         FEEDBACK_ENCRYPTION_KEY: bindings.secret(),
