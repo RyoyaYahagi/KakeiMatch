@@ -75,7 +75,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 - **Receipt**: `documentKind:receipt|not_receipt|unknown`、`merchant:String|null`、`purchasedDate:YYYY-MM-DD|null`、`purchasedTime:HH:MM|null`、`totalAmountYen:Int|null`、`taxAmountYen:Int|null`、`items:[{name,amountYen:Int|null,quantity?:Decimal>0,unitPriceYen?:Int|null}]`、`adjustments?:[{label,amountYen:符号付きInt,targetItemIndex?:Int|null}]`、`warnings:[{field:既知field|null,code:String(1…100),message:String(1…500),index?:Int|null}]`。各配列最大100、一般テキスト最大500。index は実際の対象配列内だけ。warning code はWorker仕様上自由な識別文字列であり、未知codeを既知状態へ読み替えない。[Worker (2026/10), receiptResultProblem]
 - **Payroll**: `documentKind:pay_slip|not_pay_slip|unknown`、`employerName,paymentDate,payPeriod` はnullable、`payType:salary|bonus|other`、`grossPayYen,netPayYen` はnullable整数円、`deductions:{incomeTaxYen,residentTaxYen,healthInsuranceYen,pensionYen,employmentInsuranceYen,otherYen,totalYen}` は全キー必須nullable整数円、`allowances:[{name,amountYen}]`、`warnings:[{field:既知field|null,code:unreadable|uncertain|amount_mismatch}]` 各最大30。ラベルはNFKC後の7桁以上の番号、氏名・住所等の識別情報ラベル、URL、@を拒否。支給日補完・手取り再計算はしない。[Payroll (2026/10), payrollSchema]
 - **Choice**: `{type:choice,choice:候補内ID,confidence:Decimal(0…1),probabilities:{全候補ID:Decimal(0…1)}}`。回答キー集合・候補集合が要求と一致し、確率和の誤差が0.02以内、choice が最大確率であることを検証する。画面の提案値はPWAと同じく最大確率0.75以上・2位との差0.15以上の時だけ返す。[PWA (2026/10), safeCategoryResponse]
-- **Jev要求**: Geminiの同じ抽出値を元に店名・品目名を200 UTF-16単位以内、先頭30品目に絞る。学習済みの分類を先に適用し、未分類indexだけを渡す責任は呼び出し元サービスにある。候補は1…100件、ID一意・1…128文字、名前1…100文字。ローカル学習履歴・画像・家計簿全体を送らない。[PWA (2026/10), local-receipts.ts / local-category-learning.ts]
+- **分類要求**（route名 `/api/ai/jev` と費用応答の `jev` キーは旧provider名の名残で、現在の送信先はGemini Decisions API）: Geminiの同じ抽出値を元に店名・品目名を200 UTF-16単位以内、先頭30品目に絞る。学習済みの分類を先に適用し、未分類indexだけを渡す責任は呼び出し元サービスにある。候補は1…100件、ID一意・1…128文字、名前1…100文字。ローカル学習履歴・画像・家計簿全体を送らない。[PWA (2026/10), local-receipts.ts / local-category-learning.ts]
 - **Cost**: `{requests,inputTokens,outputTokens,costUsdMicros,unknownRequests}` は非負の安全整数。合計料金・不明件数はprovider和と一致、`unknownRequests<=requests`。通貨はUSD。金額にDoubleを使わない。[Costs (2026/10), monthlyCosts]
 - **User / Session**: Userは`{id,name,email,emailVerified,image?:String|null,createdAt,updatedAt}`、Sessionは`{id,userId,token,expiresAt,createdAt,updatedAt,ipAddress?:String|null,userAgent?:String|null}`。日時はtimezone付きISO8601。user ID一致とsession期限を検証する。native境界は `ipAddress` / `userAgent` を省略し、D1のepoch millisecondsで返るUserとPasskeyの `createdAt` をISO8601へ直す。取得結果は保存・ログ・診断へ入れない。[Better Auth (2026/10), get-session; 実装: KMAPIModels.swift]
 - **Passkey**: `{id,name?:String|null,publicKey,userId,credentialID,counter:Int>=0,deviceType:singleDevice|multiDevice,backedUp:Bool,transports?:String|null,createdAt?:ISO8601|null,aaguid?:String|null}`。一覧のID重複を拒否。[Better Auth (2026/10), Passkey schema / listPasskeys]
@@ -85,9 +85,9 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 
 ### AI応答のschema照合（2026/10 監査）
 
-Geminiのレシート、Jevの分類、Geminiの給与明細について、PWA/Worker側のschema（`src/lib/receipt-extraction.ts`、`workers/ai-gateway/src/worker.ts`、`workers/ai-gateway/src/payroll-schema.ts`）とiOSの `KMAPIShapes` を項目ごとに突き合わせた。**追加が必要な検証は見つからなかった。** 下表の項目はすべてAPI境界で拒否し、`KMAPIError.invalidResponse` として呼び出し側の保存・表示処理へ渡さない。合成した不正fixtureは `KakeiMatchTests/APIClientTests.swift` の `aiResponsesRejectNestedUnknownKeysMissingRequiredNullsAndReferenceViolations`、`jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory`、`rejectsRangesMissingNullsAndUnknownEnums` で固定する。
+Geminiのレシート、Gemini Decisionsのカテゴリ分類、Geminiの給与明細について、PWA/Worker側のschema（`src/lib/receipt-extraction.ts`、`workers/ai-gateway/src/worker.ts`、`workers/ai-gateway/src/payroll-schema.ts`）とiOSの `KMAPIShapes` を項目ごとに突き合わせた。**追加が必要な検証は見つからなかった。** 下表の項目はすべてAPI境界で拒否し、`KMAPIError.invalidResponse` として呼び出し側の保存・表示処理へ渡さない。合成した不正fixtureは `KakeiMatchTests/APIClientTests.swift` の `aiResponsesRejectNestedUnknownKeysMissingRequiredNullsAndReferenceViolations`、`jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory`、`rejectsRangesMissingNullsAndUnknownEnums` で固定する。
 
-| 観点 | レシート (`/api/ai/gemini`) | Jev分類 (`/api/ai/jev`・`category-suggestion`) | 給与明細 (`/api/ai/payroll`) |
+| 観点 | レシート (`/api/ai/gemini`) | カテゴリ分類 (`/api/ai/jev`・`category-suggestion`) | 給与明細 (`/api/ai/payroll`) |
 | --- | --- | --- | --- |
 | 未知キー | 全objectで拒否（`KMAPIShapes.receipt`） | answerは`type`/`choice`/`confidence`/`probabilities`の4キー完全一致。responseは`model`/`answers`のみ | 全objectで拒否（`KMAPIShapes.payroll`） |
 | nullと欠落 | nullableでもキー必須。省略可は`adjustments`と要素の`quantity`/`unitPriceYen`/`targetItemIndex`/`index`のみ | `type`/`choice`/`confidence`/`probabilities`の欠落と、要求外・欠けた回答キーを拒否 | nullableでもキー必須。`deductions`の7キー、`allowances[].amountYen`、`warnings[].field`の欠落を拒否 |
@@ -136,7 +136,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 音声（PWAのみ）は2 MiB上限と形式署名を検証する。MP4は要求では`audio/mp4`、WorkerがGoogle向けに`audio/m4a`へ変換する。最大60秒の録音停止・同じ録音flowIdでの明示再試行・画面移動時停止はUI側で実装する。APIは録音しない。iOSは利用者の決定により音声入力（録音・文字起こし）を作らず、`/api/contact/transcribe` を呼ばない。設定の「お問い合わせ」行にも「声でも送れます」を出さず、問い合わせ画面にも音声の文言・ボタンを置かない。[Contact (2026/10), parseContactInput / transcriptionPayload; docs/CONTACT.md; 利用者決定 2026/10]
 
-レシート/給与の新しい明示読み取りはUUIDv4を使う。JevはGeminiと同じflowIdと抽出値に結び付く。サーバーのフローは開始から10分・各段階最大3試行、カテゴリ候補更新でflowを勝手に再発行しない。問い合わせ最終送信は同じ内容とflowIdで冪等、結果不明時は自動再送しない。MoneyForward提案も利用枠と費用制限を通る。[Cloud account, AI entitlementと利用量; Worker, categorySuggestion; Contact, サーバーの記録と二重投稿]
+レシート/給与の新しい明示読み取りはUUIDv4を使う。カテゴリ分類はGeminiと同じflowIdと抽出値に結び付く。サーバーのフローは開始から10分・各段階最大3試行、カテゴリ候補更新でflowを勝手に再発行しない。問い合わせ最終送信は同じ内容とflowIdで冪等、結果不明時は自動再送しない。MoneyForward提案も利用枠と費用制限を通る。[Cloud account, AI entitlementと利用量; Worker, categorySuggestion; Contact, サーバーの記録と二重投稿]
 
 ## Worker側のnative契約
 
@@ -153,7 +153,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 ## 検証と未実装
 
-`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。AI応答はレシート・Jev・給与明細それぞれの未知キー、nullable必須キーの欠落、型・範囲、整数円、ID参照、件数上限を合成fixtureで拒否することを確認する。実Worker、Apple App Attest、実Passkey、Gemini/Jevへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
+`KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。AI応答はレシート・カテゴリ分類・給与明細それぞれの未知キー、nullable必須キーの欠落、型・範囲、整数円、ID参照、件数上限を合成fixtureで拒否することを確認する。実Worker、Apple App Attest、実Passkey、Geminiへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
 
 CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 

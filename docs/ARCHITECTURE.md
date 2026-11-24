@@ -31,7 +31,7 @@ Cloud accountは端末内の家計操作には不要です。Better AuthとPassk
 
 本人によるアカウント削除は、同一originと有効sessionをサーバーで確認し、D1のbatchで削除済みの不透明なuser IDをtombstoneへ記録してからuser行を削除します。認証情報、session、招待、利用権限、AI利用記録、問い合わせ処理状態は外部キーにより削除します。tombstoneは遅れて終わるPasskey登録から同じIDが復活するのを防ぐためにだけ保持し、氏名・email・認証情報を持ちません。AI用JWTは要求ごとにD1のuser行を確認してから使います。家計データは端末に残り、アカウント削除と連動して消しません。
 
-AI要求は同一originの `/api/ai/*` を通します。Workerは認証、利用枠、要求形式、provider応答を検証します。利用者が選んだ場合だけ、レシート画像をGeminiへ送ります。レシート分類では、検証済みの店名・合計金額・最大30件の商品名と金額に加え、候補カテゴリのID・名称と分類基準をGemini Interactions APIへ送ります。MoneyForwardのカテゴリ対応候補では、変換元カテゴリ名と候補カテゴリのID・名称を送ります。分類はレシート読み取りと共通の `GEMINI_API_KEY`、`GEMINI_MODEL`、費用予約・計測、rate limit、circuitを使います。分類応答は選択肢・全候補の確率・confidenceをWorkerで検証します。Gemini要求が失敗した場合は別providerへ送らず、分類を停止します。Cloud accountやネットワークを利用できない場合も、手入力、明細取込、照合、Actual Budgetの端末内操作を続けられます。
+AI要求は同一originの `/api/ai/*` を通します。Workerは認証、利用枠、要求形式、provider応答を検証します。利用者が選んだ場合だけ、レシート画像をGeminiへ送ります。レシート分類では、検証済みの店名・合計金額・最大30件の商品名と金額に加え、候補カテゴリのID・名称と分類基準をGemini Decisions API（`POST /v1beta/decisions`、モデル `gemini-decision-1`）へ送ります。レシート画像の読み取りはGemini Interactions APIです。MoneyForwardのカテゴリ対応候補では、変換元カテゴリ名と候補カテゴリのID・名称を送ります。分類はレシート読み取りと共通の `GEMINI_API_KEY`、費用予約・計測、rate limit、circuitを使います。分類のモデルはWorkerのコードで `gemini-decision-1` に固定し、`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどの設定で、分類には使いません。分類応答は選択肢・全候補の確率・confidenceをWorkerで検証します。Gemini要求が失敗した場合は別providerへ送らず、分類を停止します。Cloud accountやネットワークを利用できない場合も、手入力、明細取込、照合、Actual Budgetの端末内操作を続けられます。
 
 端末間の同期は、利用者の2台をWebRTCのデータチャネルで直接つなぎます。サーバーもSTUN/TURNも使わず、同じネットワークの端末どうしだけがつながります。接続に必要なsession descriptionは、QRコードまたは文字のコードとして利用者が受け渡します。コードにはDTLSの指紋が入るため、チャネルはコードを見せた端末に結び付いて暗号化されます。片方の家計簿全体をバックアップと同じ形式で送り、受け取った側はSHA-256で欠けがないことを確かめてから、バックアップの復元と同じ手順で切り替えます。元の家計簿は「変更前のデータに戻す」で戻せます。取引単位の合併はしません。
 
