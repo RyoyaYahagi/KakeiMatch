@@ -20,7 +20,11 @@ const now = Date.parse("2026-09-30T14:59:00Z") / 1000;
 const receipt = { documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30", totalAmountYen: 3284, taxAmountYen: null, items: [{ name: "Synthetic Item", amountYen: 3284 }], warnings: [] };
 const category = { receipt: { merchant: receipt.merchant, totalAmountYen: receipt.totalAmountYen, items: receipt.items } };
 const image = { contentType: "image/png", imageBase64: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString("base64") };
-const choice = { type: "choice", choice: "food", probabilities: { food: 0.9, household: 0.02, transport: 0.01, medical: 0.01, clothing: 0.01, entertainment: 0.01, utilities: 0.01, communications: 0.01, other: 0.02 }, confidence: 0.9 };
+const lowerProbability = (1 - (0.9 + 0.02)) / 7;
+const choice = { type: "choice", choice: "food", probabilities: {
+  food: 0.9, household: 0.02, transport: lowerProbability, medical: lowerProbability, clothing: lowerProbability,
+  entertainment: lowerProbability, utilities: lowerProbability, communications: lowerProbability, other: lowerProbability,
+}, confidence: 0.9 };
 const jev = { model: "gemini-3.5-flash-lite", answers: { item_0: choice } };
 const origin = "https://kakeimatch-pr-60.workers.dev";
 function bearer(user = "synthetic-user", at = now, claims = {}) {
@@ -31,11 +35,20 @@ function bearer(user = "synthetic-user", at = now, claims = {}) {
 function request(stage: string, body: unknown, token = bearer(), headers = {}) {
   return new Request(`${origin}/api/ai/${stage}`, { method: "POST", headers: { origin, authorization: token, "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 }
-const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async () => {
+const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async (_url, init) => {
   if (typeof value === "object" && value !== null && "answers" in value) {
-    const fixture = value as { model?: string; answers: unknown; usage?: { input_tokens?: number; output_tokens?: number } | null };
+    const fixture = value as { model?: string; answers: Record<string, { probabilities: Record<string, number> }>; usage?: { input_tokens?: number; output_tokens?: number } | null };
     const usage = fixture.usage === null ? {} : { usage: { total_input_tokens: fixture.usage?.input_tokens ?? 20, total_output_tokens: fixture.usage?.output_tokens ?? 3, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: (fixture.usage?.input_tokens ?? 20) + (fixture.usage?.output_tokens ?? 3) } };
-    return Response.json({ modelVersion: fixture.model || "gemini-3.5-flash-lite", output_text: JSON.stringify({ answers: fixture.answers }), ...usage }, { status });
+    const payload = JSON.parse(String(init?.body));
+    const categoryIds = Object.keys(JSON.parse(payload.input[1].text).categories);
+    const sparse = payload.response_format.schema.properties.answers.items.properties.probabilities.items.type === "object";
+    const answers = Object.entries(fixture.answers).map(([key, { probabilities, ...answer }]) => {
+      const scores = categoryIds.map(id => probabilities[id]);
+      const top = scores.map((probability, index) => ({ index, probability }))
+        .sort((a, b) => b.probability - a.probability).slice(0, 2);
+      return { key, ...answer, probabilities: sparse ? top : scores };
+    });
+    return Response.json({ modelVersion: fixture.model || "gemini-3.5-flash-lite", output_text: JSON.stringify({ answers }), ...usage }, { status });
   }
   return Response.json(value, { status });
 }) as typeof fetch;
@@ -245,8 +258,8 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(providerPayload.model).toBe("gemini-3.5-flash-lite");
     const facts = JSON.parse(providerPayload.input[1].text);
     expect(facts).toEqual({ sourceCategoryName: "スーパーマーケット", categories: { "local-food": "食費", "local-home": "日用品" } });
-    expect(providerPayload.response_format.schema.properties.answers.required).toEqual(["category"]);
-    expect(providerPayload.response_format.schema.properties.answers.additionalProperties.properties.probabilities.required).toEqual(["local-food", "local-home"]);
+    expect(providerPayload.response_format.schema.properties.answers.required).toBeUndefined();
+    expect(providerPayload.response_format.schema.properties.answers.items.properties.probabilities.required).toBeUndefined();
     expect(providerPayload.store).toBe(false);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events WHERE provider='gemini'").bind().first()).toEqual({ count: 1 });
   });
@@ -818,7 +831,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const twoItemReceipt = { ...receipt, items: twoItems.receipt.items };
     const extracted = await handleRequest(request("gemini", { ...image, flowId }), env, options(fetchOk({ output_text: JSON.stringify(twoItemReceipt) })));
     expect(extracted.status).toBe(200);
-    const second = { ...choice, choice: "household" };
+    const second = { ...choice, choice: "household", probabilities: { ...choice.probabilities, food: 0.02, household: 0.9 } };
     const provider = fetchOk({ model: "gemini-3.5-flash-lite", answers: { item_0: choice, item_1: second } });
     const response = await handleRequest(request("jev", twoItems), env, options(provider));
     expect(response.status).toBe(200);
@@ -865,12 +878,12 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const extraction = { ...receipt, items };
     expect((await gemini(flowId, now, fetchOk({ output_text: JSON.stringify(extraction) }))).status).toBe(200);
 
-    const probabilities = Object.fromEntries(categories.map((category, index) => [category.id, index === 0 ? 1 : 0]));
-    const answers = Object.fromEntries(items.map((_, index) => [`item_${index}`, {
-      type: "choice", choice: categories[0]!.id, probabilities, confidence: 1,
-    }]));
+    const answers = items.map((_, index) => ({
+      key: `item_${index}`, type: "choice", choice: categories[0]!.id, confidence: 0.8,
+      probabilities: [{ index: 0, probability: 0.8 }, { index: 25, probability: 0.1 }],
+    }));
     const outputText = JSON.stringify({ answers });
-    expect(new TextEncoder().encode(outputText).byteLength).toBe(126_273);
+    expect(new TextEncoder().encode(outputText).byteLength).toBeLessThan(6_000);
     const provider = fetchOk({
       model: "gemini-3.5-flash-lite",
       output_text: outputText,
@@ -892,16 +905,22 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       expect(answer.choice).toBe(categories[0]!.id);
       expect(Object.keys(answer.probabilities)).toHaveLength(100);
       expect(Object.keys(answer.probabilities)).toEqual(categories.map(category => category.id));
+      expect(answer.probabilities[categories[0]!.id]).toBe(0.8);
+      expect(answer.probabilities[categories[25]!.id]).toBe(0.1);
+      expect(answer.probabilities[categories[99]!.id]).toBeCloseTo(0.1 / 98);
     }
 
     const [, init] = vi.mocked(provider).mock.calls[0]!;
     const payload = JSON.parse(String(init?.body));
     expect(payload.generation_config.max_output_tokens).toBe(65_536);
     const schema = payload.response_format.schema.properties.answers;
-    expect(schema.required).toEqual(itemIndexes.map(index => `item_${index}`));
-    expect(schema.properties).toBeUndefined();
-    expect(schema.additionalProperties.properties.probabilities.required).toEqual(categories.map(category => category.id));
-    expect(JSON.stringify(payload.response_format.schema).length).toBeLessThan(15_000);
+    expect(schema).toEqual({ type: "array", items: expect.any(Object) });
+    const answerSchema = schema.items;
+    expect(Object.keys(answerSchema.properties)).toEqual(answerSchema.required);
+    const pairs = answerSchema.properties.probabilities;
+    expect(pairs.type).toBe("array");
+    expect(Object.keys(pairs.items.properties)).toEqual(pairs.items.required);
+    expect(pairs.items.required).toEqual(["index", "probability"]);
 
     const reservation = await db.prepare("SELECT reserved_cost_usd_micros FROM ai_provider_cost_events WHERE flow_id=? AND provider='gemini' ORDER BY rowid DESC LIMIT 1")
       .bind(flowId).first<{ reserved_cost_usd_micros: number }>();
@@ -935,7 +954,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await handleRequest(request("jev", merchantOnly), env, options(provider))).status).toBe(200);
     const [, init] = vi.mocked(provider).mock.calls[0];
     expect(JSON.parse(JSON.parse(String(init?.body)).input[1].text)).toEqual({ merchant: "Synthetic Cafe", totalAmountYen: 900, categories: { meals: "外食" } });
-    expect(JSON.parse(String(init?.body)).response_format.schema.properties.answers.required).toEqual(["category"]);
+    expect(JSON.parse(String(init?.body)).response_format.schema.properties.answers.required).toBeUndefined();
     expect((await handleRequest(request("jev", merchantOnly), env, options(fetchOk({ model: "gemini-3.5-flash-lite", answers: { category: validAnswer }, extra: true })))).status).toBe(200);
   });
   it("extracts receipt JSON from the current Gemini Interactions REST response", async () => {
