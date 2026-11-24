@@ -20,6 +20,7 @@ export const PRICING_CATALOG: readonly Pricing[] = [
   { version: "2026-10-20-opencode-jev-1.13-free", provider: "jev", model: "jev-1.13-free", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 0, outputUsdPerMillionMicros: 0 },
   { version: "2026-10-20-opencode-jev-1.13", provider: "jev", model: "jev-1.13", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 42_000, outputUsdPerMillionMicros: 0 },
   { version: "2026-10-03-gemini-transcribe-standard", provider: "gemini", model: "gemini-3.5-transcribe", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 2_000_000, outputUsdPerMillionMicros: 12_000_000 },
+  { version: "2026-11-25-gemini-decisions", provider: "gemini", model: "gemini-decision-1", validFrom: 0, billingMode: "standard", inputUsdPerMillionMicros: 100_000, outputUsdPerMillionMicros: 0 },
 ];
 export function pricingFor(provider: Provider, model: string, at: number, catalog = PRICING_CATALOG): Pricing | null {
   return catalog.filter(p => p.provider === provider && p.model === model && p.validFrom <= at && (p.validUntil === undefined || at < p.validUntil)).sort((a, b) => b.validFrom - a.validFrom)[0] ?? null;
