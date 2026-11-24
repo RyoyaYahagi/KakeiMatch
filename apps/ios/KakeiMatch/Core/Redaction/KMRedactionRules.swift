@@ -13,7 +13,7 @@ enum KMRedactionRules {
         #"(?:会員(?:番号|No\.?|ID)|承認(?:番号|No\.?)|レシート(?:番号|No\.?)|端末(?:番号|No\.?|ID)|取引(?:番号|No\.?)|伝票(?:番号|No\.?)|カード番号|下[４4]桁|電話番号|郵便番号|Member\s*(?:ID|No\.?)|TEL)[ :：#]*[A-Z0-9０-９+(*＊][A-Z0-9０-９+() *＊./－-]*"#,
     ]
     private static let labelOnly = #"(?i)(?:会員|承認|レシート|端末|伝票|取引|カード|Member)(?:番号|\s*No\.?|\s*ID)\s*[:：]?\s*$"#
-    private static let allowed = #"(?i)\d{2,4}(?:[/.-]\d{1,2}){2}(?!\d)|\d{2,4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}:\d{2}(?::\d{2})?|[¥￥]\s*\d[\d,]*|\d[\d,]*\s*(?:円|点|個|本|枚)|\d{1,3}(?:,\d{3})+"#
+    private static let allowed = #"(?i)\d{2,4}(?:\s*[/.-]\s*\d{1,2}){2}(?!\d)|\d{2,4}年\s*\d{1,2}月\s*\d{1,2}日|\d{1,2}:\d{2}(?::\d{2})?|[¥￥]\s*\d[\d,]*|\d[\d,]*\s*(?:円|点|個|本|枚)|\d{1,3}(?:,\d{3})+|^\s*(?:合計|小計|total|subtotal)\s*[:：]?\s*[¥￥]?\s*\d{1,7}\s*(?:円)?\s*$"#
     private static let numeric = #"\d(?:[ -]?\d)*"#
 
     static func expectsValue(_ text: String) -> Bool {

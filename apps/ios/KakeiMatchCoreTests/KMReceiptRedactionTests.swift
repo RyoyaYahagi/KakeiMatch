@@ -17,10 +17,10 @@ struct KMReceiptRedactionTests {
             let coverage = try Self.darkFraction(image, region: region)
             #expect(coverage >= 0.95)
         }
-        for region in fixture.retained {
+        for (field, region) in zip(["merchant", "date", "item", "total"], fixture.retained) {
             let normalized = CGRect(x: region.minX / 900, y: region.minY / 990,
                                     width: region.width / 900, height: region.height / 990)
-            #expect(result.masks.allSatisfy { $0.intersection(normalized).isEmpty })
+            #expect(result.masks.allSatisfy { $0.intersection(normalized).isEmpty }, "Expected zero mask coverage for \(field)")
             #expect(try Self.darkFraction(image, region: region) < 0.75)
         }
     }
@@ -32,12 +32,14 @@ struct KMReceiptRedactionTests {
                      "VISA 1234", "12345678"] {
             #expect(!KMRedactionRules.ranges(in: text, confidence: 1, afterLabel: false).isEmpty)
         }
-        for text in ["2026/11/24", "2026年11月24日", "12:34:59", "¥10000000", "12,345,678円", "2個"] {
+        for text in ["2026/11/24", "2026 / 11 / 24", "2026年11月24日", "12:34:59",
+                     "¥10000000", "12,345,678円", "2個", "TOTAL 1200", "合計：1200"] {
             #expect(KMRedactionRules.ranges(in: text, confidence: 0.5, afterLabel: false).isEmpty)
         }
         #expect(KMRedactionRules.expectsValue("会員番号："))
         #expect(!KMRedactionRules.ranges(in: "A041", confidence: 1, afterLabel: true).isEmpty)
         #expect(!KMRedactionRules.ranges(in: "4321", confidence: 0.5, afterLabel: false).isEmpty)
+        #expect(!KMRedactionRules.ranges(in: "TOTAL 12345678", confidence: 0.5, afterLabel: false).isEmpty)
         let branded = "VISA 1234"
         let brandMasks = KMRedactionRules.ranges(in: branded, confidence: 1, afterLabel: false)
         #expect(brandMasks.map { String(branded[$0]) } == [" 1234"])
