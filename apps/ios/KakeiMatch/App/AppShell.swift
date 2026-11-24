@@ -132,7 +132,7 @@ struct AppShell: View {
                         KMRaisedTilePlacement(origin: CGPoint(x: row.midX - KMLayout.addSize / 2, y: row.minY - 22)) {
                             KMRaisedAddTile { showsChooser = true }
                                 .frame(width: KMLayout.addSize, height: KMLayout.addSize)
-                                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                                .contentShape(.interaction, KMRaisedAddTileShape.shape)
                                 .accessibilityHidden(true)
                         }
                     }
@@ -411,11 +411,20 @@ private final class KMRaisedAddTileController: UIViewController {
     }
 }
 
-@MainActor
-private final class KMAddTileHitTestView: UIView {
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+/// Single corner-curve definition shared by the raised add tile's glass surface and UIKit hit-test gate.
+enum KMRaisedAddTileShape {
+    static let shape = RoundedRectangle(cornerRadius: KMRadius.xl, style: .continuous)
+
+    static func contains(_ point: CGPoint, in bounds: CGRect) -> Bool {
         guard !bounds.isEmpty else { return false }
-        return UIBezierPath(roundedRect: bounds, cornerRadius: KMRadius.xl).contains(point)
+        return shape.path(in: bounds).contains(point)
+    }
+}
+
+@MainActor
+final class KMAddTileHitTestView: UIView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        KMRaisedAddTileShape.contains(point, in: bounds)
     }
 }
 
@@ -428,8 +437,8 @@ private struct KMAddTileButton: View {
                 .foregroundStyle(KMColor.onPrimary)
                 .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                 .glassEffect(.regular.tint(KMColor.primary).interactive(),
-                             in: RoundedRectangle(cornerRadius: KMRadius.xl))
-                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                             in: KMRaisedAddTileShape.shape)
+                .contentShape(.interaction, KMRaisedAddTileShape.shape)
         }
         .frame(width: KMLayout.addSize, height: KMLayout.addSize)
         .buttonStyle(.plain)

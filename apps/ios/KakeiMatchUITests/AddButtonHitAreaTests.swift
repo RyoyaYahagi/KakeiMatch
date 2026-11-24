@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 import XCTest
 
 final class AddButtonHitAreaTests: XCTestCase {
@@ -14,6 +15,70 @@ final class AddButtonHitAreaTests: XCTestCase {
             app.buttons[tab].tap()
             XCTAssertTrue(app.buttons[tab].isSelected)
             assertTileCoordinates(app, currentTab: tab)
+        }
+    }
+
+    @MainActor
+    func testAddTileCornerBoundaryRespondsJustInsideAndIgnoresJustOutside() {
+        continueAfterFailure = false
+        let app = makeApp()
+        app.launch()
+        XCTAssertTrue(app.otherElements["home.screen"].waitForExistence(timeout: 10))
+
+        let homeTab = app.buttons["home-tab"]
+        let add = app.buttons["add-record"]
+        XCTAssertTrue(homeTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(add.waitForExistence(timeout: 5))
+
+        let tileSize: CGFloat = 56
+        let tileBounds = CGRect(x: 0, y: 0, width: tileSize, height: tileSize)
+        let continuousPath = RoundedRectangle(cornerRadius: 18, style: .continuous).path(in: tileBounds)
+        var low: CGFloat = 0
+        var high = tileSize / 2
+        for _ in 0..<24 {
+            let mid = (low + high) / 2
+            if continuousPath.contains(CGPoint(x: mid, y: mid)) {
+                high = mid
+            } else {
+                low = mid
+            }
+        }
+        let cornerDiagonal = high
+        let margin: CGFloat = 1.5
+        let insideInset = cornerDiagonal + margin
+        let outsideInset = cornerDiagonal - margin
+        XCTAssertGreaterThan(outsideInset, 0)
+        XCTAssertFalse(continuousPath.contains(CGPoint(x: outsideInset, y: outsideInset)))
+        XCTAssertTrue(continuousPath.contains(CGPoint(x: insideInset, y: insideInset)))
+
+        let rowTop = homeTab.frame.minY
+        let centerX = app.frame.midX
+        let left = centerX - tileSize / 2
+        let right = centerX + tileSize / 2
+        let top = rowTop - 22
+        let bottom = top + tileSize
+
+        let corners: [(name: String, inside: CGPoint, outside: CGPoint)] = [
+            ("左上", CGPoint(x: left + insideInset, y: top + insideInset),
+             CGPoint(x: left + outsideInset, y: top + outsideInset)),
+            ("右上", CGPoint(x: right - insideInset, y: top + insideInset),
+             CGPoint(x: right - outsideInset, y: top + outsideInset)),
+            ("左下", CGPoint(x: left + insideInset, y: bottom - insideInset),
+             CGPoint(x: left + outsideInset, y: bottom - outsideInset)),
+            ("右下", CGPoint(x: right - insideInset, y: bottom - insideInset),
+             CGPoint(x: right - outsideInset, y: bottom - outsideInset)),
+        ]
+
+        for corner in corners {
+            tap(app, x: corner.inside.x, y: corner.inside.y)
+            XCTAssertTrue(app.buttons["chooser.receipt"].waitForExistence(timeout: 5),
+                          "\(corner.name)角の境界すぐ内側のタップが反応しません: \(corner.inside)")
+            app.buttons["record-sheet.close"].tap()
+            waitForChooserToClose(app)
+
+            tap(app, x: corner.outside.x, y: corner.outside.y)
+            XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
+                           "\(corner.name)角の境界すぐ外側のタップで追加画面が開きました: \(corner.outside)")
         }
     }
 
