@@ -2,6 +2,7 @@ name: iOS
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
@@ -37,8 +38,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.ref }}
-  cancel-in-progress: true
+  group: ios-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   UI_SHARD_COUNT: 4
@@ -52,6 +53,7 @@ defaults:
 
 jobs:
   build:
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-15
     timeout-minutes: 15
     outputs:
@@ -127,6 +129,7 @@ jobs:
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
   ui-tests:
+    if: ${{ success() && !github.event.pull_request.draft }}
     needs: build
     runs-on: macos-15
     timeout-minutes: 25
@@ -224,8 +227,9 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Pull request tests run Debug only; catch Release-only compile errors before TestFlight.
+  # Pull request tests run Debug only; verify Release compilation on main pushes and manual runs before TestFlight.
   release-build:
+    if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
     runs-on: macos-15
     timeout-minutes: 15
     steps:
@@ -246,7 +250,7 @@ jobs:
             -destination 'generic/platform=iOS' -derivedDataPath DerivedData build CODE_SIGNING_ALLOWED=NO
 
   ios:
-    if: always()
+    if: ${{ always() && !github.event.pull_request.draft }}
     needs: [build, ui-tests, release-build]
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -255,20 +259,20 @@ jobs:
         working-directory: .
     steps:
       - uses: actions/checkout@v4
-      - name: Require every iOS job to succeed
+      - name: Require every executed iOS job to succeed
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
           echo "$NEEDS_JSON"
-          jq -e 'all(.[]; .result == "success")' <<< "$NEEDS_JSON"
+          jq -e 'length > 0 and all(.[]; .result == "success" or .result == "skipped")' <<< "$NEEDS_JSON"
       # Pull requests skip screenshot-only tests, so the combined set would be partial.
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && needs.ui-tests.result == 'success'
         uses: actions/download-artifact@v4
         with:
           pattern: ios-reference-screenshots-shard-*-attempt-*
           path: screenshot-shards
       - name: Combine screenshots for existing download commands
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && needs.ui-tests.result == 'success'
         run: |
           python3 - <<'PY'
           import json, os, pathlib, shutil
@@ -301,20 +305,20 @@ jobs:
           (output / 'manifest.json').write_text(json.dumps(manifest))
           PY
       - name: Build PWA visual regression report
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && needs.ui-tests.result == 'success'
         run: |
           node apps/ios/scripts/visual-regression.mjs \
             --ios screenshots \
             --reference docs/screenshots/migration \
             --output visual-regression
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && needs.ui-tests.result == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ios-visual-regression-attempt-${{ github.run_attempt }}
           path: visual-regression
           if-no-files-found: error
           retention-days: 14
-      - if: github.event_name != 'pull_request'
+      - if: github.event_name != 'pull_request' && needs.ui-tests.result == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: ios-reference-screenshots-attempt-${{ github.run_attempt }}
