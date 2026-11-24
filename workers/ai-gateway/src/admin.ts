@@ -1,11 +1,14 @@
-import { getAccountSession, type AccountD1Database, type AccountEnv } from "./account-auth";
+import type { AccountD1Database, AccountEnv } from "./account-auth";
 import { monthBounds } from "./ai-provider-costs";
 import { monthKey } from "./receipt-ai-usage";
 import { analyzeFeedback, createFeedbackIssue, deleteFeedback, getFeedback, listFeedback, revealFeedbackOriginal, updateFeedbackStatus,
   purgeExpiredFeedback, type FeedbackAnalysisInput, type FeedbackIssueInput, type FeedbackIssueResult, type FeedbackStatus } from "./feedback";
 
+export const ADMIN_OPERATOR_PRINCIPAL_ID = "admin-operator";
+
 export interface AdminEnv extends AccountEnv {
   ADMIN_USER_IDS?: string;
+  ADMIN_ACCESS_EMAILS?: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
   GITHUB_ISSUES_REPOSITORY?: string;
@@ -13,11 +16,12 @@ export interface AdminEnv extends AccountEnv {
   FEEDBACK_ENCRYPTION_KEY?: string;
 }
 
-type AdminResult = { userId: string } | { response: Response };
+export type AdminIdentity = { adminSubject: string; principalId: string };
+type AdminResult = AdminIdentity | { response: Response };
 export type AdminHandlerOptions = {
   fetchImpl?: typeof fetch;
   nowSeconds?: () => number;
-  analyzeFeedback?: (input: FeedbackAnalysisInput, adminUserId: string) => Promise<string>;
+  analyzeFeedback?: (input: FeedbackAnalysisInput, admin: AdminIdentity) => Promise<string>;
 };
 type SqlRow = Record<string, unknown>;
 
@@ -29,8 +33,22 @@ function json(status: number, value: unknown): Response {
   } });
 }
 
-function adminIds(value: string | undefined): Set<string> {
-  return new Set((value ?? "").split(",").map(id => id.trim()).filter(Boolean));
+function parseAccessDomain(value: string | undefined): URL | null {
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  let domain: URL;
+  try { domain = new URL(trimmed); } catch { return null; }
+  if (domain.protocol !== "https:" || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(domain.hostname) || domain.port ||
+      domain.pathname !== "/" || domain.search || domain.hash || domain.username || domain.password) return null;
+  return domain;
+}
+
+function adminEmails(value: string | undefined): Set<string> {
+  return new Set((value ?? "").split(",").map(email => email.trim().toLowerCase()).filter(email => email.includes("@") && !/\s/.test(email)));
+}
+
+function hasControlOrSpace(value: string): boolean {
+  return Array.from(value).some(ch => ch.charCodeAt(0) <= 0x20 || ch.charCodeAt(0) === 0x7f);
 }
 
 function decodePart(value: string): Record<string, unknown> | null {
@@ -42,38 +60,36 @@ function decodePart(value: string): Record<string, unknown> | null {
   } catch { return null; }
 }
 
-async function verifyAccessJwt(request: Request, env: AdminEnv, fetchImpl: typeof fetch, now: number): Promise<boolean> {
-  const domainValue = env.CF_ACCESS_TEAM_DOMAIN;
-  const audience = env.CF_ACCESS_AUD;
-  if (!domainValue && !audience) return true;
-  if (!domainValue || !audience) return false;
-  let domain: URL;
-  try { domain = new URL(domainValue); } catch { return false; }
-  if (domain.protocol !== "https:" || !/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(domain.hostname) || domain.port ||
-      domain.pathname !== "/" || domain.search || domain.hash || domain.username || domain.password) return false;
+async function verifyAccessJwt(request: Request, domain: URL, audience: string, fetchImpl: typeof fetch, now: number): Promise<{ sub: string; email: string } | null> {
   const token = request.headers.get("cf-access-jwt-assertion") ?? "";
-  if (token.length > 16_384) return false;
+  if (!token || token.length > 16_384) return null;
   const parts = token.split(".");
-  if (parts.length !== 3) return false;
+  if (parts.length !== 3) return null;
   const header = decodePart(parts[0]); const claims = decodePart(parts[1]);
-  if (!header || !claims || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) return false;
+  if (!header || !claims || header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) return null;
   const audiences = typeof claims.aud === "string" ? [claims.aud] : claims.aud;
   if (claims.iss !== domain.origin || !Array.isArray(audiences) || !audiences.includes(audience) ||
       !Number.isSafeInteger(claims.exp) || (claims.exp as number) <= now ||
-      claims.nbf !== undefined && (!Number.isSafeInteger(claims.nbf) || (claims.nbf as number) > now + 30)) return false;
+      claims.nbf !== undefined && (!Number.isSafeInteger(claims.nbf) || (claims.nbf as number) > now + 30)) return null;
+  if (typeof claims.email !== "string" || typeof claims.sub !== "string") return null;
+  const email = claims.email.trim().toLowerCase();
+  const sub = claims.sub.trim();
+  if (!email || !email.includes("@") || hasControlOrSpace(email)) return null;
+  if (!sub || sub.length > 256 || hasControlOrSpace(sub)) return null;
   try {
     const response = await fetchImpl(new URL("/cdn-cgi/access/certs", domain), { signal: AbortSignal.timeout(5_000) });
-    if (!response.ok) return false;
+    if (!response.ok) return null;
     const jwks = await readBoundedJson(response, 64 * 1024);
-    if (!jwks || typeof jwks !== "object" || !Array.isArray((jwks as { keys?: unknown }).keys)) return false;
+    if (!jwks || typeof jwks !== "object" || !Array.isArray((jwks as { keys?: unknown }).keys)) return null;
     const key = (jwks as { keys: unknown[] }).keys.find((candidate): candidate is JsonWebKey & { kid: string; alg?: string; use?: string } =>
       candidate !== null && typeof candidate === "object" && (candidate as Record<string, unknown>).kid === header.kid);
-    if (!key || key.kty !== "RSA" || key.alg !== "RS256" || key.use !== "sig") return false;
+    if (!key || key.kty !== "RSA" || key.alg !== "RS256" || key.use !== "sig") return null;
     const publicKey = await crypto.subtle.importKey("jwk", key, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
     const signature = decodeBytes(parts[2]);
-    if (!signature) return false;
-    return await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
-  } catch { return false; }
+    if (!signature) return null;
+    const verified = await crypto.subtle.verify("RSASSA-PKCS1-v1_5", publicKey, signature, new TextEncoder().encode(`${parts[0]}.${parts[1]}`));
+    return verified ? { sub, email } : null;
+  } catch { return null; }
 }
 
 async function readBoundedJson(response: Response, maxBytes: number): Promise<unknown | null> {
@@ -101,21 +117,20 @@ function decodeBytes(value: string): Uint8Array<ArrayBuffer> | null {
   catch { return null; }
 }
 
-/** Resolves a server-verified Better Auth session and applies the server-side ID allowlist. */
+/** Verifies a Cloudflare Access JWT and checks the email against the server-side allowlist. */
 export async function requireAdmin(request: Request, env: AdminEnv, options: AdminHandlerOptions = {}): Promise<AdminResult> {
-  const allowedIds = adminIds(env.ADMIN_USER_IDS);
-  if (!env.ACCOUNT_DB || !env.BETTER_AUTH_SECRET || allowedIds.size === 0) return { response: json(503, { error: "admin_not_configured" }) };
+  const domain = parseAccessDomain(env.CF_ACCESS_TEAM_DOMAIN);
+  const audience = env.CF_ACCESS_AUD?.trim() ?? "";
+  const allowedEmails = adminEmails(env.ADMIN_ACCESS_EMAILS);
+  if (!env.ACCOUNT_DB || !domain || !audience || allowedEmails.size === 0) return { response: json(503, { error: "admin_not_configured" }) };
   const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-  if (!await verifyAccessJwt(request, env, options.fetchImpl ?? fetch, now)) return { response: json(403, { error: "access_denied" }) };
+  const verified = await verifyAccessJwt(request, domain, audience, options.fetchImpl ?? fetch, now);
+  if (!verified) return { response: json(403, { error: "access_denied" }) };
+  if (!allowedEmails.has(verified.email)) return { response: json(403, { error: "forbidden" }) };
   const origin = request.headers.get("origin");
   const requestUrl = new URL(request.url);
   if (origin !== null && origin !== requestUrl.origin) return { response: json(403, { error: "forbidden_origin" }) };
-  let session;
-  try { session = await getAccountSession(request, env); }
-  catch { return { response: json(503, { error: "temporarily_unavailable" }) }; }
-  if (!session) return { response: json(401, { error: "unauthorized" }) };
-  if (!allowedIds.has(session.user.id)) return { response: json(403, { error: "forbidden" }) };
-  return { userId: session.user.id };
+  return { adminSubject: `access:${verified.sub}`, principalId: ADMIN_OPERATOR_PRINCIPAL_ID };
 }
 
 async function selectRows<T extends SqlRow>(db: AccountD1Database, sql: string, ...values: unknown[]): Promise<T[]> {
@@ -164,7 +179,7 @@ async function overview(db: AccountD1Database, now: number) {
   const month = monthKey(now);
   const bounds = monthBounds(month)!;
   const [accounts, activity, costs, feedback, recentErrors] = await Promise.all([
-    selectRow<{ registered: number }>(db, "SELECT COUNT(*) AS registered FROM user u WHERE NOT EXISTS (SELECT 1 FROM guest_devices g WHERE g.user_id=u.id)"),
+    selectRow<{ registered: number }>(db, "SELECT COUNT(*) AS registered FROM user u WHERE u.id != ? AND NOT EXISTS (SELECT 1 FROM guest_devices g WHERE g.user_id=u.id)", ADMIN_OPERATOR_PRINCIPAL_ID),
     selectRow<{ activeToday: number; activeLast30Days: number; usedAiToday: number; usedAiLast30Days: number }>(db,
       `SELECT COUNT(DISTINCT CASE WHEN dispatched_at>=? THEN user_id END) AS activeToday,
        COUNT(DISTINCT user_id) AS activeLast30Days,
@@ -223,7 +238,8 @@ async function users(db: AccountD1Database, limit: number) {
       COUNT(c.id) AS aiRequests, CASE WHEN g.user_id IS NOT NULL THEN 'guest' ELSE 'registered' END AS kind, 1 AS enabled
      FROM user u LEFT JOIN account_entitlements e ON e.user_id=u.id
      LEFT JOIN guest_devices g ON g.user_id=u.id LEFT JOIN ai_provider_cost_events c ON c.user_id=u.id
-     GROUP BY u.id ORDER BY u.createdAt DESC LIMIT ?`, limit);
+     WHERE u.id != ?
+     GROUP BY u.id ORDER BY u.createdAt DESC LIMIT ?`, ADMIN_OPERATOR_PRINCIPAL_ID, limit);
   return { users: rows.map(row => ({ ...row, enabled: row.enabled === 1 })) };
 }
 
@@ -274,13 +290,13 @@ export async function handleAdminRequest(request: Request, env: AdminEnv, option
       const statusValue = url.searchParams.get("status");
       const statuses = new Set<FeedbackStatus>(["new", "reviewing", "issue_created", "resolved", "dismissed"]);
       if (statusValue && !statuses.has(statusValue as FeedbackStatus)) return json(400, { error: "invalid_status" });
-      return json(200, await listFeedback({ db: env.ACCOUNT_DB, adminUserId: auth.userId, limit, now,
+      return json(200, await listFeedback({ db: env.ACCOUNT_DB, adminUserId: auth.adminSubject, limit, now,
         ...(statusValue ? { status: statusValue as FeedbackStatus } : {}) }));
     }
     const feedbackMatch = /^\/api\/admin\/feedback\/([A-Za-z0-9_-]{1,80})(?:\/(original|status|analyze|issue))?$/.exec(path);
     if (feedbackMatch) {
       const [, id, action] = feedbackMatch;
-      const base = { db: env.ACCOUNT_DB, adminUserId: auth.userId, id, now };
+      const base = { db: env.ACCOUNT_DB, adminUserId: auth.adminSubject, id, now };
       if (!action && request.method === "GET") return json(200, { item: await getFeedback(base) });
       if (action === "original" && request.method === "POST") return json(200, await revealFeedbackOriginal({ ...base, encryptionKey: env.FEEDBACK_ENCRYPTION_KEY }));
       if (action === "status" && request.method === "PATCH") {
@@ -292,7 +308,7 @@ export async function handleAdminRequest(request: Request, env: AdminEnv, option
       }
       if (action === "analyze" && request.method === "POST") {
         if (!options.analyzeFeedback) return json(503, { error: "not_configured" });
-        return json(200, await analyzeFeedback({ ...base, analyze: payload => options.analyzeFeedback!(payload, auth.userId) }));
+        return json(200, await analyzeFeedback({ ...base, analyze: payload => options.analyzeFeedback!(payload, auth) }));
       }
       if (action === "issue" && request.method === "POST") {
         const draft = await readJson(request);

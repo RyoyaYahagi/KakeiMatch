@@ -45,6 +45,25 @@ final class ReceiptFlowTests: XCTestCase {
     @MainActor func testScreensLight() { screenshots("light") }
     @MainActor func testScreensDark() { screenshots("dark") }
 
+    @MainActor func testDecliningAIConsentKeepsManualReceiptEntryAvailable() {
+        continueAfterFailure = false
+        let app = launch("initial", source: "receipt")
+        let aiButton = app.buttons["receipt.aiButton"]
+        XCTAssertTrue(aiButton.waitForExistence(timeout: 5))
+        aiButton.tap()
+        XCTAssertTrue(app.alerts["AIへの送信について"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS %@", "Google Gemini")).firstMatch.exists)
+        let decline = app.alerts["AIへの送信について"].buttons.matching(
+            NSPredicate(format: "label == %@", "同意しない"))
+        XCTAssertEqual(decline.count, 1, "拒否操作はアクセシビリティ上も一つだけ表示します")
+        decline.firstMatch.tap()
+        XCTAssertFalse(app.alerts["AIへの送信について"].exists)
+        XCTAssertTrue(app.buttons["receipt.aiButton"].exists)
+        XCTAssertTrue(app.buttons["receipt.saveButton"].exists)
+        app.terminate()
+    }
+
     @MainActor
     private func screenshots(_ appearance: String) {
         continueAfterFailure = false

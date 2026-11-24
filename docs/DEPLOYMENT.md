@@ -160,7 +160,7 @@ corepack pnpm --dir apps/pwa exec cf --help
 corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
-D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql`、`0017_jev_upstream_circuits.sql` が必要です。0017は当時のJev provider停止状態のキーを分割した履歴migrationです。過去のJev circuit行は残りますが、現行WorkerのGemini分類は利用しません。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
+D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql`、`0017_jev_upstream_circuits.sql`、`0018_native_app_auth.sql`、`0019_admin_operator_principal.sql` が必要です。`0016_feedback_inbox.sql` も適用してください。0017は当時のJev provider停止状態のキーを分割した履歴migrationです。過去のJev circuit行は残りますが、現行WorkerのGemini分類は利用しません。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
 corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
@@ -224,6 +224,6 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 
 ## お問い合わせと管理画面の導入
 
-Worker更新前に `0016_feedback_inbox.sql` までのmigrationを適用します。`FEEDBACK_ENCRYPTION_KEY` と `ADMIN_USER_IDS` をSecret bindingへ登録します。本番では管理経路をCloudflare Accessで保護し、Worker側に `CF_ACCESS_TEAM_DOMAIN` と `CF_ACCESS_AUD` を設定します。問い合わせ原文の暗号鍵は独立した32バイトのランダム値をBase64で表します。鍵不足の場合は平文保存へ切り替えず、送信を拒否します。
+Worker更新前に `0019_admin_operator_principal.sql` までのmigrationを適用します。`FEEDBACK_ENCRYPTION_KEY` と `ADMIN_ACCESS_EMAILS`（Cloudflare AccessのJWTで許可するメールアドレスのカンマ区切り一覧）をSecret bindingへ登録します。本番では管理経路をCloudflare Accessで保護し、Worker側に `CF_ACCESS_TEAM_DOMAIN` と `CF_ACCESS_AUD` を設定します。問い合わせ原文の暗号鍵は独立した32バイトのランダム値をBase64で表します。鍵不足の場合は平文保存へ切り替えず、送信を拒否します。
 
 `GITHUB_ISSUES_TOKEN` は管理者による明示的なIssue作成にだけ使います。対象リポジトリへのIssues書き込み権限に限定し、`GITHUB_ISSUES_REPOSITORY` はサーバー設定で固定します。通常の問い合わせ送信はGitHubへ投稿しません。毎日03:00（日本時間）のscheduled handlerは90日の保存期限を過ぎた問い合わせ本文と原文を削除します。詳しくは[管理画面](ADMIN.md)と[お問い合わせ](CONTACT.md)を参照してください。

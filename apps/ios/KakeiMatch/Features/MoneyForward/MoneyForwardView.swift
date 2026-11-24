@@ -322,7 +322,9 @@ struct KMMoneyForwardView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             if tag == "unresolved" {
-                Button("AIで候補を確認") { Task { await model.suggestCategory(for: group.key) } }
+                Button("AIで候補を確認") {
+                    KMNativeAIConsent.shared.request { Task { await model.suggestCategory(for: group.key) } }
+                }
                     .buttonStyle(KMButtonStyle(role: .text))
                     .frame(minHeight: KMLayout.minimumHit, alignment: .leading)
                     .disabled(model.isBusy)
