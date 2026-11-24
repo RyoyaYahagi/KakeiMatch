@@ -2,7 +2,7 @@ import Foundation
 
 enum KMRedactionRules {
     private static let sensitiveLabel = #"(?:会員(?:番号|No\.?|ID)|承認(?:番号|No\.?)|レシート(?:番号|No\.?)|端末(?:番号|No\.?|ID)|取引(?:番号|No\.?)|伝票(?:番号|No\.?)|カード番号|下4桁|電話番号|郵便番号|(?<![A-Z])Member\s*(?:ID|No\.?)|(?<![A-Z])TEL)"#
-    private static let labelSeparator = #"[ :#]*"#
+    private static let labelSeparator = #"[\h:#]*"#
     private static let labeledValue = #"[A-Z0-9+(*][A-Z0-9+() *./-]*"#
     private static let sensitive = [
         #"(?i)(?:https?://|www\.)[^\s]+"#,

@@ -67,6 +67,20 @@ struct KMReceiptRedactionTests {
         #expect(!KMRedactionRules.ranges(in: labelLine + value, confidence: 0.99, afterLabel: false).isEmpty)
     }
 
+    @Test(arguments: ["\t:", ":\t", "\t:\t", "　\t：\t　"])
+    func recognizesSensitiveLabelWithTabSeparators(_ separator: String) {
+        let labelLine = "会員番号" + separator
+        let value = "1234"
+        let sameLine = labelLine + value
+        let sameLineMasks = KMRedactionRules.ranges(in: sameLine, confidence: 0.99, afterLabel: false)
+        #expect(sameLineMasks.contains { String(sameLine[$0]).hasSuffix(value) })
+
+        let expectsValue = KMRedactionRules.expectsValue(labelLine)
+        #expect(expectsValue)
+        let nextLineMasks = KMRedactionRules.ranges(in: value, confidence: 0.99, afterLabel: expectsValue)
+        #expect(nextLineMasks.contains { String(value[$0]) == value })
+    }
+
     @Test
     func detectionFailureCannotReturnSendableResult() async throws {
         let data = try Self.receipt(degraded: false).data
