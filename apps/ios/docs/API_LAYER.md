@@ -96,7 +96,7 @@ Geminiのレシート、Gemini Decisionsのカテゴリ分類、Geminiの給与�
 | 整数円 | `Decimal`で整数判定し、±9,007,199,254,740,991に制限 | 該当なし | 同左 |
 | ID参照 | `targetItemIndex`はitems内、warningの`index`は対象のitems/adjustments内 | 回答キーは要求キーと一致、`choice`と確率キーは候補IDのみ。`category-suggestion`の`categoryId`はnullか候補内 | 該当なし |
 | 件数上限 | items・adjustments・warningsは各100 | answers・probabilitiesは100、候補は1…100 | allowances・warningsは各30 |
-| PWA/Workerとの差 | Workerが行う日付・時刻・quantity 0の正規化は行わず、不正として拒否する（厳しい側） | 同等。提案値の0.75以上・2位との差0.15以上も同じ | 同等 |
+| PWA/Workerとの差 | Workerが行う日付・時刻・quantity 0の正規化は行わず、不正として拒否する（厳しい側） | 同等。`/api/ai/jev` の提案値はPWAと同じく最大確率0.75以上・2位との差0.15以上の時だけ使う。`category-suggestion` はWorkerがconfidence 0.4以上の時だけ `categoryId` を返し、アプリ側では閾値を判定しない | 同等 |
 
 `classify` は上表に加えて、`answers` のキー集合が要求した`category`/`item_N`と一致すること、各確率キーが要求候補のID集合と一致することを検証する。`ReceiptModel` の `invalidAndNonReceiptResponsesDoNotReplaceManualInput` は、不正応答で手入力や保存済み抽出が置き換わらないことを合成fixtureで確認する。
 
