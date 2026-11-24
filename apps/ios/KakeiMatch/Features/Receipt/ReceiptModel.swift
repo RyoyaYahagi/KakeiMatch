@@ -394,9 +394,16 @@ final class KMReceiptModel {
         operation = Task {
             do {
                 await saveDraft()
+                try Task.checkCancellation()
+                let sourceData = imageData
+                let sourceType = image.contentType
+                let upload = try await Task.detached(priority: .userInitiated) {
+                    try KMUploadImage.prepareReceipt(data: sourceData, contentType: sourceType)
+                }.value
+                try Task.checkCancellation()
                 let client = try workerClient()
                 let flow = UUID()
-                let extraction = try await client.readReceipt(image: KMUploadImage(data: imageData, contentType: image.contentType), flowID: flow)
+                let extraction = try await client.readReceipt(image: upload, flowID: flow)
                 try KMReceiptPresentation.validateExtraction(extraction)
                 guard revision == token, !Task.isCancelled, var receipt, let repositories else { return }
                 try await ensureCurrent(receipt)

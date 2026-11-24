@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Synchronization
 import Testing
 @testable import KakeiMatch
@@ -252,9 +254,30 @@ private final class ReceiptHTTPStub: URLProtocol, @unchecked Sendable {
     static let body = Mutex("")
     /// Path-specific responses; a path not listed here falls back to `body`.
     static let responses = Mutex<[String: String]>([:])
+    static let requests = Mutex<[URLRequest]>([])
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    private static func materializedRequest(_ request: URLRequest) throws -> URLRequest {
+        guard request.httpBody == nil, let stream = request.httpBodyStream else { return request }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buffer = [UInt8](repeating: 0, count: 8192)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            guard count >= 0 else { throw stream.streamError ?? URLError(.cannotDecodeRawData) }
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+        var copy = request
+        copy.httpBodyStream = nil
+        copy.httpBody = data
+        return copy
+    }
     override func startLoading() {
+        if let captured = try? Self.materializedRequest(request) {
+            Self.requests.withLock { $0.append(captured) }
+        }
         let json: String
         switch request.url?.path {
         case "/api/ai/token": json = #"{"token":"header.payload.signature","expiresAt":1800000600}"#
@@ -276,10 +299,33 @@ private final class ReceiptCredentials: KMCloudCredentialStore, Sendable {
 }
 
 extension ReceiptModelTests {
+    private static func syntheticJPEG(width: Int = 4, height: Int = 4, properties: [CFString: Any] = [:]) throws -> Data {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let context = try #require(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let image = try #require(context.makeImage())
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, properties.isEmpty ? nil : properties as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     private func readingModel(response: String, native: Bool = false, guest: Bool = true,
-                              attest: any KMAppAttesting = ReceiptUnsupportedAttest()) async throws -> (KMReceiptModel, KMRepositories) {
+                              attest: any KMAppAttesting = ReceiptUnsupportedAttest(),
+                              imageData: Data? = nil, contentType: String = "image/jpeg") async throws -> (KMReceiptModel, KMRepositories) {
         ReceiptHTTPStub.body.withLock { $0 = response }
         ReceiptHTTPStub.responses.withLock { $0 = [:] }
+        ReceiptHTTPStub.requests.withLock { $0 = [] }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
@@ -292,14 +338,54 @@ extension ReceiptModelTests {
                               now: { Date(timeIntervalSince1970: 1_800_000_000) })
         let repositories = try KMFixtureLoader.load(named: "receipt")
         var receipt = try #require(try await repositories.receipts.receipts().first)
-        let bytes = Data([0xff, 0xd8, 0xff])
-        receipt.image = .init(blobId: "synthetic-image", contentType: "image/jpeg", sizeBytes: bytes.count)
+        let bytes = try imageData ?? Self.syntheticJPEG()
+        receipt.image = .init(blobId: "synthetic-image", contentType: contentType, sizeBytes: bytes.count)
         let store = try #require(repositories.receipts as? KMInMemoryStore)
         store.imageValues["synthetic-image"] = bytes
         try await store.saveReceipt(receipt)
         let model = KMReceiptModel(api: api)
         await model.load(repositories, receiptID: receipt.id)
         return (model, repositories)
+    }
+
+    @Test func startReadingSendsRedrawnMetadataFreeJPEGWithoutModifyingSavedOriginal() async throws {
+        let extraction = #"{"documentKind":"unknown","merchant":null,"purchasedDate":null,"purchasedTime":null,"totalAmountYen":null,"taxAmountYen":null,"items":[],"warnings":[]}"#
+        let originalBytes = try Self.syntheticJPEG(width: 40, height: 20, properties: [
+            kCGImagePropertyOrientation: 6,
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifUserComment: "SYNTHETIC_RECEIPT_EXIF"],
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 35.68, kCGImagePropertyGPSLatitudeRef: "N"]
+        ])
+        let (model, repositories) = try await readingModel(response: extraction, imageData: originalBytes, contentType: "image/jpeg")
+        await model.startReading()?.value
+        #expect(model.error == nil)
+
+        let geminiRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
+        let bodyData = try #require(geminiRequest.httpBody)
+        let payload = try #require(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        #expect(payload["contentType"] as? String == "image/jpeg")
+        let encoded = try #require(payload["imageBase64"] as? String)
+        let uploadedData = try #require(Data(base64Encoded: encoded))
+        #expect(uploadedData != originalBytes)
+        #expect(uploadedData.range(of: Data("SYNTHETIC_RECEIPT_EXIF".utf8)) == nil)
+        let decoded = try #require(CGImageSourceCreateWithData(uploadedData as CFData, nil))
+        let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
+        #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 20)
+        #expect(props[kCGImagePropertyPixelHeight as String] as? Int == 40)
+        #expect(props[kCGImagePropertyGPSDictionary as String] == nil)
+        #expect(props[kCGImagePropertyExifDictionary as String] == nil)
+        #expect(props[kCGImagePropertyTIFFDictionary as String] == nil)
+        #expect(props[kCGImagePropertyOrientation as String] == nil)
+        #expect(try await repositories.receipts.receiptImage(blobId: "synthetic-image") == originalBytes)
+
+        let (pngModel, pngRepositories) = try await readingModel(response: extraction, imageData: Self.syntheticPNG, contentType: "image/png")
+        await pngModel.startReading()?.value
+        #expect(pngModel.error == nil)
+        let pngRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
+        let pngPayload = try #require(try JSONSerialization.jsonObject(with: try #require(pngRequest.httpBody)) as? [String: Any])
+        #expect(pngPayload["contentType"] as? String == "image/jpeg")
+        let uploadedPNG = try #require(Data(base64Encoded: try #require(pngPayload["imageBase64"] as? String)))
+        #expect(KMUploadImage.matches(uploadedPNG, contentType: "image/jpeg"))
+        #expect(try await pngRepositories.receipts.receiptImage(blobId: "synthetic-image") == Self.syntheticPNG)
     }
 
     @Test func jevItemAnswersBecomeTheReceiptCategories() async throws {

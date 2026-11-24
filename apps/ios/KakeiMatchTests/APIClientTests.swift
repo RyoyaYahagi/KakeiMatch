@@ -1,3 +1,4 @@
+import CoreGraphics
 import CryptoKit
 import Foundation
 import ImageIO
@@ -1120,6 +1121,283 @@ struct APIClientTests {
         context.draw(image, in: CGRect(x: 0, y: 0, width: 2, height: 1))
         #expect(pixels[0] < 10 && pixels[1] < 10 && pixels[2] < 10)
         #expect(pixels[4] > 240 && pixels[5] > 240 && pixels[6] > 240)
+    }
+
+    private typealias RGBAColor = (r: CGFloat, g: CGFloat, b: CGFloat, a: CGFloat)
+
+    private static func makeQuadrantCGImage(
+        width: Int,
+        height: Int,
+        topLeft: RGBAColor,
+        topRight: RGBAColor,
+        bottomLeft: RGBAColor,
+        bottomRight: RGBAColor
+    ) throws -> CGImage {
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let context = try #require(CGContext(
+            data: nil,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ))
+        // Flip so test rectangles follow top-left coordinates matching decoded CGImage rows.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        let halfW = width / 2
+        let halfH = height / 2
+        let quadrants: [(CGRect, RGBAColor)] = [
+            (CGRect(x: 0, y: 0, width: halfW, height: halfH), topLeft),
+            (CGRect(x: halfW, y: 0, width: width - halfW, height: halfH), topRight),
+            (CGRect(x: 0, y: halfH, width: halfW, height: height - halfH), bottomLeft),
+            (CGRect(x: halfW, y: halfH, width: width - halfW, height: height - halfH), bottomRight)
+        ]
+        for (rect, color) in quadrants {
+            context.setFillColor(red: color.r, green: color.g, blue: color.b, alpha: color.a)
+            context.fill(rect)
+        }
+        return try #require(context.makeImage())
+    }
+
+    private static func encodeImage(_ image: CGImage, type: String, properties: [CFString: Any] = [:]) throws -> Data {
+        let encoded = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(encoded, type as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, properties.isEmpty ? nil : properties as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        return encoded as Data
+    }
+
+    private static func samplePixel(from image: CGImage, x: Int, y: Int) throws -> (r: UInt8, g: UInt8, b: UInt8) {
+        let width = image.width
+        let height = image.height
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try #require(CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ))
+        context.interpolationQuality = .none
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let offset = (y * width + x) * 4
+        return (pixels[offset], pixels[offset + 1], pixels[offset + 2])
+    }
+
+    @Test
+    func receiptPrepareStripsExifGpsAndPreservesResolution() throws {
+        let sourceImage = try Self.makeQuadrantCGImage(
+            width: 120,
+            height: 80,
+            topLeft: (1, 0, 0, 1),
+            topRight: (0, 1, 0, 1),
+            bottomLeft: (0, 0, 1, 1),
+            bottomRight: (1, 1, 0, 1)
+        )
+        let inputProperties: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.95,
+            kCGImagePropertyGPSDictionary: [
+                kCGImagePropertyGPSLatitude: 35.6812,
+                kCGImagePropertyGPSLatitudeRef: "N",
+                kCGImagePropertyGPSLongitude: 139.7671,
+                kCGImagePropertyGPSLongitudeRef: "E"
+            ],
+            kCGImagePropertyExifDictionary: [
+                kCGImagePropertyExifDateTimeOriginal: "2026:11:24 12:34:56",
+                kCGImagePropertyExifUserComment: "SYNTHETIC_EXIF_MARKER"
+            ],
+            kCGImagePropertyTIFFDictionary: [
+                kCGImagePropertyTIFFMake: "SyntheticCamera",
+                kCGImagePropertyTIFFModel: "SyntheticModel",
+                kCGImagePropertyTIFFSoftware: "SYNTHETIC_SOFTWARE"
+            ],
+            kCGImagePropertyIPTCDictionary: [
+                kCGImagePropertyIPTCCaptionAbstract: "SYNTHETIC_IPTC"
+            ]
+        ]
+        let input = try Self.encodeImage(sourceImage, type: "public.jpeg", properties: inputProperties)
+        let inputSource = try #require(CGImageSourceCreateWithData(input as CFData, nil))
+        let inputProps = try #require(CGImageSourceCopyPropertiesAtIndex(inputSource, 0, nil) as? [String: Any])
+        #expect(inputProps[kCGImagePropertyGPSDictionary as String] != nil)
+        #expect(inputProps[kCGImagePropertyExifDictionary as String] != nil)
+
+        let prepared = try KMUploadImage.prepareReceipt(data: input, contentType: "image/jpeg")
+        #expect(prepared.contentType == "image/jpeg")
+        #expect(KMUploadImage.matches(prepared.data, contentType: "image/jpeg"))
+        #expect(prepared.data.count <= KMUploadImage.maxUploadBytes)
+
+        let decoded = try #require(CGImageSourceCreateWithData(prepared.data as CFData, nil))
+        let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
+        #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 120)
+        #expect(props[kCGImagePropertyPixelHeight as String] as? Int == 80)
+        #expect(props[kCGImagePropertyGPSDictionary as String] == nil)
+        #expect(props[kCGImagePropertyExifDictionary as String] == nil)
+        #expect(props[kCGImagePropertyTIFFDictionary as String] == nil)
+        #expect(props[kCGImagePropertyIPTCDictionary as String] == nil)
+        #expect(props[kCGImagePropertyOrientation as String] == nil)
+
+        for marker in ["SYNTHETIC_EXIF_MARKER", "SyntheticCamera", "SYNTHETIC_SOFTWARE", "SYNTHETIC_IPTC"] {
+            #expect(prepared.data.range(of: Data(marker.utf8)) == nil)
+        }
+
+        let outputImage = try #require(CGImageSourceCreateImageAtIndex(decoded, 0, nil))
+        let tl = try Self.samplePixel(from: outputImage, x: 30, y: 20)
+        let tr = try Self.samplePixel(from: outputImage, x: 90, y: 20)
+        let bl = try Self.samplePixel(from: outputImage, x: 30, y: 60)
+        let br = try Self.samplePixel(from: outputImage, x: 90, y: 60)
+        #expect(tl.r > 200 && tl.g < 50 && tl.b < 50)
+        #expect(tr.r < 50 && tr.g > 200 && tr.b < 50)
+        #expect(bl.r < 50 && bl.g < 50 && bl.b > 200)
+        #expect(br.r > 200 && br.g > 200 && br.b < 50)
+
+        let transparentPNGImage = try Self.makeQuadrantCGImage(
+            width: 40,
+            height: 30,
+            topLeft: (0, 0, 0, 0),
+            topRight: (0, 0, 0, 0),
+            bottomLeft: (0, 0, 0, 0),
+            bottomRight: (0, 0, 0, 0)
+        )
+        let pngData = try Self.encodeImage(transparentPNGImage, type: "public.png")
+        let preparedPNG = try KMUploadImage.prepareReceipt(data: pngData, contentType: "image/png")
+        #expect(preparedPNG.contentType == "image/jpeg")
+        let decodedPNG = try #require(CGImageSourceCreateWithData(preparedPNG.data as CFData, nil))
+        let pngProps = try #require(CGImageSourceCopyPropertiesAtIndex(decodedPNG, 0, nil) as? [String: Any])
+        #expect(pngProps[kCGImagePropertyPixelWidth as String] as? Int == 40)
+        #expect(pngProps[kCGImagePropertyPixelHeight as String] as? Int == 30)
+        #expect(pngProps[kCGImagePropertyExifDictionary as String] == nil)
+        #expect(pngProps[kCGImagePropertyGPSDictionary as String] == nil)
+        let flattenedPNG = try #require(CGImageSourceCreateImageAtIndex(decodedPNG, 0, nil))
+        let center = try Self.samplePixel(from: flattenedPNG, x: 20, y: 15)
+        #expect(center.r > 240 && center.g > 240 && center.b > 240)
+
+        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage.prepareReceipt(data: Data(), contentType: "image/jpeg") }
+        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage.prepareReceipt(data: Data([0xff, 0xd8, 0xff]), contentType: "image/png") }
+        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage.prepareReceipt(data: Data([0xff, 0xd8, 0xff]), contentType: "image/heic") }
+        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage.prepareReceipt(data: Data([0xff, 0xd8, 0xff]), contentType: "image/jpeg") }
+        #expect(throws: KMAPIError.invalidRequest) {
+            _ = try KMUploadImage.prepareReceipt(data: Data([0xff, 0xd8, 0xff]) + Data(repeating: 0, count: 20 * 1024 * 1024), contentType: "image/jpeg")
+        }
+    }
+
+    @Test
+    func receiptPrepareAppliesExifOrientationToUprightRaster() throws {
+        // Raw 80x40 image: TL=red, TR=green, BL=blue, BR=white.
+        let sourceImage = try Self.makeQuadrantCGImage(
+            width: 80,
+            height: 40,
+            topLeft: (1, 0, 0, 1),
+            topRight: (0, 1, 0, 1),
+            bottomLeft: (0, 0, 1, 1),
+            bottomRight: (1, 1, 1, 1)
+        )
+        let oriented6Input = try Self.encodeImage(sourceImage, type: "public.jpeg", properties: [
+            kCGImageDestinationLossyCompressionQuality: 0.95,
+            kCGImagePropertyOrientation: 6,
+            kCGImagePropertyExifDictionary: [kCGImagePropertyExifUserComment: "ORIENTED_6"],
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 35.0, kCGImagePropertyGPSLatitudeRef: "N"]
+        ])
+        let prepared6 = try KMUploadImage.prepareReceipt(data: oriented6Input, contentType: "image/jpeg")
+        let decoded6 = try #require(CGImageSourceCreateWithData(prepared6.data as CFData, nil))
+        let props6 = try #require(CGImageSourceCopyPropertiesAtIndex(decoded6, 0, nil) as? [String: Any])
+        #expect(props6[kCGImagePropertyPixelWidth as String] as? Int == 40)
+        #expect(props6[kCGImagePropertyPixelHeight as String] as? Int == 80)
+        #expect(props6[kCGImagePropertyOrientation as String] == nil)
+        #expect(props6[kCGImagePropertyExifDictionary as String] == nil)
+        #expect(props6[kCGImagePropertyGPSDictionary as String] == nil)
+        #expect(props6[kCGImagePropertyTIFFDictionary as String] == nil)
+
+        // Orientation 6 rotates 90 deg CW: TL=blue, TR=red, BL=white, BR=green.
+        let image6 = try #require(CGImageSourceCreateImageAtIndex(decoded6, 0, nil))
+        let tl6 = try Self.samplePixel(from: image6, x: 10, y: 20)
+        let tr6 = try Self.samplePixel(from: image6, x: 30, y: 20)
+        let bl6 = try Self.samplePixel(from: image6, x: 10, y: 60)
+        let br6 = try Self.samplePixel(from: image6, x: 30, y: 60)
+        #expect(tl6.r < 50 && tl6.g < 50 && tl6.b > 200)
+        #expect(tr6.r > 200 && tr6.g < 50 && tr6.b < 50)
+        #expect(bl6.r > 200 && bl6.g > 200 && bl6.b > 200)
+        #expect(br6.r < 50 && br6.g > 200 && br6.b < 50)
+
+        let oriented3Input = try Self.encodeImage(sourceImage, type: "public.jpeg", properties: [
+            kCGImageDestinationLossyCompressionQuality: 0.95,
+            kCGImagePropertyOrientation: 3,
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 35.0, kCGImagePropertyGPSLatitudeRef: "N"]
+        ])
+        let prepared3 = try KMUploadImage.prepareReceipt(data: oriented3Input, contentType: "image/jpeg")
+        let decoded3 = try #require(CGImageSourceCreateWithData(prepared3.data as CFData, nil))
+        let props3 = try #require(CGImageSourceCopyPropertiesAtIndex(decoded3, 0, nil) as? [String: Any])
+        #expect(props3[kCGImagePropertyPixelWidth as String] as? Int == 80)
+        #expect(props3[kCGImagePropertyPixelHeight as String] as? Int == 40)
+        #expect(props3[kCGImagePropertyOrientation as String] == nil)
+        #expect(props3[kCGImagePropertyExifDictionary as String] == nil)
+        #expect(props3[kCGImagePropertyGPSDictionary as String] == nil)
+
+        // Orientation 3 rotates 180 deg: TL=white, BR=red.
+        let image3 = try #require(CGImageSourceCreateImageAtIndex(decoded3, 0, nil))
+        let tl3 = try Self.samplePixel(from: image3, x: 20, y: 10)
+        let br3 = try Self.samplePixel(from: image3, x: 60, y: 30)
+        #expect(tl3.r > 200 && tl3.g > 200 && tl3.b > 200)
+        #expect(br3.r > 200 && br3.g < 50 && br3.b < 50)
+    }
+
+    @Test
+    func receiptPrepareDownscalesWhenOutputExceedsSixMiB() throws {
+        let rawWidth = 3600
+        let rawHeight = 2700
+        let byteCount = rawWidth * rawHeight * 4
+        var buffer = Data(count: byteCount)
+        buffer.withUnsafeMutableBytes { rawBuffer in
+            let words = rawBuffer.bindMemory(to: UInt64.self)
+            var state: UInt64 = 0x9e37_79b9_7f4a_7c15
+            for index in words.indices {
+                state ^= state << 13
+                state ^= state >> 7
+                state ^= state << 17
+                words[index] = state
+            }
+        }
+        let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        let provider = try #require(CGDataProvider(data: buffer as CFData))
+        let cgImage = try #require(CGImage(
+            width: rawWidth,
+            height: rawHeight,
+            bitsPerComponent: 8,
+            bitsPerPixel: 32,
+            bytesPerRow: rawWidth * 4,
+            space: colorSpace,
+            bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+            provider: provider,
+            decode: nil,
+            shouldInterpolate: false,
+            intent: .defaultIntent
+        ))
+        let input = try Self.encodeImage(cgImage, type: "public.jpeg", properties: [
+            kCGImageDestinationLossyCompressionQuality: 0.9,
+            kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 35.0, kCGImagePropertyGPSLatitudeRef: "N"]
+        ])
+        #expect(input.count > KMUploadImage.maxUploadBytes)
+        #expect(input.count <= KMUploadImage.maxReceiptInputBytes)
+
+        let prepared = try KMUploadImage.prepareReceipt(data: input, contentType: "image/jpeg")
+        #expect(prepared.contentType == "image/jpeg")
+        #expect(prepared.data.count <= KMUploadImage.maxUploadBytes)
+
+        let decoded = try #require(CGImageSourceCreateWithData(prepared.data as CFData, nil))
+        let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
+        let outWidth = try #require(props[kCGImagePropertyPixelWidth as String] as? Int)
+        let outHeight = try #require(props[kCGImagePropertyPixelHeight as String] as? Int)
+        #expect(outWidth > 0 && outWidth < rawWidth)
+        #expect(outHeight > 0 && outHeight < rawHeight)
+        let expectedAspect = Double(rawWidth) / Double(rawHeight)
+        let actualAspect = Double(outWidth) / Double(outHeight)
+        #expect(abs(actualAspect - expectedAspect) < 0.02)
+        #expect(props[kCGImagePropertyGPSDictionary as String] == nil)
+        #expect(props[kCGImagePropertyExifDictionary as String] == nil)
     }
 
     @Test

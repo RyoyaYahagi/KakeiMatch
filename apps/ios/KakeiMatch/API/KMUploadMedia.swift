@@ -1,16 +1,115 @@
+import CoreGraphics
 import Foundation
 import ImageIO
 import UIKit
 
-/// Receipt parity: original JPEG/PNG/WebP bytes, no automatic resize or masking.
+/// Receipt upload image: re-encoded to upright JPEG without EXIF/GPS metadata before upload.
 struct KMUploadImage: Sendable {
+    static let maxUploadBytes = 6 * 1024 * 1024
+    static let maxReceiptInputBytes = 20 * 1024 * 1024
+    private static let maxReceiptPixelDimension = 20_000
+    private static let maxReceiptPixelCount: Int64 = 100_000_000
+    private static let receiptJPEGQuality: CGFloat = 0.9
+    private static let maxResizeAttempts = 12
+
     let data: Data
     let contentType: String
 
     init(data: Data, contentType: String) throws {
-        guard !data.isEmpty, data.count <= 6 * 1024 * 1024,
+        guard !data.isEmpty, data.count <= Self.maxUploadBytes,
               Self.matches(data, contentType: contentType) else { throw KMAPIError.invalidRequest }
         self.data = data; self.contentType = contentType
+    }
+
+    /// Redraws receipt JPEG/PNG/WebP into an upright JPEG raster without metadata, downscaling only if > maxBytes.
+    static func prepareReceipt(data: Data, contentType: String, maxBytes: Int = maxUploadBytes) throws -> Self {
+        guard maxBytes > 0, maxBytes <= Self.maxUploadBytes,
+              !data.isEmpty, data.count <= Self.maxReceiptInputBytes,
+              Self.matches(data, contentType: contentType) else {
+            throw KMAPIError.invalidRequest
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetCount(source) > 0,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let rawWidth = (properties[kCGImagePropertyPixelWidth as String] as? NSNumber)?.intValue,
+              let rawHeight = (properties[kCGImagePropertyPixelHeight as String] as? NSNumber)?.intValue,
+              (1...Self.maxReceiptPixelDimension).contains(rawWidth),
+              (1...Self.maxReceiptPixelDimension).contains(rawHeight),
+              Int64(rawWidth) * Int64(rawHeight) <= Self.maxReceiptPixelCount else {
+            throw KMAPIError.invalidRequest
+        }
+        guard let upright = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(rawWidth, rawHeight),
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary),
+              upright.width > 0, upright.height > 0 else {
+            throw KMAPIError.invalidRequest
+        }
+
+        var width = upright.width
+        var height = upright.height
+        var output = try Self.encodeCleanJPEG(upright, width: width, height: height, quality: Self.receiptJPEGQuality)
+
+        for _ in 0..<Self.maxResizeAttempts where output.count > maxBytes && (width > 1 || height > 1) {
+            let ratio = sqrt(Double(maxBytes) / Double(output.count)) * 0.9
+            let scale = min(0.85, max(0.5, ratio))
+            var nextWidth = max(1, Int((Double(width) * scale).rounded(.down)))
+            var nextHeight = max(1, Int((Double(height) * scale).rounded(.down)))
+            if nextWidth == width && width > 1 { nextWidth = width - 1 }
+            if nextHeight == height && height > 1 { nextHeight = height - 1 }
+            width = nextWidth
+            height = nextHeight
+            output = try Self.encodeCleanJPEG(upright, width: width, height: height, quality: Self.receiptJPEGQuality)
+        }
+
+        guard output.count <= maxBytes else {
+            throw KMAPIError.invalidRequest
+        }
+        return try Self(data: output, contentType: "image/jpeg")
+    }
+
+    private static func encodeCleanJPEG(_ image: CGImage, width: Int, height: Int, quality: CGFloat) throws -> Data {
+        try autoreleasepool {
+            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+            guard let context = CGContext(
+                data: nil,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+            ) else {
+                throw KMAPIError.invalidRequest
+            }
+            context.interpolationQuality = .high
+            let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+            context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
+            context.fill(bounds)
+            context.draw(image, in: bounds)
+            guard let flattened = context.makeImage() else {
+                throw KMAPIError.invalidRequest
+            }
+            let destinationData = NSMutableData()
+            guard let destination = CGImageDestinationCreateWithData(
+                destinationData,
+                "public.jpeg" as CFString,
+                1,
+                nil
+            ) else {
+                throw KMAPIError.invalidRequest
+            }
+            let options: [CFString: Any] = [
+                kCGImageDestinationLossyCompressionQuality: quality
+            ]
+            CGImageDestinationAddImage(destination, flattened, options as CFDictionary)
+            guard CGImageDestinationFinalize(destination) else {
+                throw KMAPIError.invalidRequest
+            }
+            return destinationData as Data
+        }
     }
 
     static func matches(_ data: Data, contentType: String) -> Bool {
