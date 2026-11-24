@@ -115,7 +115,7 @@ struct AppShell: View {
                     tab = destination
                     entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
                     moneyForwardRoute = false
-                }), reviewCount: reviewCount)
+                }), reviewCount: reviewCount, add: { showsChooser = true })
             }
         }
         // Keep only the raised add button in the root overlay. The four tabs and
@@ -136,15 +136,12 @@ struct AppShell: View {
                     }
                     .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                     .buttonStyle(.plain)
-                    .accessibilityLabel("記録を追加")
-                    .accessibilityIdentifier("add-record")
-                    .accessibilitySortPriority(3)
+                    // Accessibility identity and order live in KMBottomNavigation's center slot.
+                    .accessibilityHidden(true)
                     .position(x: row.midX, y: row.minY - 22 + KMLayout.addSize / 2)
                 }
             }
         }
-        // Sort all five navigation actions in the same accessibility container.
-        .accessibilityElement(children: .contain)
         .font(KMTypography.text)
         .tint(KMColor.primary)
         .preferredColorScheme(selectedColorScheme)

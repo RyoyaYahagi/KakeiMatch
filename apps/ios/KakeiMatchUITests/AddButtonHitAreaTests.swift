@@ -13,7 +13,7 @@ final class AddButtonHitAreaTests: XCTestCase {
         for tab in ["home-tab", "receipt-tab", "reconciliation-tab", "settings-tab"] {
             app.buttons[tab].tap()
             XCTAssertTrue(app.buttons[tab].isSelected)
-            assertTileCoordinates(app)
+            assertTileCoordinates(app, currentTab: tab)
         }
     }
 
@@ -30,26 +30,38 @@ final class AddButtonHitAreaTests: XCTestCase {
         let add = app.buttons["add-record"]
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let rowTop = homeTab.frame.minY
-        let x = app.frame.midX - 30 // 2pt outside the centered tile, inside the full-width row.
         let y = rowTop - 18 // the top-edge test point, within the raised tile's vertical span.
         let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "records.row."))
         XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10), "テスト用の記録行がありません")
-        var underlyingRow: XCUIElement?
-        for _ in 0..<6 {
-            underlyingRow = rows.allElementsBoundByIndex.first {
-                $0.frame.minX <= x && x <= $0.frame.maxX && $0.frame.minY <= y && y <= $0.frame.maxY
+
+        func assertSideTapOpensUnderlyingRow(atX x: CGFloat) {
+            var underlyingRow: XCUIElement?
+            for _ in 0..<6 {
+                underlyingRow = rows.allElementsBoundByIndex.first {
+                    $0.frame.minX <= x && x <= $0.frame.maxX && $0.frame.minY <= y && y <= $0.frame.maxY
+                }
+                if underlyingRow != nil { break }
+                app.swipeUp(velocity: .slow)
             }
-            if underlyingRow != nil { break }
-            app.swipeUp(velocity: .slow)
-        }
-        guard underlyingRow != nil else {
-            XCTFail("タイル横の座標に重なる記録行を表示できませんでした")
-            return
+            guard underlyingRow != nil else {
+                XCTFail("タイル横の座標に重なる記録行を表示できませんでした: x=\(x), y=\(y)")
+                return
+            }
+
+            tap(app, x: x, y: y)
+            XCTAssertTrue(app.buttons["records.detailBack"].waitForExistence(timeout: 10),
+                          "タイル外のタップが背後の記録行へ届きません")
+            XCTAssertTrue(app.staticTexts["records.detail.heading"].waitForExistence(timeout: 5),
+                          "背後の記録行から記録詳細の見出しが表示されません")
+            XCTAssertFalse(app.buttons["chooser.receipt"].exists,
+                           "タイル外のタップで追加画面が開きました")
         }
 
-        tap(app, x: x, y: y)
-        XCTAssertTrue(app.otherElements["records.detailScreen"].waitForExistence(timeout: 10),
-                      "タイル外のタップが背後の記録行へ届きません")
+        // 2pt outside the centered 56pt tile on both sides, within the raised row's span.
+        assertSideTapOpensUnderlyingRow(atX: app.frame.midX - 30)
+        app.buttons["records.detailBack"].tap()
+        XCTAssertTrue(rows.firstMatch.waitForExistence(timeout: 10), "記録詳細から記録一覧へ戻れません")
+        assertSideTapOpensUnderlyingRow(atX: app.frame.midX + 30)
     }
 
     @MainActor
@@ -138,14 +150,24 @@ final class AddButtonHitAreaTests: XCTestCase {
     }
 
     @MainActor
-    private func assertTileCoordinates(_ app: XCUIApplication) {
+    private func assertTileCoordinates(_ app: XCUIApplication, currentTab: String) {
         let homeTab = app.buttons["home-tab"]
+        let receiptTab = app.buttons["receipt-tab"]
+        let reconciliationTab = app.buttons["reconciliation-tab"]
         let add = app.buttons["add-record"]
         XCTAssertTrue(homeTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(receiptTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(reconciliationTab.waitForExistence(timeout: 5))
         XCTAssertTrue(add.waitForExistence(timeout: 5))
         let rowTop = homeTab.frame.minY
         let centerX = app.frame.midX
         let top = rowTop - 22
+
+        let addFrame = add.frame
+        XCTAssertEqual(addFrame.width, 56, accuracy: 1, "追加ボタンの幅が56ptではありません")
+        XCTAssertEqual(addFrame.height, 56, accuracy: 1, "追加ボタンの高さが56ptではありません")
+        XCTAssertEqual(addFrame.midX, centerX, accuracy: 1, "追加ボタンが中央に配置されていません")
+        XCTAssertEqual(addFrame.minY, top, accuracy: 1, "追加ボタンの上端がナビ行上端-22ptではありません")
 
         for y in [top + 4, rowTop + 6, top + 52] {
             tap(app, x: centerX, y: y)
@@ -155,15 +177,28 @@ final class AddButtonHitAreaTests: XCTestCase {
             waitForChooserToClose(app)
         }
 
+        let leftTabTapX = receiptTab.frame.maxX - 4
+        tap(app, x: leftTabTapX, y: rowTop + 6)
+        XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
+                       "左隣タブの内側端タップで追加画面が開きました: x=\(leftTabTapX), y=\(rowTop + 6)")
+        XCTAssertTrue(receiptTab.isSelected, "左隣タブの内側端タップで記録タブへ切り替わりません")
+
+        let rightTabTapX = reconciliationTab.frame.minX + 4
+        tap(app, x: rightTabTapX, y: rowTop + 6)
+        XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
+                       "右隣タブの内側端タップで追加画面が開きました: x=\(rightTabTapX), y=\(rowTop + 6)")
+        XCTAssertTrue(reconciliationTab.isSelected, "右隣タブの内側端タップで照合タブへ切り替わりません")
+
+        app.buttons[currentTab].tap()
+        XCTAssertTrue(app.buttons[currentTab].isSelected)
+
         for (x, y) in [
-            (centerX - 30, rowTop + 6), (centerX + 30, rowTop + 6),
-            (centerX, top - 2), (centerX, rowTop + 36),
-            (centerX - 26, top + 2), (centerX + 26, top + 2),
-            (centerX - 26, top + 54), (centerX + 26, top + 54),
+            (centerX, rowTop + 56),
+            (centerX, top - 24),
         ] {
             tap(app, x: x, y: y)
             XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
-                           "タイル形状の外のタップで追加画面が開きました: x=\(x), y=\(y)")
+                           "タイル外のタップで追加画面が開きました: x=\(x), y=\(y)")
         }
     }
 
