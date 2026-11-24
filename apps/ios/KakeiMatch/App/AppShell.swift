@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AppShell: View {
     @State private var tab: KMTab = .home
@@ -121,24 +122,20 @@ struct AppShell: View {
         // Keep only the raised add button in the root overlay. The four tabs and
         // bar material remain in their original 64pt row; the measured anchor
         // tracks safe-area and width changes without screen-height arithmetic.
+        // Isolate the raised tile in a dedicated hit-tested UIViewController so
+        // SwiftUI's root hosting view cannot expand button slop onto neighbor tabs.
         .overlayPreferenceValue(KMBottomNavigationBoundsKey.self) { anchor in
             GeometryReader { proxy in
                 if let anchor {
                     let row = proxy[anchor]
-                    Button { showsChooser = true } label: {
-                        KMIcon(name: "add", size: 28)
-                            .foregroundStyle(KMColor.onPrimary)
-                            .frame(width: KMLayout.addSize, height: KMLayout.addSize)
-                            .glassEffect(.regular.tint(KMColor.primary).interactive(),
-                                         in: RoundedRectangle(cornerRadius: KMRadius.xl))
-                            // Shape the label itself: Button uses it for interaction hit testing.
-                            .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                    if row.width > 0, row.height > 0 {
+                        KMRaisedTilePlacement(origin: CGPoint(x: row.midX - KMLayout.addSize / 2, y: row.minY - 22)) {
+                            KMRaisedAddTile { showsChooser = true }
+                                .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+                                .accessibilityHidden(true)
+                        }
                     }
-                    .frame(width: KMLayout.addSize, height: KMLayout.addSize)
-                    .buttonStyle(.plain)
-                    // Accessibility identity and order live in KMBottomNavigation's center slot.
-                    .accessibilityHidden(true)
-                    .position(x: row.midX, y: row.minY - 22 + KMLayout.addSize / 2)
                 }
             }
         }
@@ -325,5 +322,117 @@ struct AppShell: View {
         case .transfer: TransferView()
         case .payroll: PayrollView(onCancel: { entry = .income }, onSaved: { entry = nil; tab = .records })
         }
+    }
+}
+
+private struct KMRaisedTilePlacement: Layout {
+    let origin: CGPoint
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let size = proposal.replacingUnspecifiedDimensions()
+        return CGSize(width: max(0, size.width), height: max(0, size.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let target = CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y)
+        let tileProposal = ProposedViewSize(width: KMLayout.addSize, height: KMLayout.addSize)
+        for subview in subviews {
+            subview.place(at: target, anchor: .topLeading, proposal: tileProposal)
+        }
+    }
+}
+
+/// Hosts the raised add button in its own UIKit hit-test gate so taps outside the
+/// 56x56pt rounded tile fall through to neighboring tabs and underlying list rows.
+private struct KMRaisedAddTile: UIViewControllerRepresentable {
+    let action: @MainActor () -> Void
+
+    func makeUIViewController(context: Context) -> KMRaisedAddTileController {
+        KMRaisedAddTileController(action: action)
+    }
+
+    func updateUIViewController(_ uiViewController: KMRaisedAddTileController, context: Context) {
+        uiViewController.action = action
+        let style: UIUserInterfaceStyle = context.environment.colorScheme == .dark ? .dark : .light
+        if uiViewController.overrideUserInterfaceStyle != style {
+            uiViewController.overrideUserInterfaceStyle = style
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiViewController: KMRaisedAddTileController, context: Context) -> CGSize? {
+        CGSize(width: KMLayout.addSize, height: KMLayout.addSize)
+    }
+}
+
+@MainActor
+private final class KMRaisedAddTileController: UIViewController {
+    var action: @MainActor () -> Void
+    private var hosting: UIHostingController<KMAddTileButton>?
+
+    init(action: @escaping @MainActor () -> Void) {
+        self.action = action
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = KMAddTileHitTestView()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        view.clipsToBounds = false
+        view.isAccessibilityElement = false
+        view.accessibilityElementsHidden = true
+
+        let child = UIHostingController(rootView: KMAddTileButton { [weak self] in self?.action() })
+        child.safeAreaRegions = []
+        child.view.backgroundColor = .clear
+        child.view.clipsToBounds = false
+        child.view.translatesAutoresizingMaskIntoConstraints = false
+        child.view.isAccessibilityElement = false
+        child.view.accessibilityElementsHidden = true
+
+        addChild(child)
+        view.addSubview(child.view)
+        NSLayoutConstraint.activate([
+            child.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            child.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            child.view.topAnchor.constraint(equalTo: view.topAnchor),
+            child.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        child.didMove(toParent: self)
+        hosting = child
+    }
+}
+
+@MainActor
+private final class KMAddTileHitTestView: UIView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard !bounds.isEmpty else { return false }
+        return UIBezierPath(roundedRect: bounds, cornerRadius: KMRadius.xl).contains(point)
+    }
+}
+
+private struct KMAddTileButton: View {
+    let action: @MainActor () -> Void
+
+    var body: some View {
+        Button { action() } label: {
+            KMIcon(name: "add", size: 28)
+                .foregroundStyle(KMColor.onPrimary)
+                .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+                .glassEffect(.regular.tint(KMColor.primary).interactive(),
+                             in: RoundedRectangle(cornerRadius: KMRadius.xl))
+                .contentShape(.interaction, RoundedRectangle(cornerRadius: KMRadius.xl))
+        }
+        .frame(width: KMLayout.addSize, height: KMLayout.addSize)
+        .buttonStyle(.plain)
+        .accessibilityHidden(true)
     }
 }

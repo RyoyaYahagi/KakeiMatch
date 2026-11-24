@@ -193,12 +193,14 @@ final class AddButtonHitAreaTests: XCTestCase {
         XCTAssertTrue(app.buttons[currentTab].isSelected)
 
         for (x, y) in [
-            (centerX, rowTop + 56),
-            (centerX, top - 24),
+            (centerX - 30, rowTop + 6), (centerX + 30, rowTop + 6),
+            (centerX, top - 2), (centerX, rowTop + 36),
+            (centerX - 26, top + 2), (centerX + 26, top + 2),
+            (centerX - 26, top + 54), (centerX + 26, top + 54),
         ] {
             tap(app, x: x, y: y)
             XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
-                           "タイル外のタップで追加画面が開きました: x=\(x), y=\(y)")
+                           "タイル形状の外のタップで追加画面が開きました: x=\(x), y=\(y)")
         }
     }
 
