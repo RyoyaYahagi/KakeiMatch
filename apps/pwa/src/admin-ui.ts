@@ -55,7 +55,6 @@ app.innerHTML = `
   <main class="admin-main">
     <header class="admin-header">
       <div><p class="admin-eyebrow">KAKEIMATCH / OPERATIONS</p><h1>管理画面</h1><p class="muted">家計データは表示しません。</p></div>
-      <a class="text-button admin-exit" href="/">アプリへ戻る</a>
     </header>
     <p id="admin-status" class="status" role="status" aria-live="polite">運用情報を読み込んでいます…</p>
     <nav class="admin-nav" aria-label="管理画面" role="tablist">
@@ -94,20 +93,20 @@ function clearAdminData() {
   detailRequestId++;
 }
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(path, { credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json' } });
+  const response = await fetch(path, { cache: 'no-store', headers: { accept: 'application/json' } });
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) clearAdminData();
-    throw new Error(response.status === 401 ? 'ログインが必要です。管理者アカウントで開き直してください。' : response.status === 403 ? '管理者権限がありません。' : `管理APIを取得できませんでした（${response.status}）。`);
+    if (response.status === 401 || response.status === 403 || response.status === 503) clearAdminData();
+    throw new Error(response.status === 403 ? '管理者権限がありません。' : response.status === 503 ? '管理画面の認証設定が未完了です。' : `管理APIを取得できませんでした（${response.status}）。`);
   }
   return response.json() as Promise<T>;
 }
 async function postJson<T>(path: string, body?: unknown, method = 'POST'): Promise<T> {
-  const response = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store', headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+  const response = await fetch(path, { method, cache: 'no-store', headers: { accept: 'application/json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) clearAdminData();
+    if (response.status === 401 || response.status === 403 || response.status === 503) clearAdminData();
     const payload = await response.json().catch(() => null) as { error?: unknown } | null;
     if (response.status === 409 && payload?.error === 'issue_submission_unknown') throw new Error('Issueの作成結果を確認できません。GitHubで受付IDを確認してください。重複を防ぐため再作成は停止しています。');
-    throw new Error(response.status === 401 ? 'ログインが必要です。' : response.status === 403 ? '管理者権限がありません。' : `操作を完了できませんでした（${response.status}）。`);
+    throw new Error(response.status === 403 ? '管理者権限がありません。' : response.status === 503 ? '管理画面の認証設定が未完了です。' : `操作を完了できませんでした（${response.status}）。`);
   }
   return response.json() as Promise<T>;
 }

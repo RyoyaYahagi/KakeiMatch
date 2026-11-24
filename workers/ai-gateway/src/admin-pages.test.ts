@@ -1,14 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import appWorker from '../../../apps/pwa/src/worker';
 
-const state = vi.hoisted(() => ({ status: 401 }));
-vi.mock('./admin', () => ({ requireAdmin: async () => state.status === 200 ? { userId: 'synthetic-admin' } : { response: Response.json({ error: 'denied' }, { status: state.status }) } }));
+const state = vi.hoisted(() => ({ status: 403 }));
+vi.mock('./admin', () => ({
+  requireAdmin: async () => state.status === 200
+    ? { adminSubject: 'access:synthetic-sub', principalId: 'admin-operator' }
+    : { response: Response.json({ error: 'denied' }, { status: state.status }) },
+}));
 vi.mock('./worker', () => ({ handleRequest: vi.fn(), handleAdminGatewayRequest: async () => Response.json({ overview: 'safe metadata' }) }));
 vi.mock('./account-auth', () => ({ handleAuthRequest: vi.fn(), handleAccountRequest: vi.fn() }));
 
 describe('admin document routing', () => {
-  beforeEach(() => { state.status = 401; });
-  it.each([401, 403])('refuses every admin HTML path with status %s before fetching assets', async status => {
+  beforeEach(() => { state.status = 403; });
+  it.each([403, 503])('refuses every admin HTML path with status %s before fetching assets', async status => {
     state.status = status;
     const assets = vi.fn(async () => new Response('<html>admin</html>'));
     for (const path of ['/admin', '/admin/', '/admin/feedback', '/admin.html']) {

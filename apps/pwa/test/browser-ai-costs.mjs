@@ -54,6 +54,8 @@ try {
   await page.clock.setFixedTime(new Date('2026-10-01T01:00:00Z'));
   await page.goto(new URL('/admin.html', process.env.PWA_E2E_URL).toString());
   await page.getByRole('heading', { name: '管理画面', exact: true }).waitFor();
+  assert.equal(await page.locator('a[href="/"]').count(), 0, 'admin view has no back-to-app link');
+  assert.equal(await page.getByText('アプリへ戻る').count(), 0, 'admin view has no back-to-app label');
   await page.getByText('登録アカウント', { exact: true }).waitFor();
   assert.equal(await page.locator('#app-shell').count(), 0, 'admin entry does not initialize the PWA/Actual app shell');
   assert.equal(resources.some(path => /actual|wasm/i.test(path)), false, 'admin entry does not request Actual assets');
