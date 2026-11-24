@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { ADMIN_OPERATOR_PRINCIPAL_ID } from "./admin";
 import { reserveFlow, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
 import { GUEST_CREATIONS_PER_ADDRESS_DAILY } from "./guest-ai";
 import { sqliteD1 } from "./test-support/sqlite-d1";
@@ -63,7 +64,7 @@ describe("guest AI", () => {
     expect(chunksRead).toBe(3);
     expect(cancel).toHaveBeenCalledOnce();
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM user').get()).toEqual({ count: 0 });
+    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM user WHERE id != ?').get(ADMIN_OPERATOR_PRINCIPAL_ID)).toEqual({ count: 0 });
   });
 
   it('accepts a valid guest request at the byte limit and rejects malformed JSON', async () => {
@@ -87,7 +88,7 @@ describe("guest AI", () => {
     const failed = vi.fn<typeof fetch>(async () => Response.json({ success: false }));
     expect((await createGuest(failed)).status).toBe(403);
     expect((await handleRequest(guestRequest("POST", { origin: "https://evil.example.test" }, { turnstileToken: "x" }), env, { fetchImpl: turnstilePass() })).status).toBe(403);
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM user").get()).toEqual({ count: 0 });
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM user WHERE id != ?").get(ADMIN_OPERATOR_PRINCIPAL_ID)).toEqual({ count: 0 });
 
     const value = await guestSecret();
     expect(value).toMatch(/^[A-Za-z0-9_-]{43}$/);

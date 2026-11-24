@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { AiPausedError, CircuitOpenError, checkEmergencyStop, costAdmission, DEFAULT_GUARDRAILS, guardrailConfig, requestReservation } from "./ai-global-guardrails";
+import { costUsdMicros, pricingFor } from "./ai-provider-costs";
 import { sqliteD1 } from "./test-support/sqlite-d1";
 
 describe("global AI guardrail configuration", () => {
@@ -29,15 +30,22 @@ describe("global AI guardrail configuration", () => {
   });
 
   it("reserves a conservative request amount for configured provider models", () => {
-    const geminiBody = JSON.stringify({ model: "gemini-3.5-flash-lite", input: [{ type: "text", text: "synthetic prompt" }] });
+    const geminiBody = JSON.stringify({ model: "gemini-3.5-flash-lite", input: [{ type: "text", text: "synthetic prompt" }], generation_config: { max_output_tokens: 8192 } });
     expect(requestReservation("gemini", "gemini-3.5-flash-lite", geminiBody, 0, 0)).toBeGreaterThanOrEqual(20_480);
     expect(requestReservation("gemini", "gemini-3.5-flash-lite", geminiBody, 50_000, 0)).toBe(50_000);
+    const categoryBody = JSON.stringify({ model: "gemini-3.5-flash-lite", input: [{ type: "text", text: "synthetic prompt" }], generation_config: { max_output_tokens: 65_536 } });
+    const categoryInput = Math.ceil(new TextEncoder().encode(categoryBody).byteLength / 4);
+    const categoryExpected = costUsdMicros({ input: categoryInput, output: 65_536, thinking: 0, cached: 0, total: categoryInput + 65_536 }, pricingFor("gemini", "gemini-3.5-flash-lite", 0)!);
+    expect(requestReservation("gemini", "gemini-3.5-flash-lite", categoryBody, 0, 0)).toBe(categoryExpected);
+    expect(requestReservation("gemini", "gemini-3.5-flash-lite", categoryBody, 0, 0)).toBeGreaterThan(requestReservation("gemini", "gemini-3.5-flash-lite", geminiBody, 0, 0));
     const jevBody = JSON.stringify({ model: "jev-latest", questions: { item_0: {}, item_1: {} } });
     expect(requestReservation("jev", "jev-latest", jevBody, 0, 0)).toBeGreaterThan(0);
     // The OpenCode free model prices at zero, so only the configured floor remains.
     expect(requestReservation("jev", "jev-1.13-free", jevBody, 5_000, 0)).toBe(5_000);
     expect(requestReservation("jev", "jev-1.13", jevBody, 0, 0)).toBeGreaterThan(0);
     expect(() => requestReservation("gemini", "unpriced-model", geminiBody, 0, 0)).toThrow(AiPausedError);
+    const invalidCap = JSON.stringify({ model: "gemini-3.5-flash-lite", generation_config: { max_output_tokens: -1 } });
+    expect(() => requestReservation("gemini", "gemini-3.5-flash-lite", invalidCap, 0, 0)).toThrow(AiPausedError);
     expect(() => requestReservation("jev", "unpriced-model", jevBody, 0, 0)).toThrow(AiPausedError);
   });
 

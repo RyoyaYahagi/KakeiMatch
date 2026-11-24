@@ -1,24 +1,51 @@
 import { readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { handleAdminRequest, type AdminEnv } from "./admin";
+import { afterEach, describe, expect, it } from "vitest";
+import { ADMIN_OPERATOR_PRINCIPAL_ID, handleAdminRequest, type AdminEnv } from "./admin";
 import { sqliteD1 } from "./test-support/sqlite-d1";
 
-const authState = vi.hoisted(() => ({ userId: "admin-user" as string | null }));
-vi.mock("./account-auth", () => ({
-  getAccountSession: async () => authState.userId ? {
-    user: { id: authState.userId, email: `${authState.userId}@example.test`, name: "Synthetic" },
-    session: { id: "synthetic-session", expiresAt: new Date(Date.now() + 60_000) },
-  } : null,
-}));
-
-const migrationNames = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql",
-  "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql", "0016_feedback_inbox.sql", "0017_jev_upstream_circuits.sql"];
+const migrationNames = [
+  "0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql",
+  "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql",
+  "0015_uncounted_provider_errors.sql", "0016_category_suggestion_flows.sql", "0016_feedback_inbox.sql",
+  "0017_jev_upstream_circuits.sql", "0018_native_app_auth.sql", "0019_admin_operator_principal.sql",
+];
 const origin = "https://kakeimatch.example";
+const teamDomain = "https://example.cloudflareaccess.com";
+const audience = "admin-aud";
 const now = Math.floor(Date.parse("2026-10-08T04:00:00Z") / 1000);
 let sqlite: DatabaseSync | undefined;
 
-afterEach(() => { sqlite?.close(); sqlite = undefined; authState.userId = "admin-user"; });
+afterEach(() => { sqlite?.close(); sqlite = undefined; });
+
+function encode(value: unknown): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+async function createAccessFixture() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const jwks = { keys: [{ ...publicJwk, kid: "key-1", alg: "RS256", use: "sig" }] };
+  const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(jwks), { headers: { "content-type": "application/json" } });
+  const sign = async (claims: Record<string, unknown>) => {
+    const header = encode({ alg: "RS256", typ: "JWT", kid: "key-1" });
+    const payload = encode({ iss: teamDomain, aud: [audience], exp: now + 60, ...claims });
+    const signature = new Uint8Array(
+      await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${header}.${payload}`)),
+    );
+    let binary = "";
+    for (const byte of signature) binary += String.fromCharCode(byte);
+    return `${header}.${payload}.${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+  };
+  return { fetchImpl, sign };
+}
 
 async function setup() {
   sqlite = new DatabaseSync(":memory:");
@@ -41,20 +68,49 @@ async function setup() {
     VALUES ('feedback-open',?,?, 'bug','new','encrypted-original','safe summary',?),
     ('feedback-expired',?,?, 'question','new','expired-original','expired',?)`)
     .bind(now - 50, now - 40, now + 86400, now - 200, now - 200, now - 1).run();
-  await db.prepare("INSERT INTO admin_audit_log(id,admin_user_id,action,target_type,target_id,created_at) VALUES ('audit1','admin-user','feedback_analyzed','feedback','feedback-open',?)")
+  await db.prepare("INSERT INTO admin_audit_log(id,admin_user_id,action,target_type,target_id,created_at) VALUES ('audit1','access:seed-sub','feedback_analyzed','feedback','feedback-open',?)")
     .bind(now - 10).run();
-  const env: AdminEnv = { ACCOUNT_DB: db, BETTER_AUTH_SECRET: "synthetic-better-auth-secret-long-enough",
-    CLOUD_ACCOUNT_ORIGIN: origin, ADMIN_USER_IDS: "admin-user" };
+  const env: AdminEnv = {
+    ACCOUNT_DB: db,
+    CF_ACCESS_TEAM_DOMAIN: teamDomain,
+    CF_ACCESS_AUD: audience,
+    ADMIN_ACCESS_EMAILS: "admin@example.test",
+  };
   return { db, env };
 }
 
-const get = (path: string) => new Request(`${origin}${path}`);
+const get = (path: string, jwt?: string) => new Request(`${origin}${path}`, jwt ? { headers: { "cf-access-jwt-assertion": jwt } } : undefined);
 
 describe("admin D1 APIs", () => {
-  it("aggregates only account and AI operations metadata and purges expired inbox data", async () => {
+  it("lists feedback for an allowed Access email without cookies or session, and records access:<sub> in audit logs", async () => {
     const { db, env } = await setup();
-    const options = { nowSeconds: () => now };
-    const overview = await handleAdminRequest(get("/api/admin/overview"), env, options);
+    const { fetchImpl, sign } = await createAccessFixture();
+    const jwt = await sign({ email: "admin@example.test", sub: "admin-sub-1" });
+    const options = { fetchImpl, nowSeconds: () => now };
+
+    const feedback = await handleAdminRequest(get("/api/admin/feedback", jwt), env, options);
+    expect(feedback.status).toBe(200);
+    expect(feedback.headers.get("cache-control")).toBe("no-store");
+    expect(await feedback.json()).toMatchObject({
+      items: [{ id: "feedback-open", kind: "bug", status: "new", message: "safe summary" }],
+    });
+
+    const patch = await handleAdminRequest(new Request(`${origin}/api/admin/feedback/feedback-open/status`, {
+      method: "PATCH",
+      headers: { origin, "content-type": "application/json", "cf-access-jwt-assertion": jwt },
+      body: JSON.stringify({ status: "reviewing" }),
+    }), env, options);
+    expect(patch.status).toBe(200);
+
+    const audit = await handleAdminRequest(get("/api/admin/audit", jwt), env, options);
+    expect(await audit.json()).toMatchObject({
+      entries: [
+        { adminUserId: "access:admin-sub-1", action: "feedback_status_updated", targetId: "feedback-open" },
+        { adminUserId: "access:seed-sub", action: "feedback_analyzed", targetId: "feedback-open" },
+      ],
+    });
+
+    const overview = await handleAdminRequest(get("/api/admin/overview", jwt), env, options);
     expect(overview.status).toBe(200);
     expect(overview.headers.get("cache-control")).toBe("no-store");
     expect(await overview.json()).toMatchObject({
@@ -66,42 +122,77 @@ describe("admin D1 APIs", () => {
     const expired = await db.prepare("SELECT id FROM feedback_submissions WHERE id='feedback-expired'").bind().first();
     expect(expired).toBeNull();
 
-    const costs = await handleAdminRequest(get("/api/admin/ai/costs?month=2026-10"), env, options);
+    const costs = await handleAdminRequest(get("/api/admin/ai/costs?month=2026-10", jwt), env, options);
     expect(await costs.json()).toMatchObject({ totalUsdMicros: 350, providers: { gemini: { requests: 1 }, jev: { requests: 1 } } });
-    const users = await handleAdminRequest(get("/api/admin/users"), env, options);
+
+    const users = await handleAdminRequest(get("/api/admin/users", jwt), env, options);
     const userBody = await users.json() as { users: Array<{ id: string; kind: string; plan: string; enabled: boolean; createdAt: number }> };
+    expect(userBody.users.some(user => user.id === ADMIN_OPERATOR_PRINCIPAL_ID)).toBe(false);
     expect(userBody.users.find(user => user.id === "guest-user")).toMatchObject({ kind: "guest", plan: "guest", enabled: true, createdAt: now - 3600 });
     expect(JSON.stringify(userBody)).not.toContain("@example");
-    const audit = await handleAdminRequest(get("/api/admin/audit"), env, options);
-    expect(await audit.json()).toMatchObject({ entries: [{ adminUserId: "admin-user", action: "feedback_analyzed", targetId: "feedback-open" }] });
   });
 
   it("keeps calendar-month costs outside the rolling 30-day window and counts every error group", async () => {
     const { db, env } = await setup();
+    const { fetchImpl, sign } = await createAccessFixture();
     const monthEnd = Date.parse("2026-10-31T14:59:00Z") / 1000;
     const monthStart = Date.parse("2026-09-30T15:01:00Z") / 1000;
+    const jwt = await sign({ email: "admin@example.test", sub: "admin-sub-1", exp: monthEnd + 60 });
     await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,provider,requested_model,model,estimated_cost_usd_micros,metering_status,dispatched_at)
       VALUES ('month-start','member-user','gemini','model','model',777,'metered',?)`).bind(monthStart).run();
     for (let index = 0; index < 12; index++) await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,provider,requested_model,model,metering_status,safe_error_code,dispatched_at)
       VALUES (?,'member-user','gemini','model','model','unknown',?,?)`).bind(`error-${index}`, `safe_code_${index}`, monthEnd - 10).run();
-    const response = await handleAdminRequest(get("/api/admin/overview"), env, { nowSeconds: () => monthEnd });
+    const response = await handleAdminRequest(get("/api/admin/overview", jwt), env, { fetchImpl, nowSeconds: () => monthEnd });
     const data = await response.json() as { ai: { monthUsdMicros: number; last30DaysErrors: number }; recentErrors: unknown[] };
     expect(data.ai.monthUsdMicros).toBe(1127);
     expect(data.ai.last30DaysErrors).toBe(14);
     expect(data.recentErrors).toHaveLength(10);
   });
 
-  it("rejects unauthenticated and non-admin requests and blocks cross-origin mutations", async () => {
+  it("rejects missing, invalid, wrong-aud, expired, disallowed, service-token, unconfigured, and cross-origin requests", async () => {
     const { env } = await setup();
-    authState.userId = null;
-    expect((await handleAdminRequest(get("/api/admin/users"), env, { nowSeconds: () => now })).status).toBe(401);
-    authState.userId = "member-user";
-    const forbidden = await handleAdminRequest(get("/api/admin/users"), env, { nowSeconds: () => now });
-    expect(forbidden.status).toBe(403);
-    expect(forbidden.headers.get("cache-control")).toBe("no-store");
-    authState.userId = "admin-user";
-    const mutation = new Request(`${origin}/api/admin/feedback/feedback-open/status`, { method: "PATCH",
-      headers: { origin: "https://attacker.example", "content-type": "application/json" }, body: JSON.stringify({ status: "resolved" }) });
-    expect((await handleAdminRequest(mutation, env, { nowSeconds: () => now })).status).toBe(403);
+    const { fetchImpl, sign } = await createAccessFixture();
+    const otherSigner = await createAccessFixture();
+    const options = { fetchImpl, nowSeconds: () => now };
+
+    const validJwt = await sign({ email: "admin@example.test", sub: "admin-sub-1" });
+    const wrongSigJwt = await otherSigner.sign({ email: "admin@example.test", sub: "admin-sub-1" });
+    const wrongAudJwt = await sign({ email: "admin@example.test", sub: "admin-sub-1", aud: ["other-aud"] });
+    const expiredJwt = await sign({ email: "admin@example.test", sub: "admin-sub-1", exp: now - 1 });
+    const disallowedJwt = await sign({ email: "member@example.test", sub: "member-sub-1" });
+    const serviceTokenJwt = await sign({ sub: "svc-sub-1", common_name: "svc" });
+
+    for (const req of [
+      get("/api/admin/feedback"),
+      get("/api/admin/feedback", wrongSigJwt),
+      get("/api/admin/feedback", wrongAudJwt),
+      get("/api/admin/feedback", expiredJwt),
+      get("/api/admin/feedback", disallowedJwt),
+      get("/api/admin/feedback", serviceTokenJwt),
+    ]) {
+      const response = await handleAdminRequest(req, env, options);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("cache-control")).toBe("no-store");
+    }
+
+    const mutation = new Request(`${origin}/api/admin/feedback/feedback-open/status`, {
+      method: "PATCH",
+      headers: { origin: "https://attacker.example", "content-type": "application/json", "cf-access-jwt-assertion": validJwt },
+      body: JSON.stringify({ status: "resolved" }),
+    });
+    expect((await handleAdminRequest(mutation, env, options)).status).toBe(403);
+
+    const noDomainEnv: AdminEnv = { ...env };
+    delete noDomainEnv.CF_ACCESS_TEAM_DOMAIN;
+    expect((await handleAdminRequest(get("/api/admin/feedback", validJwt), noDomainEnv, options)).status).toBe(503);
+
+    const noAudEnv: AdminEnv = { ...env };
+    delete noAudEnv.CF_ACCESS_AUD;
+    expect((await handleAdminRequest(get("/api/admin/feedback", validJwt), noAudEnv, options)).status).toBe(503);
+
+    const neitherEnv: AdminEnv = { ...env };
+    delete neitherEnv.CF_ACCESS_TEAM_DOMAIN;
+    delete neitherEnv.CF_ACCESS_AUD;
+    expect((await handleAdminRequest(get("/api/admin/feedback", validJwt), neitherEnv, options)).status).toBe(503);
   });
 });
