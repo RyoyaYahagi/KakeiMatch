@@ -381,9 +381,11 @@ extension ReceiptModelTests {
         await pngModel.startReading()?.value
         #expect(pngModel.error == nil)
         let pngRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
-        let pngPayload = try #require(try JSONSerialization.jsonObject(with: try #require(pngRequest.httpBody)) as? [String: Any])
+        let pngBodyData = try #require(pngRequest.httpBody)
+        let pngPayload = try #require(try JSONSerialization.jsonObject(with: pngBodyData) as? [String: Any])
         #expect(pngPayload["contentType"] as? String == "image/jpeg")
-        let uploadedPNG = try #require(Data(base64Encoded: try #require(pngPayload["imageBase64"] as? String)))
+        let pngEncoded = try #require(pngPayload["imageBase64"] as? String)
+        let uploadedPNG = try #require(Data(base64Encoded: pngEncoded))
         #expect(KMUploadImage.matches(uploadedPNG, contentType: "image/jpeg"))
         #expect(try await pngRepositories.receipts.receiptImage(blobId: "synthetic-image") == Self.syntheticPNG)
     }
