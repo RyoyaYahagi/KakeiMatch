@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "cf dev",
+    "dev": "vite",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node test/sw.test.mjs && node --experimental-strip-types --test test/browser-bundle-secrets.test.mjs",
@@ -15,7 +15,7 @@
     "test:diagnostics-e2e": "node test/browser-diagnostics.mjs",
     "test:encryption-e2e": "node test/browser-encryption.mjs",
     "test:screen-lock-removal-e2e": "node test/browser-screen-lock-removal.mjs",
-    "build": "tsc --noEmit && cf build",
+    "build": "tsc --noEmit && vite build",
     "icons": "node scripts/render-icons.mjs",
     "screenshots:readme": "node scripts/readme-screenshots.mjs",
     "screenshots:migration": "node scripts/migration-screenshots.mjs",
@@ -82,8 +82,6 @@
     "zod": "4.6.6"
   },
   "devDependencies": {
-    "@cloudflare/vite-plugin": "1.62.0",
-    "cf": "1.0.0-beta.5",
     "playwright-core": "1.58.2",
     "typescript": "5.9.2",
     "vite": "8.3.3"

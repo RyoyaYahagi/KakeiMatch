@@ -9,7 +9,7 @@ The root Next.js application and its server-side Actual integration are legacy r
 ## A — production runtime
 
 - `apps/pwa/**`: the Vite PWA, browser UI, local IndexedDB storage, browser Actual integration, statement import, reconciliation, backup/restore, service worker, and Cloudflare Worker entrypoint. `apps/pwa/vite.config.ts` builds the Cloudflare application and aliases `@` to root `src`.
-- `workers/ai-gateway/**`: account authentication and AI API handlers. `apps/pwa/src/worker.ts` imports `workers/ai-gateway/src/account-auth.ts` and `workers/ai-gateway/src/worker.ts`. Its D1 migrations and bindings support Cloud account and AI use.
+- `workers/ai-gateway/**`: account authentication and AI API handlers. `workers/ai-gateway/src/hosting.ts` imports `workers/ai-gateway/src/account-auth.ts` and `workers/ai-gateway/src/worker.ts`. Its D1 migrations and bindings support Cloud account and AI use.
 - The PWA Cloudflare configuration uses the Issue #39 preview by default. Production configuration is selected only by the explicit `production-deploy` mode and requires account D1 settings. Root scripts expose `deploy:preview` for the Issue #39 preview and `deploy` for the explicit production mode; only the dedicated preview was deployed for synthetic verification; production was not deployed.
 - Browser-safe root modules imported by the PWA:
   - `src/lib/local-data.ts`: IndexedDB repository used by receipt, statement, reconciliation, and backup features.

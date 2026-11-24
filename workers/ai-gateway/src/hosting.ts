@@ -1,10 +1,10 @@
-import { handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
-import { handleRequest as handleAiRequest } from '../../../workers/ai-gateway/src/worker';
-import { requireAdmin, type AdminEnv } from '../../../workers/ai-gateway/src/admin';
-import { handleAdminGatewayRequest } from '../../../workers/ai-gateway/src/worker';
-import { purgeExpiredFeedback } from '../../../workers/ai-gateway/src/feedback';
+import { handleAuthRequest } from './account-auth';
+import { handleRequest as handleAiRequest } from './worker';
+import { requireAdmin, type AdminEnv } from './admin';
+import { handleAdminGatewayRequest } from './worker';
+import { purgeExpiredFeedback } from './feedback';
 import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
-import { appleAppSiteAssociation, handleNativeRequest, purgeNativeCredentials, type NativeEnv } from '../../../workers/ai-gateway/src/native-auth';
+import { appleAppSiteAssociation, handleNativeRequest, purgeNativeCredentials, type NativeEnv } from './native-auth';
 
 type AppEnv = Parameters<typeof handleAuthRequest>[1] & Parameters<typeof handleAiRequest>[1] & AdminEnv & NativeEnv & {
   ASSETS: { fetch(request: Request): Promise<Response> };
