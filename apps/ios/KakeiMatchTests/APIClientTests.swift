@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import CryptoKit
 import Foundation
 import ImageIO
@@ -7,6 +8,27 @@ import Synchronization
 import Testing
 import UIKit
 @testable import KakeiMatch
+
+
+private func makeRedactedAPIReceipt() async throws -> KMRedactedReceiptImage {
+    let context = try #require(CGContext(data: nil, width: 640, height: 240, bitsPerComponent: 8,
+        bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue))
+    context.setFillColor(gray: 1, alpha: 1)
+    context.fill(CGRect(x: 0, y: 0, width: 640, height: 240))
+    let font = CTFontCreateWithName("Helvetica" as CFString, 40, nil)
+    for (index, text) in ["Synthetic Market", "2026/11/24", "TOTAL 1200"].enumerated() {
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            NSAttributedString.Key(kCTFontAttributeName as String): font,
+        ]))
+        context.textPosition = CGPoint(x: 30, y: CGFloat(180 - index * 65))
+        CTLineDraw(line, context)
+    }
+    let bytes = NSMutableData()
+    let destination = try #require(CGImageDestinationCreateWithData(bytes, "public.png" as CFString, 1, nil))
+    CGImageDestinationAddImage(destination, try #require(context.makeImage()), nil)
+    #expect(CGImageDestinationFinalize(destination))
+    return try await KMRedactedReceiptImage.prepare(data: bytes as Data, contentType: "image/png")
+}
 
 private final class APIStub: URLProtocol, @unchecked Sendable {
     struct Reply: Sendable {
@@ -239,7 +261,7 @@ struct APIClientTests {
         case .token: _ = try await client.accessToken(allowGuest: false)
         case .usage: _ = try await client.usage()
         case .costs: _ = try await client.costs(month: KMYearMonth("2027-01"))
-        case .receipt: _ = try await client.readReceipt(image: KMUploadImage(data: Data([0xff, 0xd8, 0xff]), contentType: "image/jpeg"), flowID: Self.flow)
+        case .receipt: _ = try await client.readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
         case .payroll:
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
             let image = UIGraphicsImageRenderer(size: CGSize(width: 10, height: 10), format: format).pngData { context in
@@ -860,7 +882,7 @@ struct APIClientTests {
         try await api.createNativeGuest()
         #expect(try await api.accessToken() == String(repeating: "T", count: 43))
         #expect(store.read("ai-token") == nil)
-        _ = try await api.readReceipt(image: KMUploadImage(data: Data([0xff, 0xd8, 0xff]), contentType: "image/jpeg"), flowID: Self.flow)
+        _ = try await api.readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
         #expect(appAttest.hashes.withLock { $0.count } == 3)
         #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
             "/api/native/config", "/api/native/challenge", "/api/native/attest",

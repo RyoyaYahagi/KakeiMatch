@@ -130,7 +130,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 ## 画像・音声の前処理
 
-**通常レシート**はPWAの送信前縮小・変換・自動マスキングが存在しない。保存時はJPEG/PNG/WebP・署名・10 MiB上限、送信時は元bytesをBase64化し6 MiB超を拒否する。iOSの `KMUploadImage` も送信前は署名・MIME一致・6 MiBを検証し、元bytesを変更しない。HEICは拒否する。写真選択UIでHEIC変換を追加する場合は、PWAとの差分として別途判断する。元画像のメタデータ除去を今回のレシートAPIの保証にしない。[PWA (2026/10), local-receipts.ts:analyze; Security, Cloud account and AI]
+**通常レシート**はPWAの送信前縮小・変換・自動マスキングが存在しない。保存時はJPEG/PNG/WebP・署名・10 MiB上限、送信時は元bytesをBase64化し6 MiB超を拒否する。iOS は送信前に画像を JPEG に描き直し、元画像のメタデータを除去する。端末内の文字・バーコード検出で機密情報を隠し、再検証に通った `KMRedactedReceiptImage` だけを送信する。マスクを検証できない場合は送信を停止する。HEIC は拒否する。[PWA (2026/10), local-receipts.ts:analyze; Security, Cloud account and AI]
 
 **給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。`Features/Payroll/PayrollView` がマスキング画像・同意を表示し、送信後/失敗/画面移動時に画像を破棄する。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: KMUploadMedia.swift / Features/Payroll/PayrollView.swift]
 
@@ -178,3 +178,9 @@ CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削�
 [Apple App Attest, 2026/10] Apple. “DCAppAttestService.” https://developer.apple.com/documentation/devicecheck/dcappattestservice / “Establishing your app’s integrity.” https://developer.apple.com/documentation/devicecheck/establishing-your-app-s-integrity / “Validating apps that connect to your server.” https://developer.apple.com/documentation/devicecheck/validating-apps-that-connect-to-your-server
 
 [Apple Web Auth, 2026/10] Apple. “ASWebAuthenticationSession.” https://developer.apple.com/documentation/authenticationservices/aswebauthenticationsession
+
+## レシートのマスキング評価
+
+macOS で `swift run --package-path apps/ios km-receipt-redaction-eval IMAGE_DIRECTORY GT.json` を実行する。GT は `file`（画像の相対パス）、`fields`（`kind` が `total`、`date`、`merchant`、`item` のいずれかで、`text` が期待する文字列）、`sensitive`（左下原点、0〜1 の座標で表した機密領域の矩形）を持つ配列。矩形の JSON 形式は `[[x, y], [width, height]]`。
+
+出力は項目ごとの保持数と分母、未被覆の機密領域数、送信停止数、処理時間の p95 を含む。停止した画像は保持率の分母に含まれる。評価画像と GT は端末内で処理し、出力にも含めない。

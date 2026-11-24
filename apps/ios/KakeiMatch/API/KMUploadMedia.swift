@@ -5,12 +5,8 @@ import UIKit
 
 /// Receipt upload image: re-encoded to upright JPEG without EXIF/GPS metadata before upload.
 struct KMUploadImage: Sendable {
-    static let maxUploadBytes = 6 * 1024 * 1024
-    static let maxReceiptInputBytes = 20 * 1024 * 1024
-    private static let maxReceiptPixelDimension = 20_000
-    private static let maxReceiptPixelCount: Int64 = 100_000_000
-    private static let receiptJPEGQuality: CGFloat = 0.9
-    private static let maxResizeAttempts = 12
+    static let maxUploadBytes = KMVisionRedactor.maxUploadBytes
+    static let maxReceiptInputBytes = KMVisionRedactor.maxReceiptInputBytes
 
     let data: Data
     let contentType: String
@@ -21,160 +17,17 @@ struct KMUploadImage: Sendable {
         self.data = data; self.contentType = contentType
     }
 
-    /// Redraws receipt JPEG/PNG/WebP into an upright JPEG raster without metadata, downscaling only if > maxBytes.
     static func prepareReceipt(data: Data, contentType: String, maxBytes: Int = maxUploadBytes) throws -> Self {
-        guard maxBytes > 0, maxBytes <= Self.maxUploadBytes,
-              !data.isEmpty, data.count <= Self.maxReceiptInputBytes,
-              Self.matches(data, contentType: contentType) else {
+        do {
+            let clean = try KMVisionRedactor.prepareJPEG(data: data, contentType: contentType, maxBytes: maxBytes)
+            return try Self(data: clean, contentType: "image/jpeg")
+        } catch {
             throw KMAPIError.invalidRequest
-        }
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-              CGImageSourceGetCount(source) > 0,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
-              let rawWidth = (properties[kCGImagePropertyPixelWidth as String] as? NSNumber)?.intValue,
-              let rawHeight = (properties[kCGImagePropertyPixelHeight as String] as? NSNumber)?.intValue,
-              (1...Self.maxReceiptPixelDimension).contains(rawWidth),
-              (1...Self.maxReceiptPixelDimension).contains(rawHeight),
-              Int64(rawWidth) * Int64(rawHeight) <= Self.maxReceiptPixelCount else {
-            throw KMAPIError.invalidRequest
-        }
-        guard let upright = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: max(rawWidth, rawHeight),
-            kCGImageSourceShouldCacheImmediately: true
-        ] as CFDictionary),
-              upright.width > 0, upright.height > 0 else {
-            throw KMAPIError.invalidRequest
-        }
-
-        var width = upright.width
-        var height = upright.height
-        var output = try Self.encodeCleanJPEG(upright, width: width, height: height, quality: Self.receiptJPEGQuality)
-
-        for _ in 0..<Self.maxResizeAttempts where output.count > maxBytes && (width > 1 || height > 1) {
-            let ratio = sqrt(Double(maxBytes) / Double(output.count)) * 0.9
-            let scale = min(0.85, max(0.5, ratio))
-            var nextWidth = max(1, Int((Double(width) * scale).rounded(.down)))
-            var nextHeight = max(1, Int((Double(height) * scale).rounded(.down)))
-            if nextWidth == width && width > 1 { nextWidth = width - 1 }
-            if nextHeight == height && height > 1 { nextHeight = height - 1 }
-            width = nextWidth
-            height = nextHeight
-            output = try Self.encodeCleanJPEG(upright, width: width, height: height, quality: Self.receiptJPEGQuality)
-        }
-
-        guard output.count <= maxBytes else {
-            throw KMAPIError.invalidRequest
-        }
-        return try Self(data: output, contentType: "image/jpeg")
-    }
-
-    private static func encodeCleanJPEG(_ image: CGImage, width: Int, height: Int, quality: CGFloat) throws -> Data {
-        try autoreleasepool {
-            let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
-            guard let context = CGContext(
-                data: nil,
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bytesPerRow: 0,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-            ) else {
-                throw KMAPIError.invalidRequest
-            }
-            context.interpolationQuality = .high
-            let bounds = CGRect(x: 0, y: 0, width: width, height: height)
-            context.setFillColor(red: 1, green: 1, blue: 1, alpha: 1)
-            context.fill(bounds)
-            context.draw(image, in: bounds)
-            guard let flattened = context.makeImage() else {
-                throw KMAPIError.invalidRequest
-            }
-            let destinationData = NSMutableData()
-            guard let destination = CGImageDestinationCreateWithData(
-                destinationData,
-                "public.jpeg" as CFString,
-                1,
-                nil
-            ) else {
-                throw KMAPIError.invalidRequest
-            }
-            let options: [CFString: Any] = [
-                kCGImageDestinationLossyCompressionQuality: quality
-            ]
-            CGImageDestinationAddImage(destination, flattened, options as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else {
-                throw KMAPIError.invalidRequest
-            }
-            return try Self.stripJPEGMetadataSegments(destinationData as Data)
-        }
-    }
-
-    /// Removes APP1 (EXIF/XMP), APP3-13, APP15, and COM segments (including ImageIO's minimal sRGB APP1) before SOS.
-    private static func stripJPEGMetadataSegments(_ data: Data) throws -> Data {
-        try data.withUnsafeBytes { rawBuffer in
-            let bytes = rawBuffer.bindMemory(to: UInt8.self)
-            guard bytes.count >= 4, bytes[0] == 0xff, bytes[1] == 0xd8 else {
-                throw KMAPIError.invalidRequest
-            }
-            var output = Data()
-            output.reserveCapacity(bytes.count)
-            output.append(contentsOf: [0xff, 0xd8])
-
-            var index = 2
-            var sawStartOfScan = false
-            while index < bytes.count {
-                guard bytes[index] == 0xff else { throw KMAPIError.invalidRequest }
-                while index < bytes.count, bytes[index] == 0xff { index += 1 }
-                guard index < bytes.count else { throw KMAPIError.invalidRequest }
-                let marker = bytes[index]
-                index += 1
-
-                if marker == 0x00 { throw KMAPIError.invalidRequest }
-                if marker == 0xd9 {
-                    output.append(contentsOf: [0xff, 0xd9])
-                    break
-                }
-                if marker == 0xda {
-                    sawStartOfScan = true
-                    output.append(contentsOf: [0xff, 0xda])
-                    if let base = bytes.baseAddress, index < bytes.count {
-                        output.append(base.advanced(by: index), count: bytes.count - index)
-                    }
-                    break
-                }
-                if (0xd0...0xd7).contains(marker) || marker == 0x01 || marker == 0xd8 {
-                    output.append(contentsOf: [0xff, marker])
-                    continue
-                }
-
-                guard index + 2 <= bytes.count else { throw KMAPIError.invalidRequest }
-                let length = (Int(bytes[index]) << 8) | Int(bytes[index + 1])
-                guard length >= 2, index + length <= bytes.count else { throw KMAPIError.invalidRequest }
-
-                let isMetadata = marker == 0xe1 || (0xe3...0xed).contains(marker) || marker == 0xef || marker == 0xfe
-                if !isMetadata, let base = bytes.baseAddress {
-                    output.append(contentsOf: [0xff, marker])
-                    output.append(base.advanced(by: index), count: length)
-                }
-                index += length
-            }
-
-            guard sawStartOfScan else { throw KMAPIError.invalidRequest }
-            return output
         }
     }
 
     static func matches(_ data: Data, contentType: String) -> Bool {
-        let bytes = Array(data.prefix(12))
-        switch contentType {
-        case "image/jpeg": return bytes.starts(with: [0xff, 0xd8, 0xff])
-        case "image/png": return bytes.starts(with: [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
-        case "image/webp": return bytes.count >= 12 && String(bytes: bytes[0..<4], encoding: .ascii) == "RIFF" && String(bytes: bytes[8..<12], encoding: .ascii) == "WEBP"
-        default: return false
-        }
+        KMVisionRedactor.matches(data, contentType: contentType)
     }
 }
 
@@ -232,5 +85,17 @@ struct KMUploadAudio: Sendable {
         }
         guard valid else { throw KMAPIError.invalidRequest }
         self.data = data; self.contentType = contentType
+    }
+}
+
+struct KMRedactedReceiptImage: Sendable {
+    let upload: KMUploadImage
+
+    private init(upload: KMUploadImage) { self.upload = upload }
+
+    static func prepare(data: Data, contentType: String) async throws -> Self {
+        let clean = try KMUploadImage.prepareReceipt(data: data, contentType: contentType)
+        let result = try await KMVisionRedactor.redactPreparedJPEG(clean.data)
+        return try Self(upload: KMUploadImage(data: result.data, contentType: "image/jpeg"))
     }
 }
