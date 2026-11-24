@@ -1,4 +1,4 @@
-import { handleAccountRequest, handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
+import { handleAuthRequest } from '../../../workers/ai-gateway/src/account-auth';
 import { handleRequest as handleAiRequest } from '../../../workers/ai-gateway/src/worker';
 import { requireAdmin, type AdminEnv } from '../../../workers/ai-gateway/src/admin';
 import { handleAdminGatewayRequest } from '../../../workers/ai-gateway/src/worker';
@@ -20,6 +20,29 @@ function secureApiResponse(response: Response): Response {
   return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
 }
 
+function jsonError(status: number, error: string): Response {
+  return new Response(JSON.stringify({ error }), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+  });
+}
+
+// Paths the admin page needs: the document, the theme script and the built bundles. Served only after requireAdmin passes.
+function isAdminDocumentPath(path: string): boolean {
+  return path === '/admin' || path.startsWith('/admin/') || path === '/admin.html';
+}
+
+function isAdminStaticPath(path: string): boolean {
+  return path === '/theme.js' || path.startsWith('/assets/');
+}
+
+// Retired PWA screens and APIs. They answer 410 so clients see they are gone, while the code stays for a later cleanup.
+function isRetiredPath(path: string): boolean {
+  return path === '/' || path === '/index.html' ||
+    path.startsWith('/api/auth/') || path.startsWith('/api/account/') || path.startsWith('/api/ai/') ||
+    path === '/api/contact' || path.startsWith('/api/contact/');
+}
+
 const appWorker = {
   async scheduled(event: { scheduledTime: number }, env: AppEnv): Promise<void> {
     await purgeExpiredFeedback(env.ACCOUNT_DB, Math.floor(event.scheduledTime / 1000));
@@ -29,29 +52,18 @@ const appWorker = {
     const path = new URL(request.url).pathname;
     if (path === '/.well-known/apple-app-site-association') return secureApiResponse(appleAppSiteAssociation(request, env));
     if (path.startsWith('/api/native/')) return secureApiResponse(await handleNativeRequest(request, env));
-    if (path === '/admin' || path.startsWith('/admin/') || path === '/admin.html') {
+    if (isAdminDocumentPath(path) || isAdminStaticPath(path)) {
       const auth = await requireAdmin(request, env);
       if ('response' in auth) return secureApiResponse(auth.response);
       if (request.method !== 'GET' && request.method !== 'HEAD') return secureApiResponse(new Response(null, { status: 405 }));
-      const assetUrl = new URL('/admin.html', request.url);
+      const assetUrl = new URL(isAdminDocumentPath(path) ? '/admin.html' : path, request.url);
       return secureApiResponse(await env.ASSETS.fetch(new Request(assetUrl, { method: request.method })));
     }
     if (path === '/api/admin' || path.startsWith('/api/admin/')) {
       return secureApiResponse(await handleAdminGatewayRequest(request, env));
     }
-    if (path.startsWith('/api/auth/')) {
-      return secureApiResponse(await handleAuthRequest(request, env));
-    }
-    if (path.startsWith('/api/account/')) {
-      return secureApiResponse(await handleAccountRequest(request, env));
-    }
-    if (path.startsWith('/api/ai/') || path === '/api/contact' || path.startsWith('/api/contact/')) {
-      return secureApiResponse(await handleAiRequest(request, env));
-    }
-    return secureApiResponse(new Response(JSON.stringify({ error: 'not_found' }), {
-      status: 404,
-      headers: { 'content-type': 'application/json; charset=utf-8' },
-    }));
+    if (isRetiredPath(path)) return secureApiResponse(jsonError(410, 'gone'));
+    return secureApiResponse(jsonError(404, 'not_found'));
   },
 };
 

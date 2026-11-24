@@ -24,7 +24,7 @@ export default defineConfig(({ mode, isPreview }) => {
       compatibilityFlags: ['nodejs_compat'],
       entrypoint: './src/worker.ts',
       triggers: [{ type: 'scheduled', schedule: '0 18 * * *' }],
-      assets: { runWorkerFirst: ['/api/*', '/admin', '/admin/*', '/admin.html', '/.well-known/apple-app-site-association'] },
+      assets: { runWorkerFirst: true },
       env: {
         ASSETS: bindings.assets(),
         ACCOUNT_DB: bindings.d1({ name: databaseName, id: databaseId }),
@@ -45,18 +45,16 @@ export default defineConfig(({ mode, isPreview }) => {
         GITHUB_ISSUES_TOKEN: bindings.secret(),
         GITHUB_ISSUES_REPOSITORY: bindings.text('RyoyaYahagi/KakeiMatch'),
         ADMIN_USER_IDS: bindings.secret(),
+        ADMIN_ACCESS_EMAILS: bindings.secret(),
         CF_ACCESS_TEAM_DOMAIN: bindings.secret(),
         CF_ACCESS_AUD: bindings.secret(),
         FEEDBACK_ENCRYPTION_KEY: bindings.secret(),
-        OPENCODE_API_KEY: bindings.secret(),
-        OPENROUTER_API_KEY: bindings.secret(),
         AI_USER_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600039' : '600035', simple: { limit: 20, period: 60 } }),
         // Contact AI is not counted against a plan, so it gets its own tighter limit per identity and per address.
         CONTACT_RATE_LIMIT: bindings.rateLimit({ namespace: production ? '600146' : '600147', simple: { limit: 5, period: 60 } }),
         TURNSTILE_SITE_KEY: bindings.text(turnstileSiteKey),
         TURNSTILE_SECRET_KEY: bindings.secret(),
         GEMINI_MODEL: bindings.text('gemini-3.5-flash-lite'),
-        JEV_PROVIDER: bindings.text('opencode'),
       },
     },
   };

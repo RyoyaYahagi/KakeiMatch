@@ -7,6 +7,7 @@ import { AppAttestAssertionError } from './app-attest';
 import { handleRequest as handleWebRequest } from './worker';
 import { reserveFlow, dayKey, type FlowLimits } from './receipt-ai-usage';
 import { addressDayMac } from './guest-ai';
+import { ADMIN_OPERATOR_PRINCIPAL_ID } from './admin';
 
 const { attest, assertion } = vi.hoisted(() => ({
   attest: vi.fn(async ({ attestation }: { attestation: string }) => {
@@ -53,7 +54,9 @@ function request(path: string, body?: unknown, headers: Record<string, string> =
   return new Request(`${origin}${path}`, { method, headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
 }
 const run = (path: string, body?: unknown, headers?: Record<string, string>, method?: string) => handleNativeRequest(request(path, body, headers, method), env, { nowSeconds: () => now });
-const count = (table: string) => (sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count;
+const count = (table: string) => ((table === 'user'
+  ? sqlite.prepare('SELECT COUNT(*) AS count FROM user WHERE id != ?').get(ADMIN_OPERATOR_PRINCIPAL_ID)
+  : sqlite.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get()) as { count: number }).count;
 async function issueChallenge(purpose: 'attest' | 'guest' | 'token' = 'attest', id = keyId, headers?: Record<string, string>) {
   return run('/api/native/challenge', { purpose, keyId: id }, headers);
 }

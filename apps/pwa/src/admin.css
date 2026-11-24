@@ -8,7 +8,6 @@
 .admin-header h1 { font-size: 1.5rem; }
 .admin-header .muted, .admin-section-heading .muted { margin: var(--space-1) 0 0; }
 .admin-eyebrow { margin: 0 0 var(--space-1); color: var(--muted); font: 700 .7rem/1.4 var(--font-num); letter-spacing: .12em; }
-.admin-exit { flex: none; }
 .admin-nav { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
 .admin-nav button { min-height: 44px; padding-inline: var(--space-3); background: transparent; color: var(--muted); font-size: .875rem; }
 .admin-nav button[aria-selected="true"] { background: var(--primary-soft); color: var(--primary); }

@@ -12,7 +12,7 @@ The `.kmb` portable backup includes local household records and retained receipt
 
 ## Secrets
 
-Never commit API keys, passwords, production environment files, Actual credentials, authentication secrets, real card statements, or real receipt images. Gemini, TypeSafe, Better Auth, and AI gateway signing secrets belong in Cloudflare secret bindings. Secret values must not appear in configuration source, logs, or browser bundles. Resource identifiers used to select production D1 are configuration values, not secrets; the production database must still be selected explicitly.
+Never commit API keys, passwords, production environment files, Actual credentials, authentication secrets, real card statements, or real receipt images. Gemini, Better Auth, and AI gateway signing secrets belong in Cloudflare secret bindings. Secret values must not appear in configuration source, logs, or browser bundles. Resource identifiers used to select production D1 are configuration values, not secrets; the production database must still be selected explicitly.
 
 ## Cloud account and AI
 
@@ -22,7 +22,7 @@ AI quota checks run independently of short-window abuse limits. The monthly coun
 
 Receipt analysis is an explicit user action. The browser sends the selected, locally saved image to the same-origin AI gateway, which forwards it to Gemini. The PWA accepts JPEG, PNG, or WebP images up to 10 MiB for local storage; the gateway accepts at most 6 MiB. The gateway does not persist request or response bodies, and the Gemini request uses `store: false`. Do not send a user's name, email, Actual data, household history, or other receipts.
 
-Category classification sends only validated merchant, total amount in yen, and at most 30 item names and amounts to TypeSafe Jev through the configured provider (OpenCode Console by default, OpenRouter when `JEV_PROVIDER=openrouter`). Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Provider responses are schema-validated before application code can save a suggestion. Failures leave the user's confirmed data intact and the category available for review.
+Category classification sends validated merchant, total amount in yen, and at most 30 item names and amounts to Gemini, together with the candidate category IDs, names, and classification criteria. MoneyForward category mapping also sends the source category name and candidate category IDs and names. Both use the same `GEMINI_API_KEY` and `GEMINI_MODEL` bindings as receipt extraction, plus its Gemini Interactions API, cost admission, metering, rate limit, and circuit controls. The Worker validates the returned choice, the probability for every candidate, and confidence before application code can save a suggestion. Classification has no OpenCode or OpenRouter route and no alternate-provider fallback; missing Gemini credentials or a provider failure stops classification. Never send images, user or receipt identifiers, storage keys, purchase history, Actual data, or other receipts. Failures leave the user's confirmed data intact and the category available for review.
 
 ### Native iOS boundary
 
@@ -32,7 +32,7 @@ All native identity/origin/environment settings must be explicitly configured; m
 
 ## Files and logs
 
-Receipt images and statement files are untrusted input. The PWA validates image signatures and size before local storage. It parses the complete supported PayPayカード CSV before saving the original file and canonical rows. Unsupported card formats remain disabled until their columns are verified. Statement CSV files and canonical rows never leave the device for Cloudflare, Gemini, Jev, or an Actual Sync Server. Confirmed statement-derived transactions can be registered in the device-local Actual browser engine.
+Receipt images and statement files are untrusted input. The PWA validates image signatures and size before local storage. It parses the complete supported PayPayカード CSV before saving the original file and canonical rows. Unsupported card formats remain disabled until their columns are verified. Statement CSV files and canonical rows never leave the device for Cloudflare, Gemini, or an Actual Sync Server. Confirmed statement-derived transactions can be registered in the device-local Actual browser engine.
 
 Avoid logging financial data, raw AI request/response bodies, provider errors that may contain user data, and secrets. Use synthetic or thoroughly anonymized fixtures; never commit family financial records. The PWA support Flight Recorder is an exception only for fixed, non-user-authored metadata: whitelisted screen/action names, safe error codes, network state, and relative event age. It must remain memory-only, must not accept free-form strings or stack traces, and is attached to support requests only after explicit user opt-in.
 
@@ -97,6 +97,12 @@ The Worker-only `@peculiar/x509@1.14.3` and `cbor-x@1.6.8` dependencies provide 
 The required lockfile audit found newly published findings in existing packages. This change selects compatible patches rather than suppressing them: Zod 4.6.6 ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5), reachable in Worker input validation), Vite 8.3.3 ([GHSA-587h-7wmj-h5pm](https://github.com/advisories/GHSA-587h-7wmj-h5pm), development tooling), Undici 7.30.1 ([GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c), development tooling), and legacy Next.js 15.5.28 ([GHSA-2464-fhr4-w9xw](https://github.com/advisories/GHSA-2464-fhr4-w9xw), [GHSA-p3m5-59mp-jv5r](https://github.com/advisories/GHSA-p3m5-59mp-jv5r)). The Next.js runtime remains excluded from the deployable PWA/Worker graph; it is patched to avoid retaining a newly reported critical finding in the development tree.
 
 The four audit commands above then report: pnpm production/all each have 2 high, 5 moderate and no critical findings; Gateway npm production/all each have 2 moderate and no high/critical findings. The remaining pnpm high findings are the previously reviewed `next > postcss@8.4.31` paths, not reachable from the production bundle, with the existing 2026-11-02 review expiry. Raw local outputs are retained with the run record; the PR's dependency-audit workflow retains its JSON outputs and command statuses as an artifact. This is a dependency/reachability check, not proof that the new authentication protocol has no vulnerabilities. Signed-device and production validation remain outstanding.
+
+Follow-up verified on 2026-11-19 (release review):
+
+Better Auth and Passkey are aligned at 1.7.26 in the Worker. The workspace also resolves both packages and the Drizzle adapter to 1.7.26 through its reviewed pnpm overrides, including the PWA importer, without changing Passkey, guest, or session configuration. This is later than the 1.7.7 fix floor and also clears the adapter's low advisory. Vitest is 4.1.12 in both audit trees. PostCSS is overridden to 8.5.28, which removes the four PostCSS entries from the expired exception baseline; no exception was renewed. The old `braces` exception is absent from current advisory data and is not retained.
+
+The four required audits reported: pnpm production 1 moderate, pnpm all 2 moderate, and AI Gateway npm production/all 0 advisories. There were no high or critical findings and the audit classifier reported `new/changed: 0; expired: 0`. The remaining pnpm moderate findings are `esbuild@0.18.20` through an optional legacy Drizzle Kit peer and `minimatch@10.2.6` through lint-only `eslint-config-next`; neither is in the deployable Worker bundle. The Worker npm audit is clean. Raw JSON and command statuses are retained by the PR's dependency-audit workflow artifact. This review does not change or claim validation of authentication behavior beyond the existing Worker suite and typecheck.
 
 ## Reporting
 

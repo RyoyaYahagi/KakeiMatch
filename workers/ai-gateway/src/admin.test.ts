@@ -1,10 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleAdminRequest, requireAdmin, type AdminEnv } from "./admin";
-
-const authState = vi.hoisted(() => ({ session: null as unknown }));
-vi.mock("./account-auth", () => ({
-  getAccountSession: async () => authState.session,
-}));
+import { describe, expect, it, vi } from "vitest";
+import { ADMIN_OPERATOR_PRINCIPAL_ID, handleAdminRequest, requireAdmin, type AdminEnv } from "./admin";
 
 function encode(value: unknown): string {
   const bytes = new TextEncoder().encode(JSON.stringify(value));
@@ -13,22 +8,53 @@ function encode(value: unknown): string {
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-async function accessToken(audience = "admin-aud", issuer = "https://example.cloudflareaccess.com", kid = "key-1") {
-  const pair = await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, ["sign", "verify"]);
+type TokenOptions = {
+  audience?: string;
+  issuer?: string;
+  kid?: string;
+  email?: string | null;
+  sub?: string | null;
+  commonName?: string;
+  expOffsetSeconds?: number;
+  now?: number;
+};
+
+async function createSigner() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
   const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  const header = encode({ alg: "RS256", typ: "JWT", kid });
-  const payload = encode({ iss: issuer, aud: [audience], exp: Math.floor(Date.now() / 1000) + 60 });
-  const signature = new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${header}.${payload}`)));
-  let binary = "";
-  for (const byte of signature) binary += String.fromCharCode(byte);
-  const jwt = `${header}.${payload}.${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
-  return { jwt, jwks: { keys: [{ ...publicJwk, kid, alg: "RS256", use: "sig" }] } };
+  const sign = async (options: TokenOptions = {}) => {
+    const now = options.now ?? Math.floor(Date.now() / 1000);
+    const kid = options.kid ?? "key-1";
+    const header = encode({ alg: "RS256", typ: "JWT", kid });
+    const claims: Record<string, unknown> = {
+      iss: options.issuer ?? "https://example.cloudflareaccess.com",
+      aud: [options.audience ?? "admin-aud"],
+      exp: now + (options.expOffsetSeconds ?? 60),
+    };
+    if (options.email !== null) claims.email = options.email === undefined ? "admin@example.test" : options.email;
+    if (options.sub !== null) claims.sub = options.sub === undefined ? "sub-admin-1" : options.sub;
+    if (options.commonName !== undefined) claims.common_name = options.commonName;
+    const payload = encode(claims);
+    const signature = new Uint8Array(
+      await crypto.subtle.sign("RSASSA-PKCS1-v1_5", pair.privateKey, new TextEncoder().encode(`${header}.${payload}`)),
+    );
+    let binary = "";
+    for (const byte of signature) binary += String.fromCharCode(byte);
+    return `${header}.${payload}.${btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_")}`;
+  };
+  const jwks = (kid = "key-1") => ({ keys: [{ ...publicJwk, kid, alg: "RS256", use: "sig" }] });
+  return { sign, jwks };
 }
 
 const envBase = (): AdminEnv => ({
   ACCOUNT_DB: { prepare: () => ({ bind: () => ({ first: async () => null, run: async () => ({ success: true }) }) }), batch: async () => [] },
-  BETTER_AUTH_SECRET: "synthetic-better-auth-secret-long-enough",
-  ADMIN_USER_IDS: "admin-user, another-admin",
+  CF_ACCESS_TEAM_DOMAIN: "https://example.cloudflareaccess.com",
+  CF_ACCESS_AUD: "admin-aud",
+  ADMIN_ACCESS_EMAILS: "admin@example.test, ops@example.test",
   CLOUD_ACCOUNT_ORIGIN: "https://kakeimatch.example",
 });
 
@@ -37,47 +63,94 @@ function request(headers: Record<string, string> = {}) {
 }
 
 describe("admin authorization", () => {
-  beforeEach(() => { authState.session = null; });
+  it("fails closed with 503 when Access settings or email allowlist are missing or partial", async () => {
+    const { sign } = await createSigner();
+    const jwt = await sign();
+    const fetchImpl = vi.fn<typeof fetch>();
 
-  it("fails closed when the allowlist is absent", async () => {
-    const env = envBase();
-    delete env.ADMIN_USER_IDS;
-    const result = await requireAdmin(request(), env);
-    expect("response" in result && result.response.status).toBe(503);
+    const cases: Array<(env: AdminEnv) => void> = [
+      env => { delete env.CF_ACCESS_TEAM_DOMAIN; delete env.CF_ACCESS_AUD; },
+      env => { delete env.CF_ACCESS_AUD; },
+      env => { delete env.CF_ACCESS_TEAM_DOMAIN; },
+      env => { env.CF_ACCESS_AUD = "   "; },
+      env => { env.CF_ACCESS_TEAM_DOMAIN = "http://example.cloudflareaccess.com"; },
+      env => { env.CF_ACCESS_TEAM_DOMAIN = "https://attacker.example"; },
+      env => { env.CF_ACCESS_TEAM_DOMAIN = "not-a-url"; },
+      env => { delete env.ADMIN_ACCESS_EMAILS; },
+      env => { env.ADMIN_ACCESS_EMAILS = " , "; },
+    ];
+
+    for (const mutate of cases) {
+      const env = envBase();
+      mutate(env);
+      const result = await requireAdmin(request({ "cf-access-jwt-assertion": jwt }), env, { fetchImpl });
+      expect("response" in result && result.response.status).toBe(503);
+      if ("response" in result) expect(result.response.headers.get("cache-control")).toBe("no-store");
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("requires a valid Better Auth session and the server-side user ID allowlist", async () => {
+  it("allows an email in ADMIN_ACCESS_EMAILS without Better Auth session or ADMIN_USER_IDS", async () => {
+    const { sign, jwks } = await createSigner();
     const env = envBase();
-    expect(await requireAdmin(request(), env).then(result => "response" in result && result.response.status)).toBe(401);
-    authState.session = { user: { id: "regular-user", email: "user@example.test", name: "User" }, session: { id: "s", expiresAt: new Date(Date.now() + 60_000) } };
-    expect(await requireAdmin(request(), env).then(result => "response" in result && result.response.status)).toBe(403);
-    authState.session = { user: { id: "admin-user", email: "admin@example.test", name: "Admin" }, session: { id: "s", expiresAt: new Date(Date.now() + 60_000) } };
-    const result = await requireAdmin(request(), env);
-    expect(result).toEqual({ userId: "admin-user" });
+    const jwt = await sign({ email: "Admin@Example.Test", sub: "cf-sub-1" });
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(jwks()), { headers: { "content-type": "application/json" } }));
+
+    const result = await requireAdmin(request({ "cf-access-jwt-assertion": jwt }), env, { fetchImpl });
+    expect(result).toEqual({ adminSubject: "access:cf-sub-1", principalId: ADMIN_OPERATOR_PRINCIPAL_ID });
   });
 
-  it("verifies Cloudflare Access signature, issuer and audience when configured", async () => {
+  it("rejects missing JWT, invalid signatures, wrong aud/iss, expired JWT, disallowed emails, and service tokens", async () => {
+    const primary = await createSigner();
+    const attacker = await createSigner();
     const env = envBase();
-    env.CF_ACCESS_TEAM_DOMAIN = "https://example.cloudflareaccess.com";
-    env.CF_ACCESS_AUD = "admin-aud";
-    authState.session = { user: { id: "admin-user", email: "admin@example.test", name: "Admin" }, session: { id: "s", expiresAt: new Date(Date.now() + 60_000) } };
-    const { jwt, jwks } = await accessToken();
-    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(jwks), { headers: { "content-type": "application/json" } });
-    expect(await requireAdmin(request({ "cf-access-jwt-assertion": jwt }), env, { fetchImpl }).then(result => "userId" in result)).toBe(true);
-    expect(await requireAdmin(request(), env, { fetchImpl }).then(result => "response" in result && result.response.status)).toBe(403);
-    const parts = jwt.split('.');
-    parts[2] = (parts[2][0] === 'A' ? 'B' : 'A') + parts[2].slice(1);
-    expect(await requireAdmin(request({ "cf-access-jwt-assertion": parts.join('.') }), env, { fetchImpl }).then(result => "response" in result && result.response.status)).toBe(403);
-    expect(await requireAdmin(request({ "cf-access-jwt-assertion": jwt }), env, { fetchImpl, nowSeconds: () => Math.floor(Date.now() / 1000) + 120 }).then(result => "response" in result && result.response.status)).toBe(403);
-    const { jwt: wrongIssuer } = await accessToken('admin-aud', 'https://attacker.example');
-    expect(await requireAdmin(request({ "cf-access-jwt-assertion": wrongIssuer }), env, { fetchImpl }).then(result => "response" in result && result.response.status)).toBe(403);
-    const { jwt: wrongAud } = await accessToken("other-aud");
-    expect(await requireAdmin(request({ "cf-access-jwt-assertion": wrongAud }), env, { fetchImpl }).then(result => "response" in result && result.response.status)).toBe(403);
+    const now = 1_800_000_000;
+    const fetchImpl: typeof fetch = async () => new Response(JSON.stringify(primary.jwks()), { headers: { "content-type": "application/json" } });
+
+    const validJwt = await primary.sign({ now });
+    const tamperedParts = validJwt.split(".");
+    tamperedParts[2] = (tamperedParts[2][0] === "A" ? "B" : "A") + tamperedParts[2].slice(1);
+    const untrustedKeyJwt = await attacker.sign({ now });
+    const wrongAudJwt = await primary.sign({ audience: "other-aud", now });
+    const wrongIssJwt = await primary.sign({ issuer: "https://attacker.example", now });
+    const expiredJwt = await primary.sign({ expOffsetSeconds: -1, now });
+    const disallowedEmailJwt = await primary.sign({ email: "member@example.test", now });
+    const serviceTokenNoEmailEmptySub = await primary.sign({ email: null, sub: "", commonName: "ci-service-token", now });
+    const serviceTokenNoEmailWithSub = await primary.sign({ email: null, sub: "svc-sub-1", commonName: "ci-service-token", now });
+    const missingSubJwt = await primary.sign({ sub: null, now });
+    const emptySubJwt = await primary.sign({ sub: "   ", now });
+
+    const rejectedRequests: Request[] = [
+      request(),
+      request({ "cf-access-jwt-assertion": tamperedParts.join(".") }),
+      request({ "cf-access-jwt-assertion": untrustedKeyJwt }),
+      request({ "cf-access-jwt-assertion": wrongAudJwt }),
+      request({ "cf-access-jwt-assertion": wrongIssJwt }),
+      request({ "cf-access-jwt-assertion": expiredJwt }),
+      request({ "cf-access-jwt-assertion": disallowedEmailJwt }),
+      request({ "cf-access-jwt-assertion": serviceTokenNoEmailEmptySub }),
+      request({ "cf-access-jwt-assertion": serviceTokenNoEmailWithSub }),
+      request({ "cf-access-jwt-assertion": missingSubJwt }),
+      request({ "cf-access-jwt-assertion": emptySubJwt }),
+      request({ "cf-access-jwt-assertion": validJwt, origin: "https://attacker.example" }),
+    ];
+
+    for (const req of rejectedRequests) {
+      const result = await requireAdmin(req, env, { fetchImpl, nowSeconds: () => now });
+      expect("response" in result && result.response.status).toBe(403);
+      if ("response" in result) expect(result.response.headers.get("cache-control")).toBe("no-store");
+    }
   });
 
   it("returns no-store for rejected admin API responses", async () => {
-    const response = await handleAdminRequest(request(), envBase());
-    expect(response.status).toBe(401);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    const missingJwt = await handleAdminRequest(request(), envBase());
+    expect(missingJwt.status).toBe(403);
+    expect(missingJwt.headers.get("cache-control")).toBe("no-store");
+
+    const unconfiguredEnv = envBase();
+    delete unconfiguredEnv.CF_ACCESS_AUD;
+    const unconfigured = await handleAdminRequest(request(), unconfiguredEnv);
+    expect(unconfigured.status).toBe(503);
+    expect(unconfigured.headers.get("cache-control")).toBe("no-store");
   });
 });

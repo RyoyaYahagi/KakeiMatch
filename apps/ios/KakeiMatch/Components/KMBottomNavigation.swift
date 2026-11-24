@@ -29,18 +29,28 @@ enum KMTab: String, CaseIterable {
 struct KMBottomNavigation: View {
     @Binding var selection: KMTab
     var reviewCount = 0
+    let add: () -> Void
 
     var body: some View {
         HStack(alignment: .top, spacing: 0) {
             tab(.home)
             tab(.records)
             ZStack(alignment: .top) {
-                Color.clear.frame(maxWidth: .infinity, minHeight: KMLayout.navHeight)
-                    .accessibilityHidden(true)
+                // Touch hit-testing stays on AppShell's root overlay tile; this slot
+                // provides the single accessibility element in slot 3 so navigation
+                // order stays home -> records -> add -> reconciliation -> settings.
+                Color.clear
+                    .frame(width: KMLayout.addSize, height: KMLayout.addSize)
                     .allowsHitTesting(false)
+                    .accessibilityRepresentation {
+                        Button("記録を追加", action: add)
+                            .accessibilityIdentifier("add-record")
+                    }
+                    .offset(y: -22)
                 Text("追加").font(KMTypography.body(12, weight: .bold))
                     .foregroundStyle(KMColor.primary)
                     .padding(.top, 38)
+                    .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, minHeight: KMLayout.navHeight, alignment: .top)
@@ -60,6 +70,8 @@ struct KMBottomNavigation: View {
                 .ignoresSafeArea(edges: .bottom)
                 .accessibilityHidden(true)
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("アプリ")
     }
 
     private func tab(_ tab: KMTab) -> some View {
@@ -90,17 +102,5 @@ struct KMBottomNavigation: View {
         .accessibilityLabel(tab == .reconciliation && reviewCount > 0 ? "照合（確認が必要 \(reviewCount)件）" : tab.label)
         .accessibilityAddTraits(selection == tab ? .isSelected : [])
         .accessibilityIdentifier(tab.identifier)
-        .accessibilitySortPriority(tab.accessibilityOrder)
-    }
-}
-
-private extension KMTab {
-    var accessibilityOrder: Double {
-        switch self {
-        case .home: 5
-        case .records: 4
-        case .reconciliation: 2
-        case .settings: 1
-        }
     }
 }

@@ -3,20 +3,17 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { allSuites, selectChecks } from './select-ci-tests.mjs';
 
-test('Rakuten fix covers both providers, reconciliation and backup without unrelated flows', () => {
+test('PWA-screen suites are retired from CI, so statement and shared parser changes select no suite', () => {
   const result = selectChecks(['apps/pwa/src/local-statements.ts', 'src/lib/local-statements.test.ts',
-    'src/lib/statement-parser-core.ts', 'src/lib/statement-parser.test.ts']);
-  for (const name of ['smbc-statements', 'rakuten-statements', 'reconciliation',
-    'provider-only-reconciliation', 'reconciliation-review', 'statement-options', 'backup']) {
-    assert.ok(result.e2e.includes(`test:${name}-e2e`), name);
-  }
-  assert.ok(!result.e2e.includes('test:payroll-e2e'));
-  assert.ok(!result.e2e.includes('test:receipt-items-e2e'));
+    'src/lib/statement-parser-core.ts', 'src/lib/statement-parser.test.ts', 'apps/pwa/src/statement-parser.ts']);
+  assert.deepEqual(result.e2e, []);
   assert.equal(result.skipPwa, false);
 });
 
-test('shared parser wrapper also covers MoneyForward hashing', () => {
-  assert.ok(selectChecks(['apps/pwa/src/statement-parser.ts']).e2e.includes('test:moneyforward-e2e'));
+test('suites that failed on the retired PWA screens are not in CI', () => {
+  for (const name of ['payroll', 'backup', 'contact', 'security', 'recurring']) {
+    assert.ok(!allSuites.includes(`test:${name}-e2e`), name);
+  }
 });
 
 test('unknown paths, shared modules, dependency and workflow changes run all suites', () => {
@@ -37,8 +34,7 @@ test('iOS-only skips PWA, mixed changes keep relevant PWA checks', () => {
   assert.equal(selectChecks(['apps/ios/project.yml', '.github/workflows/ios.yml']).skipPwa, true);
   const mixed = selectChecks(['apps/ios/project.yml', 'apps/pwa/src/payroll-ui.ts']);
   assert.equal(mixed.skipPwa, false);
-  assert.ok(mixed.e2e.includes('test:payroll-e2e'));
-  assert.ok(mixed.e2e.length < allSuites.length);
+  assert.deepEqual(mixed.e2e, []);
 });
 
 test('docs and unit-only changes retain lightweight checks but skip browser installation', () => {
@@ -47,15 +43,14 @@ test('docs and unit-only changes retain lightweight checks but skip browser inst
   assert.deepEqual(result.e2e, []);
 });
 
-test('multiple features union their suites without duplicates', () => {
-  const result = selectChecks(['apps/pwa/src/payroll-ui.ts', 'apps/pwa/src/moneyforward-parser.ts']);
-  assert.ok(result.e2e.includes('test:payroll-e2e'));
-  assert.ok(result.e2e.includes('test:moneyforward-e2e'));
-  assert.equal(result.e2e.filter(name => name === 'test:backup-e2e').length, 1);
+test('retired feature changes select nothing, while an unclassified PWA change runs every remaining suite', () => {
+  assert.deepEqual(selectChecks(['apps/pwa/src/payroll-ui.ts', 'apps/pwa/src/moneyforward-parser.ts']).e2e, []);
+  assert.deepEqual(selectChecks(['apps/pwa/src/admin-ui.ts']).e2e, allSuites);
 });
 
-test('standalone E2E edits select themselves; removed/renamed unknown paths force full checks', () => {
-  assert.deepEqual(selectChecks(['apps/pwa/test/browser-payroll.mjs']).e2e, ['test:payroll-e2e']);
+test('standalone E2E edits select themselves; retired or renamed paths fall back to every remaining suite', () => {
+  assert.deepEqual(selectChecks(['apps/pwa/test/browser-ai-costs.mjs']).e2e, ['test:ai-costs-e2e']);
+  assert.deepEqual(selectChecks(['apps/pwa/test/browser-payroll.mjs']).e2e, allSuites);
   assert.deepEqual(selectChecks(['apps/pwa/src/payroll-ui.ts', 'apps/pwa/src/renamed-payroll.ts']).e2e, allSuites);
 });
 
@@ -72,8 +67,7 @@ test('TestFlight and CI-only changes preserve main PWA skip policy', () => {
   assert.deepEqual(result.e2e, []);
   const mixed = selectChecks([...files, 'apps/pwa/src/payroll-ui.ts']);
   assert.equal(mixed.skipPwa, false);
-  assert.ok(mixed.e2e.includes('test:payroll-e2e'));
-  assert.ok(mixed.e2e.length < allSuites.length);
+  assert.deepEqual(mixed.e2e, []);
   assert.deepEqual(selectChecks(files, { full: true }).e2e, allSuites);
 });
 

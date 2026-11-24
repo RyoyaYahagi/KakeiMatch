@@ -8,7 +8,11 @@ const calls = [];
 let feedbackStatus = 'new';
 let feedbackSummary = null;
 let feedbackIssue = false;
-await context.route('**/admin.html', route => route.fulfill({ path: new URL('../.cloudflare/output/v0/workers/default/assets/admin.html', import.meta.url).pathname }));
+const builtAssets = new URL('../.cloudflare/output/v0/workers/default/assets/', import.meta.url);
+await context.route('**/admin.html', route => route.fulfill({ path: new URL('admin.html', builtAssets).pathname }));
+// The Worker gates admin scripts and styles behind Cloudflare Access, which this synthetic run does not have.
+// Serve the built admin files from the same build output as admin.html.
+await context.route(/\/(theme\.js|assets\/[^?#]+)(\?.*)?$/, route => route.fulfill({ path: new URL(new URL(route.request().url()).pathname.slice(1), builtAssets).pathname }));
 await context.route('**/api/admin/**', async route => {
   const request = route.request();
   const url = new URL(request.url());
@@ -54,6 +58,8 @@ try {
   await page.clock.setFixedTime(new Date('2026-10-01T01:00:00Z'));
   await page.goto(new URL('/admin.html', process.env.PWA_E2E_URL).toString());
   await page.getByRole('heading', { name: '管理画面', exact: true }).waitFor();
+  assert.equal(await page.locator('a[href="/"]').count(), 0, 'admin view has no back-to-app link');
+  assert.equal(await page.getByText('アプリへ戻る').count(), 0, 'admin view has no back-to-app label');
   await page.getByText('登録アカウント', { exact: true }).waitFor();
   assert.equal(await page.locator('#app-shell').count(), 0, 'admin entry does not initialize the PWA/Actual app shell');
   assert.equal(resources.some(path => /actual|wasm/i.test(path)), false, 'admin entry does not request Actual assets');
