@@ -33,12 +33,12 @@ Actual Budgetで解決済みの家計簿機能は可能な限り再実装しま�
 
 現行server-centric実装では、必ずサーバー側で認可してください。URL parameter、form、JSON body等から受け取ったuser IDをそのまま認可に使用しないでください。
 
-Issue #30以降のlocal-first移行では、家計データの正本は原則として利用者端末に置きます。通常のローカル家計閲覧をCloudflare user/sessionへ依存させず、Cloudflare側の利用者識別はGemini/Jev等の外部API利用境界に限定します。
+Issue #30以降のlocal-first移行では、家計データの正本は原則として利用者端末に置きます。通常のローカル家計閲覧をCloudflare user/sessionへ依存させず、Cloudflare側の利用者識別はGemini等の外部API利用境界に限定します。
 
 ## AIの役割
 
-- Gemini: レシート画像からの構造化抽出
-- Jev: 支出カテゴリなど、選択肢の中からの曖昧な分類
+- Gemini Interactions API: レシート画像からの構造化抽出
+- Gemini Decisions API: 支出カテゴリなど、選択肢の中からの曖昧な分類
 - 通常コード: 明細照合、重複検出、状態遷移、認可、金額処理
 
 AIに決定的ロジックを置き換えさせないでください。
@@ -80,7 +80,7 @@ Issue #30以降のCloudflare作業では、新しい公式 `cf` CLIを第一選�
 - Dashboardの手作業より、再現可能なCLI/config-as-codeを優先する
 - `wrangler` を直接使うのは、現行 `cf` が未対応と確認できた場合、または `cf` 自身が委譲する場合に限る
 - `cf` はopen betaなので、実行時点の `cf --help` / `cf cli search` / 公式Docsを確認する
-- Gemini/Jev等の秘密鍵をsource/configへ直書きしない。Cloudflare Secret bindingとして扱い、browser bundleへ露出させない
+- Gemini等の秘密鍵をsource/configへ直書きしない。Cloudflare Secret bindingとして扱い、browser bundleへ露出させない
 
 ## CIの実行範囲
 

@@ -6,7 +6,7 @@
 
 外部APIへの送信直前に、要求件数と費用の予約を同じSQL INSERTで判定します。並行要求は別々の事前SELECTの結果だけで許可しません。月・日はAsia/Tokyo、急増の検知は直前60秒の件数です。[実装: ai-provider-costs.ts](../workers/ai-gateway/src/ai-provider-costs.ts)、[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)
 
-費用判定は、計測済みの推定料金に、処理中・不明な要求の予約額を加えます。応答後に計測できた要求は予約額を推定料金に置き換えます。不明な要求は予約を残します。画像を含む要求サイズを4バイトあたり1トークンと見積もり、旧Jev providerでは質問数も掛けていました。現行のGemini分類はテキスト要求としてGeminiの予約計算を使います。Geminiは出力8192トークン分を予約し、APIにも同じ出力上限を送ります。予約額は下表の最低額以上です。この要求サイズの算式は本実装の運用上の見積もりで、provider請求額の厳密な上限ではありません。要求数の上限も併用するため、料金が事後に判明する要求が無制限に増えません。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)、[Google Interactions (2026/10), GenerationConfig](https://ai.google.dev/api/interactions-api)
+費用判定は、計測済みの推定料金に、処理中・不明な要求の予約額を加えます。応答後に計測できた要求は予約額を推定料金に置き換えます。不明な要求は予約を残します。画像を含む要求サイズを4バイトあたり1トークンと見積もり、旧Jev providerでは質問数も掛けていました。現行のカテゴリ分類はGemini Decisions API（モデル `gemini-decision-1`）へ送るテキスト要求で、Gemini providerとして同じ予約計算を使い、質問数は掛けません。Geminiは、要求に出力上限（`max_output_tokens`）があればその値を、なければ8192トークンを出力として予約します。出力上限を要求に送るのは、レシート・給与明細の読み取りやお問い合わせ・管理分析などInteractions APIを使う要求で、Decisions要求は出力上限を送りません。ただし料金カタログ上の `gemini-decision-1` は出力単価が0なので、分類の予約額は入力の見積もり額か下表の最低額の大きい方になります。予約額は下表の最低額以上です。この要求サイズの算式は本実装の運用上の見積もりで、provider請求額の厳密な上限ではありません。要求数の上限も併用するため、料金が事後に判明する要求が無制限に増えません。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)、[Google Interactions (2026/10), GenerationConfig](https://ai.google.dev/api/interactions-api)
 
 下表は未設定時の初期値です。USD micro-dollarは1 USDの100万分の1です。日・月の金額欄は、その期間にサービス全体または対象providerが発生させた計測済み料金と予約額の合計上限です。[実装: DEFAULT_GUARDRAILS](../workers/ai-gateway/src/ai-global-guardrails.ts)
 
