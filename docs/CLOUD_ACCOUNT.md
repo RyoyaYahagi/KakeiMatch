@@ -86,7 +86,7 @@ npx wrangler@4.144.0 preview secret bulk /private/path/preview-secrets.json \
 
 `GET /api/ai/costs?month=2026-10` は認証済みsession本人の月次料金だけを返します。利用者IDを要求から採用しません。月省略時はAsia/Tokyoの当月です。不正な月は400、未認証は401、保存領域の障害は503を返します。応答はUSD整数単位の `totalUsdMicros`、`unknownRequests` と、Gemini/Jevごとの要求件数・入力/出力トークン・料金・不明件数を含みます。全利用者の集計を返すAPIはありません。[実装: ai-provider-costs.ts](../workers/ai-gateway/src/ai-provider-costs.ts)
 
-計測には現行Gemini Interactions APIの `usage` と、GenerateContent形式の `usageMetadata` に対応します。思考トークンは出力料金に1回だけ加えます。キャッシュやツール等の未対応の料金要素、矛盾する使用量、未知のモデルは推測で0ドルにせず不明として扱います。既存JeV providerの料金形式は過去イベントの表示用に保持します。[Google Interactions (2026/10), Usage](https://ai.google.dev/api/interactions-api)、[Google GenerateContent (2026/10), UsageMetadata](https://ai.google.dev/api/generate-content)、[実装](../workers/ai-gateway/src/ai-provider-costs.ts)
+計測には現行Gemini Interactions APIの `usage` と、GenerateContent形式の `usageMetadata` に対応します。カテゴリ分類のGemini Decisions APIの応答は、Interactions APIと同じ `usage` の項目として読み取ります（Decisionsは応答にモデル名を含まないため、Workerが送信したモデル `gemini-decision-1` の使用量として計測します）。思考トークンは出力料金に1回だけ加えます。キャッシュやツール等の未対応の料金要素、矛盾する使用量、未知のモデルは推測で0ドルにせず不明として扱います。既存JeV providerの料金形式は過去イベントの表示用に保持します。[Google Interactions (2026/10), Usage](https://ai.google.dev/api/interactions-api)、[Google GenerateContent (2026/10), UsageMetadata](https://ai.google.dev/api/generate-content)、[実装](../workers/ai-gateway/src/ai-provider-costs.ts)
 
 通常の設定画面には製品利用回数だけを表示します。「アプリ情報」の開発者向け機能を有効にすると、AIアカウント内に自分の月次推定料金と月切替を表示します。不明な要求は既知の料金合計に含められないため、件数を明示します。開発者設定は既定値OFFで、ブラウザー内の表示だけを制御します。家計バックアップやCloud account権限には使いません。無効にしても計測は続きます。[実装: PWA](../apps/pwa/src/main.ts)
 

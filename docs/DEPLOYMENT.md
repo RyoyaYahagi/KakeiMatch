@@ -14,9 +14,9 @@ Issue #39では本番route、D1、secretを準備・検証せず、本番deploy�
 
 preview上ではActualブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL` です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` と `GEMINI_MODEL` を使い、追加のprovider keyや環境変数は必要ありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL` です。`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどのモデル名です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` を使い、モデルはWorkerのコードで `gemini-decision-1` に固定されます。追加のprovider keyや環境変数は必要ありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
-カテゴリ分類は `workers/ai-gateway/cloudflare.config.ts` で設定された `GEMINI_MODEL`（既定 `gemini-3.5-flash-lite`）を、レシート読み取りと同じGemini Interactions APIへ送ります。本番Workerの既存 `GEMINI_API_KEY` が両方の機能で共有されるため、この変更に伴う新しいsecret登録はありません。Cloudflareの `kakeimatch` Workerで読み取り用Gemini keyが既に設定されていることを確認してください。分類のAPI要求が失敗した場合は他providerへ再送せず、分類を停止します。
+カテゴリ分類はGemini Decisions API（`POST https://generativelanguage.googleapis.com/v1beta/decisions`）へ、コードで固定したモデル `gemini-decision-1` を指定して送ります。`workers/ai-gateway/cloudflare.config.ts` の `GEMINI_MODEL`（既定 `gemini-3.5-flash-lite`）は、レシート読み取りなどGemini Interactions APIを使う機能のモデルで、分類には効きません。本番Workerの既存 `GEMINI_API_KEY` が両方の機能で共有されるため、この変更に伴う新しいsecret登録はありません。Cloudflareの `kakeimatch` Workerで読み取り用Gemini keyが既に設定されていることを確認してください。分類のAPI要求が失敗した場合は他providerへ再送せず、分類を停止します。
 
 分類のGemini要求が失敗した場合は、既存のcircuit・metering制御に従って失敗を記録し、分類を停止します。Gemini circuitが開いている間はレシート読み取りと分類の両方を停止します。OpenCodeまたはOpenRouterへのfallbackはありません。旧 `0017_jev_upstream_circuits.sql` は過去のJev circuit記録を維持する履歴migrationであり、新Workerはその記録を参照しません。既存のJev/OpenCode/OpenRouter secretはこのWorkerの現在の設定と送信経路では使いません。運用者は他の対象で未使用と確認してからCloudflare secretを削除できます。Secretを操作する場合は現行 `cf cli search` と対象commandのhelpを確認し、値をsourceやコマンド引数へ書かないでください。
 
@@ -201,7 +201,7 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 
 料金設定はWorkerの `PRICING_CATALOG` で管理します。モデルID、価格の適用開始・終了日時、料金方式、入力・出力単価を一緒に更新してください。既存の版を上書きせず、新しい版を追加します。既存イベントの料金は更新しません。未知のモデルや未対応の料金方式はコスト不明になります。USDの100万分の1を整数で保存し、要求ごとの端数は切り上げます。[実装: ai-provider-costs.ts](../workers/ai-gateway/src/ai-provider-costs.ts)
 
-2026年10月2日に確認したStandardの料金はGemini 3.5 Flash-Liteの入力100万トークンあたり0.30 USD、思考を含む出力100万トークンあたり2.50 USDです。Jev 1.13.0は入力100万トークンあたり0.042 USDで、出力は無料です。カタログはこの料金の推定値を使います。無料枠、請求書、為替換算との照合は行いません。[Google料金 (2026/10), Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/pricing)、[TypeSafe料金 (2026/10), Jev 1.13](https://docs.typesafe.ai/models)
+2026年10月2日に確認したStandardの料金はGemini 3.5 Flash-Liteの入力100万トークンあたり0.30 USD、思考を含む出力100万トークンあたり2.50 USDです。Jev 1.13.0は入力100万トークンあたり0.042 USDで、出力は無料です。現行のカテゴリ分類に使う `gemini-decision-1` は、カタログに入力100万トークンあたり0.10 USD、出力0 USDの版（`2026-11-25-gemini-decisions`）を登録しています。この値はコードの登録内容で、Googleの料金ページとの照合は今回行っていません。カタログはこの料金の推定値を使います。無料枠、請求書、為替換算との照合は行いません。[Google料金 (2026/10), Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/pricing)、[TypeSafe料金 (2026/10), Jev 1.13](https://docs.typesafe.ai/models)
 
 合成要求で、再試行ごとのコスト記録、製品利用回数が増えないこと、`GET /api/ai/costs` の利用者分離、コスト不明の件数を確認します。画面では開発者向け設定を有効にしてから当月・前月の表示を確認します。設定を無効にしても計測は続きます。更新を戻す場合は追加テーブルを残してください。旧Workerを動かした期間は計測されないため、その期間の集計は不完全になります。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)、[実装: PWA](../apps/pwa/src/main.ts)
 

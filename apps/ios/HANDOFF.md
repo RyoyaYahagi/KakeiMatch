@@ -75,7 +75,7 @@ pnpm --dir apps/pwa dev          # Safari / Playwright で 390x844 表示
 | 端末内 DB（SQLite）・PWA `.kmb` 取り込み | `feature/ios-local-store` | #283 | Linux | マージ済み。設計は `docs/DATA_LAYER.md` |
 | 画面実装の統合土台 | #283 マージ後の `main` | #283 | Linux | `feature/ios-screens-base` は使わない |
 | iOS 専用バックアップの書き出し・復元 | `feature/ios-backup-export` | #284 | Linux | マージ済み。専用`.kmib`の書き出し・iOS間復元・原本同梱を追加。iOS→PWA書き出しは提供しない。詳細は `docs/DATA_LAYER.md` |
-| Worker API クライアント（Gemini/Jev は Worker 経由） | `feature/ios-api-client` | #287 | Linux | マージ済み。typed通信・応答検証・Keychain・給与画像マスキング。native API adapter・App Attest / Passkey実装とstubテストを追加。Workerとの契約は `../../docs/NATIVE_APP_AUTH.md`。署名済み実機から実Workerへの通信は未確認。`docs/API_LAYER.md` |
+| Worker API クライアント（Gemini のレシート・給与・カテゴリ分類は Worker 経由） | `feature/ios-api-client` | #287 | Linux | マージ済み。typed通信・応答検証・Keychain・給与画像マスキング。native API adapter・App Attest / Passkey実装とstubテストを追加。Workerとの契約は `../../docs/NATIVE_APP_AUTH.md`。署名済み実機から実Workerへの通信は未確認。`docs/API_LAYER.md` |
 | Worker のネイティブ認証境界（専用 session・Passkey・AASA・App Attest） | `feature/ios-native-auth` | #292 | Linux | マージ済み・本番デプロイ済み。本番 D1 に migration 0018 適用済み。`NATIVE_APP_ID` は 2026-10-28 に登録済み。次の本番ビルドで反映される。反映後に 1.1 節 6 番で確認する |
 | ロジックと DB のつなぎ込み（照合結果・学習履歴・定期処理済み日の保存） | `feature/ios-local-store` | #283 | Linux | schema v2・再open・両実装共通テストを追加 |
 | Home | `feature/ios-home` | #295 | **Mac** | マージ済み（`be4a1df`） |
