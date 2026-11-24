@@ -5,6 +5,7 @@ let package = Package(
     name: "KakeiMatchCore",
     platforms: [.macOS(.v15)],
     products: [
+        .executable(name: "km-receipt-redaction-eval", targets: ["KMReceiptRedactionEval"]),
         .library(name: "KakeiMatchCore", targets: ["KakeiMatchCore"]),
     ],
     targets: [
@@ -73,6 +74,8 @@ let package = Package(
                 "Core/KMAmountFormatter.swift",
                 "Core/KMDeletionUndoPolicy.swift",
                 "Core/KMReceiptPresentation.swift",
+                "Core/Redaction/KMRedactionRules.swift",
+                "Redaction/KMVisionRedactor.swift",
                 "Data/Aggregation/BudgetAggregation.swift",
                 "Data/Aggregation/HomeAggregation.swift",
                 "Data/Aggregation/KMCategoryToneMapping.swift",
@@ -118,6 +121,7 @@ let package = Package(
                 "Data/Statements/StatementImportResult.swift",
             ]
         ),
+        .executableTarget(name: "KMReceiptRedactionEval", dependencies: ["KakeiMatchCore"], path: "Tools/KMReceiptRedactionEval"),
         .testTarget(
             name: "KakeiMatchCoreTests",
             dependencies: ["KakeiMatchCore"],

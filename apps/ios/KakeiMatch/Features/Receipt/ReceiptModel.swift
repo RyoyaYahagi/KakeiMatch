@@ -29,6 +29,12 @@ final class KMReceiptModel {
     var loading = true
     var saving = false
     var didSave = false
+    struct RedactionPreview: Identifiable {
+        let id = UUID()
+        let data: Data
+    }
+
+    var redactionPreview: RedactionPreview?
     var error: String?
     var status: String?
     var needsGuestStart = false
@@ -390,6 +396,7 @@ final class KMReceiptModel {
         }
         revision = UUID(); let token = revision
         phase = .reading; startedReading = Date(); error = nil; status = nil
+        redactionPreview = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)
         operation = Task {
             do {
@@ -398,9 +405,10 @@ final class KMReceiptModel {
                 let sourceData = imageData
                 let sourceType = image.contentType
                 let upload = try await Task.detached(priority: .userInitiated) {
-                    try KMUploadImage.prepareReceipt(data: sourceData, contentType: sourceType)
+                    try await KMRedactedReceiptImage.prepare(data: sourceData, contentType: sourceType)
                 }.value
                 try Task.checkCancellation()
+                guard revision == token else { return }
                 let client = try workerClient()
                 let flow = UUID()
                 let extraction = try await client.readReceipt(image: upload, flowID: flow)
@@ -483,6 +491,12 @@ final class KMReceiptModel {
                 phase = .idle
             } catch {
                 guard revision == token, !Task.isCancelled else { return }
+                if let failure = error as? KMVisionRedactor.Failure {
+                    phase = .idle
+                    redactionPreview = failure.preview.map { RedactionPreview(data: $0) }
+                    self.error = "隠した内容を確認できなかったため、写真の送信を止めました。写真を撮り直すか、手で入力してください。"
+                    return
+                }
                 KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
                 if let failure = error as? KMAPIError {
                     if failure == .nativeAuthenticationRequired || failure == .authenticationRequired {
