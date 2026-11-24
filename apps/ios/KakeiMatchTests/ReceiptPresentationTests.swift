@@ -1,4 +1,5 @@
 import CoreGraphics
+import CoreText
 import Foundation
 import ImageIO
 import Synchronization
@@ -320,6 +321,47 @@ extension ReceiptModelTests {
         return data as Data
     }
 
+    /// A receipt-like picture whose text Vision can read. Photos without readable text are refused
+    /// before sending, so the 4x4 blank fixture can no longer stand in for a receipt that is read.
+    /// With `orientation6` the pixels are stored sideways and tagged like a camera photo, so the
+    /// upright result still has readable text.
+    private static func readableReceiptImage(
+        format: String = "public.jpeg", orientation6: Bool = false, properties: [CFString: Any] = [:]
+    ) throws -> Data {
+        let width = 640, height = 240
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGImageAlphaInfo.noneSkipLast.rawValue
+        let upright = try #require(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: 0, space: colorSpace, bitmapInfo: bitmapInfo))
+        upright.setFillColor(gray: 1, alpha: 1)
+        upright.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        let font = CTFontCreateWithName("Helvetica" as CFString, 40, nil)
+        for (index, text) in ["Synthetic Market", "2026/11/24", "TOTAL 1200"].enumerated() {
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+                NSAttributedString.Key(kCTFontAttributeName as String): font,
+            ]))
+            upright.textPosition = CGPoint(x: 30, y: CGFloat(180 - index * 65))
+            CTLineDraw(line, upright)
+        }
+        var image = try #require(upright.makeImage())
+        var imageProperties = properties
+        if orientation6 {
+            // Orientation 6 displays the stored pixels rotated 90 degrees clockwise.
+            let sideways = try #require(CGContext(data: nil, width: height, height: width, bitsPerComponent: 8,
+                bytesPerRow: 0, space: colorSpace, bitmapInfo: bitmapInfo))
+            sideways.translateBy(x: CGFloat(height), y: 0)
+            sideways.rotate(by: .pi / 2)
+            sideways.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+            image = try #require(sideways.makeImage())
+            imageProperties[kCGImagePropertyOrientation] = 6
+        }
+        let data = NSMutableData()
+        let destination = try #require(CGImageDestinationCreateWithData(data, format as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, imageProperties.isEmpty ? nil : imageProperties as CFDictionary)
+        #expect(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
+
     private func readingModel(response: String, native: Bool = false, guest: Bool = true,
                               attest: any KMAppAttesting = ReceiptUnsupportedAttest(),
                               imageData: Data? = nil, contentType: String = "image/jpeg") async throws -> (KMReceiptModel, KMRepositories) {
@@ -338,7 +380,7 @@ extension ReceiptModelTests {
                               now: { Date(timeIntervalSince1970: 1_800_000_000) })
         let repositories = try KMFixtureLoader.load(named: "receipt")
         var receipt = try #require(try await repositories.receipts.receipts().first)
-        let bytes = try imageData ?? Self.syntheticJPEG()
+        let bytes = try imageData ?? Self.readableReceiptImage()
         receipt.image = .init(blobId: "synthetic-image", contentType: contentType, sizeBytes: bytes.count)
         let store = try #require(repositories.receipts as? KMInMemoryStore)
         store.imageValues["synthetic-image"] = bytes
@@ -350,8 +392,7 @@ extension ReceiptModelTests {
 
     @Test func startReadingSendsRedrawnMetadataFreeJPEGWithoutModifyingSavedOriginal() async throws {
         let extraction = #"{"documentKind":"unknown","merchant":null,"purchasedDate":null,"purchasedTime":null,"totalAmountYen":null,"taxAmountYen":null,"items":[],"warnings":[]}"#
-        let originalBytes = try Self.syntheticJPEG(width: 40, height: 20, properties: [
-            kCGImagePropertyOrientation: 6,
+        let originalBytes = try Self.readableReceiptImage(orientation6: true, properties: [
             kCGImagePropertyExifDictionary: [kCGImagePropertyExifUserComment: "SYNTHETIC_RECEIPT_EXIF"],
             kCGImagePropertyGPSDictionary: [kCGImagePropertyGPSLatitude: 35.68, kCGImagePropertyGPSLatitudeRef: "N"]
         ])
@@ -369,15 +410,16 @@ extension ReceiptModelTests {
         #expect(uploadedData.range(of: Data("SYNTHETIC_RECEIPT_EXIF".utf8)) == nil)
         let decoded = try #require(CGImageSourceCreateWithData(uploadedData as CFData, nil))
         let props = try #require(CGImageSourceCopyPropertiesAtIndex(decoded, 0, nil) as? [String: Any])
-        #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 20)
-        #expect(props[kCGImagePropertyPixelHeight as String] as? Int == 40)
+        #expect(props[kCGImagePropertyPixelWidth as String] as? Int == 640)
+        #expect(props[kCGImagePropertyPixelHeight as String] as? Int == 240)
         #expect(props[kCGImagePropertyGPSDictionary as String] == nil)
         #expect(props[kCGImagePropertyExifDictionary as String] == nil)
         #expect(props[kCGImagePropertyTIFFDictionary as String] == nil)
         #expect(props[kCGImagePropertyOrientation as String] == nil)
         #expect(try await repositories.receipts.receiptImage(blobId: "synthetic-image") == originalBytes)
 
-        let (pngModel, pngRepositories) = try await readingModel(response: extraction, imageData: Self.syntheticPNG, contentType: "image/png")
+        let originalPNG = try Self.readableReceiptImage(format: "public.png")
+        let (pngModel, pngRepositories) = try await readingModel(response: extraction, imageData: originalPNG, contentType: "image/png")
         await pngModel.startReading()?.value
         #expect(pngModel.error == nil)
         let pngRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
@@ -387,7 +429,16 @@ extension ReceiptModelTests {
         let pngEncoded = try #require(pngPayload["imageBase64"] as? String)
         let uploadedPNG = try #require(Data(base64Encoded: pngEncoded))
         #expect(KMUploadImage.matches(uploadedPNG, contentType: "image/jpeg"))
-        #expect(try await pngRepositories.receipts.receiptImage(blobId: "synthetic-image") == Self.syntheticPNG)
+        #expect(try await pngRepositories.receipts.receiptImage(blobId: "synthetic-image") == originalPNG)
+    }
+
+    @Test func photoWithoutReadableTextIsNotSentAndShowsTheMaskedPreview() async throws {
+        let (model, _) = try await readingModel(response: "{}", imageData: try Self.syntheticJPEG())
+        await model.startReading()?.value
+        #expect(model.phase == .idle)
+        #expect(model.error == "隠した内容を確認できなかったため、写真の送信を止めました。写真を撮り直すか、手で入力してください。")
+        #expect(model.redactionPreview != nil)
+        #expect(ReceiptHTTPStub.requests.withLock { $0.contains { $0.url?.path == "/api/ai/gemini" } } == false)
     }
 
     @Test func jevItemAnswersBecomeTheReceiptCategories() async throws {
