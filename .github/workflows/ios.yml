@@ -99,6 +99,22 @@ jobs:
           fi
           node scripts/shard-ui-tests.mjs "$UI_SHARD_COUNT" ${UI_SHARD_FLAGS:+"$UI_SHARD_FLAGS"} "${changed[@]}" > ui-shards.json
           cat ui-shards.json
+          # ui-tests runs one job per matrix entry. A matrix that disagrees with UI_SHARD_COUNT
+          # would silently skip the tests of the missing shards, so fail here.
+          node <<'JS'
+          const fs = require("node:fs");
+          const text = fs.readFileSync("../../.github/workflows/ios.yml", "utf8");
+          const found = text.match(/^        shard: \[([^\]]*)\]\s*$/m);
+          if (!found) throw new Error("ui-tests matrix line not found in .github/workflows/ios.yml");
+          const matrix = found[1].split(",").map((value) => Number(value.trim()));
+          const count = Number(process.env.UI_SHARD_COUNT);
+          const shards = JSON.parse(fs.readFileSync("ui-shards.json", "utf8"));
+          const ordered = matrix.every((value, index) => value === index);
+          if (matrix.length !== count || shards.length !== count || !ordered) {
+            throw new Error(`UI shard count mismatch: ui-tests matrix [${matrix.join(", ")}], UI_SHARD_COUNT ${count}, ui-shards.json ${shards.length}`);
+          }
+          console.log(`UI shard count consistent: ${count}`);
+          JS
       - name: Generate Xcode project
         run: |
           # Official universal binary; pin both the version and release asset digest.
@@ -142,7 +158,7 @@ jobs:
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
   # Shards start with build rather than after it, so each simulator boots while build compiles.
-  # The shard list is fixed to UI_SHARD_COUNT and checked against ui-shards.json after download.
+  # The shard list is fixed to UI_SHARD_COUNT; build fails if the matrix, UI_SHARD_COUNT and ui-shards.json disagree.
   ui-tests:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-26
@@ -191,30 +207,40 @@ jobs:
       - name: Select Xcode and start simulator in background
         run: bash scripts/ci-simulator.sh start
       # build uploads ios-test-products after its swift test and build-for-testing pass.
-      # Stop at once if build concludes without it, and give up after 15 minutes.
+      # Wait while build is queued or running; the job timeout is the outer limit.
+      # Fail at once if build ends without the upload, or if the upload is still missing
+      # 300 seconds after build succeeded.
       - name: Wait for build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           started=$(date +%s)
-          deadline=$((started + 900))
+          build_completed_at=""
+          last_build_status=""
           while :; do
             build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
               --jq '.jobs[] | select(.name == "build") | [.status, (.conclusion // "")] | @tsv')
             build_status=${build%%$'\t'*}
             build_conclusion=${build#*$'\t'}
+            if [ "$build_status" != "$last_build_status" ]; then
+              echo "build job: ${build_status:-not listed} ${build_conclusion}"
+              last_build_status=$build_status
+            fi
             artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=ios-test-products" \
               --jq '[.artifacts[] | select(.expired | not)] | length')
             if [ "$artifacts" -gt 0 ]; then
               break
             fi
-            if [ "$build_status" = completed ] && [ "$build_conclusion" != success ]; then
-              echo "::error::build concluded '$build_conclusion' without ios-test-products"
-              exit 1
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Timed out after 900 seconds waiting for ios-test-products from build"
-              exit 1
+            if [ "$build_status" = completed ]; then
+              if [ "$build_conclusion" != success ]; then
+                echo "::error::build concluded '$build_conclusion' without ios-test-products"
+                exit 1
+              fi
+              build_completed_at=${build_completed_at:-$(date +%s)}
+              if [ $(( $(date +%s) - build_completed_at )) -ge 300 ]; then
+                echo "::error::build succeeded but ios-test-products did not appear within 300 seconds"
+                exit 1
+              fi
             fi
             sleep 15
           done
