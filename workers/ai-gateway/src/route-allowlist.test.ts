@@ -23,8 +23,25 @@ vi.mock('./native-auth', () => ({
   purgeNativeCredentials: vi.fn(),
 }));
 
-function run(path: string, assets: (request: Request) => Promise<Response> = async () => new Response('asset')) {
-  return appWorker.fetch(new Request(`https://app.example.test${path}`), { ASSETS: { fetch: assets } } as never);
+function run(path: string, assets: (request: Request) => Promise<Response> = async () => new Response('asset'), init?: RequestInit) {
+  return appWorker.fetch(new Request(`https://app.example.test${path}`, init), { ASSETS: { fetch: assets } } as never);
+}
+
+const BROWSER_HTML_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+
+function expectNoRetiredHandlersOrAssets(assets: { mock: unknown }) {
+  expect(handlers.aiRequest).not.toHaveBeenCalled();
+  expect(handlers.authRequest).not.toHaveBeenCalled();
+  expect(handlers.accountRequest).not.toHaveBeenCalled();
+  expect(assets).not.toHaveBeenCalled();
+}
+
+async function runIsolated(path: string, init?: RequestInit): Promise<Response> {
+  state.status = 200;
+  const assets = vi.fn(async () => new Response('asset'));
+  const response = await run(path, assets, init);
+  expectNoRetiredHandlersOrAssets(assets);
+  return response;
 }
 
 describe('worker route allowlist', () => {
@@ -77,17 +94,72 @@ describe('worker route allowlist', () => {
     '/api/ai/jev',
     '/api/contact',
     '/api/contact/interview',
-  ])('answers %s with 410 without calling any retired handler', async path => {
-    state.status = 200;
-    const assets = vi.fn(async () => new Response('asset'));
-    const response = await run(path, assets);
+  ])('answers %s with 410 JSON without calling any retired handler', async path => {
+    const response = await runIsolated(path);
     expect(response.status).toBe(410);
     expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expect(await response.json()).toEqual({ error: 'gone' });
-    expect(handlers.aiRequest).not.toHaveBeenCalled();
-    expect(handlers.authRequest).not.toHaveBeenCalled();
-    expect(handlers.accountRequest).not.toHaveBeenCalled();
-    expect(assets).not.toHaveBeenCalled();
+  });
+
+  it.each(['/', '/index.html'])('answers GET %s with 410 self-contained HTML when Accept includes text/html', async path => {
+    const response = await runIsolated(path, {
+      method: 'GET',
+      headers: { accept: BROWSER_HTML_ACCEPT },
+    });
+    expect(response.status).toBe(410);
+    expect(response.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('vary')).toBe('Accept');
+    expect(response.headers.get('content-security-policy')).toContain("style-src 'self' 'unsafe-inline'");
+
+    const body = await response.text();
+    expect(body).toContain('KakeiMatch の Web 版は終了しました');
+    expect(body).toContain('これからはアプリ版をご利用ください。');
+    expect(body).toContain('yappapp.support@gmail.com');
+    expect(body).not.toMatch(/<link\b|<script\b|<img\b|\bsrc\s*=|\bhref\s*=\s*["']\s*(?:\/|https?:)|url\s*\(/i);
+  });
+
+  it.each([
+    { path: '/', accept: 'application/json' },
+    { path: '/', accept: '*/*' },
+    { path: '/', accept: 'text/html;q=0' },
+    { path: '/', accept: undefined },
+    { path: '/index.html', accept: 'application/json' },
+    { path: '/index.html', accept: '*/*' },
+    { path: '/index.html', accept: 'text/html;q=0' },
+    { path: '/index.html', accept: undefined },
+  ])('answers GET $path with 410 JSON when Accept is $accept', async ({ path, accept }) => {
+    const headers = accept === undefined ? undefined : { accept };
+    const response = await runIsolated(path, { method: 'GET', headers });
+    expect(response.status).toBe(410);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await response.json()).toEqual({ error: 'gone' });
+  });
+
+  it.each(['/', '/index.html'])('answers POST %s with 410 JSON even when Accept includes text/html', async path => {
+    const response = await runIsolated(path, {
+      method: 'POST',
+      headers: { accept: BROWSER_HTML_ACCEPT },
+    });
+    expect(response.status).toBe(410);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await response.json()).toEqual({ error: 'gone' });
+  });
+
+  it.each([
+    '/api/auth/get-session',
+    '/api/account/delete',
+    '/api/ai/gemini',
+    '/api/contact',
+  ])('answers retired API %s with 410 JSON even when Accept includes text/html', async path => {
+    const response = await runIsolated(path, {
+      method: 'GET',
+      headers: { accept: BROWSER_HTML_ACCEPT },
+    });
+    expect(response.status).toBe(410);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await response.json()).toEqual({ error: 'gone' });
   });
 
   it.each([
@@ -98,11 +170,23 @@ describe('worker route allowlist', () => {
     '/icon.svg',
     '/administrator',
   ])('answers unlisted %s with 404', async path => {
-    state.status = 200;
-    const assets = vi.fn(async () => new Response('asset'));
-    const response = await run(path, assets);
+    const response = await runIsolated(path);
     expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
     expect(await response.json()).toEqual({ error: 'not_found' });
-    expect(assets).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/sw.js',
+    '/manifest.webmanifest',
+    '/icon.svg',
+  ])('answers unlisted %s with 404 JSON even when Accept includes text/html', async path => {
+    const response = await runIsolated(path, {
+      method: 'GET',
+      headers: { accept: BROWSER_HTML_ACCEPT },
+    });
+    expect(response.status).toBe(404);
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await response.json()).toEqual({ error: 'not_found' });
   });
 });
