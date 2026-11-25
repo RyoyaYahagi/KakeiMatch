@@ -40,7 +40,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 
 ## endpoint 一覧（従来Worker互換モード）
 
-この節の正本は `apps/pwa/src/worker.ts`、`workers/ai-gateway/src/{worker,guest-ai,account-auth,contact,feedback,payroll-schema,ai-provider-costs}.ts`。認証 plugin 部分は lockfile が固定する Better Auth / Passkey **1.7.6** の配布ソース（`dist/api/routes/{session,sign-out}.mjs`、Passkey `dist/index.mjs`）も確認した。下表の JSON は省略記法であり、`?` はキー省略可、`T|null` はキー必須・null 許可を表す。[Worker (2026/10), routing / schemas; Better Auth (2026/10), routes]
+この節の正本は `workers/ai-gateway/src/hosting.ts`、`workers/ai-gateway/src/{worker,guest-ai,account-auth,contact,feedback,payroll-schema,ai-provider-costs}.ts`。認証 plugin 部分は lockfile が固定する Better Auth / Passkey **1.7.6** の配布ソース（`dist/api/routes/{session,sign-out}.mjs`、Passkey `dist/index.mjs`）も確認した。下表の JSON は省略記法であり、`?` はキー省略可、`T|null` はキー必須・null 許可を表す。[Worker (2026/10), routing / schemas; Better Auth (2026/10), routes]
 
 認証記号: **S** = サーバーが検証した Better Auth session Cookie、**G** = `Authorization: Guest <43文字の端末合言葉>`、**B** = `Authorization: Bearer <10分のAI JWT>`、**O** = 接続先 origin と一致する Origin ヘッダー必須。GET で Origin を付ける場合も一致が必要（guest config は検査しない）。B の `sub` はサーバーが決め、要求に user ID を入れない。[Worker (2026/10), handleRequest / authenticate; Account (2026/10), getAccountSession]
 
@@ -161,7 +161,7 @@ CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削�
 
 ## 参照資料
 
-[Worker, 2026/10] KakeiMatch. `apps/pwa/src/worker.ts`, `workers/ai-gateway/src/{worker,guest-ai}.ts`.
+[Worker, 2026/10] KakeiMatch. `workers/ai-gateway/src/hosting.ts`, `workers/ai-gateway/src/{worker,guest-ai}.ts`.
 
 [Account, 2026/10] KakeiMatch. `workers/ai-gateway/src/account-auth.ts`, `docs/CLOUD_ACCOUNT.md`.
 

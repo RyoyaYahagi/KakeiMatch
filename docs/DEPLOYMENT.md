@@ -1,6 +1,6 @@
 # デプロイ
 
-本番のKakeiMatchは `apps/pwa` のPWAとCloudflare Workerで構成します。利用者の端末に家計データを保存します。自宅Linux、Docker、Next.js server、Actual Sync Server、server-side household storageは必要ありません。
+本番のCloudflare Workerは `workers/ai-gateway` から配信します。家計データは利用者の端末に保存します。自宅Linux、Docker、Next.js server、Actual Sync Server、server-side household storageは必要ありません。
 
 ## 本番URLとデータ
 
@@ -8,7 +8,7 @@
 
 同一WorkerがPWAと `/api/auth/*`、`/api/account/*`、`/api/ai/*` を配信します。WorkerのD1 bindingは、本人確認、session、Passkey、招待・回復、利用権限、AI利用量の保存だけに使います。家計データは保存しません。Geminiの認証情報はWorker secretに設定します。WorkerはCOOP/COEP headerを維持し、Service Workerは `/api/*` をcacheしません。
 
-`apps/pwa/cloudflare.config.ts` は通常、`kakeimatch-issue-39-preview` Workerを選びます。previewは既存のsynthetic test用D1を使い、合成データだけで確認します。previewで家計データを開かないでください。本番設定はpreviewではないbuildで `production-deploy` modeを明示した場合だけ選択されます。本番用 `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` の両方が必要です。これにより、指定なしでpreview D1を本番に使うことを防ぎます。指定するIDが本番用であることは運用時に確認してください。本番の `CLOUD_ACCOUNT_ORIGIN` は正規originに設定します。
+`workers/ai-gateway/cloudflare.config.ts` は通常、`kakeimatch-issue-39-preview` Workerを選びます。previewは既存のsynthetic test用D1を使い、合成データだけで確認します。previewで家計データを開かないでください。本番設定はpreviewではないbuildで `production-deploy` modeを明示した場合だけ選択されます。本番用 `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` の両方が必要です。これにより、指定なしでpreview D1を本番に使うことを防ぎます。指定するIDが本番用であることは運用時に確認してください。本番の `CLOUD_ACCOUNT_ORIGIN` は正規originに設定します。
 
 Issue #39では本番route、D1、secretを準備・検証せず、本番deployもしません。preview deployは合成データによる回帰確認専用です。現在の `cf` CLIを使う前に `cf --help` と `cf cli search` を確認してください。古いWrangler手順からcommandを推測しないでください。専用previewには `pnpm deploy:preview` を使います。確認済みpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。rootの `deploy` scriptはproduction modeを選び、本番サービスへ変更を加える可能性があります。別途明示的な依頼がない限り実行しないでください。
 
@@ -16,7 +16,7 @@ preview上ではActualブラウザー版を使ったレシート、明細、照�
 
 本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL` です。`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどのモデル名です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` を使い、モデルはWorkerのコードで `gemini-decision-1` に固定されます。追加のprovider keyや環境変数は必要ありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
-カテゴリ分類はGemini Decisions API（`POST https://generativelanguage.googleapis.com/v1beta/decisions`）へ、コードで固定したモデル `gemini-decision-1` を指定して送ります。`apps/pwa/cloudflare.config.ts` と `workers/ai-gateway/cloudflare.config.ts` の `GEMINI_MODEL`（既定 `gemini-3.5-flash-lite`）は、レシート読み取りなどGemini Interactions APIを使う機能のモデルで、分類には効きません。本番Workerの既存 `GEMINI_API_KEY` が両方の機能で共有されるため、この変更に伴う新しいsecret登録はありません。Cloudflareの `kakeimatch` Workerで読み取り用Gemini keyが既に設定されていることを確認してください。分類のAPI要求が失敗した場合は他providerへ再送せず、分類を停止します。
+カテゴリ分類はGemini Decisions API（`POST https://generativelanguage.googleapis.com/v1beta/decisions`）へ、コードで固定したモデル `gemini-decision-1` を指定して送ります。`workers/ai-gateway/cloudflare.config.ts` の `GEMINI_MODEL`（既定 `gemini-3.5-flash-lite`）は、レシート読み取りなどGemini Interactions APIを使う機能のモデルで、分類には効きません。本番Workerの既存 `GEMINI_API_KEY` が両方の機能で共有されるため、この変更に伴う新しいsecret登録はありません。Cloudflareの `kakeimatch` Workerで読み取り用Gemini keyが既に設定されていることを確認してください。分類のAPI要求が失敗した場合は他providerへ再送せず、分類を停止します。
 
 分類のGemini要求が失敗した場合は、既存のcircuit・metering制御に従って失敗を記録し、分類を停止します。Gemini circuitが開いている間はレシート読み取りと分類の両方を停止します。OpenCodeまたはOpenRouterへのfallbackはありません。旧 `0017_jev_upstream_circuits.sql` は過去のJev circuit記録を維持する履歴migrationであり、新Workerはその記録を参照しません。既存のJev/OpenCode/OpenRouter secretはこのWorkerの現在の設定と送信経路では使いません。運用者は他の対象で未使用と確認してからCloudflare secretを削除できます。Secretを操作する場合は現行 `cf cli search` と対象commandのhelpを確認し、値をsourceやコマンド引数へ書かないでください。
 
@@ -36,15 +36,17 @@ npm run --prefix workers/ai-gateway typecheck
 npm run --prefix workers/ai-gateway build
 ```
 
-AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace外にあります。`npm ci --prefix workers/ai-gateway` でその依存をinstallしてから上記commandを実行してください。`npm run --prefix workers/ai-gateway dev` はViteを直接起動し、PWAのCloudflare configを読みません。本番PWAと同一origin APIのlocal確認にはrootの `pnpm dev` またはbuild後の `pnpm start` を使います。Worker単体のlocal開発を行う場合は、必要なときだけ `.dev.vars.example` を `.dev.vars` へコピーし、合成値を設定します。実provider要求にはprovider keyが必要です。値はGitに入れず、deploy先ではCloudflare secretを使います。D1 schema変更は `workers/ai-gateway/migrations/` のversion付きSQLで管理します。
+AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace外にあります。PWAのローカル画面は `pnpm dev` で確認できます。Workerの開発サーバーは `npm run --prefix workers/ai-gateway dev` で起動します。D1 schema変更は `workers/ai-gateway/migrations/` に記録します。
 
 ## ローカルでAIを試す
 
-PWAと同一originのWorkerを動かすには、リポジトリrootで次を実行します。Node.js 22以上とCorepackが必要です。`pnpm start` はビルド済みの配信確認用なので、AIの開発には `pnpm dev` を使います。
+Workerの設定とD1は `workers/ai-gateway` を起点に操作します。Node.js 22以上が必要です。リポジトリrootから次を実行します。
 
 ```sh
-corepack pnpm install
-cp apps/pwa/.dev.vars.example apps/pwa/.dev.vars
+corepack pnpm install --frozen-lockfile
+cd workers/ai-gateway
+npm ci
+cp .dev.vars.example .dev.vars
 ```
 
 既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。Geminiを実際に呼び出す場合は、レシート読み取りとカテゴリ分類で共通の `GEMINI_API_KEY` を設定します。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
@@ -52,27 +54,12 @@ cp apps/pwa/.dev.vars.example apps/pwa/.dev.vars
 次に、開発サーバーと同じ保存先にあるローカルD1だけを更新します。IDは `cloudflare.config.ts` の開発用 `ACCOUNT_DB` と一致させます。`--local` と `--persist-to .wrangler/state` を省略しないでください。
 
 ```sh
-corepack pnpm --dir apps/pwa exec cf d1 migrations apply 25111b8d-a7ec-4765-b53e-5b5d0ad6fd39 \
-  --local --persist-to .wrangler/state --dir ../../workers/ai-gateway/migrations
-corepack pnpm dev
+npm exec -- cf d1 migrations apply 25111b8d-a7ec-4765-b53e-5b5d0ad6fd39 \
+  --local --persist-to .wrangler/state --dir migrations
+npm run dev
 ```
 
-ブラウザーで `http://localhost:5173` を開きます。`CLOUD_ACCOUNT_ORIGIN` もこの値に合わせます。Passkeyを試す場合はIPアドレスではなく `localhost` を使います。設定の「ログイン・利用状況」で登録なしのAI利用が表示され、合成レシートから「AIで読み取る」を選ぶと、bot確認後に読み取りへ進みます。例として「テストマート、牛乳220円、パン180円、合計400円」の画像を使います。実際のレシート画像は、読み取り時にGoogleへ送られます。登録なしの利用枠は日本時間の1日5回です。
-
-開発用の公開鍵はconfigでテスト鍵を選び、秘密鍵は `.dev.vars.example` のテスト鍵を使います。これらは [Cloudflare公式のテスト鍵](https://developers.cloudflare.com/turnstile/troubleshooting/testing/)です。本番では使いません。bot確認にはCloudflareへの通信が必要です。providerキーを合成値のままにした場合、実AIの成功は確認できません。`not_configured` やD1のtableエラーが出たら、`.dev.vars` の設定と、開発サーバーとmigrationの保存先が一致しているかを確認します。設定を変えたら開発サーバーを再起動します。
-
-アカウント付きの経路を試す場合は、別のターミナルでローカルの `ACCOUNT_BOOTSTRAP_SECRET` を対話入力して招待を発行します。実在するメールアドレスや本番のsecretは使いません。
-
-```sh
-read -rs 'ACCOUNT_BOOTSTRAP_SECRET?ローカルbootstrap secret: '
-echo
-export ACCOUNT_BOOTSTRAP_SECRET
-ACCOUNT_ADMIN_URL=http://localhost:5173 \
-node workers/ai-gateway/scripts/account-invite.mjs invite developer@example.test 'Local Developer'
-unset ACCOUNT_BOOTSTRAP_SECRET
-```
-
-この入力例はzsh用です。発行されたローカルの招待URLを同じブラウザーで開き、Passkeyを登録します。APIキー、`.dev.vars` の内容、招待URLをPRやチャットへ貼りません。
+開発サーバーは管理画面とネイティブAPIの窓口です。ネイティブ認証を試す場合は、合成データを使い、preview用のネイティブ識別子とoriginを設定します。D1のtableエラーが出たら、開発サーバーとmigrationの保存先を確認します。
 
 ## legacy server環境からの移行
 
@@ -84,17 +71,17 @@ unset ACCOUNT_BOOTSTRAP_SECRET
 
 通常の本番更新は、PRのGitHub Actions検証job `ci` が成功し、人間がmainへSquash mergeした後にCloudflare Workers Buildsが行います。GitHubのmain rulesetは、最新mainとの整合を満たしたPRの `ci` 成功を必須にします。mainへの直接pushとAIによるmainへのマージは禁止です。GitHub ActionsはPRの検証を担当し、本番公開は行いません。マージ後のCI成功を待つ構成ではありません。
 
-既存Worker `kakeimatch` のSettings > Buildsから `RyoyaYahagi/KakeiMatch` を連携し、次の設定を使います。リポジトリ連携の手順は[Cloudflare公式「Workers Builds」](https://developers.cloudflare.com/workers/ci-cd/builds/)、各項目は[公式の設定資料](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)を参照してください。連携設定はCloudflare側で管理し、このリポジトリの変更だけでは連携は有効になりません。
+既存Worker `kakeimatch` のSettings > Buildsから `RyoyaYahagi/KakeiMatch` を連携し、次の設定を使います。リポジトリ連携の手順は[Cloudflare公式「Workers Builds」](https://developers.cloudflare.com/workers/ci-cd/builds/)、各項目は[公式の設定資料](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)を参照してください。連携設定はCloudflare側で管理します。S3をmainへマージする前に、既存のビルド設定を下表の値へ切り替えてください。
 
 | 項目 | 設定 |
 | --- | --- |
 | Production branch | `main` |
-| Root directory | リポジトリroot（`apps/pwa`ではない） |
-| Build command | `pnpm install --frozen-lockfile && pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run` |
-| Deploy command | `pnpm --dir apps/pwa exec cf deploy --prebuilt --mode production-deploy` |
+| Root directory | リポジトリroot |
+| Build command | `pnpm install --frozen-lockfile && npm ci --prefix workers/ai-gateway && cd workers/ai-gateway && npm exec -- cf deploy --mode production-deploy --dry-run` |
+| Deploy command | `cd workers/ai-gateway && npm exec -- cf deploy --prebuilt --mode production-deploy` |
 | 非本番branchの自動build・preview | 無効（PR検証はGitHub Actionsで行う） |
 
-Node.js 22.18以上と、リポジトリで固定したpnpm 10.15.0を使います。本番modeでbuildを検証し、その成果物をprebuiltで公開します。`cf` は `apps/pwa/package.json` に固定した版を使います。通常modeではpreview Workerを選ぶため、`production-deploy` を省略しません。
+Node.js 22.18以上と、リポジトリで固定したpnpm 10.15.0を使います。本番modeでbuildを検証し、その成果物をprebuiltで公開します。`cf` は `workers/ai-gateway/package.json` に固定した版を使います。通常modeではpreview Workerを選ぶため、`production-deploy` を省略しません。
 
 Cloudflare側のBuild variablesに、次の値を登録します。build用の環境変数とWorkerの実行時bindingは別設定です。[Cloudflare公式「Configuration」](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
 
@@ -153,32 +140,32 @@ export ACCOUNT_D1_ID='<production-d1-id>'
 export ACCOUNT_D1_NAME='<production-d1-name>'
 ```
 
-実行時点のCLIを確認します。新しい操作は `cf cli search` で検索し、現行のhelpと公式資料を確認してから実行します。
+リポジトリrootから `cd workers/ai-gateway` で移動し、実行時点のCLIを確認します。新しい操作は `cf cli search` で検索し、現行のhelpと公式資料を確認してから実行します。
 
 ```sh
-corepack pnpm --dir apps/pwa exec cf --help
-corepack pnpm --dir apps/pwa exec cf cli search 'Manage D1 migrations and deploy a Worker'
+npm exec -- cf --help
+npm exec -- cf cli search 'Manage D1 migrations and deploy a Worker'
 ```
 
 D1のmigration履歴を確認し、未適用分だけを適用します。`0001_auth.sql` から `0007_account_deletion.sql` まで、および `0014_guest_ai.sql`、`0015_uncounted_provider_errors.sql`、`0016_category_suggestion_flows.sql`、`0017_jev_upstream_circuits.sql`、`0018_native_app_auth.sql`、`0019_admin_operator_principal.sql` が必要です。`0016_feedback_inbox.sql` も適用してください。0017は当時のJev provider停止状態のキーを分割した履歴migrationです。過去のJev circuit行は残りますが、現行WorkerのGemini分類は利用しません。0016は、MoneyForwardの未対応カテゴリ提案に使う入力HMACと利用回数の予約を保存する表を追加します。カテゴリ名や家計取引はD1へ保存しません。0015は、providerがエラーを返した読み取りを利用回数に数えないための列を追加します。0014はゲスト用の表と、利用記録の種類・暦日・アドレスHMACの列を追加します。既存の行は種類がレシートのまま扱われます。番号は、別ブランチにある未適用の0008〜0013と重ならないようにしています。`TURNSTILE_SITE_KEY` は公開値で、production modeのbuildでは環境変数として必須です。previewはCloudflareのテスト用の鍵を使います。0003はテーブル追加で、旧 `ai_usage` を削除しません。schemaを破壊的に戻さず、旧アプリへ戻す場合も利用量計算への影響を確認してください。
 
 ```sh
-corepack pnpm --dir apps/pwa exec cf d1 migrations list "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
-corepack pnpm --dir apps/pwa exec cf d1 migrations apply "$ACCOUNT_D1_ID" --dir ../../workers/ai-gateway/migrations
+npm exec -- cf d1 migrations list "$ACCOUNT_D1_ID" --dir migrations
+npm exec -- cf d1 migrations apply "$ACCOUNT_D1_ID" --dir migrations
 ```
 
 secret値は本人だけがCloudflareへ登録します。値をGit、PR、チャット、コマンド引数へ書かず、CLIの非表示入力等を使います。必要なbinding名は「本番URLとデータ」に記載しています。初回登録と公開済みWorkerでの更新は挙動が異なるため、[公式secret手順](https://developers.cloudflare.com/workers/configuration/secrets/)と現行CLIを確認してください。previewの値をコピーしません。
 
 `cf workers secrets update <name> --type secret_text` は `--text` を省略すると空の値で更新します。`--text` に値を渡すと実行中のプロセス一覧から値が見えるため、値は0600の一時ファイルへ書き、`--body @<file>` で渡します。`--body` のJSONには `name` も必要です。`--dry-run` は送信内容をそのまま表示するため、実値では使わないでください。
 
-検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、PWAとAPIが同じversionに含まれることを確認してから公開します。
+検証とCIの成功、migration適用、secret bindingの存在を確認した後、production modeでdry-runします。Worker名 `kakeimatch`、本番D1、正規origin、管理画面アセットとAPIが同じ成果物に含まれることを確認してから公開します。
 
 ```sh
-corepack pnpm --dir apps/pwa exec cf deploy --mode production-deploy --dry-run
-corepack pnpm --dir apps/pwa exec cf deploy --mode production-deploy
+npm exec -- cf deploy --mode production-deploy --dry-run
+npm exec -- cf deploy --mode production-deploy
 ```
 
-公開後は本番の `GET /` が200、COOPが `same-origin`、COEPが `require-corp` であることを確認します。未認証のaccount / AI APIは401 / 403等で拒否し、500や秘密値、provider本文を返さないことを確認します。Service WorkerのAPIキャッシュ除外も維持します。認証済みの実AI確認は本人が行います。
+公開後は `GET /` が410、未認証の管理画面が拒否されること、`/.well-known/apple-app-site-association` がネイティブ認証の設定に従って応答することを確認します。認証済みの実AI確認は本人が行います。
 
 ## 本人による招待と実機確認
 

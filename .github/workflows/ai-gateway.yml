@@ -5,6 +5,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'workers/ai-gateway/**'
+      - 'apps/pwa/**'
+      - 'pnpm-lock.yaml'
       - '.github/workflows/ai-gateway.yml'
   workflow_dispatch:
 
@@ -22,11 +24,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.15.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: ${{ runner.environment == 'github-hosted' && 'npm' || '' }}
           cache-dependency-path: workers/ai-gateway/package-lock.json
+      - run: pnpm install --frozen-lockfile
       - run: npm ci --prefix workers/ai-gateway
       - run: npm test --prefix workers/ai-gateway
       - run: npm run typecheck --prefix workers/ai-gateway

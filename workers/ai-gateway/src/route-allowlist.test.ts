@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import appWorker from '../../../apps/pwa/src/worker';
+import appWorker from './hosting';
 
 const state = vi.hoisted(() => ({ status: 403 }));
 const handlers = vi.hoisted(() => ({

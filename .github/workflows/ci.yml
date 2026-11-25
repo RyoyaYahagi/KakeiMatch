@@ -76,7 +76,7 @@ jobs:
       - if: steps.changes.outputs.skip_pwa != 'true'
         run: pnpm --dir apps/pwa test
       - if: steps.changes.outputs.skip_pwa != 'true'
-        run: pnpm --dir apps/pwa exec cf build
+        run: pnpm --dir apps/pwa exec vite build
       - if: steps.changes.outputs.e2e != '' && runner.environment == 'github-hosted'
         uses: actions/cache@v4
         with:
@@ -85,6 +85,10 @@ jobs:
       # The runner image already provides Chromium's system libraries, so skip the slow apt step.
       - if: steps.changes.outputs.e2e != ''
         run: pnpm --dir apps/pwa exec playwright-core install chromium
+      - if: contains(steps.changes.outputs.e2e, 'test:ai-costs-e2e') || contains(steps.changes.outputs.e2e, 'test:admin-e2e')
+        run: |
+          npm ci --prefix workers/ai-gateway
+          npm run build --prefix workers/ai-gateway
       - name: Synthetic local-first flows without legacy runtime
         if: steps.changes.outputs.e2e != ''
         env:

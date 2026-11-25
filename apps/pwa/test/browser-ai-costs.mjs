@@ -8,7 +8,7 @@ const calls = [];
 let feedbackStatus = 'new';
 let feedbackSummary = null;
 let feedbackIssue = false;
-const builtAssets = new URL('../.cloudflare/output/v0/workers/default/assets/', import.meta.url);
+const builtAssets = new URL('../../../workers/ai-gateway/.cloudflare/output/v0/workers/default/assets/', import.meta.url);
 await context.route('**/admin.html', route => route.fulfill({ path: new URL('admin.html', builtAssets).pathname }));
 // The Worker gates admin scripts and styles behind Cloudflare Access, which this synthetic run does not have.
 // Serve the built admin files from the same build output as admin.html.

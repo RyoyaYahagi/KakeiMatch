@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
-const assetRoot = fileURLToPath(new URL('../.cloudflare/output/v0/workers/default/assets/', import.meta.url));
+const assetRoot = fileURLToPath(new URL('../dist/', import.meta.url));
 const template = await readFile(new URL('../public/sw.js', import.meta.url), 'utf8');
 const html = await readFile(`${assetRoot}index.html`, 'utf8');
 const assets = JSON.parse(await readFile(`${assetRoot}offline-assets.json`, 'utf8'));

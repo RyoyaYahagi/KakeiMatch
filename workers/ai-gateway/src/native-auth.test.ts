@@ -88,7 +88,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
   });
 
   it('serves AASA directly through the PWA Worker with HTTPS, no redirects, and no guessed identity', async () => {
-    const { default: appWorker } = await import('../../../apps/pwa/src/worker');
+    const { default: appWorker } = await import('./hosting');
     const assetFetch = vi.fn(async () => new Response('unexpected SPA asset'));
     const appEnv = { ...env, ACCOUNT_DB: env.ACCOUNT_DB!, ASSETS: { fetch: assetFetch } };
     const response = await appWorker.fetch(request('/.well-known/apple-app-site-association'), appEnv);

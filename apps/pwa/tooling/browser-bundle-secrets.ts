@@ -1,8 +1,13 @@
-import type { Plugin } from 'vite';
+type BundleContext = {
+  environment: { name: string };
+  error(message: string): never;
+};
 
-export const browserBundleSecrets: Plugin = {
+type BundleEntry = { type: 'chunk'; code: string } | { type: 'asset' };
+
+export const browserBundleSecrets = {
   name: 'browser-bundle-secret-material-boundary',
-  generateBundle(_options, bundle) {
+  generateBundle(this: BundleContext, _options: unknown, bundle: Record<string, BundleEntry>) {
     if (this.environment.name !== 'client') return;
     // AI_EMERGENCY_STOP is a flag, not secret material; values like false occur in normal code.
     const secretBindingNames = [
