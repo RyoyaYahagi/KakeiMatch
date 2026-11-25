@@ -32,7 +32,6 @@ on:
         default: iPhone 17
         options:
           - iPhone 17
-          - iPhone SE (3rd generation)
 
 permissions:
   contents: read
@@ -54,7 +53,7 @@ defaults:
 jobs:
   build:
     if: ${{ !github.event.pull_request.draft }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 15
     outputs:
       shards: ${{ steps.shards.outputs.matrix }}
@@ -82,7 +81,7 @@ jobs:
             echo "::warning::Spotlight indexing is still enabled on /"
           fi
       # Official image inventory: Xcode_26.2.app, iOS 26.2, iPhone 17.
-      # https://github.com/actions/runner-images/blob/71a003a8ee93ec4165885a365ab607c6732c5078/images/macos/macos-15-Readme.md
+      # https://github.com/actions/runner-images/blob/3b5e6b447abb7eadff4a19ac472e806b1e063f42/images/macos/macos-26-Readme.md
       # build-for-testing only needs the destination, not a booted device.
       # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
@@ -149,7 +148,7 @@ jobs:
   ui-tests:
     if: ${{ success() && !github.event.pull_request.draft }}
     needs: build
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 35
     strategy:
       fail-fast: false
@@ -175,6 +174,18 @@ jobs:
           if mdutil -s / 2>&1 | grep -q "Indexing enabled"; then
             echo "::warning::Spotlight indexing is still enabled on /"
           fi
+      # The first CoreSimulator call in a job is slow on these images
+      # (actions/runner-images#15247). The start step below makes that call, so time
+      # two calls here first. Failure is tolerated; this only records durations.
+      - name: Time first simctl calls
+        continue-on-error: true
+        run: |
+          printf '### First simctl calls\n' >> "$GITHUB_STEP_SUMMARY" || true
+          for call in 1 2; do
+            printf -- '- simctl list %s started (UTC): %s\n' "$call" "$(date -u +%FT%TZ)" >> "$GITHUB_STEP_SUMMARY" || true
+            xcrun simctl list > /dev/null 2>&1 || true
+            printf -- '- simctl list %s finished (UTC): %s\n' "$call" "$(date -u +%FT%TZ)" >> "$GITHUB_STEP_SUMMARY" || true
+          done
       - name: Select Xcode and start simulator in background
         run: bash scripts/ci-simulator.sh start
       - uses: actions/download-artifact@v4
@@ -369,7 +380,7 @@ jobs:
   # Pull request tests run Debug only; verify Release compilation on main pushes and manual runs before TestFlight.
   release-build:
     if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch' }}
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
