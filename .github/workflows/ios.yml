@@ -32,7 +32,6 @@ on:
         default: iPhone 17
         options:
           - iPhone 17
-          - iPhone SE (3rd generation)
 
 permissions:
   contents: read
