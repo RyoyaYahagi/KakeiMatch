@@ -1,63 +1,94 @@
 import { readdir, readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
-// Method totals in seconds from run 40702769985, updated with a 2026-11-01 pull request run. These are hints, not a test list:
-// deleted methods disappear; new methods receive the default estimate.
-const durations = {
-  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 15,
-  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 23,
-  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 18,
-  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 16,
-  'BudgetFlowTests/testBudgetInitialDarkScreenshot': 9,
-  'BudgetFlowTests/testBudgetInitialLightScreenshot': 9,
-  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 94,
-  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 43,
-  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 21,
-  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 36,
-  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 64,
-  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 173,
+// Seconds per UI test method, written by generate-ui-test-weights.mjs from CI logs. Do not edit the table by hand.
+// Every UI test needs an entry, and shard-ui-tests.test.mjs fails when one is missing or deleted.
+// BEGIN generated weights
+export const durations = {
+  'AddButtonHitAreaTests/testAddButtonAccessibilityOrderAndLandscapeLock': 28,
+  'AddButtonHitAreaTests/testAddTileCornerBoundaryRespondsJustInsideAndIgnoresJustOutside': 55,
+  'AddButtonHitAreaTests/testAddTileOnlyRespondsInsideItsRaisedShapeOnHomeTab': 48,
+  'AddButtonHitAreaTests/testAddTileTracksDynamicTypeAndKeyboard': 52,
+  'AddButtonHitAreaTests/testAddTileTracksMoneyForwardRoute': 19,
+  'AddButtonHitAreaTests/testTapBesideRaisedTileStillActivatesUnderlyingRecordRow': 27,
+  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 9,
+  'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 20,
+  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 23,
+  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 21,
+  'BudgetFlowTests/testBudgetInitialDarkScreenshot': 10,
+  'BudgetFlowTests/testBudgetInitialLightScreenshot': 17,
+  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 19,
+  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 21,
+  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 25,
+  'DriveSyncFlowTests/testDriveSyncInitialScreenshotsInLightAndDark': 22,
+  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 15,
+  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 81,
+  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 43,
+  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 104,
   'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 6,
-  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 20,
-  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 33,
-  'HomeFlowTests/testAttentionOpensReconciliation': 9,
-  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 65,
-  'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 11,
-  'MasterManagementFlowTests/testCreateCategoryFromSettings': 20,
-  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 26,
-  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 12,
-  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 18,
-  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 50,
-  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 10,
-  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 10,
+  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 22,
+  'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 21,
+  'HomeFlowTests/testAttentionOpensReconciliation': 10,
+  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 83,
+  'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 13,
+  'MasterManagementFlowTests/testCreateCategoryFromSettings': 18,
+  'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots': 18,
+  'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark': 33,
+  'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark': 22,
+  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 18,
+  'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 25,
+  'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 13,
+  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 19,
+  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 49,
+  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 18,
   'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 16,
+  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 15,
   'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 15,
-  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 10,
-  'PayrollFlowTests/testPayrollInitialLightScreenshot': 10,
-  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 61,
-  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 29,
-  'ReceiptFlowTests/testPendingReceiptUsesEditorAndReturnsToRecords': 13,
-  'ReceiptFlowTests/testScreensDark': 92,
-  'ReceiptFlowTests/testScreensLight': 67,
-  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 15,
-  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 38,
-  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 15,
+  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 15,
+  'PayrollFlowTests/testPayrollInitialLightScreenshot': 13,
+  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 25,
+  'ReceiptFlowTests/testDecliningAIConsentKeepsManualReceiptEntryAvailable': 17,
+  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 30,
+  'ReceiptFlowTests/testScreensDark': 72,
+  'ReceiptFlowTests/testScreensLight': 68,
+  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 26,
+  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 37,
+  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 22,
   'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 14,
-  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 35,
-  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 59,
-  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 24,
-  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 22,
-  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 22,
-  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 12,
-  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 17,
-  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 12,
-  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 31,
-  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 57,
-  'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 33,
+  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 34,
+  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 68,
+  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 26,
+  'ReconciliationFlowTests/testUnmatchedWithKnownUseCreatesPrefilledRecordAndRerunsReconciliation': 25,
+  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 31,
+  'RecordsFlowTests/testDeleteLayoutAtAccessibilityXLFromSearchResult': 25,
+  'RecordsFlowTests/testDeleteLayoutOnIPhoneSE3FromSearchResult': 30, // no measurement yet: default
+  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 29,
+  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 17,
+  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 18,
+  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 18,
+  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 65,
+  'RecordsFlowTests/testSearchChipsSelectRequestedCondition': 31,
+  'RecordsFlowTests/testSearchPeriodOpensCalendar': 56,
+  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 46,
+  'RecurringFlowTests/testCatchUpDialogDarkScreenshot': 30,
+  'RecurringFlowTests/testCatchUpDialogLightScreenshot': 44,
+  'RecurringFlowTests/testCatchUpHistoryDarkScreenshot': 37,
+  'RecurringFlowTests/testCatchUpHistoryLightScreenshot': 36,
+  'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 31,
   'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
   'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
-  'SettingsFlowTests/testDarkSettingsRootScreenshot': 11,
+  'RecurringFlowTests/testRecurringSpendingExclusionIsSavedAndAppliedToGeneratedRecord': 40,
+  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 33,
+  'SettingsFlowTests/testDarkSettingsRootScreenshot': 10,
+  'SettingsFlowTests/testGuestCanReachPolicyAndSupportFromSettings': 13,
   'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 21,
+  'UXExplorationTests/testU1EmptyHomeShowsTabsAndBudgetSetup': 17,
+  'UXExplorationTests/testU2EmptyEntryObservesSourceAccountTrap': 40,
+  'UXExplorationTests/testU3EditsRegisteredRecordCategory': 36,
+  'UXExplorationTests/testU4ReconciliationEmptyAndPopulatedStates': 38,
+  'UXExplorationTests/testU5SettingsRowsAndBudgetDiscovery': 24,
 };
+// END generated weights
 
 // Methods that only open a screen and attach reference screenshots. Pull requests
 // skip them; pushes to main and manual runs keep them. Methods that also check
@@ -123,13 +154,20 @@ export function validateCoverage(tests, shards) {
   }
 }
 
-export function assignShards(tests, count, weights = durations) {
+// Shard 0 also runs the Swift Testing unit tests, about this many seconds on its simulator.
+export const unitTestSeconds = 200;
+
+// firstShardSeconds is time that shard 0 spends before its UI tests start.
+export function assignShards(tests, count, weights = durations, { firstShardSeconds = 0 } = {}) {
   if (!Number.isInteger(count) || count < 1 || count > tests.length) {
     throw new Error('Shard count must be an integer between 1 and the test count');
   }
   const weight = name => weights[name] ?? 30;
   const ordered = [...tests].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b, 'en'));
-  const shards = Array.from({ length: count }, () => ({ tests: [], estimatedSeconds: 0 }));
+  const shards = Array.from({ length: count }, (_, index) => ({
+    tests: [],
+    estimatedSeconds: index === 0 ? firstShardSeconds : 0,
+  }));
   for (const name of ordered) {
     const shard = shards.reduce((best, candidate) => candidate.estimatedSeconds < best.estimatedSeconds ? candidate : best);
     shard.tests.push(name);
@@ -211,10 +249,10 @@ export function selectForChanges(tests, changedPaths, { features, testFiles }) {
   return { all: false, tests: tests.filter(name => classes.has(name.split('/')[0])) };
 }
 
-// Fewer shards for a small selection: about five minutes of tests per simulator.
+// Fewer shards for a small selection: about 450 seconds of tests per simulator.
 export function shardCountFor(tests, maximum, weights = durations) {
   const seconds = tests.reduce((sum, name) => sum + (weights[name] ?? 30), 0);
-  return Math.max(1, Math.min(maximum, tests.length, Math.ceil(seconds / 300)));
+  return Math.max(1, Math.min(maximum, tests.length, Math.ceil(seconds / 450)));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -237,7 +275,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     tests = selection.tests;
     if (!selection.all) shardCount = shardCountFor(tests, shardCount);
   }
-  const shards = assignShards(tests, shardCount);
+  const shards = assignShards(tests, shardCount, durations, { firstShardSeconds: unitTestSeconds });
   if (index === undefined) {
     console.log(JSON.stringify(shards, null, 2));
   } else {

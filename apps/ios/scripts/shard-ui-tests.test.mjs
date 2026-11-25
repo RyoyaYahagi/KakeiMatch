@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import {
-  assignShards, discoverTests, featureIdentifiers, screenshotOnly, selectForChanges, selectTests, shardCountFor,
-  smokeClasses, uiTestFiles, validateCoverage,
+  assignShards, discoverTests, durations, featureIdentifiers, screenshotOnly, selectForChanges, selectTests,
+  shardCountFor, smokeClasses, uiTestFiles, unitTestSeconds, validateCoverage,
 } from './shard-ui-tests.mjs';
+import {
+  buildWeights, estimates, formatWeightTable, median, parseDurations, replaceWeightTable,
+} from './generate-ui-test-weights.mjs';
 
 test('discovers methods per class and ignores comments, helpers and non-test functions', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'ios-shards-'));
@@ -122,4 +125,61 @@ test('repository mapping covers every UI test class through a feature or the smo
   assert.equal(receipt.all, false);
   assert.ok(receipt.tests.some(name => name.startsWith('ReceiptFlowTests/')));
   assert.ok(receipt.tests.length < discovered.length);
+});
+
+test('every UI test has its own weight and no weight is left for a deleted test', async () => {
+  const discovered = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  const unregistered = discovered.filter(name => !(name in durations));
+  const stale = Object.keys(durations).filter(name => !discovered.includes(name));
+  assert.deepEqual(unregistered, [], 'run generate-ui-test-weights.mjs --write to register these UI tests');
+  assert.deepEqual(stale, [], 'run generate-ui-test-weights.mjs --write to drop these weights');
+});
+
+test('shard 0 starts with the unit-test seconds counted', () => {
+  const shards = assignShards(['A', 'B', 'C', 'D'], 2, { A: 100, B: 100, C: 100, D: 100 }, { firstShardSeconds: 200 });
+  assert.deepEqual(shards.map(shard => shard.tests), [['C'], ['A', 'B', 'D']]);
+  assert.deepEqual(shards.map(shard => shard.estimatedSeconds), [300, 300]);
+  assert.equal(unitTestSeconds, 200);
+});
+
+test('a selection that fits in 450 seconds runs on one simulator', () => {
+  assert.equal(shardCountFor(['A', 'B'], 4, { A: 200, B: 200 }), 1);
+  assert.equal(shardCountFor(['A', 'B'], 4, { A: 250, B: 250 }), 2);
+});
+
+test('reads passed durations from xcodebuild output and ignores other lines', () => {
+  const log = [
+    "Test Case '-[KakeiMatchUITests.AddButtonHitAreaTests testAddTileTracksMoneyForwardRoute]' passed (12.5 seconds)",
+    "Test Case '-[KakeiMatchUITests.RecordsFlowTests testX]' failed (3.0 seconds)",
+    "Test Case '-[KakeiMatchUITests.RecordsFlowTests testY]' skipped (0.1 seconds)",
+    'Executed 2 tests, with 0 failures',
+  ].join('\n');
+  assert.deepEqual(parseDurations(log), [['AddButtonHitAreaTests/testAddTileTracksMoneyForwardRoute', 12.5]]);
+});
+
+test('medians use the middle value, or the mean of the two middle values', () => {
+  assert.equal(median([30, 10, 20]), 20);
+  assert.equal(median([10, 40, 20, 30]), 25);
+});
+
+test('weights prefer estimates, then pull-request runs, then main runs, then the default', () => {
+  const weights = buildWeights(['Est', 'Pr', 'Main', 'None'], {
+    pullRequestSamples: new Map([['Pr', [10, 12, 100]], ['Main', [999]]]),
+    mainSamples: new Map([['Main', [50, 60, 70]], ['Est', [5]]]),
+    estimated: { Est: 48 },
+  });
+  assert.deepEqual(weights, {
+    Est: { seconds: 48, source: 'estimate' },
+    Pr: { seconds: 12, source: 'pull-request' },
+    Main: { seconds: 999, source: 'pull-request' },
+    None: { seconds: 30, source: 'default' },
+  });
+});
+
+test('the generated table replaces only the marked block', () => {
+  const source = 'before\n// BEGIN generated weights\nold table\n// END generated weights\nafter';
+  assert.equal(replaceWeightTable(source, formatWeightTable({ 'A/testB': { seconds: 7, source: 'main' } })),
+    "before\n// BEGIN generated weights\nexport const durations = {\n  'A/testB': 7,\n};\n// END generated weights\nafter");
+  assert.throws(() => replaceWeightTable('no markers', 'x'), /markers/);
+  assert.ok(Object.keys(estimates).every(name => name.includes('/test')));
 });
