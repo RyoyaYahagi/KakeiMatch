@@ -1,0 +1,137 @@
+/* Design tokens: docs/DESIGN.md. Screens use these variables instead of raw values. */
+:root {
+  color-scheme: light;
+  --bg: #FAF6F1;
+  --surface: #FFFFFF;
+  --sunken: #F3EBE1;
+  --text: #2E2219;
+  --muted: #6E5F52;
+  --border: #ECE2D7;
+  --border-strong: #C9B6A2;
+  --primary: #A94C16;
+  --on-primary: #FFFFFF;
+  --primary-soft: #FCE9DC;
+  --primary-press: #8F3F11;
+  --success: #B3361F;
+  --success-soft: #FBE7E1;
+  --warning: #3F55B5;
+  --warning-soft: #E6EAFB;
+  --missing: #8A3A78;
+  --missing-soft: #F6E5F0;
+  --danger: #9E1B32;
+  --danger-soft: #FBE3E7;
+  --income: #2D6FA8;
+  --scrim: rgb(46 34 25 / .45);
+  --shadow: 0 1px 3px rgb(46 34 25 / .06);
+  --shadow-raised: 0 4px 12px rgb(169 76 22 / .35);
+  --c-food: #D9661F; --c-food-soft: #FFE8D6;
+  --c-daily: #0B7A68; --c-daily-soft: #E4F5EF;
+  --c-transport: #2D66B5; --c-transport-soft: #E0EBFA;
+  --c-fun: #B23C74; --c-fun-soft: #FBE2EE;
+  --c-util: #946600; --c-util-soft: #FFF1C7;
+  --c-comm: #6450BF; --c-comm-soft: #ECE8FB;
+  --c-other: #5E6A65; --c-other-soft: #E8ECEA;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 10px; --radius-md: 12px; --radius-lg: 16px; --radius-xl: 18px; --radius-sheet: 24px; --radius-full: 999px;
+  --font-body: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI", system-ui, sans-serif;
+  /* Amounts, counts and dates line up like a ledger slip. */
+  --font-num: ui-monospace, "SF Mono", Menlo, "Roboto Mono", monospace;
+  --nav-height: 64px;
+  --sidebar-width: 240px;
+  --content-max: 760px;
+  --content-wide: 1080px;
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background: var(--bg);
+}
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #17120E;
+    --surface: #221B15;
+    --sunken: #2B221B;
+    --text: #F2E9E0;
+    --muted: #B3A493;
+    --border: #382D24;
+    --border-strong: #5E4D3F;
+    --primary: #FFA56B;
+    --on-primary: #2A1205;
+    --primary-soft: #3D2414;
+    --primary-press: #F08F50;
+    --success: #FF8C72; --success-soft: #3B1D17;
+    --warning: #AEB6FF; --warning-soft: #262C55;
+    --missing: #F0A6DA; --missing-soft: #3A1E33;
+    --danger: #FF8FA3; --danger-soft: #3D1820;
+    --income: #8DC0F0;
+    --scrim: rgb(0 0 0 / .6);
+    --shadow: none;
+    --shadow-raised: 0 4px 12px rgb(0 0 0 / .45);
+    --c-food: #FFA766; --c-food-soft: #3B2616;
+    --c-daily: #45C7A8; --c-daily-soft: #173A32;
+    --c-transport: #8DB8F5; --c-transport-soft: #182A44;
+    --c-fun: #F28DBC; --c-fun-soft: #3A1A2B;
+    --c-util: #F0C150; --c-util-soft: #3A2E0E;
+    --c-comm: #B3A5F5; --c-comm-soft: #241F45;
+    --c-other: #A9B4AF; --c-other-soft: #262E2B;
+}
+
+/* Base */
+* { box-sizing: border-box; }
+html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+body { margin: 0; background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
+/* iOS/Safari paints a rectangular tap highlight over the full hit area by default.
+   Remove that touch-only flash; :focus-visible below still provides keyboard focus feedback. */
+button { -webkit-tap-highlight-color: transparent; }
+main { max-width: 640px; min-width: 0; margin: 0 auto; padding: max(var(--space-4), env(safe-area-inset-top)) var(--space-4) calc(var(--nav-height) + var(--space-8) + env(safe-area-inset-bottom)); }
+main, form { min-width: 0; }
+img, input, select, textarea, button { max-width: 100%; }
+h1 { margin: 0; font-size: 1.375rem; }
+h2 { font-size: 1.125rem; margin: var(--space-6) 0 var(--space-3); }
+h3 { font-size: 1rem; margin: var(--space-5) 0 var(--space-2); }
+p { line-height: 1.6; }
+ul { list-style: none; padding: 0; margin: 0; }
+li { padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.status { font-size: .875rem; color: var(--muted); }
+.status.error { color: var(--danger); }
+.muted { color: var(--muted); font-size: .875rem; }
+.row { display: flex; justify-content: space-between; align-items: baseline; gap: var(--space-3); }
+.empty { padding: var(--space-6) 0; }
+
+
+/* Buttons (docs/DESIGN.md ボタン): only `.primary` is filled. A button without a class
+   carries no frame or fill, so a forgotten class never adds another filled block. */
+button { font: inherit; min-height: 44px; padding: var(--space-2) var(--space-4); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--primary); font-weight: 700; cursor: pointer; word-break: keep-all; overflow-wrap: anywhere; transition: transform .08s ease, background-color .12s ease; }
+@supports (word-break: auto-phrase) { button { word-break: auto-phrase; } }
+button:disabled { opacity: .55; cursor: default; }
+button.primary { background: var(--primary); color: var(--on-primary); }
+button.primary:active:not(:disabled) { background: var(--primary-press); transform: translateY(1px) scale(.985); }
+button.primary:disabled { opacity: 1; background: var(--sunken); color: var(--muted); }
+.secondary { background: transparent; color: var(--primary); border: 0; padding-inline: var(--space-2); font-weight: 700; margin: var(--space-2) var(--space-2) 0 0; }
+.text-button { background: transparent; color: var(--primary); padding: var(--space-1) var(--space-2); font-weight: 500; }
+button.destructive { background: transparent; color: var(--danger); border: 0; padding-inline: var(--space-2); font-weight: 700; }
+.secondary:active:not(:disabled), .text-button:active:not(:disabled) { background: var(--primary-soft); }
+button.destructive:active:not(:disabled) { background: var(--danger-soft); }
+
+form button { margin-top: var(--space-5); }
+
+/* Form controls */
+label { display: block; margin: var(--space-4) 0 var(--space-2); color: var(--text); }
+input, select, textarea { font: inherit; width: 100%; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-md); }
+input, select { min-height: 48px; padding: var(--space-2) var(--space-3); }
+textarea { min-height: 88px; padding: var(--space-2) var(--space-3); }
+input:focus, select:focus, textarea:focus { border-color: var(--primary); }
+
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 3px solid var(--warning); outline-offset: 2px; }
+
+@media (min-width: 1024px) {
+  :root { --nav-height: 0px; }
+  main { max-width: none; margin: 0 0 0 var(--sidebar-width); padding: var(--space-8) var(--space-8) var(--space-8); }
+  main > p { max-width: var(--content-max); margin-inline: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}

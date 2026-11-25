@@ -1,43 +1,28 @@
 # アーキテクチャ
 
-本番アプリは `apps/pwa` のPWAと、同じoriginで動くCloudflare Workerです。家計データは利用者の端末に保存します。Cloudflareはアプリ配信、Cloud account、AI Gatewayと、それらに必要なD1データを担当します。
+利用者向けアプリは `apps/ios` の iOS アプリです。家計データは利用者の端末に保存します。`workers/ai-gateway` はネイティブ API、管理画面、アカウントや運用に必要な D1 データを担当します。
 
 ## 本番構成
 
-```text
-ブラウザー / iPhone
-├─ PWAの画面
-├─ Actual Budgetブラウザー版
-├─ KakeiMatchのIndexedDB記録
-├─ レシート / 明細 / 照合 / .kmbバックアップと復元
-└─ Cloud account / AI利用時の同一origin要求
-       │
-       ▼
-Cloudflare Worker: https://kakeimatch.yhgry.workers.dev
-├─ PWA配信
-├─ /api/auth/* と /api/account/*（本人認証、招待、アカウント削除）
-├─ /api/ai/* と /api/contact*
-└─ D1: 本人確認 / session / Passkey / 招待・回復 /
-       利用権限 / AI利用量・料金・制限 / 問い合わせ処理状態
-```
+- iOS アプリは `/api/native/*` を利用します。Passkey の関連付けには AASA を配信します。
+- 管理画面と管理 API（`/admin`、`/api/admin/*`）は Cloudflare Access と Worker の管理者認可で保護します。
+- 旧 PWA の経路には Worker が HTTP 410 を返します。Cloudflare Access の対象では未認証のリクエストが先にログイン画面へ転送されます。
 
-本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はoriginごとに分かれるため、利用開始後にWorker名やoriginを変えると、保存済みデータが見えなくなることがあります。このoriginを安定して維持してください。previewは別originを使い、合成データ専用とします。家計データをpreviewで開かないでください。
+本番 origin は `https://kakeimatch.yhgry.workers.dev` です。Passkey の RP ID と Associated Domains に関係するため、この origin を維持します。プレビューは別 origin と合成データを使います。
 
 ## データ境界
 
-Actual Budgetのブラウザー版は家計簿を端末内に保存します。KakeiMatchはレシート情報と画像、取り込んだ明細、照合run・判断、登録状態をブラウザー内に保存します。明細解析、照合、状態変更、金額処理は決定的な通常コードで行います。これらの家計データをアプリ用データベースへ送りません。
+iOS アプリは取引、レシート、取り込んだ明細、照合結果を端末内に保存します。明細解析、照合、状態変更、金額処理は通常コードで行います。
 
 Cloud accountは端末内の家計操作には不要です。Better AuthとPasskeyはアカウントとAI APIの本人確認に使います。D1には本人確認とsession、Passkey、招待・回復情報、利用権限、AI利用量・料金・制限情報、問い合わせの二重投稿を防ぐ処理状態、マスキング済み問い合わせと許可された診断情報、暗号化した原文、管理操作の監査ログを保存します。音声はD1へ保存しません。取引、レシート画像、明細CSV、照合結果、Actual Budgetデータは保存しません。ログアウトしても端末の家計データは削除されません。
 
-本人によるアカウント削除は、同一originと有効sessionをサーバーで確認し、D1のbatchで削除済みの不透明なuser IDをtombstoneへ記録してからuser行を削除します。認証情報、session、招待、利用権限、AI利用記録、問い合わせ処理状態は外部キーにより削除します。tombstoneは遅れて終わるPasskey登録から同じIDが復活するのを防ぐためにだけ保持し、氏名・email・認証情報を持ちません。AI用JWTは要求ごとにD1のuser行を確認してから使います。家計データは端末に残り、アカウント削除と連動して消しません。
+本人によるアカウント削除はネイティブセッションで認証します。D1 のバッチで利用者 ID を tombstone に記録してからアカウントと関連する認証・利用情報を削除します。家計データは端末に残ります。
 
-AI要求は同一originの `/api/ai/*` を通します。Workerは認証、利用枠、要求形式、provider応答を検証します。利用者が選んだ場合だけ、レシート画像をGeminiへ送ります。レシート分類では、検証済みの店名・合計金額・最大30件の商品名と金額に加え、候補カテゴリのID・名称と分類基準をGemini Decisions API（`POST /v1beta/decisions`、モデル `gemini-decision-1`）へ送ります。レシート画像の読み取りはGemini Interactions APIです。MoneyForwardのカテゴリ対応候補では、変換元カテゴリ名と候補カテゴリのID・名称を送ります。分類はレシート読み取りと共通の `GEMINI_API_KEY`、費用予約・計測、rate limit、circuitを使います。分類のモデルはWorkerのコードで `gemini-decision-1` に固定し、`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどの設定で、分類には使いません。分類応答は選択肢・全候補の確率・confidenceをWorkerで検証します。Gemini要求が失敗した場合は別providerへ送らず、分類を停止します。Cloud accountやネットワークを利用できない場合も、手入力、明細取込、照合、Actual Budgetの端末内操作を続けられます。
+AI 要求は iOS からネイティブ API を通します。Workerは認証、利用枠、要求形式、provider応答を検証します。利用者が選んだ場合だけ、レシート画像をGeminiへ送ります。レシート分類では、検証済みの店名・合計金額・最大30件の商品名と金額に加え、候補カテゴリのID・名称と分類基準をGemini Decisions API（`POST /v1beta/decisions`、モデル `gemini-decision-1`）へ送ります。レシート画像の読み取りはGemini Interactions APIです。MoneyForwardのカテゴリ対応候補では、変換元カテゴリ名と候補カテゴリのID・名称を送ります。分類はレシート読み取りと共通の `GEMINI_API_KEY`、費用予約・計測、rate limit、circuitを使います。分類のモデルはWorkerのコードで `gemini-decision-1` に固定し、`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどの設定で、分類には使いません。分類応答は選択肢・全候補の確率・confidenceをWorkerで検証します。Gemini要求が失敗した場合は別providerへ送らず、分類を停止します。Cloud accountやネットワークを利用できない場合も、手入力、明細取込、照合、端末内の家計操作を続けられます。
 
-端末間の同期は、利用者の2台をWebRTCのデータチャネルで直接つなぎます。サーバーもSTUN/TURNも使わず、同じネットワークの端末どうしだけがつながります。接続に必要なsession descriptionは、QRコードまたは文字のコードとして利用者が受け渡します。コードにはDTLSの指紋が入るため、チャネルはコードを見せた端末に結び付いて暗号化されます。片方の家計簿全体をバックアップと同じ形式で送り、受け取った側はSHA-256で欠けがないことを確かめてから、バックアップの復元と同じ手順で切り替えます。元の家計簿は「変更前のデータに戻す」で戻せます。取引単位の合併はしません。
 
-Service Workerは `/api/*` をcacheしません。Workerはブラウザー内のActualエンジンが必要とするCOOP/COEP response headerを維持します。いずれも本番構成の要件です。
 
-給与明細も既存のAI境界を通し、手取りだけをActualへ登録します。写真はメモリ内でマスキングした後に送信し、永続保存しません。確認済みの構造化内訳だけを端末の`payroll-record`へ保存し、バックアップ・同期へ含めます。詳細は[給与明細](LOCAL_PAYROLL.md)を参照してください。
+給与明細の読み取りもネイティブの AI 境界を通します。
 
 ## iOS ネイティブのクラウドAPI
 
@@ -51,14 +36,15 @@ iOSアプリは、利用者が設定で明示的に有効にした場合だけ�
 
 Issue #38のクラウド保存は、明示同意後の暗号文のみを端末外へ送る追加経路として段階的に実装します。端末側の共通暗号形式と復旧コードは[暗号化クラウド保存の共通形式](ENCRYPTED_HOUSEHOLD_STORAGE.md)に定義します。現段階では送信・保存先・同意UIは未実装で、通常の端末内利用には影響しません。将来の保存先へ平文家計データ、復旧コード、復号鍵を送らず、Cloud account/Passkeyと復号鍵を分けます。
 
-`.kmb` archiveにはActualブラウザー版の家計簿、KakeiMatchの端末記録、残っているレシート画像と明細CSVを含めます。復元時は内容を検証し、新しい端末profileとActual data directoryへstagingしてから、有効profileを切り替えます。Cloud credentials、session、AI token、利用権限、AI利用量、provider secretsは含めません。archiveは暗号化されません。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。
+旧 PWA の `.kmb` は iOS へ取り込めます。iOS のバックアップ形式は `.kmib` です。
 
-旧Next.js環境から移行する場合、Actual ZIPにはActual Budgetの取引だけが含まれます。legacy Next.jsには `.kmb` export機能がありません。`.kmb` はlocal-first PWAで作成した場合に限り、KakeiMatchの端末記録や残っているreceipt/statement原本も含みます。PWAはlegacy server SQLiteを直接読みません。旧Next.js環境のreceipt/statement metadataは自動移行されず、Actual ZIPにも含まれません。これらの記録が必要な場合は別途手動移行してください。Actual孤児データの特殊な整理制約はIssue #58で管理します。
+旧Next.js環境から移行する場合、Actual ZIPにはActual Budgetの取引だけが含まれます。legacy Next.jsには `.kmb` export機能がありません。`.kmb` はlocal-first PWAで作成した場合に限り、KakeiMatchの端末記録や残っているreceipt/statement原本も含みます。旧 PWA は legacy server SQLite を直接読み込みませんでした。旧Next.js環境のreceipt/statement metadataは自動移行されず、Actual ZIPにも含まれません。これらの記録が必要な場合は別途手動移行してください。Actual孤児データの特殊な整理制約はIssue #58で管理します。
 
-MoneyForward CSVの移行も端末内で解析・登録します。元CSVは保存せず、移行履歴と対応ルールだけをIndexedDBと`.kmb`に保持します。未対応カテゴリの任意提案では、カテゴリ名と利用可能な選択肢だけを専用AI APIへ送ります。詳細は[マネーフォワードCSVからの移行](MONEYFORWARD_IMPORT.md)を参照してください。
 
 ## legacy実装
 
-旧Next.jsアプリとserver adapterはlegacyまたは移行時の参照として残します。本番client、起動経路、家計データの正本ではありません。PWA production buildが共有するroot moduleは、browser-safeな15ファイルに限定しています。Vite pluginは実際のmodule graphを検査し、それ以外のroot moduleやlegacy runtime packageがbundleへ入る場合はbuildを失敗させます。詳細は[legacy文書index](legacy/README.md)と[legacy runtime inventory](LEGACY_RUNTIME_INVENTORY.md)を参照してください。現行PWAの動作と合成データによる確認手順は[ローカル利用フロー](LOCAL_FIRST_FLOW.md)に記載します。
+旧 Next.js アプリとサーバーアダプターは移行時の参照として残します。旧 PWA のリポジトリ上の最終状態は `pwa-final` タグにあります。過去の構成は [legacy 文書](legacy/README.md) を参照してください。
 
-お問い合わせでは、録音終了後に音声をGoogleへ送り自動で文字起こしします。利用者が許可した場合は、サーバー管理のProduct Contextと文章をGeminiへ送り、1問ずつの深掘りと送信前要約を行います。別途利用者が許可した場合だけ、メモリ上のFlight Recorderから固定語彙で構成した画面・操作・安全なエラーコード・通信状態を添付します。生ログ、stack trace、入力文字列、家計データは診断コンテキストに入りません。最終送信時はAIやGitHubを呼ばず、管理者専用Inboxへ保存します。管理者が確認してからマスキング済み情報だけをAI分析またはIssue化します。原文は秘密情報を除去して暗号化し、90日の保存期限を設けます。管理UI/APIはサーバー側の管理者認可と、設定済み環境ではCloudflare Access JWT検証で保護します。詳細は[お問い合わせ](CONTACT.md)を参照してください。
+## お問い合わせと管理画面
+
+iOS から明示的に送信されたお問い合わせを管理者専用の受信箱に保存します。管理者は内容を確認してから AI 分析や Issue 作成を実行できます。Issue にはマスキング済み情報だけを送ります。暗号化した原文とマスキング済み本文の保存期限は90日です。管理画面と管理 API の動作は [Gateway の README](../workers/ai-gateway/README.md) を参照してください。

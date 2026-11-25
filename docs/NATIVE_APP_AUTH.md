@@ -154,7 +154,7 @@ userまたは背後のBetter Auth session削除は外部キーでnative session 
 
 `KMAPIConfiguration` はbundleの `KMNativeAPIHost` から既定のHTTPS API URLを作ります。値が欠損・不正なら初期化を失敗させ、production hostへfallbackしません。hostの自動発見やpreview fallbackは行いません。テスト等では明示URLを注入できますが、署名済みpreview buildでは `KM_NATIVE_HOST` とAssociated Domainsの値を合わせてください。Worker `/api/native/config` の `rpId` もそのURL hostと一致必須です。
 
-全項目を明示します。通常のPWA buildで値がなくても失敗させず、ネイティブ境界だけ無効にします。`apps/pwa/cloudflare.config.ts` は本番build変数からtext bindingを作ります。previewは `PREVIEW_NATIVE_APP_*` だけを読み、本番値を継承しません。既存の `BETTER_AUTH_SECRET`・`AI_GATEWAY_AUTH_SECRET`・D1・rate-limit bindingも必須です。新しいprovider秘密鍵や端末内bootstrap secretは不要です。
+全項目を明示します。通常の Worker buildで値がなくても失敗させず、ネイティブ境界だけ無効にします。`workers/ai-gateway/cloudflare.config.ts` は本番build変数からtext bindingを作ります。previewは `PREVIEW_NATIVE_APP_*` だけを読み、本番値を継承しません。既存の `BETTER_AUTH_SECRET`・`AI_GATEWAY_AUTH_SECRET`・D1・rate-limit bindingも必須です。新しいprovider秘密鍵や端末内bootstrap secretは不要です。
 
 AASAは `/.well-known/apple-app-site-association` にJSONとして直接200で返し、`webcredentials.apps:[設定したApp ID]` を載せます。Cloudflare assetsより先にWorkerで処理します。Team/App ID、origin、RP、環境が不正なら404にし、SPAへredirectしません。Appleは有効なHTTPS証明書・redirectなし・App ID prefixとbundle IDの一致を要求します。AASAはApple CDN経由で反映に時間がかかるため、設定直後の実機失敗を即座にサーバーバグと断定しません。[Apple Domains (2026/10), Add the associated domain file / CDN]
 

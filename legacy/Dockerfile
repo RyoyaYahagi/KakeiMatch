@@ -6,12 +6,10 @@ WORKDIR /app
 
 FROM base AS dependencies
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/pwa/package.json ./apps/pwa/package.json
 RUN pnpm install --frozen-lockfile
 
 FROM base AS builder
 COPY --from=dependencies /app/node_modules ./node_modules
-COPY --from=dependencies /app/apps/pwa/node_modules ./apps/pwa/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN mkdir -p data && pnpm legacy:db:migrate && pnpm legacy:build

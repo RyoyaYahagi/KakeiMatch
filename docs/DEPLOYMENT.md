@@ -4,15 +4,15 @@
 
 ## 本番URLとデータ
 
-アプリが前提とする本番の正規originは `https://kakeimatch.yhgry.workers.dev` です。ブラウザーの保存領域はoriginごとに分かれます。利用開始後にWorker名やoriginを変更すると、保存済みデータをアプリから参照できなくなる可能性があります。Worker名とoriginを安定して維持してください。本番の配信経路、専用D1、secret bindingは準備済みです。本番Worker名 `kakeimatch` とCloudflareアカウントのsubdomain `yhgry` に対応するURLを正規originとして使います。
+本番 Worker `kakeimatch` の正規 origin は `https://kakeimatch.yhgry.workers.dev` です。ネイティブ認証の RP ID と Associated Domains に関わるため、この origin を維持します。
 
-同一WorkerがPWAと `/api/auth/*`、`/api/account/*`、`/api/ai/*` を配信します。WorkerのD1 bindingは、本人確認、session、Passkey、招待・回復、利用権限、AI利用量の保存だけに使います。家計データは保存しません。Geminiの認証情報はWorker secretに設定します。WorkerはCOOP/COEP headerを維持し、Service Workerは `/api/*` をcacheしません。
+`workers/ai-gateway` の Worker が管理画面とネイティブ API を配信します。D1 は認証、利用権限、AI 利用量、問い合わせの運用に使います。家計データは iOS 端末内に保存し、Gemini の認証情報は Worker の Secret binding に設定します。
 
 `workers/ai-gateway/cloudflare.config.ts` は通常、`kakeimatch-issue-39-preview` Workerを選びます。previewは既存のsynthetic test用D1を使い、合成データだけで確認します。previewで家計データを開かないでください。本番設定はpreviewではないbuildで `production-deploy` modeを明示した場合だけ選択されます。本番用 `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` の両方が必要です。これにより、指定なしでpreview D1を本番に使うことを防ぎます。指定するIDが本番用であることは運用時に確認してください。本番の `CLOUD_ACCOUNT_ORIGIN` は正規originに設定します。
 
 Issue #39では本番route、D1、secretを準備・検証せず、本番deployもしません。preview deployは合成データによる回帰確認専用です。現在の `cf` CLIを使う前に `cf --help` と `cf cli search` を確認してください。古いWrangler手順からcommandを推測しないでください。専用previewには `pnpm deploy:preview` を使います。確認済みpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。rootの `deploy` scriptはproduction modeを選び、本番サービスへ変更を加える可能性があります。別途明示的な依頼がない限り実行しないでください。
 
-preview上ではActualブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
+旧 PWA の Issue #39 では、プレビュー上で Actual ブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
 本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL` です。`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどのモデル名です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` を使い、モデルはWorkerのコードで `gemini-decision-1` に固定されます。追加のprovider keyや環境変数は必要ありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
@@ -26,17 +26,16 @@ preview上ではActualブラウザー版を使ったレシート、明細、照�
 
 ```sh
 corepack pnpm install
-corepack pnpm --dir apps/pwa dev
-corepack pnpm --dir apps/pwa typecheck
-corepack pnpm --dir apps/pwa test
-corepack pnpm --dir apps/pwa build
+corepack pnpm lint
+corepack pnpm typecheck
+corepack pnpm test
 npm ci --prefix workers/ai-gateway
 npm run --prefix workers/ai-gateway test
 npm run --prefix workers/ai-gateway typecheck
 npm run --prefix workers/ai-gateway build
 ```
 
-AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace外にあります。PWAのローカル画面は `pnpm dev` で確認できます。Workerの開発サーバーは `npm run --prefix workers/ai-gateway dev` で起動します。D1 schema変更は `workers/ai-gateway/migrations/` に記録します。
+AI Gateway Workerは独立した `package-lock.json` を持ち、pnpm workspace外にあります。Workerの開発サーバーは `npm run --prefix workers/ai-gateway dev` で起動します。D1 schema変更は `workers/ai-gateway/migrations/` に記録します。
 
 ## ローカルでAIを試す
 
@@ -63,15 +62,15 @@ npm run dev
 
 ## legacy server環境からの移行
 
-以前のNext.jsアプリ、server SQLite、ファイル保存、Actual CLI、Docker Composeはlegacy参照として残します。PWAを利用するための本番構成ではありません。legacy Composeファイルを本番導入手順として使わないでください。過去の設計は[legacy architecture](legacy/ARCHITECTURE.md)と[legacy implementation plan](legacy/IMPLEMENTATION_PLAN.md)に記録しています。
+以前のNext.jsアプリ、server SQLite、ファイル保存、Actual CLI、Docker Composeはlegacy参照として残します。現在の本番構成ではありません。legacy Composeファイルを本番導入手順として使わないでください。過去の設計は[legacy architecture](legacy/ARCHITECTURE.md)と[legacy implementation plan](legacy/IMPLEMENTATION_PLAN.md)に記録しています。
 
-旧Actual ServerからexportしたZIPにはActual Budgetの家計簿データだけが含まれます。PWAのブラウザー版Actualへimportしてください。旧Next.jsにはKakeiMatch `.kmb` export機能がなく、旧receipt/statement metadataも自動移行されません。local-first PWAで作成した `.kmb` には、Actual BudgetとKakeiMatch端末記録、残っているreceipt/statement原本が含まれます。PWAは旧server SQLiteや旧receipt/statement directoryを直接読みません。新しい端末profileを確認するまで旧環境の検証済みbackupを保管してください。対応するexportに含まれないlegacy記録は個別に手動移行してください。詳細は[端末内データのバックアップと復元](LOCAL_BACKUP.md)を参照してください。Actual orphan cleanupの特殊制約はIssue #58で管理します。
+旧 PWA から書き出した `.kmb` は iOS アプリに取り込めます。旧 Next.js の Actual ZIP に含まれるのは Actual Budget の取引です。新しい端末で移行結果を確認するまで、旧環境のバックアップを保管してください。
 
 ## Cloudflare Workers Buildsによる本番更新
 
 通常の本番更新は、PRのGitHub Actions検証job `ci` が成功し、人間がmainへSquash mergeした後にCloudflare Workers Buildsが行います。GitHubのmain rulesetは、最新mainとの整合を満たしたPRの `ci` 成功を必須にします。mainへの直接pushとAIによるmainへのマージは禁止です。GitHub ActionsはPRの検証を担当し、本番公開は行いません。マージ後のCI成功を待つ構成ではありません。
 
-既存Worker `kakeimatch` のSettings > Buildsから `RyoyaYahagi/KakeiMatch` を連携し、次の設定を使います。リポジトリ連携の手順は[Cloudflare公式「Workers Builds」](https://developers.cloudflare.com/workers/ci-cd/builds/)、各項目は[公式の設定資料](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)を参照してください。連携設定はCloudflare側で管理します。S3をmainへマージする前に、既存のビルド設定を下表の値へ切り替えてください。
+既存Worker `kakeimatch` のSettings > Buildsから `RyoyaYahagi/KakeiMatch` を連携し、次の設定を使います。リポジトリ連携の手順は[Cloudflare公式「Workers Builds」](https://developers.cloudflare.com/workers/ci-cd/builds/)、各項目は[公式の設定資料](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)を参照してください。連携設定はCloudflare側で管理します。S3 を main にマージした後、`cf builds triggers update` で下表の設定に切り替えました。
 
 | 項目 | 設定 |
 | --- | --- |
@@ -123,11 +122,11 @@ cf builds triggers list --external-script-id "$build_worker_tag"
 
 ## iOS ネイティブ認証の公開前準備（Issue #240）
 
-Workerを更新する前に `0018_native_app_auth.sql` を適用してください。新しい定期清掃もこの表を参照するため、ネイティブ機能を無効にして公開する場合も必要です。本PRの担当エージェントは本番migration・deploy・秘密値の登録を行いません。WorkerとPWA配信に影響するため、利用者が準備とCI結果を確認してからマージします。
+Workerを更新する前に `0018_native_app_auth.sql` を適用してください。新しい定期清掃もこの表を参照するため、ネイティブ機能を無効にして公開する場合も必要です。本PRの担当エージェントは本番migration・deploy・秘密値の登録を行いません。Worker の配信に影響するため、利用者が準備とCI結果を確認してからマージします。
 
 `NATIVE_APP_TEAM_ID`、`NATIVE_APP_ID`、`NATIVE_APP_ORIGIN`、`NATIVE_APP_RP_ID`、`NATIVE_APP_ATTEST_ENVIRONMENT` は明示的なbuild変数からWorkerのtext bindingへ渡します。未設定ならnative APIは無効、AASAは404です。Team IDやApp ID prefixを推測しません。preview buildは `PREVIEW_NATIVE_APP_*` だけを読み、本番の値を継承しません。新しいprovider秘密鍵は不要です。
 
-署名Team、App Attest / Associated Domains capability、AASAの直接200応答、環境分離と実機の確認手順は[ネイティブ認証境界](NATIVE_APP_AUTH.md#8-利用者による準備実機確認)を参照してください。既存Webの認証・PWAの配信header・利用枠・費用停止は維持します。
+署名Team、App Attest / Associated Domains capability、AASAの直接200応答、環境分離と実機の確認手順は[ネイティブ認証境界](NATIVE_APP_AUTH.md#8-利用者による準備実機確認)を参照してください。管理画面の認証、利用枠、費用停止は引き続き有効です。
 
 ## 手動の本番更新・復旧手順
 
@@ -188,12 +187,12 @@ unset ACCOUNT_BOOTSTRAP_SECRET account_email account_name
 
 iPhoneでは本人が次を確認します。
 
-1. 本番URLをSafariで開き、ホーム画面へ追加してPasskeyでログインする。
-2. 合成レシートをAI解析し、Actualへ登録する。
+1. iOS アプリを開き、Passkey でログインする。
+2. 合成レシートを AI で読み取り、端末の家計簿へ登録する。
 3. 初回解析と同じflowのカテゴリ分類で利用量が1回だけ増え、再解析ではさらに1回増える。
 4. アプリを終了・再起動し、端末内データが保持される。
 5. 機内モードで端末内の家計データを閲覧できる。
-6. `.kmb`バックアップを作成できる。
+6. `.kmib` バックアップを作成できる。
 
 ## APIコスト計測の更新（Issue #117）
 
@@ -203,11 +202,11 @@ Workerの更新前に `0004_ai_provider_costs.sql` を適用します。追加�
 
 2026年10月2日に確認したStandardの料金はGemini 3.5 Flash-Liteの入力100万トークンあたり0.30 USD、思考を含む出力100万トークンあたり2.50 USDです。Jev 1.13.0は入力100万トークンあたり0.042 USDで、出力は無料です。現行のカテゴリ分類に使う `gemini-decision-1` は、カタログに入力100万トークンあたり0.10 USD、出力0 USDの版（`2026-11-25-gemini-decisions`）を登録しています。この値はコードの登録内容で、Googleの料金ページとの照合は今回行っていません。カタログはこの料金の推定値を使います。無料枠、請求書、為替換算との照合は行いません。[Google料金 (2026/10), Gemini 3.5 Flash-Lite](https://ai.google.dev/gemini-api/docs/pricing)、[TypeSafe料金 (2026/10), Jev 1.13](https://docs.typesafe.ai/models)
 
-合成要求で、再試行ごとのコスト記録、製品利用回数が増えないこと、`GET /api/ai/costs` の利用者分離、コスト不明の件数を確認します。画面では開発者向け設定を有効にしてから当月・前月の表示を確認します。設定を無効にしても計測は続きます。更新を戻す場合は追加テーブルを残してください。旧Workerを動かした期間は計測されないため、その期間の集計は不完全になります。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)、[実装: PWA](../apps/pwa/src/main.ts)
+合成要求で再試行ごとのコスト記録、製品利用回数、利用者の分離、コスト不明の件数を確認します。管理画面の「AI 利用」タブで月ごとの集計を確認できます。[実装](../workers/ai-gateway/src/worker.ts)
 
 ## サービス全体のAI費用制限（Issue #56）
 
-`0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Plusにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。PWAの開発者設定をOFFにしても制限は動作します。
+`0005_ai_global_guardrails.sql` をWorker更新前に適用します。`AI_GUARDRAILS_JSON` と `AI_EMERGENCY_STOP` はWorker側のbindingで管理します。未設定でも初期値による制限が有効です。Plusにも適用します。並行要求の費用予約、日・月・直前60秒の要求上限、障害による停止、調査・再開の手順は[AI費用の停止と再開](AI_COST_GUARDRAILS.md)を参照してください。
 
 ## お問い合わせと管理画面の導入
 

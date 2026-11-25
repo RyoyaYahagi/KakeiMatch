@@ -37,7 +37,7 @@ docs/update-ux
 
 変更の大小を問わず直接pushは禁止です。Pull Request経由で統合します。
 
-GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、workflowやジョブ自体のpath filterは設けません。`ci` は毎回起動し、PR差分が `apps/ios/**`、`.github/workflows/ios.yml`、`.github/workflows/ci.yml`、`scripts/testflight.test.mjs` だけの場合に限ってPWA検査のステップを省略します。TestFlightスクリプトの構文検査と回帰テスト、CI選択ルールのテストは実行します。PWAの静的解析・型検査・単体テスト・照合評価（`eval:reconciliation` と `eval:reconciliation-property`）・ビルドは維持し、重いブラウザー操作テストは変更モジュールに応じて選びます。
+GitHubのmain rulesetは、PR経由の変更と最新のmainに対する `ci` checkの成功を必須にし、branchの削除とforce pushも禁止します。管理者を含めてbypass対象は設けません。設定の正本は `.github/main-ruleset.json` です。GitHub側の設定を更新するときも、このファイルと整合させてください。必須checkが文書だけのPRでも返るよう、workflowやジョブ自体のpath filterは設けません。`ci` は毎回起動します。iOS 関連ファイルのみの変更ではルートと管理画面の検査を省略します。TestFlight スクリプト、CI 選択ルール、読み取り専用 CLI のテストは毎回実行します。
 
 `eval:reconciliation-property` は既存1,200ケースに加えて、Issue #380 の1,700ケース（基本900＋堅牢性800）を同じ不変条件で検証します。家族別の期待自動確定数は1.2.0で実測した下限で、誤確定・旧方式の正しい確定の喪失・I1〜I6違反が1件でもあれば失敗します。
 
@@ -122,18 +122,10 @@ AIエージェントは作業開始時に必ず以下を読んでください。
 - AI schema: 不正なAI応答のvalidation test
 - 主要ユーザーフロー: MVP安定後にE2Eを追加
 
-GitHub Actionsの実行時間には上限があります。push前に、変更範囲に応じた `pnpm lint` / `pnpm typecheck` / `pnpm test` / 関連する `pnpm --dir apps/pwa test:*-e2e` をローカルで実行し、CIを確認作業の代わりに繰り返し使わないでください。作業途中のPRをDraftにすると `ci`・`ai-gateway`・`ios` は実行されませんが、`security-audit` は変更パスに該当すればDraftでも実行されます。
+GitHub Actionsの実行時間には上限があります。push前に、変更範囲に応じた `pnpm lint` / `pnpm typecheck` / `pnpm test` / 関連する Gateway の管理画面 E2E をローカルで実行し、CIを確認作業の代わりに繰り返し使わないでください。作業途中のPRをDraftにすると `ci`・`ai-gateway`・`ios` は実行されませんが、`security-audit` は変更パスに該当すればDraftでも実行されます。
 
 実データ・実レシート・実カード明細をfixtureとしてGitへコミットしないでください。匿名化した人工データを利用します。
 
-### CIのブラウザー操作テストの選択
+### 管理画面のブラウザーテスト
 
-`scripts/select-ci-tests.mjs` で、PRのmerge baseからの全差分を確認します。明細取り込み・給与・検索・予算・マネーフォワード移行・問い合わせは、明示したモジュールと関連する操作テストを対応付けます。複数の機能を変更した場合は対象を合算します。たとえば楽天CSV修正（`local-statements.ts` と `statement-parser-core.ts`）は、楽天・三井住友の取り込み、照合、要確認、取り込み設定、バックアップの7本を実行します。
-
-共通UI・保存基盤・依存関係・CI選択スクリプトなどの変更と、対応表にないファイルの変更は、従来の全46本を実行します。新規ファイルを自動的に対象外にはしません。リネームでは旧パスと新パスを両方判定します。文書と単体テストだけの変更ではブラウザー操作テストを省略します。単独の操作テストを変更した場合はそのテストを実行します。
-
-対象が0本ならChromiumの準備とブラウザー用サーバーの起動も省略します。3並列と既存の必須 `ci` check名は維持します。対象と選択理由はActionsのログとSummaryに表示します。
-
-操作テストは1本あたり180秒で停止し、終了しなければ10秒後に強制終了します。時間超過は検査失敗として扱い、自動再試行はしません。失敗時は各テストのログをartifactへ保存します。CI上で停止が発生したカテゴリ学習テストは、個々の操作待ちも30秒に制限し、Playwrightの操作ログを保存します。
-
-全体を確認したい場合はActionsの `CI` を `workflow_dispatch` で手動実行します。手動実行・差分取得失敗・空の差分は全件実行になります。定期実行は追加しません。対応表を増やす際は、共有する処理の利用元も調べ、`node --test scripts/select-ci-tests.test.mjs` で対象漏れと全件への切り替えを確認してください。全件の一覧は `scripts/ci-e2e-suites.json` に置きます。
+CI は Gateway をビルドし、ローカルの `/api/native/config` が応答してから管理画面の E2E を実行します。テストは生成されたアセットと合成の管理 API 応答を使います。

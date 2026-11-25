@@ -36,7 +36,7 @@ function isAdminStaticPath(path: string): boolean {
   return path === '/theme.js' || path.startsWith('/assets/');
 }
 
-// Retired PWA screens and APIs. They answer 410 so clients see they are gone, while the code stays for a later cleanup.
+// Retired PWA screens and APIs. They answer 410 so clients see they are gone.
 function isRetiredPath(path: string): boolean {
   return path === '/' || path === '/index.html' ||
     path.startsWith('/api/auth/') || path.startsWith('/api/account/') || path.startsWith('/api/ai/') ||
