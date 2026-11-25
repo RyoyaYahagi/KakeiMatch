@@ -132,7 +132,7 @@ jobs:
     if: ${{ success() && !github.event.pull_request.draft }}
     needs: build
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -155,13 +155,72 @@ jobs:
           cat shard-tests.txt
       - name: Wait for simulator and set reference appearance
         run: bash scripts/ci-simulator.sh wait
+      - name: Prepare test startup monitoring
+        continue-on-error: true
+        run: |
+          cat > "$RUNNER_TEMP/observe-ios-test.sh" <<'BASH'
+          # Invoked by each test step so its summary belongs to that step.
+          observe_ios_test() (
+            local label="$1" state
+            shift
+            state="$RUNNER_TEMP/ios-startup/$label"
+            if ! command -v perl > /dev/null || ! mkdir -p "$state"; then
+              "$@"
+              return
+            fi
+            date +%s > "$state/start" || true
+            printf '### %s startup\n- xcodebuild started (UTC): %s\n' \
+              "$label" "$(date -u +%FT%TZ)" >> "$GITHUB_STEP_SUMMARY" || true
+
+            (
+              sleep 181 > /dev/null 2>&1
+              for sample in 1 2 3 4; do
+                [ ! -s "$state/test-start" ] || break
+                printf 'Startup CPU sample %s at %s\n' "$sample" "$(date -u +%FT%TZ)"
+                ps -axo pid,pcpu,comm -r | awk 'NR <= 16' || true
+                [ "$sample" = 4 ] || sleep 60 > /dev/null 2>&1
+              done
+            ) &
+            monitor_pid=$!
+            trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+
+            # Match the first observed XCTest or Swift Testing start line.
+            # Drain all output and preserve xcodebuild's exit status.
+            local result=0
+            "$@" 2>&1 | perl -MPOSIX=strftime -e '
+              $| = 1;
+              my ($state, $summary) = @ARGV;
+              my $started = 0;
+              while (<STDIN>) {
+                print;
+                if (!$started && /^(?:Test Suite .* started at |(?:◇ )?Test run started\b)/) {
+                  $started = 1;
+                  my $now = time;
+                  if (open my $marker, ">", "$state/test-start") {
+                    print {$marker} "$now\n";
+                  }
+                  if (open my $out, ">>", $summary) {
+                    print {$out} "- Test execution started (UTC): ",
+                      strftime("%Y-%m-%dT%H:%M:%SZ", gmtime($now)), "\n";
+                  }
+                }
+              }
+            ' "$state" "$GITHUB_STEP_SUMMARY" || result=${PIPESTATUS[0]}
+            date +%s > "$state/end" || true
+            return "$result"
+          )
+          BASH
       - name: Swift Testing
         id: unit-tests
+        timeout-minutes: 10
         if: matrix.shard == 0
         run: |
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
           test "${#xctestruns[@]}" -eq 1
-          xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
+          if ! source "$RUNNER_TEMP/observe-ios-test.sh"; then
+            observe_ios_test() { shift; "$@"; }
+          fi
+          observe_ios_test swift-testing xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
             -only-testing:KakeiMatchTests test-without-building
       - name: Generate parity report
@@ -188,6 +247,7 @@ jobs:
           retention-days: 14
       # Still run the UI tests when only the unit tests failed, so one run reports both.
       - name: XCUITest and screenshots
+        timeout-minutes: 26
         if: success() || steps.unit-tests.outcome == 'failure'
         run: |
           test_args=()
@@ -197,7 +257,10 @@ jobs:
           test "${#test_args[@]}" -gt 0
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
           test "${#xctestruns[@]}" -eq 1
-          xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
+          if ! source "$RUNNER_TEMP/observe-ios-test.sh"; then
+            observe_ios_test() { shift; "$@"; }
+          fi
+          observe_ios_test xcuitest xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UITests.xcresult -parallel-testing-enabled NO \
             "${test_args[@]}" test-without-building
       - name: Export screenshots
@@ -225,6 +288,46 @@ jobs:
             apps/ios/screenshots/*.png
             apps/ios/screenshots/manifest.json
           if-no-files-found: warn
+          retention-days: 14
+
+      - name: Collect slow test startup logs
+        id: startup-logs
+        if: always()
+        continue-on-error: true
+        timeout-minutes: 1
+        run: |
+          for state in "$RUNNER_TEMP"/ios-startup/*; do
+            [[ -s "$state/start" ]] || continue
+            read -r start < "$state/start"
+            end=$(cat "$state/test-start" 2>/dev/null || cat "$state/end" 2>/dev/null || date +%s)
+            (( end - start > 180 )) || continue
+
+            from=$(date -u -r "$start" '+%Y-%m-%d %H:%M:%S')
+            until=$(date -u -r "$end" '+%Y-%m-%d %H:%M:%S')
+            output="$RUNNER_TEMP/ios-startup-logs/${state##*/}"
+            mkdir -p "$output"
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+            printf 'Startup interval (UTC): %s to %s (%ss)\n' "$from" "$until" "$((end - start))" > "$output/interval.txt"
+            options=(--start "$from" --end "$until" --timezone UTC --info)
+            # Bound each query independently so a stuck simulator cannot block the host query.
+            perl -e 'alarm 12; exec @ARGV' xcrun simctl spawn "$SIMULATOR_ID" log show "${options[@]}" \
+              --predicate 'process IN {"installd", "testmanagerd", "launchd", "xctest"} OR subsystem CONTAINS[c] "xctest"' \
+              > "$output/simulator.log" 2>&1 &
+            simulator_log_pid=$!
+            perl -e 'alarm 12; exec @ARGV' /usr/bin/log show "${options[@]}" \
+              --predicate 'subsystem BEGINSWITH "com.apple.CoreSimulator" OR process == "CoreSimulatorService" OR process == "Simulator"' \
+              > "$output/host.log" 2>&1 || true
+            wait "$simulator_log_pid" || true
+          done
+      - name: Upload slow test startup logs
+        if: always() && steps.startup-logs.outputs.available == 'true'
+        continue-on-error: true
+        timeout-minutes: 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-startup-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ios-startup-logs
+          if-no-files-found: ignore
           retention-days: 14
 
   # Pull request tests run Debug only; verify Release compilation on main pushes and manual runs before TestFlight.
