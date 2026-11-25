@@ -1,6 +1,0 @@
-[
-  "test:manual-retry-e2e",
-  "test:ai-costs-e2e",
-  "test:updates-e2e",
-  "test:encryption-e2e"
-]

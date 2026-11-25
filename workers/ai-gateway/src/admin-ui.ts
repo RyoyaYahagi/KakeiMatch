@@ -1,4 +1,4 @@
-import '../../../apps/pwa/src/style.css';
+import './admin-base.css';
 import './admin.css';
 
 type Overview = {

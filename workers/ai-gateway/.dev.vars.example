@@ -1,4 +1,4 @@
-# Local values for `cf dev` in apps/pwa. Copy to .dev.vars (ignored by Git) and keep them synthetic,
+# Local values for local Worker development in workers/ai-gateway. Copy to .dev.vars (ignored by Git) and keep them synthetic,
 # except GEMINI_API_KEY when you deliberately use the real Gemini API.
 # Generate each secret with: openssl rand -hex 32
 BETTER_AUTH_SECRET=<local-synthetic-secret>

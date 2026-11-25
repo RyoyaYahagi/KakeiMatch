@@ -1,6 +1,6 @@
 # AI費用の停止と再開
 
-サービス全体のAI停止は、利用者の製品利用枠とは独立して動作します。Plusも対象です。停止中も端末内の家計簿、レシート、手入力、明細取込、照合、バックアップは利用できます。#117の計測テーブルを共通の正本に使います。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)、[実装: PWA](../apps/pwa/src/local-receipts.ts)
+サービス全体のAI停止は、利用者の製品利用枠とは独立して動作します。Plusも対象です。停止中も端末内の家計簿、レシート、手入力、明細取込、照合、バックアップは利用できます。#117の計測テーブルを共通の正本に使います。[実装: ai-global-guardrails.ts](../workers/ai-gateway/src/ai-global-guardrails.ts)
 
 ## 判定と設定
 
@@ -28,12 +28,13 @@ Providerごとに `enabled`、`dailyRequests`、`monthlyRequests`、`minuteReque
 
 `AI_EMERGENCY_STOP` は文字列 `true` で全providerを停止します。未設定または文字列 `false` で通常の制限へ戻します。不正な値は送信を拒否します。この設定と費用設定はWorker側だけに置きます。PWAの開発者表示設定では変更できません。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)
 
-運用者は現在の `cf --help`、`cf cli search` と発見したcommandのhelpを確認してください。2026年10月2日の `cf` beta.5では、検索結果は `cf workers secrets update` と `cf d1 query` です。新たな本番操作は正しいWorker・D1を確認してから行います。秘密鍵をコマンド引数や文書へ書きません。[設定: cloudflare.config.ts](../apps/pwa/cloudflare.config.ts)、[Cloudflare CLI](https://developers.cloudflare.com/workers/cli/)
+運用者は現在の `cf --help`、`cf cli search` と発見したcommandのhelpを確認してください。2026年10月2日の `cf` beta.5では、検索結果は `cf workers secrets update` と `cf d1 query` です。新たな本番操作は正しいWorker・D1を確認してから行います。秘密鍵をコマンド引数や文書へ書きません。[設定: cloudflare.config.ts](../workers/ai-gateway/cloudflare.config.ts)、[Cloudflare CLI](https://developers.cloudflare.com/workers/cli/)
 
 ```sh
-corepack pnpm --dir apps/pwa exec cf cli search 'Update Worker secret bindings and query SQL in D1'
-corepack pnpm --dir apps/pwa exec cf workers secrets update --help
-corepack pnpm --dir apps/pwa exec cf d1 query --help
+cd workers/ai-gateway
+npm exec -- cf cli search 'Update Worker secret bindings and query SQL in D1'
+npm exec -- cf workers secrets update --help
+npm exec -- cf d1 query --help
 ```
 
 binding更新は既存のsecret管理と同様に行います。複数の設定を変更する場合は、現行CLIが提供する一括更新も確認します。binding更新後は反映先のWorker version・deploymentを確認してください。合成AI要求が `503 ai_temporarily_paused` となり、計測テーブルの要求数が増えないことを確認します。再開時も合成要求で確認してください。実利用者の家計情報を運用確認へ使いません。[実装: worker.ts](../workers/ai-gateway/src/worker.ts)

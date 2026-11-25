@@ -5,7 +5,7 @@
 
 ## 0. 前提（必ず読む）
 
-- 正解実装は `apps/pwa`。基準 tag は `pwa-swift-migration-baseline`（main `ae8c9b6`、push 済み）。
+- 移植時の参照実装は基準タグ内の `apps/pwa`。基準 tag は `pwa-swift-migration-baseline`（main `ae8c9b6`、push 済み）。
 - 見た目・文言・導線・表示条件を PWA どおりに再現する。「iOS らしく」「モダンに」を理由に変えない。
 - 例外は **Liquid Glass（iOS 26）** だけ。適用するのは下部ナビ、シートの枠、浮いたボタン、toast/banner、ナビゲーションバー。行・金額・状態色・カテゴリ色・文言・内容の余白は PWA のまま。deployment target は iOS 26.0。
 - 作業ルールの正本は `apps/ios/AGENTS.md`（PR #278 で追加）。リポジトリ直下の `AGENTS.md` / `CONTRIBUTING.md` にも従う（main への直接 push・マージ禁止、PR まで）。
@@ -39,7 +39,8 @@ cd apps/ios && xcodegen generate && open KakeiMatch.xcodeproj
 
    ```sh
    # 本番 Worker `kakeimatch` のビルドトリガー: dd4b3c09-9880-47c0-850c-bc30ce881bc5
-   corepack pnpm --dir apps/pwa exec cf builds triggers environment-variables upsert dd4b3c09-9880-47c0-850c-bc30ce881bc5 \
+   cd "$(git rev-parse --show-toplevel)/workers/ai-gateway"
+   npm exec -- cf builds triggers environment-variables upsert dd4b3c09-9880-47c0-850c-bc30ce881bc5 \
      --body '{"NATIVE_APP_ID":{"value":"<App ID Prefix>.jp.kakeimatch.ios","is_secret":false}}'
    ```
 
@@ -54,7 +55,7 @@ xcodebuild -project apps/ios/KakeiMatch.xcodeproj -scheme KakeiMatch \
   -destination 'platform=iOS Simulator,name=iPhone 17' test
 ```
 
-PWA を横に並べて見比べる（Mac の WebKit で `pnpm --dir apps/pwa screenshots:migration` を撮り直すと iPhone に近い基準になる。6 節参照）:
+旧 PWA を横に並べる場合は、作業ツリーを基準タグへ切り替えてから以下の旧手順を使う（Mac の WebKit で `pnpm --dir apps/pwa screenshots:migration` を撮り直すと iPhone に近い基準になる。6 節参照）:
 
 ```sh
 pnpm install --frozen-lockfile

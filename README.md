@@ -1,19 +1,11 @@
 # KakeiMatch
 
-**レシートを撮るだけで家計簿に記録し、後から届くカード明細と自動で突き合わせる家族向けPWAです。**
+**レシートを撮るだけで家計簿に記録し、後から届くカード明細と自動で突き合わせる家族向け iOS アプリです。**
 
 一致した取引は自動で片付け、人が見るのは「金額が違う」「記録が見つからない」など判断が必要なものだけにします。家計データは利用者の端末に保存し、サーバーへ預けません。
 
-- 本番アプリ: <https://kakeimatch.yhgry.workers.dev>（AI機能の利用には招待制のアカウントが必要です）
-- 対応環境: iPhoneのSafari（ホーム画面に追加して使用）を主な対象とし、PCのブラウザーにも対応しています
+利用者向けアプリは [iOS 版](apps/ios/HANDOFF.md) です。Cloudflare Worker はネイティブ API と [管理画面](https://kakeimatch.yhgry.workers.dev/admin) を提供します。PWA の最終版は `pwa-final` タグにあります。
 
-<p>
-  <img src="docs/screenshots/readme-home-375.png" alt="ホーム画面。今月の支出・収入・収支、予算の進み具合と、照合で確認が必要な3件を表示している" width="240">
-  <img src="docs/screenshots/readme-receipt-375.png" alt="レシート登録画面。読み取ったレシート画像の下に、金額・店名・日付、品目ごとのカテゴリ（食費・日用品）、支払元が入力されている" width="240">
-  <img src="docs/screenshots/readme-reconciliation-375.png" alt="照合画面。要確認1件、記録なし2件、一致4件と、確認が必要な明細の一覧を表示している" width="240">
-</p>
-
-<img src="docs/screenshots/readme-desktop-home-1440.png" alt="PC幅のホーム画面。左にナビゲーション、中央に月の収支・予算・確認すること・最近の記録、右に支出の内訳がある" width="740”>
 ## 作った理由
 
 家計簿をつけるときの負担は、レシートの入力だけではありません。入力した後、後日届くクレジットカードや決済サービスの明細と1件ずつ突き合わせ、金額の違いや記録漏れを探す作業が残ります。
@@ -64,7 +56,7 @@ OCRの精度100%は目指していません。成功の基準は機能の数で�
 - **他の家計簿からの移行**: マネーフォワードCSVを端末内で読み込み、カテゴリ・支払元の一括対応とプレビューを確認して登録できます。重複を防ぎ、移行履歴から取り消せます
 
 - **端末内保存とオフライン動作**: 家計データは端末に保存し、通信できない場所でも閲覧・記録できます
-- **バックアップと復元**: 家計簿、レシート画像、明細を1つの `.kmb` ファイルに書き出し、別の端末で復元できます
+- **バックアップと復元**: iOS の家計データは `.kmib` で書き出せます。旧 PWA の `.kmb` も取り込めます
 - **Google Driveへの自動保存（iOS）**: 設定で有効にすると、アプリを開いたときに、残高・取引・月ごとのカテゴリ別支出を本人のGoogle Driveへ保存します
 - **安全な更新**: アプリ更新時も入力中の内容を保持します。端末内データの形式は、バージョンを判定してから移行します
 
@@ -79,7 +71,7 @@ OCRの精度100%は目指していません。成功の基準は機能の数で�
 
 ### 家計データを端末から出さない（local-first）
 
-家計簿、レシート、明細、照合結果は利用者のブラウザー（IndexedDBとActual Budgetのブラウザー版）に保存します。サーバー側のデータベースには、アカウントとAIの運用情報に加え、明示送信された問い合わせのマスキング済み本文、暗号化した原文、管理操作の監査情報を保存します。問い合わせの本文と原文には90日の保存期限があります。アカウントにログインしていなくても、通信できなくても、AI以外の機能はすべて使えます。
+家計簿、レシート、明細、照合結果は iOS 端末内に保存します。サーバー側にはアカウントと AI の運用情報、明示送信された問い合わせ、管理操作の監査情報を保存します。問い合わせの本文と原文の保存期限は90日です。
 
 AIに送る情報も絞っています。レシート画像は、利用者が「AIで読み取る」を選んだときだけ送ります。カテゴリ提案には、検証済みの店名、合計金額、最大30件の品目名と金額だけを送ります。
 
@@ -95,50 +87,20 @@ AIは曖昧さを含む処理だけに使います。
 
 AIの応答はZodのschemaで検証し、不正な応答は保存しません。金額は整数の円で扱い、浮動小数点を使いません。照合ロジックには、合成データの評価セット（`pnpm eval:reconciliation`）を用意しています。
 
-### 解決済みの問題を作り直さない
-
-家計簿の基盤には、オープンソースの[Actual Budget](https://github.com/actualbudget/actual)のブラウザー版を使っています。KakeiMatchは、レシート入力、AI分類、明細照合、スマートフォン向けの画面に集中しています。
-
 ### 費用と濫用を抑える
 
-AIの利用はCloudflare Worker経由に限定し、APIキーをブラウザーに渡しません。利用者ごとの月間上限とレート制限に加え、サービス全体の日次・月次の費用上限を設けています。上限に達した場合や、障害が続いた場合はAIを自動で停止します。AIが止まっても、手入力と照合は使い続けられます。
+AIの利用はCloudflare Worker経由に限定し、API キーは Worker 側で管理します。利用者ごとの月間上限とレート制限に加え、サービス全体の日次・月次の費用上限を設けています。上限に達した場合や、障害が続いた場合はAIを自動で停止します。AIが止まっても、手入力と照合は使い続けられます。
 
 ## アーキテクチャ
 
-```mermaid
-flowchart TB
-  subgraph Device["利用者の端末（ブラウザー / iPhone）"]
-    UI["PWAの画面<br/>TypeScript + Vite"]
-    Actual["Actual Budget<br/>ブラウザー版"]
-    IDB["KakeiMatchの記録<br/>IndexedDB"]
-    UI --> Actual
-    UI --> IDB
-  end
-
-  subgraph CF["Cloudflare Worker（同一origin）"]
-    Assets["PWA配信"]
-    Auth["/api/auth・/api/account<br/>Better Auth + Passkey"]
-    AI["/api/ai・/api/contact<br/>認証・利用枠・応答検証"]
-    D1[("D1<br/>アカウント・利用量・問い合わせ")]
-    Auth --> D1
-    AI --> D1
-  end
-
-  UI -- "AIを使うときだけ" --> AI
-  UI -- "ログイン" --> Auth
-  AI --> Gemini["Gemini API"]
-  AI --> GH["GitHub Issues"]
-```
-
-アプリとAPIは1つのCloudflare Workerから同じoriginで配信します。ブラウザー内でActual Budgetを動かすため、WorkerはCOOP/COEPヘッダーを返します。Service Workerは `/api/*` をキャッシュしません。詳細は[アーキテクチャ](docs/ARCHITECTURE.md)を参照してください。
+iOS アプリは家計データを端末内に保存します。クラウド機能は `workers/ai-gateway` の `/api/native/*` に接続します。運用担当者は同じ Worker の `/admin` を使います。詳細は [アーキテクチャ](docs/ARCHITECTURE.md) を参照してください。
 
 ### 技術スタック
 
 | 領域 | 使用技術 |
 | --- | --- |
-| フロントエンド | TypeScript（UIフレームワークなし）、Vite、PWA（Service Worker） |
-| 家計簿エンジン | Actual Budget（`@actual-app/api` のブラウザー版） |
-| 端末内保存 | IndexedDB、Actual Budgetのブラウザー内データ |
+| アプリ・管理画面 | SwiftUI（iOS）、TypeScript と Vite（管理画面） |
+| 端末内保存 | SQLite（iOS） |
 | サーバー | Cloudflare Workers、Cloudflare Vite Plugin、`cf` CLI |
 | データベース | Cloudflare D1（アカウントとAI利用量のみ） |
 | 認証 | Better Auth、Passkey（WebAuthn） |
@@ -180,9 +142,9 @@ flowchart TB
 - [デプロイ](docs/DEPLOYMENT.md): 本番URL、preview、更新手順、ローカルでAIを試す手順
 - [AI費用の停止と再開](docs/AI_COST_GUARDRAILS.md)
 - [バックアップと復元](docs/LOCAL_BACKUP.md)と[不完全復元の調査と停止](docs/ACTUAL_RESTORE_CLEANUP.md)
-- [端末内データの構造変更](docs/LOCAL_DATA_MIGRATIONS.md)と[アプリ更新](docs/PWA_UPDATES.md)
+- [旧 PWA の端末内データ構造変更](docs/LOCAL_DATA_MIGRATIONS.md)と[更新仕様](docs/PWA_UPDATES.md)
 - [暗号化クラウド保存の共通形式](docs/ENCRYPTED_HOUSEHOLD_STORAGE.md)（開発中）
-- [ローカル利用フロー](docs/LOCAL_FIRST_FLOW.md): 合成データによるブラウザー・iPhoneでの確認状況
+- [旧 PWA のローカル利用フロー](docs/LOCAL_FIRST_FLOW.md)
 - [コントリビューション](CONTRIBUTING.md): ブランチとPull Requestの運用
 
 ## ライセンス

@@ -135,7 +135,7 @@ PWA参照画像はLinuxのChromiumで撮影されており、iOSの字形・字�
 - `Features/Receipt`: 撮影/写真選択と原本の新規保存、全体/品目表示、警告確認、AI読み取りと台帳登録、品目カテゴリの編集、未完成入力の下書き復元。残る差分は [RECEIPT_SCREEN.md](docs/RECEIPT_SCREEN.md) を参照してください。キャンセルで元タブの上に追加シートを開き直します。
 - `Features/RecordChooser`: PWAと同じ選択肢・文言・2列配置。中央追加は選択中タブを変えません。
 - `Data`: ドメイン型・Repository protocol・集計・fixture用in-memory実装・SQLite永続化・`.kmb` / `.kmib` の読み書き。使い方と実装の境界は下記と [DATA_LAYER.md](docs/DATA_LAYER.md) を参照してください。APIクライアントは別の境界として実装済みです（[API_LAYER.md](docs/API_LAYER.md)）。
-- `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIconはPWAの `public/icon.svg` から角のマスクを外して1024pxで生成しています。再生成はworkspace依存をインストール後に `node apps/ios/scripts/render-app-icon.mjs`（必要なら `PWA_BROWSER_PATH` を指定）。PWAファイルは変更しません。
+- `Assets.xcassets`: `ui-icons.ts` のSVG pathをそのままtemplate imageに移植。ナビをSF Symbolsに置き換えません。AppIcon は [元の SVG](artwork/app-icon.svg) の角のマスクを外して1024pxで生成します。再生成するには、リポジトリのルートで `npm ci --prefix workers/ai-gateway`、`npm exec --prefix workers/ai-gateway -- playwright-core install chromium`、`node apps/ios/scripts/render-app-icon.mjs` の順に実行します。既存の Chromium を使う場合は `PWA_BROWSER_PATH` で実行ファイルを指定できます。
 
 ### 共通部品のAPI
 
