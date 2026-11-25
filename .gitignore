@@ -25,7 +25,7 @@ test-results/
 .env.production.local
 .env.*.local
 !.env.example
-# Cloudflare local secrets (apps/pwa/.dev.vars, workers/ai-gateway/.dev.vars)
+# Cloudflare local secrets (workers/ai-gateway/.dev.vars)
 .dev.vars
 .dev.vars.*
 !.dev.vars.example
@@ -89,8 +89,6 @@ Thumbs.db
 .vercel/
 .turbo/
 spikes/actual-browser/.cloudflare/
-apps/pwa/.cloudflare/
-apps/pwa/.wrangler/
 workers/ai-gateway/.cloudflare/
 workers/ai-gateway/.wrangler/
 spikes/actual-browser/.wrangler/

@@ -1,6 +1,5 @@
 packages:
   - .
-  - apps/pwa
 
 onlyBuiltDependencies:
   - better-sqlite3

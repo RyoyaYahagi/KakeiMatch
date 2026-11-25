@@ -1,10 +1,7 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IDBFactory, IDBKeyRange } from 'fake-indexeddb';
+import { describe, expect, it, vi } from 'vitest';
 import { createHouseholdEncryptionKey, encryptHouseholdBlob, recoverHouseholdEncryptionKey, ENCRYPTED_CHUNK_BYTES } from './encrypted-household-format';
 import { decryptPortableSyncVersion, prepareEncryptedSyncVersion } from './encrypted-sync-version';
 import { createPortableBackup, readPortableBackup } from './local-backup-format';
-import { LOCAL_PROFILE_KEY, LocalDataRepository } from './local-data';
-import { INCOMPLETE_RESTORE_KEY, restoreEncryptedLocalBackup } from '../../apps/pwa/src/local-backup';
 
 const householdId = '00000000-0000-4000-8000-000000000001';
 const versionId = '00000000-0000-4000-8000-000000000002';
@@ -14,7 +11,6 @@ const portable = (size = 3) => createPortableBackup({ actualBackup: new Uint8Arr
   format: 'kakeimatch-local-data', schemaVersion: 2, exportedAt: at, records: [], blobs: [],
 } });
 const hash = async (blob: Blob) => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())), byte => byte.toString(16).padStart(2, '0')).join('');
-afterEach(() => vi.unstubAllGlobals());
 
 describe('暗号化同期版と既存の検証付き復元の接続', () => {
   it('元端末なしで保護鍵と復旧コードから全チャンクを検証し家計簿を読む', async () => {
@@ -68,31 +64,4 @@ describe('暗号化同期版と既存の検証付き復元の接続', () => {
     await expect(prepareEncryptedSyncVersion(new Blob(['invalid']), generated.key, context)).rejects.toThrow();
   });
 
-  it('全検証後のみ別保存先へ復元し、失敗時はActualとprofileを変更しない', async () => {
-    vi.stubGlobal('IDBKeyRange', IDBKeyRange);
-    const factory = new IDBFactory(); const sourceId = householdId; const targetId = versionId;
-    const values = new Map([[LOCAL_PROFILE_KEY, sourceId]]);
-    const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); }, removeItem: (key: string) => { values.delete(key); } };
-    vi.stubGlobal('localStorage', storage);
-    const source = await LocalDataRepository.open(sourceId, factory);
-    await source.put({ id: 'settings:budget', kind: 'app-settings', value: { budgetId: 'synthetic-original' }, updatedAt: at });
-    const ledger = { exportBackup: vi.fn(async () => new Uint8Array()), restoreBackup: vi.fn(async () => {
-      expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId); return 'synthetic-restored';
-    }), discardDataDirectory: vi.fn(async () => {}) };
-    const generated = await createHouseholdEncryptionKey(householdId, 1);
-    const sent = await prepareEncryptedSyncVersion(await portable(), generated.key, context);
-    const deps = { storage, openRepository: (id: string) => LocalDataRepository.open(id, factory), makeId: () => targetId, now: () => new Date(at) };
-    try {
-      await expect(restoreEncryptedLocalBackup(sent.metadata, context, generated.key, async () => new Blob(['bad']), ledger, deps)).rejects.toThrow();
-      expect(ledger.restoreBackup).not.toHaveBeenCalled(); expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(sourceId);
-      storage.setItem(INCOMPLETE_RESTORE_KEY, 'synthetic-incomplete');
-      await expect(restoreEncryptedLocalBackup(sent.metadata, context, generated.key, async index => sent.chunk(index), ledger, deps)).rejects.toThrow('以前の復元');
-      expect(ledger.restoreBackup).not.toHaveBeenCalled(); storage.removeItem(INCOMPLETE_RESTORE_KEY);
-      await restoreEncryptedLocalBackup(sent.metadata, context, generated.key, async index => sent.chunk(index), ledger, deps);
-      expect(storage.getItem(LOCAL_PROFILE_KEY)).toBe(targetId);
-      expect((await source.get('settings:budget'))?.value).toEqual({ budgetId: 'synthetic-original' });
-      const target = await LocalDataRepository.open(targetId, factory);
-      try { expect((await target.get('settings:budget'))?.value).toMatchObject({ budgetId: 'synthetic-restored' }); } finally { target.close(); }
-    } finally { source.close(); }
-  });
 });

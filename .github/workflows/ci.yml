@@ -46,8 +46,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: node scripts/select-ci-tests.mjs
       # iOS-only changes never install dependencies, so there is no store to save.
-      - name: Restore pnpm cache for PWA checks
-        if: steps.changes.outputs.skip_pwa != 'true' && runner.environment == 'github-hosted'
+      - name: Restore pnpm cache for root checks
+        if: steps.changes.outputs.skip_root != 'true' && runner.environment == 'github-hosted'
         uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -56,81 +56,46 @@ jobs:
         run: |
           bash -n apps/ios/scripts/testflight.sh
           node --test scripts/testflight.test.mjs
-      # Dependency-free, so it runs before the PWA install and on iOS-only PRs too.
+      # Dependency-free, so it runs before the dependency install and on iOS-only PRs too.
       - name: Test the read-only snapshot CLI
         run: node --test 'tools/kakeimatch-read/*.test.mjs'
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.skip_root != 'true'
         run: pnpm install --frozen-lockfile
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.skip_root != 'true'
         run: pnpm lint
-      # Also covers apps/pwa, so the build below skips its own tsc pass.
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.skip_root != 'true'
         run: pnpm typecheck
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.skip_root != 'true'
         run: pnpm test
-      - if: steps.changes.outputs.skip_pwa != 'true'
+      - if: steps.changes.outputs.skip_root != 'true'
         run: pnpm eval:reconciliation
       - name: Run reconciliation property evaluation
-        if: steps.changes.outputs.skip_pwa != 'true'
+        if: steps.changes.outputs.skip_root != 'true'
         run: pnpm eval:reconciliation-property
-      - if: steps.changes.outputs.skip_pwa != 'true'
-        run: pnpm --dir apps/pwa test
-      - if: steps.changes.outputs.skip_pwa != 'true'
-        run: pnpm --dir apps/pwa exec vite build
-      - if: steps.changes.outputs.e2e != '' && runner.environment == 'github-hosted'
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-      # The runner image already provides Chromium's system libraries, so skip the slow apt step.
-      - if: steps.changes.outputs.e2e != ''
-        run: pnpm --dir apps/pwa exec playwright-core install chromium
-      - if: contains(steps.changes.outputs.e2e, 'test:ai-costs-e2e') || contains(steps.changes.outputs.e2e, 'test:admin-e2e')
+      - name: Build the AI Gateway for the admin browser test
+        if: steps.changes.outputs.skip_root != 'true'
         run: |
           npm ci --prefix workers/ai-gateway
           npm run build --prefix workers/ai-gateway
-      - name: Synthetic local-first flows without legacy runtime
-        if: steps.changes.outputs.e2e != ''
+      - name: Install Chromium
+        if: steps.changes.outputs.skip_root != 'true'
+        run: npm exec --prefix workers/ai-gateway -- playwright-core install chromium
+      - name: Test the admin screen with synthetic data
+        if: steps.changes.outputs.skip_root != 'true'
+        working-directory: workers/ai-gateway
         env:
-          E2E_SCRIPTS: ${{ steps.changes.outputs.e2e }}
-          # A dev server may already hold 5173 on the self-hosted host.
-          E2E_PORT: 5199
+          ADMIN_E2E_URL: http://127.0.0.1:5199
         run: |
-          unset ACTUAL_SERVER_URL ACTUAL_SERVER_PASSWORD ACTUAL_CLI_DATA_DIR
-          unset RECEIPT_STORAGE_DIR STATEMENT_STORAGE_DIR DATABASE_PATH
-          pnpm --dir apps/pwa exec vite preview --host 127.0.0.1 --port "$E2E_PORT" --strictPort > "$RUNNER_TEMP/kakeimatch-pwa-dev.log" 2>&1 &
-          pwa_pid=$!
-          trap 'kill "$pwa_pid" 2>/dev/null || true' EXIT
-          for _attempt in $(seq 1 60); do
-            if curl --fail --silent "http://127.0.0.1:$E2E_PORT/" > /dev/null; then break; fi
-            sleep 1
-          done
-          export PWA_E2E_URL="http://127.0.0.1:$E2E_PORT"
-          mkdir -p e2e-logs
-          # Keep each script's output separate so parallel logs stay readable.
-          run_script() {
-            # Bound each process group so a stuck browser cannot consume the job's 15 minutes.
-            # 240s leaves headroom for the slowest suite (~110s) under three-way parallelism;
-            # the previous 180s limit timed out category-learning-e2e on PR #381.
-            if timeout --signal=TERM --kill-after=10s 240s pnpm --dir apps/pwa "$1" > "e2e-logs/${1//:/-}.log" 2>&1; then
-              echo "PASS $1"
-            else
-              local status=$?
-              echo "FAIL $1 (exit $status; suite limit 240s)"
-              cat "e2e-logs/${1//:/-}.log"; return 1
-            fi
-          }
-          export -f run_script
-          read -r -a e2e_scripts <<< "$E2E_SCRIPTS"
-          # The single-quoted command expands $1 in each child shell.
-          # shellcheck disable=SC2016
-          printf '%s\n' "${e2e_scripts[@]}" | xargs -P 3 -I {} bash -c 'run_script "$1"' _ {}
-      - name: Upload E2E logs
-        if: failure() && steps.changes.outputs.skip_pwa != 'true'
+          ./node_modules/.bin/vite preview --host 127.0.0.1 --port 5199 --strictPort > "$RUNNER_TEMP/kakeimatch-gateway.log" 2>&1 &
+          gateway_pid=$!
+          trap 'kill "$gateway_pid" 2>/dev/null || true' EXIT
+          curl --fail --silent --show-error --retry 30 --retry-connrefused --retry-delay 1 "$ADMIN_E2E_URL/api/native/config" > /dev/null
+          timeout --signal=TERM --kill-after=10s 240s node test/admin-e2e.mjs
+      - name: Upload Gateway preview logs
+        if: failure() && steps.changes.outputs.skip_root != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
-          path: |
-            e2e-logs/
-            ${{ runner.temp }}/kakeimatch-pwa-dev.log
+          name: gateway-preview-log
+          path: ${{ runner.temp }}/kakeimatch-gateway.log
+          if-no-files-found: ignore
           retention-days: 7

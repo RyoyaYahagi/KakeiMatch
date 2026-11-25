@@ -1,10 +1,10 @@
-// Render the existing PWA icon's vector artwork at Apple's 1024px app-icon size.
-// Requires the workspace's apps/pwa dev dependencies. Does not change PWA files.
+// Render the iOS icon artwork at Apple's 1024px app-icon size.
+// Requires the AI Gateway's Playwright dependency and Chromium.
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-const { chromium } = createRequire(new URL('../../pwa/package.json', import.meta.url))('playwright-core');
-const source = await readFile(new URL('../../pwa/public/icon.svg', import.meta.url), 'utf8');
-// The OS supplies the app icon's corner mask; keep the PWA artwork, remove its web mask.
+const { chromium } = createRequire(new URL('../../../workers/ai-gateway/package.json', import.meta.url))('playwright-core');
+const source = await readFile(new URL('../artwork/app-icon.svg', import.meta.url), 'utf8');
+// The OS supplies the app icon's corner mask; remove the mask from the source artwork.
 const svg = source.replace('rx="40"', '');
 const directory = new URL('../KakeiMatch/Assets.xcassets/AppIcon.appiconset/', import.meta.url);
 await mkdir(directory, { recursive: true });

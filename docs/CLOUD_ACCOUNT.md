@@ -59,7 +59,7 @@ Issue #60の切替には `0003_receipt_ai_flows.sql` を適用してから、PWA
 
 アカウント削除も端末内家計簿、レシート、明細、照合記録を削除しません。画面で削除前に説明し、Passkey・sessionとサーバー上の利用情報を削除した後も、端末内データの閲覧、バックアップ、原本整理、全削除を続けられます。端末内データの削除は別の明示操作です。既に別端末や外部サービスに渡ったデータを遠隔削除する機能はありません。課金契約・バックアップ・同期は別Issueの導入時に本経路へ接続します。
 
-PWAはaccount状態、AI利用量、Passkey操作、token発行とレシート解析・カテゴリ提案を同一originで接続しています。現行の起動・配信手順は[デプロイ](DEPLOYMENT.md)を正本とします。
+上記の Web API は旧 PWA 向けです。iOS は [ネイティブ認証境界](NATIVE_APP_AUTH.md) を使用します。現行の起動・配信手順は[デプロイ](DEPLOYMENT.md)を正本とします。
 
 ## 運用上の注意
 
@@ -69,7 +69,7 @@ Cloudflare WorkerのsecretにはBetter Auth signing secret、AI Gateway signing 
 
 以下はIssue #6の実施記録です。Worker名とD1を現在の本番設定へそのまま流用しないでください。現在のpreviewと本番の選択は[デプロイ](DEPLOYMENT.md)に従います。`wrangler` の例は当時の `cf` 未対応操作のフォールバックであり、通常のdeploy手順ではありません。
 
-プレビュー環境の準備では、まず `cf --help` と `cf cli search` で現行コマンドを確認します。プレビュー専用D1を `cf d1 create --name <preview-db-name>` で作成し、`apps/pwa/cloudflare.config.ts` の `ACCOUNT_DB` にその名前とIDを設定します。次に `workers/ai-gateway` から `cf d1 migrations apply <preview-db-id> --dir ./migrations` を実行します。PWAは `apps/pwa` から `cf previews deploy kakeimatch-issue-6` で配信します。これらの操作は本番Workerと本番D1を更新しません。[Cloudflare D1 migration資料](https://developers.cloudflare.com/d1/reference/migrations/)を参照してください。
+プレビュー環境の準備では、まず `cf --help` と `cf cli search` で現行コマンドを確認します。プレビュー専用D1を `cf d1 create --name <preview-db-name>` で作成し、`workers/ai-gateway/cloudflare.config.ts` のプレビュー用 `ACCOUNT_DB` にその名前と ID を設定します。次に `workers/ai-gateway` から `npm exec -- cf d1 migrations apply <preview-db-id> --dir ./migrations` と `npm exec -- cf previews deploy kakeimatch-issue-39` を実行します。これらの操作は本番Workerと本番D1を更新しません。[Cloudflare D1 migration資料](https://developers.cloudflare.com/d1/reference/migrations/)を参照してください。
 
 `CLOUD_ACCOUNT_ORIGIN` はブラウザーが開く配信元の完全なoriginに設定します。Previewでは安定したPreview URL、productionでは本番PWAのoriginを使います。RP IDはそのoriginのhostです。ローカル開発では `localhost` または `127.0.0.1` だけを許可し、実際のportを含めたoriginでアクセスします。別originのPasskeyは共有できません。[Better Auth Passkey設定資料](https://better-auth.com/docs/plugins/passkey)を参照してください。
 
@@ -88,7 +88,7 @@ npx wrangler@4.144.0 preview secret bulk /private/path/preview-secrets.json \
 
 計測には現行Gemini Interactions APIの `usage` と、GenerateContent形式の `usageMetadata` に対応します。カテゴリ分類のGemini Decisions APIの応答は、Interactions APIと同じ `usage` の項目として読み取ります（Decisionsは応答にモデル名を含まないため、Workerが送信したモデル `gemini-decision-1` の使用量として計測します）。思考トークンは出力料金に1回だけ加えます。キャッシュやツール等の未対応の料金要素、矛盾する使用量、未知のモデルは推測で0ドルにせず不明として扱います。既存JeV providerの料金形式は過去イベントの表示用に保持します。[Google Interactions (2026/10), Usage](https://ai.google.dev/api/interactions-api)、[Google GenerateContent (2026/10), UsageMetadata](https://ai.google.dev/api/generate-content)、[実装](../workers/ai-gateway/src/ai-provider-costs.ts)
 
-通常の設定画面には製品利用回数だけを表示します。「アプリ情報」の開発者向け機能を有効にすると、AIアカウント内に自分の月次推定料金と月切替を表示します。不明な要求は既知の料金合計に含められないため、件数を明示します。開発者設定は既定値OFFで、ブラウザー内の表示だけを制御します。家計バックアップやCloud account権限には使いません。無効にしても計測は続きます。[実装: PWA](../apps/pwa/src/main.ts)
+通常の設定画面には製品利用回数だけを表示します。「アプリ情報」の開発者向け機能を有効にすると、AIアカウント内に自分の月次推定料金と月切替を表示します。不明な要求は既知の料金合計に含められないため、件数を明示します。開発者設定は既定値OFFで、ブラウザー内の表示だけを制御します。家計バックアップやCloud account権限には使いません。無効にしても計測は続きます。旧 PWA の実装は `pwa-final` タグを参照してください。
 
 ## サービス全体の費用制限（Issue #56）
 
