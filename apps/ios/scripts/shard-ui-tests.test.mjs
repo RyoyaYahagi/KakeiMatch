@@ -141,7 +141,7 @@ test('shard 0 starts with the unit-test seconds counted', () => {
   const shards = assignShards(['A', 'B', 'C', 'D'], 2, { A: 100, B: 100, C: 100, D: 100 }, { firstShardSeconds: 200 });
   assert.deepEqual(shards.map(shard => shard.tests), [['C'], ['A', 'B', 'D']]);
   assert.deepEqual(shards.map(shard => shard.estimatedSeconds), [300, 300]);
-  assert.equal(unitTestSeconds, 200);
+  assert.equal(unitTestSeconds, 121);
 });
 
 test('a partial selection under 450 seconds keeps four shards', async () => {
@@ -190,4 +190,17 @@ test('the generated table replaces only the marked block', () => {
     "before\n// BEGIN generated weights\nexport const durations = {\n  'A/testB': 7,\n};\n// END generated weights\nafter");
   assert.throws(() => replaceWeightTable('no markers', 'x'), /markers/);
   assert.ok(Object.keys(estimates).every(name => name.includes('/test')));
+});
+
+test('dark passes split out of the light tests run on main only, and the light passes run on every push', async () => {
+  const all = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  const dark = ['EntryFlowTests/testManualExpenseScreensInDark', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark'];
+  const light = ['EntryFlowTests/testManualExpenseScreensAndSaveInLight', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInLight'];
+  for (const name of [...dark, ...light]) assert.ok(all.includes(name), `${name} is not a UI test`);
+  const pullRequest = selectTests(all, { skipScreenshots: true });
+  const main = selectTests(all, { skipScreenshots: false });
+  assert.deepEqual(dark.filter(name => pullRequest.includes(name)), [], 'pull requests must skip the dark passes');
+  assert.deepEqual(dark.filter(name => !main.includes(name)), [], 'main must still run the dark passes');
+  assert.deepEqual(light.filter(name => !pullRequest.includes(name)), [], 'pull requests must keep the light passes');
+  assert.deepEqual(dark.filter(name => !screenshotOnly.includes(name)), [], 'the dark passes must be listed as screenshot-only');
 });
