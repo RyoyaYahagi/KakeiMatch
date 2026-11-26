@@ -448,7 +448,7 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     expect(await db.prepare('SELECT user_id, identity FROM native_sessions').first()).toEqual({ user_id: 'synthetic-account', identity: 'guest' });
     expect(await db.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').bind(keyId).first()).toEqual({ guest_user_id: null });
     const usage = async () => (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json();
-    expect(await usage()).toEqual({ plan: 'free', period: 'day', day: dayKey(fixedNow), used: 0, limit: 5, remaining: 5 });
+    expect(await usage()).toEqual({ plan: 'free', period: 'day', day: dayKey(fixedNow), used: 0, limit: 5, remaining: 5, supportId: 'synthetic-account' });
     for (let index = 0; index < 5; index++) expect(await reserveFlow(db, 'synthetic-account', crypto.randomUUID(), `mac-${index}`, fixedNow, limits, 'receipt', 'address')).toBe('reserved');
     await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
     expect(await usage()).toMatchObject({ used: 5, remaining: 0 });
@@ -457,7 +457,7 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     await db.prepare("INSERT INTO account_entitlements(user_id,plan,monthly_ai_limit,updated_at) VALUES ('synthetic-account','pro',10,?)").bind(fixedNow).run();
     expect(await reserveFlow(db, 'synthetic-account', crypto.randomUUID(), 'mac-6', fixedNow, limits, 'receipt', 'address')).toBe('reserved');
     await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
-    expect(await usage()).toMatchObject({ plan: 'pro', period: 'month', used: 6, limit: 10, remaining: 4 });
+    expect(await usage()).toMatchObject({ plan: 'pro', period: 'month', used: 6, limit: 10, remaining: 4, supportId: 'synthetic-account' });
   });
 
   it('keeps the guest daily cap for a key that has no account', async () => {
@@ -469,7 +469,7 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     for (let index = 0; index < 5; index++) expect(await reserveFlow(db, guest!.guest_user_id, crypto.randomUUID(), `mac-${index}`, fixedNow, limits, 'receipt', 'address')).toBe('reserved');
     await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
     expect(await (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json())
-      .toEqual({ plan: 'guest', period: 'day', day: dayKey(fixedNow), used: 5, limit: 5, remaining: 0 });
+      .toEqual({ plan: 'guest', period: 'day', day: dayKey(fixedNow), used: 5, limit: 5, remaining: 0, supportId: guest!.guest_user_id });
     expect(await reserveFlow(db, guest!.guest_user_id, crypto.randomUUID(), 'mac-5', fixedNow, limits, 'receipt', 'address')).toBe('ai_quota_exceeded');
   });
 
@@ -532,8 +532,8 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     const usageResponse = await run('/api/native/ai/usage', undefined, authorization);
     expect(usageResponse.status).toBe(200);
     const usage = await usageResponse.json() as Record<string, unknown>;
-    expectContractKeys(usage, ['plan', 'period', 'month', 'used', 'limit', 'remaining']);
-    expect(usage).toMatchObject({ plan: 'family', period: 'month', used: 0, limit: null, remaining: null });
+    expectContractKeys(usage, ['plan', 'period', 'month', 'used', 'limit', 'remaining', 'supportId']);
+    expect(usage).toMatchObject({ plan: 'family', period: 'month', used: 0, limit: null, remaining: null, supportId: userId });
     expect(usage.month).toMatch(/^\d{4}-\d{2}$/);
 
     const passkeyResponse = await run('/api/native/auth/passkey/list-user-passkeys', undefined, authorization);
@@ -582,6 +582,7 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
       used: usage.used,
       limit: usage.limit,
       remaining: usage.remaining,
+      supportId: 'synthetic-account',
     });
     writeContractFixture('passkeys', [{
       id: 'synthetic-passkey',

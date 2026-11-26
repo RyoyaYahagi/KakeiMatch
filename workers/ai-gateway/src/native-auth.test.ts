@@ -323,7 +323,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     sqlite.exec('UPDATE ai_receipt_flows SET dispatched=1');
     const native = { authorization: `Native ${session.sessionToken}` };
     const usage = await run('/api/native/ai/usage', undefined, native);
-    expect(await usage.json()).toEqual({ plan: 'guest', period: 'day', day: dayKey(now), used: 5, limit: 5, remaining: 0 });
+    expect(await usage.json()).toEqual({ plan: 'guest', period: 'day', day: dayKey(now), used: 5, limit: 5, remaining: 0, supportId: user });
     const tokenChallenge = await (await issueChallenge('token', keyId, native)).json() as { challengeId: string };
     const access = await (await run('/api/native/ai/token', { challengeId: tokenChallenge.challengeId, keyId, assertion: 'proof' }, native)).json() as { token: string };
     env.GEMINI_API_KEY = 'synthetic-provider-key';

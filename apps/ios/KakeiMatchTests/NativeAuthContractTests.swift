@@ -35,6 +35,7 @@ struct NativeAuthContractTests {
         #expect(usage.used == 0)
         #expect(usage.limit == nil)
         #expect(usage.remaining == nil)
+        #expect(usage.supportId == "synthetic-account")
     }
 
     @Test func dailyCapUsageIsAcceptedForAccountsWithoutAMonthlyPlan() throws {

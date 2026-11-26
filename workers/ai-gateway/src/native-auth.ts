@@ -369,7 +369,7 @@ async function authenticatedRequest(request: Request, env: NativeEnv & { ACCOUNT
     return withoutCookies(await handleAiRequest(new Request(target, { method: 'POST', headers, body: request.body, duplex: 'half' } as RequestInit), env, options));
   }
   // Computed here, not forwarded: a key-bound session has no Better Auth cookie to forward.
-  if (targetPath === '/api/ai/usage') return json(200, await usageSummary(db, session.user_id, now, env));
+  if (targetPath === '/api/ai/usage') return json(200, { ...(await usageSummary(db, session.user_id, now, env)), supportId: session.user_id });
   const forwarded = new Request(target, { method: request.method, headers, ...(request.body ? { body: request.body, duplex: 'half' } : {}) } as RequestInit);
   if (targetPath.startsWith('/api/ai/')) return withoutCookies(await handleAiRequest(forwarded, env, options));
   if (targetPath === '/api/account/delete') return withoutCookies(await handleAccountRequest(forwarded, env as AccountEnv));
