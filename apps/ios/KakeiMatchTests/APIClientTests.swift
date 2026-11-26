@@ -552,6 +552,38 @@ struct APIClientTests {
     }
 
     @Test
+    func nativeGuestUsageAcceptsSupportIdAndAccountLinkedEntitlementResponses() async throws {
+        let store = APITestCredentials()
+        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(guestSession.utf8), key: "guest")
+        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":1,"limit":5,"remaining":4,"supportId":"km-sup-guest"}"#)
+        }
+        let guestUsage = try await api.usage(as: .guest)
+        #expect(guestUsage.supportId == "km-sup-guest")
+        #expect(guestUsage.remaining == 4)
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"free","period":"day","day":"2026-11-26","used":2,"limit":5,"remaining":3,"supportId":"km-sup-bound"}"#)
+        }
+        let boundDaily = try await api.usage(as: .guest)
+        #expect(boundDaily.plan == .free)
+        #expect(boundDaily.period == .day)
+        #expect(boundDaily.supportId == "km-sup-bound")
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"family","period":"month","month":"2026-11","used":0,"limit":null,"remaining":null,"supportId":"km-sup-family"}"#)
+        }
+        let boundFamily = try await api.usage(as: .guest)
+        #expect(boundFamily.plan == .family)
+        #expect(boundFamily.period == .month)
+        #expect(boundFamily.limit == nil)
+        #expect(boundFamily.supportId == "km-sup-family")
+    }
+
+    @Test
     func nativeConfigurationRejectsUnknownFieldsAndInconsistentUnavailableState() async throws {
         let api = try client(native: true)
         for response in [

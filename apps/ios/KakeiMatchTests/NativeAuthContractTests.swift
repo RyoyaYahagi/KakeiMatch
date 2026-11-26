@@ -57,6 +57,32 @@ struct NativeAuthContractTests {
         #expect(throws: KMAPIError.self) { try KMAPIValidation.decode(KMAIUsage.self, data: mixed, shape: KMAPIShapes.accountUsage) }
     }
 
+    @Test func accountUsageAcceptsOptionalAndNullSupportId() throws {
+        let withSupportId = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":1,"limit":5,"remaining":4,"supportId":"sup_abc123"}"#.utf8)
+        let decoded = try KMAPIValidation.decode(KMAIUsage.self, data: withSupportId, shape: KMAPIShapes.accountUsage)
+        #expect(decoded.supportId == "sup_abc123")
+
+        let monthlyWithSupportId = Data(#"{"plan":"family","period":"month","month":"2026-11","used":0,"limit":null,"remaining":null,"supportId":"sup_month"}"#.utf8)
+        let monthlyDecoded = try KMAPIValidation.decode(KMAIUsage.self, data: monthlyWithSupportId, shape: KMAPIShapes.accountUsage)
+        #expect(monthlyDecoded.supportId == "sup_month")
+
+        let withNullSupportId = Data(#"{"plan":"free","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":null}"#.utf8)
+        #expect(try KMAPIValidation.decode(KMAIUsage.self, data: withNullSupportId, shape: KMAPIShapes.accountUsage).supportId == nil)
+
+        let withoutSupportId = Data(#"{"plan":"free","period":"month","month":"2026-11","used":1,"limit":10,"remaining":9}"#.utf8)
+        #expect(try KMAPIValidation.decode(KMAIUsage.self, data: withoutSupportId, shape: KMAPIShapes.accountUsage).supportId == nil)
+    }
+
+    @Test func accountUsageRejectsEmptyNonStringAndOverlongSupportId() {
+        let empty = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":""}"#.utf8)
+        let blank = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":"   "}"#.utf8)
+        let number = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":123}"#.utf8)
+        let overlong = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":""# + String(repeating: "a", count: 129) + #""}"#.utf8)
+        for payload in [empty, blank, number, overlong] {
+            #expect(throws: KMAPIError.self) { try KMAPIValidation.decode(KMAIUsage.self, data: payload, shape: KMAPIShapes.accountUsage) }
+        }
+    }
+
     @Test func passkeysFixtureUsesTheSameShapeAndDecodesBooleanAndInstantFields() throws {
         let passkeys = try KMAPIValidation.decode([KMCloudPasskey].self, data: data("passkeys"), shape: KMAPIShapes.passkeys)
         #expect(passkeys.count == 1)

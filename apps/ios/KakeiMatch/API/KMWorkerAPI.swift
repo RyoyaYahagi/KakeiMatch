@@ -457,15 +457,16 @@ actor KMWorkerAPI {
         } else if configuration.originPolicy == .native {
             authorization = try nativeSessionAuthorization(required: true)
         }
-        let shape: KMAPIShape = identity == .guest ? .object([
+        let shape: KMAPIShape = (identity == .guest && configuration.originPolicy != .native) ? .object([
             "plan": .values(["guest"]), "period": .values(["day"]), "day": .date,
-            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
-        ]) : KMAPIShapes.accountUsage
+            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer()),
+            "supportId": .nullable(.text(max: 128)),
+        ], optional: ["supportId"]) : KMAPIShapes.accountUsage
         let result: KMAIUsage = try await send("GET", "/api/ai/usage", authorization: authorization, shape: shape)
         if let limit = result.limit {
             guard result.remaining == max(0, limit - result.used) else { throw KMAPIError.invalidResponse }
         } else {
-            guard identity == .account, result.remaining == nil else { throw KMAPIError.invalidResponse }
+            guard (identity == .account || configuration.originPolicy == .native), result.remaining == nil else { throw KMAPIError.invalidResponse }
         }
         return result
     }

@@ -8,7 +8,6 @@ struct AppShell: View {
     @State private var entryInitialValues: KMEntryInitialValues?
     @State private var budgetRouteMonth: KMYearMonth?
     @State private var settingsAccountsRoute = false
-    @State private var settingsAIRoute = false
     @State private var recordsRefreshToken = 0
     @State private var deletionNotice = KMDeletionNoticeModel()
     @State private var moneyForwardRoute = false
@@ -81,12 +80,9 @@ struct AppShell: View {
                                     })
                                     case .settings: SettingsView(initialBudgetMonth: budgetRouteMonth,
                                         initialAccounts: settingsAccountsRoute,
-                                        initialAI: settingsAIRoute,
                                         onBudgetBack: { budgetRouteMonth = nil },
                                         onAccountsBack: { settingsAccountsRoute = false },
-                                        onAIBack: { settingsAIRoute = false },
-                                        onOpenMoneyForward: { moneyForwardRoute = true },
-                                        onShowHome: { tab = .home })
+                                        onOpenMoneyForward: { moneyForwardRoute = true })
                                     }
                                 }
                     }
@@ -111,7 +107,7 @@ struct AppShell: View {
                     }
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
-                    if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
+                    if destination != .settings { settingsAccountsRoute = false }
                     deletionNotice.clearTransientStatus()
                     tab = destination
                     entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
@@ -310,8 +306,7 @@ struct AppShell: View {
         switch destination {
         case .receipt, .photo:
             ReceiptView(source: destination,
-                onSaved: { entry = nil; tab = .records },
-                onOpenAccount: { entry = nil; settingsAccountsRoute = false; settingsAIRoute = true; tab = .settings })
+                onSaved: { entry = nil; tab = .records })
         case .expense:
             if let entryInitialValues {
                 ManualEntryView(initialValues: entryInitialValues, onSaved: rerunAfterUnmatchedEntry)

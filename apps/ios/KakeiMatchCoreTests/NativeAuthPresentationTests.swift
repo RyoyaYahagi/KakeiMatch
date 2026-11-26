@@ -34,40 +34,32 @@ struct NativeAuthPresentationTests {
         #expect(KMNativeAuthPresentation.usageFraction(plan: "free", used: 1, limit: -1) == nil)
     }
 
-    @Test func accountStatusUsesPWAWording() {
-        #expect(KMNativeAuthPresentation.accountStatus(isSignedIn: false, name: "だれか") == "未ログインです。")
-        #expect(KMNativeAuthPresentation.accountStatus(isSignedIn: true, name: nil) == "ログイン中")
-        #expect(KMNativeAuthPresentation.accountStatus(isSignedIn: true, name: "  ") == "ログイン中")
-        #expect(KMNativeAuthPresentation.accountStatus(isSignedIn: true, name: "山田") == "ログイン中：山田")
-    }
-
-    @Test func nativeGuidanceExplainsUnsupportedDeviceWithoutBreakingLocalUse() {
-        #expect(KMNativeAuthPresentation.signedOutLead.contains("1日5回"))
-        #expect(KMNativeAuthPresentation.signedOutLead.contains("正規のアプリ"))
-        #expect(KMNativeAuthPresentation.signedOutLead.contains("家計データは保存しません"))
-        #expect(KMNativeAuthPresentation.unsupportedDetail.contains("クラウドのログインとAI機能"))
+    @Test func nativeGuidanceExplainsLocalUseWithoutAccountPrompts() {
+        #expect(KMNativeAuthPresentation.signedOutFreeUsage.contains("1日5回"))
+        #expect(KMNativeAuthPresentation.usageLead.contains("正規のアプリ"))
+        #expect(KMNativeAuthPresentation.usageLead.contains("家計データは保存しません"))
+        #expect(KMNativeAuthPresentation.usageLead.contains("家計簿の閲覧や編集"))
+        #expect(KMNativeAuthPresentation.unsupportedDetail.contains("AI機能を利用できません"))
         #expect(KMNativeAuthPresentation.unsupportedDetail.contains("家計簿の閲覧や編集"))
         #expect(KMNativeAuthPresentation.notConfiguredDetail.contains("家計簿の閲覧や編集"))
-        #expect(!KMNativeAuthPresentation.accountDeleteConfirm.contains("家計簿・レシート・明細・照合記録は残ります") == false)
+        for copy in [
+            KMNativeAuthPresentation.pageTitle,
+            KMNativeAuthPresentation.unavailableStatus,
+            KMNativeAuthPresentation.unsupportedDetail,
+            KMNativeAuthPresentation.signedOutFreeUsage,
+            KMNativeAuthPresentation.usageLead,
+            KMNativeAuthPresentation.usageExplanation,
+            KMNativeAuthPresentation.guestStartMessage,
+        ] {
+            #expect(!copy.contains("ログイン"))
+            #expect(!copy.contains("アカウント"))
+            #expect(!copy.contains("お問い合わせ"))
+        }
     }
 
-    @Test func invitationMustBeNonEmptyAndBounded() {
-        #expect(!KMNativeAuthPresentation.invitationIsValid(""))
-        #expect(!KMNativeAuthPresentation.invitationIsValid("   "))
-        #expect(KMNativeAuthPresentation.invitationIsValid("invite-token"))
-        #expect(!KMNativeAuthPresentation.invitationIsValid(String(repeating: "a", count: 4097)))
-        #expect(KMNativeAuthPresentation.invitationIsValid(String(repeating: "a", count: 4096)))
-    }
-
-    @Test func accountDeletionRequiresTheExactTypedPhrase() {
-        #expect(KMNativeAuthPresentation.deletionConfirmationMatches("アカウントを削除"))
-        #expect(!KMNativeAuthPresentation.deletionConfirmationMatches("アカウント削除"))
-        #expect(!KMNativeAuthPresentation.deletionConfirmationMatches("アカウントを削除 "))
-    }
-
-    @Test func settingsRowCarriesUsageValueAndOpensAuthPage() {
+    @Test func settingsRowCarriesUsageValueAndOpensUsagePage() {
         let sections = KMSettingsPresentation.sections(theme: .system, aiUsageValue: "今日 2/5回")
-        #expect(sections[2].rows[0].title == "ログイン・利用状況")
+        #expect(sections[2].rows[0].title == "利用状況")
         #expect(sections[2].rows[0].value == "今日 2/5回")
         #expect(sections[2].rows[0].destination == .ai)
     }

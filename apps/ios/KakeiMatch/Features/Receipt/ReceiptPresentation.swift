@@ -19,7 +19,7 @@ extension KMReceiptPresentation {
             return "この端末ではAI読み取りを利用できません。手で入力して続けられます。"
         }
         if error == .guestLimitReached {
-            return "この接続からの登録なしの利用が多いため、今日はこれ以上始められません。手で入力するか、設定からログインしてください。"
+            return "この接続からの利用が多いため、今日はこれ以上始められません。手で入力して続けられます。"
         }
         return error.receiptMessage(isGuest: isGuest)
     }

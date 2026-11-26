@@ -23,7 +23,6 @@
     "budget-initial": "budget/initial",
     "master-categories-initial": "masters/initial",
     "settings-initial": "settings/initial",
-    "contact-initial": "contact/initial",
     "backup-initial": "backup/initial"
   }
 }

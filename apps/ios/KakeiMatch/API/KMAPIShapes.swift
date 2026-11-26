@@ -12,12 +12,14 @@ enum KMAPIShapes {
     static let accountUsage: KMAPIShape = .oneOf([
         .object([
             "plan": .values(["free", "pro", "family"]), "period": .values(["month"]), "month": .month,
-            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
-        ]),
+            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer()),
+            "supportId": .nullable(.text(max: 128)),
+        ], optional: ["supportId"]),
         .object([
             "plan": .values(["free", "guest"]), "period": .values(["day"]), "day": .date,
-            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
-        ])
+            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer()),
+            "supportId": .nullable(.text(max: 128)),
+        ], optional: ["supportId"]),
     ])
     static let passkeys: KMAPIShape = .array(.object([
         "id": .text(max: 128), "name": .nullable(.text(max: 500)), "publicKey": .text(max: 8192), "userId": .text(max: 128),

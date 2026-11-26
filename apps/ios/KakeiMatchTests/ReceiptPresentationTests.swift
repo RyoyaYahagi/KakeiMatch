@@ -34,15 +34,16 @@ struct ReceiptPresentationTests {
         #expect(!KMReceiptPresentation.retryable(.rateLimited))
         #expect(!KMReceiptPresentation.retryable(.invalidRequest))
         #expect(KMReceiptPresentation.failureMessage(.nativeUnsupported).contains("手で入力"))
-        #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
+        #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("手で入力"))
+        #expect(!KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
     }
 
     @Test func failureViewMapsAPIErrorsToThePWACodes() {
         let guestQuota = KMReceiptPresentation.readingFailure(.quotaExceeded, guest: true)
         #expect(guestQuota.title == "! AIの読み取り回数の上限です")
         #expect(guestQuota.message.contains("手で入力して続けられます。"))
-        #expect(guestQuota.message.contains("ログインすると回数の制限なく使えることがあります。設定からログインできます。"))
-        #expect(guestQuota.accountAction && !guestQuota.photoProblem)
+        #expect(!guestQuota.message.contains("ログイン"))
+        #expect(!guestQuota.accountAction && !guestQuota.photoProblem)
         #expect(!guestQuota.message.contains("ぼやけや反射"))
 
         let accountQuota = KMReceiptPresentation.readingFailure(.quotaExceeded)
@@ -55,8 +56,8 @@ struct ReceiptPresentationTests {
         #expect(KMReceiptPresentation.readingFailure(.invalidResponse).title == "! 写真から読み取れませんでした")
         #expect(KMReceiptPresentation.readingFailure(.invalidRequest).photoProblem)
 
-        #expect(KMReceiptPresentation.readingFailure(.authenticationRequired).title == "! ログインが必要です")
-        #expect(KMReceiptPresentation.readingFailure(.nativeAuthenticationRequired).title == "! ログインが必要です")
+        #expect(KMReceiptPresentation.readingFailure(.authenticationRequired).title == "! 読み取りを確認できませんでした")
+        #expect(KMReceiptPresentation.readingFailure(.nativeAuthenticationRequired).title == "! 読み取りを確認できませんでした")
         for failure in [KMAPIError.rateLimited, .network, .providerUnavailable, .providerTimeout,
                         .aiTemporarilyPaused, .notConfigured] {
             let view = KMReceiptPresentation.readingFailure(failure)
@@ -65,7 +66,7 @@ struct ReceiptPresentationTests {
         }
         // PWA safeError maps the guest-creation limit to quota.
         #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).title == "! AIの読み取り回数の上限です")
-        #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).accountAction)
+        #expect(!KMReceiptPresentation.readingFailure(.guestLimitReached).accountAction)
         #expect(KMReceiptPresentation.readingFailure(.nativeUnsupported).title == "! 読み取れませんでした")
         #expect(!KMReceiptPresentation.readingFailure(.nativeUnsupported).accountAction)
     }

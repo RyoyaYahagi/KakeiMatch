@@ -1,11 +1,11 @@
 import SwiftUI
+import UIKit
 
 private enum KMSettingsPage: Equatable {
     case root
     case theme
     case budget
     case recurring
-    case contact
     case categoryRules
     case categories
     case accounts
@@ -19,31 +19,25 @@ private enum KMSettingsPage: Equatable {
 struct SettingsView: View {
     var initialBudgetMonth: KMYearMonth? = nil
     var initialAccounts = false
-    var initialAI = false
     var onBudgetBack: () -> Void = {}
     var onAccountsBack: () -> Void = {}
-    var onAIBack: () -> Void = {}
     var onOpenMoneyForward: () -> Void = {}
-    var onShowHome: () -> Void = {}
     @Environment(\.repositories) private var repositories
     @Environment(\.driveSync) private var driveSync
     @State private var model = KMSettingsModel()
     @State private var auth = KMNativeAuthModel()
     @State private var page = KMSettingsPage.root
+    @State private var supportIdCopied = false
 
-    init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false, initialAI: Bool = false,
+    init(initialBudgetMonth: KMYearMonth? = nil, initialAccounts: Bool = false,
          onBudgetBack: @escaping () -> Void = {}, onAccountsBack: @escaping () -> Void = {},
-         onAIBack: @escaping () -> Void = {},
-         onOpenMoneyForward: @escaping () -> Void = {}, onShowHome: @escaping () -> Void = {}) {
+         onOpenMoneyForward: @escaping () -> Void = {}) {
         self.initialBudgetMonth = initialBudgetMonth
         self.initialAccounts = initialAccounts
-        self.initialAI = initialAI
         self.onBudgetBack = onBudgetBack
         self.onAccountsBack = onAccountsBack
-        self.onAIBack = onAIBack
         self.onOpenMoneyForward = onOpenMoneyForward
-        self.onShowHome = onShowHome
-        let initialPage: KMSettingsPage = initialAccounts ? .accounts : initialAI ? .ai
+        let initialPage: KMSettingsPage = initialAccounts ? .accounts
             : (initialBudgetMonth == nil ? .root : .budget)
         _page = State(initialValue: initialPage)
     }
@@ -56,7 +50,6 @@ struct SettingsView: View {
             case .appInfo: KMAppInformationView(onBack: { page = .root })
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
             case .recurring: KMRecurringView(onBack: { page = .root })
-            case .contact: ContactView(onBackToSettings: { page = .root })
             case .categoryRules: KMMasterManagementView(initialPage: .rules, onBack: { page = .root })
             case .categories: KMMasterManagementView(initialPage: .categories, onBack: { page = .root })
             case .accounts: KMMasterManagementView(initialPage: .accounts, onBack: { page = .root; onAccountsBack() })
@@ -70,7 +63,7 @@ struct SettingsView: View {
                 } else {
                     KMDriveSyncView(now: museExportNow, onBack: { page = .root })
                 }
-            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root; onAIBack() }, onShowHome: onShowHome)
+            case .ai: KMNativeAuthView(model: auth, onBack: { page = .root })
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -78,16 +71,13 @@ struct SettingsView: View {
             if !model.loaded { await model.load(repositories) }
             await auth.refresh()
         }
-        // The row shows the PWA `#ai-row-value`; reload it after a login or
-        // logout on the account page, not only when Settings is first opened.
         .onChange(of: page) { _, value in
             guard value == .root else { return }
+            supportIdCopied = false
             Task { await auth.refresh() }
         }
-        // A receipt can open the account page while Settings is already on screen;
-        // the initial page passed to init would not be applied a second time.
-        .onChange(of: initialAI) { _, ai in
-            if ai { page = .ai }
+        .onChange(of: auth.supportId) { _, _ in
+            supportIdCopied = false
         }
     }
 
@@ -111,7 +101,8 @@ struct SettingsView: View {
             let sections = KMSettingsPresentation.sections(
                 theme: model.settings.theme,
                 aiUsageValue: auth.settingsRowValue,
-                driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: driveSync?.isEnabled == true)
+                driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: driveSync?.isEnabled == true),
+                supportId: auth.supportId
             )
             ForEach(sections) { section in
                 Text(section.title)
@@ -164,10 +155,6 @@ struct SettingsView: View {
             case .theme: page = .theme
             case .budget: page = .budget
             case .recurring: page = .recurring
-            case .contact:
-                KMContactDiagnosticRecorder.shared.recordAction(.openContact, screen: .settings)
-                KMContactDiagnosticRecorder.shared.recordScreen(.contact)
-                page = .contact
             case .categoryRules: page = .categoryRules
             case .categories: page = .categories
             case .accounts: page = .accounts
@@ -176,35 +163,65 @@ struct SettingsView: View {
             case .driveSync: page = .driveSync
             case .ai: page = .ai
             case .appInfo: page = .appInfo
+            case .copySupportId:
+                if let value = row.value {
+                    UIPasteboard.general.string = value
+                    supportIdCopied = true
+                }
             case .unimplemented: break
             }
         } label: {
-            HStack(spacing: KMSpacing.space2) {
-                Text(row.title)
-                    .font(KMTypography.text)
-                    .foregroundStyle(row.isDestructive ? KMColor.danger : KMColor.text)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: KMSpacing.space2)
-                if let value = row.value {
+            if row.destination == .copySupportId, let value = row.value {
+                VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                    HStack(spacing: KMSpacing.space2) {
+                        Text(row.title)
+                            .font(KMTypography.text)
+                            .foregroundStyle(KMColor.text)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: KMSpacing.space2)
+                        Text(supportIdCopied ? "コピーしました" : "コピー")
+                            .font(KMTypography.body(14, weight: .medium))
+                            .foregroundStyle(supportIdCopied ? KMColor.success : KMColor.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(value)
-                        .font(KMTypography.body(14))
+                        .font(KMTypography.number(13, weight: .regular))
                         .foregroundStyle(KMColor.muted)
-                        .multilineTextAlignment(.trailing)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityIdentifier(row.id == "settings.theme" ? "theme-row-value" : row.id)
                 }
-                Text("›")
-                    .font(KMTypography.body(22, weight: .regular))
-                    .foregroundStyle(KMColor.muted)
-                    .accessibilityHidden(true)
+                .padding(.vertical, KMSpacing.space2)
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .contentShape(Rectangle())
+            } else {
+                HStack(spacing: KMSpacing.space2) {
+                    Text(row.title)
+                        .font(KMTypography.text)
+                        .foregroundStyle(row.isDestructive ? KMColor.danger : KMColor.text)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: KMSpacing.space2)
+                    if let value = row.value {
+                        Text(value)
+                            .font(KMTypography.body(14))
+                            .foregroundStyle(KMColor.muted)
+                            .multilineTextAlignment(.trailing)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier(row.id == "settings.theme" ? "theme-row-value" : row.id)
+                    }
+                    Text("›")
+                        .font(KMTypography.body(22, weight: .regular))
+                        .foregroundStyle(KMColor.muted)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
-            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(row.id)
-        .accessibilityHint(row.destination == .unimplemented ? "移動先は別の画面の実装待ちです。" : "")
+        .accessibilityHint(row.destination == .unimplemented ? "移動先は別の画面の実装待ちです。" : row.destination == .copySupportId ? "タップしてサポートIDをコピーします" : "")
     }
 
     private var themePage: some View {

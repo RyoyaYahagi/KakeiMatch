@@ -126,22 +126,22 @@ struct ReceiptPresentationTests {
         #expect(!view.accountAction)
     }
 
-    @Test func readingFailureAddsTheSignInHintWhenAGuestReachesTheLimit() {
+    @Test func readingFailureDoesNotAddSignInHintWhenAGuestReachesTheLimit() {
         let view = KMReceiptPresentation.readingFailure(code: "quota",
-            message: "今日のAI読み取り（登録なしで1日5回）を使い切りました。", guest: true)
+            message: "今日のAI読み取り（1日5回）を使い切りました。", guest: true)
         #expect(view.title == "! AIの読み取り回数の上限です")
-        #expect(view.message.contains("今日のAI読み取り（登録なしで1日5回）を使い切りました。"))
-        #expect(view.message.contains("ログインすると回数の制限なく使えることがあります。設定からログインできます。"))
+        #expect(view.message == "今日のAI読み取り（1日5回）を使い切りました。")
+        #expect(!view.message.contains("ログイン"))
         #expect(!view.photoProblem)
-        #expect(view.accountAction)
+        #expect(!view.accountAction)
         let account = KMReceiptPresentation.readingFailure(code: "quota", message: "AI利用上限に達しました。", guest: false)
-        #expect(!account.message.contains("ログインすると回数"))
+        #expect(!account.message.contains("ログイン"))
         #expect(!account.accountAction)
     }
 
-    @Test func readingFailureGivesSignInPauseAndUnknownFailuresTheirOwnHeading() {
+    @Test func readingFailureGivesVerificationPauseAndUnknownFailuresTheirOwnHeading() {
         let cases: [(code: String, title: String)] = [
-            ("auth_required", "! ログインが必要です"),
+            ("auth_required", "! 読み取りを確認できませんでした"),
             ("rate_limited", "! 今はAIで読み取れません"),
             ("offline_or_unavailable", "! 今はAIで読み取れません"),
             ("not_configured", "! 今はAIで読み取れません"),
@@ -154,9 +154,9 @@ struct ReceiptPresentationTests {
             #expect(view.message == "あとで再度お試しください。")
             #expect(!view.photoProblem)
         }
-        #expect(KMReceiptPresentation.readingFailure(code: "auth_required", message: "サインインしてください。").accountAction)
+        #expect(!KMReceiptPresentation.readingFailure(code: "auth_required", message: "確認できませんでした。").accountAction)
         #expect(!KMReceiptPresentation.readingFailure(code: "offline_or_unavailable", message: "通信できません。").accountAction)
-        // A cancelled bot check is not a sign-in problem.
+        // A cancelled bot check is not a verification failure.
         let cancelled = KMReceiptPresentation.readingFailure(code: "auth_required",
             message: "確認をやめたので、AIでは読み取りませんでした。写真は端末に残っています。")
         #expect(cancelled.title == "! 読み取りを中止しました")

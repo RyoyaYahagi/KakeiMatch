@@ -30,7 +30,7 @@ enum KMAPIError: Error, Equatable, Sendable {
     func receiptMessage(isGuest: Bool = false) -> String {
         switch self {
         case .authenticationRequired, .nativeAuthenticationRequired:
-            "AI機能を使うにはアカウントへのサインインが必要です。レシートは端末に保存されています。"
+            "AI機能を利用できませんでした。レシートは端末に保存されています。手で入力して続けられます。"
         case .quotaExceeded:
             isGuest ? "今日のAI読み取り（登録なしで1日5回）を使い切りました。明日の0時に戻ります。手で入力して続けられます。" : "AI利用上限に達しました。手動で入力できます。"
         case .rateLimited: "AIへの要求が集中しています。しばらく待つか、手動で入力してください。"
@@ -82,6 +82,19 @@ struct KMAIUsage: Codable, Sendable {
     let used: Int
     let limit: Int?
     let remaining: Int?
+    let supportId: String?
+
+    init(plan: Plan, period: Period, month: KMYearMonth?, day: KMDate?,
+         used: Int, limit: Int?, remaining: Int?, supportId: String? = nil) {
+        self.plan = plan
+        self.period = period
+        self.month = month
+        self.day = day
+        self.used = used
+        self.limit = limit
+        self.remaining = remaining
+        self.supportId = supportId
+    }
 }
 struct KMAICosts: Codable, Sendable {
     struct Provider: Codable, Sendable {

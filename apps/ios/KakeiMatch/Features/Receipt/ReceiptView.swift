@@ -22,8 +22,6 @@ struct ReceiptView: View {
     /// The tapped detail row decides the first pane (category -> items).
     var initialPane: String? = nil
     var onSaved: (() -> Void)? = nil
-    /// Opens Settings > ログイン・利用状況. Supplied only where the shell can change tabs.
-    var onOpenAccount: (() -> Void)? = nil
     @Environment(\.repositories) private var repositories
     @State private var model = KMReceiptModel()
     @State private var photo: PhotosPickerItem?
@@ -302,10 +300,6 @@ struct ReceiptView: View {
                         Text(view.message).fixedSize(horizontal: false, vertical: true)
                         if view.photoProblem {
                             Button("撮り直す") { openCamera() }.accessibilityIdentifier("receipt.retakeButton")
-                        }
-                        if view.accountAction, let onOpenAccount {
-                            Button("アカウントを確認する") { onOpenAccount() }
-                                .accessibilityIdentifier("receipt.accountButton")
                         }
                         if !KMReceiptPresentation.retryable(failure) {
                             Button("手で入力して続ける") { model.stopWaiting(); model.error = nil }
