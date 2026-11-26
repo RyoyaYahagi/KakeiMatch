@@ -139,7 +139,7 @@ test('shard 0 starts with the unit-test seconds counted', () => {
   const shards = assignShards(['A', 'B', 'C', 'D'], 2, { A: 100, B: 100, C: 100, D: 100 }, { firstShardSeconds: 200 });
   assert.deepEqual(shards.map(shard => shard.tests), [['C'], ['A', 'B', 'D']]);
   assert.deepEqual(shards.map(shard => shard.estimatedSeconds), [300, 300]);
-  assert.equal(unitTestSeconds, 200);
+  assert.equal(unitTestSeconds, 121);
 });
 
 test('a selection that fits in 450 seconds runs on one simulator', () => {

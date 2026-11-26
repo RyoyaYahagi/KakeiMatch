@@ -160,8 +160,8 @@ export function validateCoverage(tests, shards) {
   }
 }
 
-// Shard 0 also runs the Swift Testing unit tests, about this many seconds on its simulator.
-export const unitTestSeconds = 200;
+// Shard 0 also runs the Swift Testing unit tests. Median of four macos-26 runs (118 to 148 seconds across runs).
+export const unitTestSeconds = 121;
 
 // firstShardSeconds is time that shard 0 spends before its UI tests start.
 export function assignShards(tests, count, weights = durations, { firstShardSeconds = 0 } = {}) {
