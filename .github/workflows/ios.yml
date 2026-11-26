@@ -357,9 +357,15 @@ jobs:
         run: |
           test_args=()
           while IFS= read -r test_name; do
+            # An empty shard file holds one blank line; it names no test.
+            [ -n "$test_name" ] || continue
             test_args+=("-only-testing:KakeiMatchUITests/$test_name")
           done < shard-tests.txt
-          test "${#test_args[@]}" -gt 0
+          # A short selection can leave this shard without tests. That is a pass, not a skip.
+          if [ "${#test_args[@]}" -eq 0 ]; then
+            echo "No UI tests in this shard; nothing to run."
+            exit 0
+          fi
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
           test "${#xctestruns[@]}" -eq 1
           if ! source "$RUNNER_TEMP/observe-ios-test.sh"; then
