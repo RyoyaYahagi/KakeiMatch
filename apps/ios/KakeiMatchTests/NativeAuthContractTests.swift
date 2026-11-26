@@ -37,6 +37,26 @@ struct NativeAuthContractTests {
         #expect(usage.remaining == nil)
     }
 
+    @Test func dailyCapUsageIsAcceptedForAccountsWithoutAMonthlyPlan() throws {
+        let free = Data(#"{"plan":"free","period":"day","day":"2026-11-26","used":2,"limit":5,"remaining":3}"#.utf8)
+        let usage = try KMAPIValidation.decode(KMAIUsage.self, data: free, shape: KMAPIShapes.accountUsage)
+        #expect(usage.plan == .free)
+        #expect(usage.period == .day)
+        #expect(usage.day != nil)
+        #expect(usage.month == nil)
+        #expect(usage.limit == 5)
+
+        let linkedGuest = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5}"#.utf8)
+        #expect(try KMAPIValidation.decode(KMAIUsage.self, data: linkedGuest, shape: KMAPIShapes.accountUsage).plan == .guest)
+    }
+
+    @Test func accountUsageRejectsMixedOrUnknownForms() {
+        let unknownPlan = Data(#"{"plan":"enterprise","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5}"#.utf8)
+        let mixed = Data(#"{"plan":"free","period":"day","month":"2026-11","day":"2026-11-26","used":0,"limit":5,"remaining":5}"#.utf8)
+        #expect(throws: KMAPIError.self) { try KMAPIValidation.decode(KMAIUsage.self, data: unknownPlan, shape: KMAPIShapes.accountUsage) }
+        #expect(throws: KMAPIError.self) { try KMAPIValidation.decode(KMAIUsage.self, data: mixed, shape: KMAPIShapes.accountUsage) }
+    }
+
     @Test func passkeysFixtureUsesTheSameShapeAndDecodesBooleanAndInstantFields() throws {
         let passkeys = try KMAPIValidation.decode([KMCloudPasskey].self, data: data("passkeys"), shape: KMAPIShapes.passkeys)
         #expect(passkeys.count == 1)

@@ -8,9 +8,16 @@ enum KMAPIShapes {
         "session": .object(["id": .text(max: 128), "userId": .text(max: 128), "token": .text(max: 8192), "expiresAt": instant,
                             "createdAt": instant, "updatedAt": instant, "ipAddress": .nullable(.text(max: 128)), "userAgent": .nullable(.text(max: 2048))], optional: ["ipAddress", "userAgent"])
     ]))
-    static let accountUsage: KMAPIShape = .object([
-        "plan": .values(["free", "pro", "family"]), "period": .values(["month"]), "month": .month,
-        "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
+    /// A monthly plan answers with `month`; an account without an entitlement row, or a guest-linked one, answers with the daily cap and `day`.
+    static let accountUsage: KMAPIShape = .oneOf([
+        .object([
+            "plan": .values(["free", "pro", "family"]), "period": .values(["month"]), "month": .month,
+            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
+        ]),
+        .object([
+            "plan": .values(["free", "guest"]), "period": .values(["day"]), "day": .date,
+            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer())
+        ])
     ])
     static let passkeys: KMAPIShape = .array(.object([
         "id": .text(max: 128), "name": .nullable(.text(max: 500)), "publicKey": .text(max: 8192), "userId": .text(max: 128),
