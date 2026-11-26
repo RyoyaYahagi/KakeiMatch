@@ -141,10 +141,13 @@ final class AddButtonHitAreaTests: XCTestCase {
         XCTAssertTrue(app.buttons["chooser.expense"].waitForExistence(timeout: 5))
         app.buttons["chooser.expense"].tap()
         XCTAssertTrue(app.otherElements["manualEntry.screen"].waitForExistence(timeout: 10))
-        // At Accessibility XL the save button stays tappable above the tab bar before the keyboard opens.
+        // At Accessibility XL the amount field and the save button stay inside the screen, tappable,
+        // and at least 44pt tall before the keyboard opens; the save button also stays above the tab bar.
+        let screen = app.windows.firstMatch
         let save = app.buttons["entry.saveButton"]
-        XCTAssertTrue(save.isHittable, "タップできません: 保存ボタン")
+        assertTappableAtXL(save, screen: screen)
         XCTAssertLessThanOrEqual(save.frame.maxY, app.buttons["home-tab"].frame.minY + 1, "下部ナビと重なっています")
+        assertTappableAtXL(app.textFields["manual-transaction-amount"], screen: screen)
 
         let amount = app.textFields["manual-transaction-amount"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))
@@ -269,6 +272,19 @@ final class AddButtonHitAreaTests: XCTestCase {
             XCTAssertFalse(app.buttons["chooser.receipt"].waitForExistence(timeout: 1),
                            "タイル形状の外のタップで追加画面が開きました: x=\(x), y=\(y)")
         }
+    }
+
+    // Same checks as DynamicTypeLayoutTests.assertTappable, which this test takes over at XL.
+    @MainActor
+    private func assertTappableAtXL(_ element: XCUIElement, screen: XCUIElement,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.waitForExistence(timeout: 10), "要素がありません", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(element.frame.minX, screen.frame.minX - 1, "左にはみ出しています: \(element)", file: file, line: line)
+        XCTAssertLessThanOrEqual(element.frame.maxX, screen.frame.maxX + 1, "右にはみ出しています: \(element)", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(element.frame.minY, screen.frame.minY - 1, "上にはみ出しています: \(element)", file: file, line: line)
+        XCTAssertLessThanOrEqual(element.frame.maxY, screen.frame.maxY + 1, "下にはみ出しています: \(element)", file: file, line: line)
+        XCTAssertTrue(element.isHittable, "タップできません: \(element)", file: file, line: line)
+        XCTAssertGreaterThanOrEqual(element.frame.height, 43.5, "タップ領域が44pt未満です: \(element)", file: file, line: line)
     }
 
     @MainActor
