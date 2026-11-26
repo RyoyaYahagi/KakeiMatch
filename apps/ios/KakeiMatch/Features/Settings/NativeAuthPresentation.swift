@@ -18,7 +18,7 @@ enum KMNativeAuthPresentation {
     static let signedOutFreeUsage = "ログインしなくても、AIの読み取りを1日5回まで使えます。"
     static let signedOutRowValue = "1日5回まで"
     static let signedOutLead = "ログインしなくても、AIを1日5回まで使えます。初めて使う時だけ、この端末が正規のアプリかを確かめます。サーバーに記録するのはAIの利用回数だけで、家計データは保存しません。家計簿の閲覧や編集はこの端末で引き続き利用できます。"
-    static let usageExplanation = "レシートの読み取りとカテゴリ提案で1回です。読み取り直すと新たに1回使います。お問い合わせのAI機能は回数に数えません。ログインしていない時は1日5回までで、毎日午前0時（日本時間）に戻ります。ログイン中はプランの回数で、毎月1日の午前0時に戻ります。"
+    static let usageExplanation = "レシートの読み取りとカテゴリ提案で1回です。読み取り直すと新たに1回使います。お問い合わせのAI機能は回数に数えません。ログインしていない時と、プランのないアカウントは1日5回までで、毎日午前0時（日本時間）に戻ります。プランがあるときは、プランの回数で、毎月1日の午前0時に戻ります。"
     static let loginInProgress = "Passkeyを確認しています…"
     static let loginFailed = "ログインできませんでした。登録済みのPasskeyを確認してください。"
     static let registerInProgress = "Passkeyを登録しています…"
@@ -68,19 +68,27 @@ enum KMNativeAuthPresentation {
         }
     }
 
-    /// `main.ts` renderUsage. Guest usage has no month and always has a limit.
-    static func usageSummary(plan: String, used: Int, limit: Int?) -> String {
+    /// `main.ts` renderUsage. Guest usage and the account daily cap have no month.
+    static func usageSummary(plan: String, period: String = "month", used: Int, limit: Int?) -> String {
         if plan == "guest" {
             return "今日のAI読み取り \(used) / \(limit ?? 0)回 · 登録なし"
         }
         let name = planName(plan)
+        if period == "day" {
+            guard let limit else { return "今日のAI読み取り \(used)回 · \(name) · 上限なし" }
+            return "今日のAI読み取り \(used) / \(limit)回 · \(name)"
+        }
         guard let limit else { return "今月の読み取り \(used)回 · \(name) · 上限なし" }
         return "今月の読み取り \(used) / \(limit)回 · \(name)"
     }
 
     /// `#ai-row-value` next to the settings entry.
-    static func settingsRowValue(plan: String, used: Int, limit: Int?) -> String {
+    static func settingsRowValue(plan: String, period: String = "month", used: Int, limit: Int?) -> String {
         if plan == "guest" { return "今日 \(used)/\(limit ?? 0)回" }
+        if period == "day" {
+            guard let limit else { return "今日 \(used)回" }
+            return "今日 \(used)/\(limit)回"
+        }
         guard let limit else { return "今月 \(used)回" }
         return "今月 \(used)/\(limit)回"
     }
