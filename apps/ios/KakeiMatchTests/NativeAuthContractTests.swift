@@ -78,7 +78,7 @@ struct NativeAuthContractTests {
         let empty = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":""}"#.utf8)
         let blank = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":"   "}"#.utf8)
         let number = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":123}"#.utf8)
-        let overlong = Data(#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":""# + String(repeating: "a", count: 129) + #""}"#.utf8)
+        let overlong = Data((#"{"plan":"guest","period":"day","day":"2026-11-26","used":0,"limit":5,"remaining":5,"supportId":""# + String(repeating: "a", count: 129) + #""}"#).utf8)
         for payload in [empty, blank, number, overlong] {
             #expect(throws: KMAPIError.self) { try KMAPIValidation.decode(KMAIUsage.self, data: payload, shape: KMAPIShapes.accountUsage) }
         }
