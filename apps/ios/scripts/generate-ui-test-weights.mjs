@@ -9,10 +9,7 @@ const shardScript = new URL('./shard-ui-tests.mjs', import.meta.url);
 const defaultSeconds = 30;
 
 // Methods with no measurement yet. Replace each with a measured value once a run has it.
-export const estimates = {
-  // The measured 193 s covered four tabs. One tab is estimated as a quarter of it, launch time ignored.
-  'AddButtonHitAreaTests/testAddTileOnlyRespondsInsideItsRaisedShapeOnHomeTab': 48,
-};
+export const estimates = {};
 
 // Xcode prints one line per passed method: Test Case '-[KakeiMatchUITests.Class method]' passed (12.3 seconds)
 const passedLine = /Test Case '-\[KakeiMatchUITests\.(\w+) (\w+)\]' passed \(([\d.]+) seconds\)/g;
@@ -97,7 +94,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   });
   const sources = Object.values(weights).reduce((count, { source }) => ({ ...count, [source]: (count[source] ?? 0) + 1 }), {});
   console.error(`weights for ${tests.length} UI tests:`, JSON.stringify(sources));
-  const table = formatWeightTable(weights);
+  // The run IDs stay in the generated block so the table can be rebuilt after CI logs expire (90 days).
+  const provenance = `// Measured from macos-26 runs. Pull requests: ${pullRequestRuns.join(', ') || 'none'}. Main: ${mainRuns.join(', ') || 'none'}.`;
+  const table = `${provenance}\n${formatWeightTable(weights)}`;
   if (write) {
     await writeFile(shardScript, replaceWeightTable(await readFile(shardScript, 'utf8'), table));
   } else {
