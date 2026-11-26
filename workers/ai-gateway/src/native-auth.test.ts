@@ -317,7 +317,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     await registerKey();
     const session = await (await guestLogin()).json() as { sessionToken: string };
     const user = (sqlite.prepare('SELECT guest_user_id FROM native_app_keys').get() as { guest_user_id: string }).guest_user_id;
-    const limits: FlowLimits = { monthlyDefault: 30, guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
+    const limits: FlowLimits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
     const address = await addressDayMac(secret, request('/api/native/ai/gemini'), now);
     for (let index = 0; index < 5; index++) expect(await reserveFlow(env.ACCOUNT_DB!, user, crypto.randomUUID(), 'mac', now, limits, 'receipt', address)).toBe('reserved');
     sqlite.exec('UPDATE ai_receipt_flows SET dispatched=1');

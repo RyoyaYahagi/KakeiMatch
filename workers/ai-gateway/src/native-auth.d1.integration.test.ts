@@ -5,6 +5,7 @@ import { Encoder } from 'cbor-x';
 import { AsnEcSignatureFormatter } from '@peculiar/x509';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleAccountRequest } from './account-auth';
+import { dayKey, reserveFlow } from './receipt-ai-usage';
 
 // App Attest cryptography is covered separately; this suite exercises real Better Auth/D1 wiring.
 vi.mock('./app-attest', () => ({
@@ -198,6 +199,21 @@ function writeContractFixture(name: string, value: unknown) {
     writeFileSync(path, serialized);
   }
   expect(readFileSync(path, 'utf8'), `${name}.json is stale. Run npm run test:update-native-contract-fixtures --prefix workers/ai-gateway`).toBe(serialized);
+}
+async function guestSignIn(run: Fixture['run']) {
+  const challenge = await run('/api/native/challenge', { purpose: 'guest', keyId });
+  expect(challenge.status).toBe(200);
+  const { challengeId } = await challenge.json() as { challengeId: string };
+  const response = await run('/api/native/guest', { challengeId, keyId, assertion: 'synthetic-app-attest-guest-assertion' });
+  expect(response.status).toBe(201);
+  return await response.json() as { sessionToken: string };
+}
+async function aiTokenFor(run: Fixture['run'], sessionToken: string) {
+  const authorization = `Native ${sessionToken}`;
+  const challenge = await (await run('/api/native/challenge', { purpose: 'token', keyId }, authorization)).json() as { challengeId: string };
+  const response = await run('/api/native/ai/token', { challengeId: challenge.challengeId, keyId, assertion: 'synthetic-app-attest-token-assertion' }, authorization);
+  expect(response.status).toBe(200);
+  return (await response.json() as { token: string }).token;
 }
 const fixedNow = 1_800_000_000;
 describe('native auth on local D1 with real Better Auth passkey verification', () => {
@@ -411,6 +427,50 @@ describe('native auth on local D1 with real Better Auth passkey verification', (
     expect(deleted.status).toBe(200);
     expect(await deleted.json()).toEqual({ deleted: true, localHouseholdDataPreserved: true });
     expect((await deletion.run('/api/native/auth/get-session', undefined, `Native ${deletionLogin.sessionToken}`)).status).toBe(401);
+  });
+
+  it('serves config, guest sign-in, and AI tokens without BETTER_AUTH_SECRET', async () => {
+    const { run, env } = await makeFixture(fixedNow);
+    delete (env as { BETTER_AUTH_SECRET?: string }).BETTER_AUTH_SECRET;
+    expect(await (await run('/api/native/config')).json()).toMatchObject({ available: true, rpId: 'native-d1.example.test' });
+    const session = await guestSignIn(run);
+    expect(await aiTokenFor(run, session.sessionToken)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+  });
+
+  it('counts a key bound to an account against its entitlement, and only the daily cap without one', async () => {
+    const { db, run } = await makeFixture(fixedNow);
+    const limits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
+    await db.prepare('INSERT INTO user(id,name,email,emailVerified,createdAt,updatedAt) VALUES (?,?,?,?,?,?)')
+      .bind('synthetic-account', 'Synthetic Member', 'member@example.invalid', 1, fixedNow * 1000, fixedNow * 1000).run();
+    await db.prepare('UPDATE native_app_keys SET account_user_id=? WHERE key_id=?').bind('synthetic-account', keyId).run();
+    const session = await guestSignIn(run);
+    // The bound key signs in as the account itself; no guest row is created for it.
+    expect(await db.prepare('SELECT user_id, identity FROM native_sessions').first()).toEqual({ user_id: 'synthetic-account', identity: 'guest' });
+    expect(await db.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').bind(keyId).first()).toEqual({ guest_user_id: null });
+    const usage = async () => (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json();
+    expect(await usage()).toEqual({ plan: 'free', period: 'day', day: dayKey(fixedNow), used: 0, limit: 5, remaining: 5 });
+    for (let index = 0; index < 5; index++) expect(await reserveFlow(db, 'synthetic-account', crypto.randomUUID(), `mac-${index}`, fixedNow, limits, 'receipt', 'address')).toBe('reserved');
+    await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
+    expect(await usage()).toMatchObject({ used: 5, remaining: 0 });
+    expect(await reserveFlow(db, 'synthetic-account', crypto.randomUUID(), 'mac-5', fixedNow, limits, 'receipt', 'address')).toBe('ai_quota_exceeded');
+    // An explicit entitlement replaces the daily cap with its monthly limit.
+    await db.prepare("INSERT INTO account_entitlements(user_id,plan,monthly_ai_limit,updated_at) VALUES ('synthetic-account','pro',10,?)").bind(fixedNow).run();
+    expect(await reserveFlow(db, 'synthetic-account', crypto.randomUUID(), 'mac-6', fixedNow, limits, 'receipt', 'address')).toBe('reserved');
+    await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
+    expect(await usage()).toMatchObject({ plan: 'pro', period: 'month', used: 6, limit: 10, remaining: 4 });
+  });
+
+  it('keeps the guest daily cap for a key that has no account', async () => {
+    const { db, run } = await makeFixture(fixedNow);
+    const limits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
+    const session = await guestSignIn(run);
+    const guest = await db.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').bind(keyId).first<{ guest_user_id: string }>();
+    expect(guest?.guest_user_id).toMatch(/^[0-9a-f-]{36}$/);
+    for (let index = 0; index < 5; index++) expect(await reserveFlow(db, guest!.guest_user_id, crypto.randomUUID(), `mac-${index}`, fixedNow, limits, 'receipt', 'address')).toBe('reserved');
+    await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
+    expect(await (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json())
+      .toEqual({ plan: 'guest', period: 'day', day: dayKey(fixedNow), used: 5, limit: 5, remaining: 0 });
+    expect(await reserveFlow(db, guest!.guest_user_id, crypto.randomUUID(), 'mac-5', fixedNow, limits, 'receipt', 'address')).toBe('ai_quota_exceeded');
   });
 
   it('keeps native session, usage, and passkey responses compatible with the committed iOS fixtures', async () => {

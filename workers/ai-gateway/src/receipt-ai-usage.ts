@@ -37,13 +37,13 @@ export async function guestDayUsage(db: Db, user: string, day: string): Promise<
   return row?.used ?? 0;
 }
 export type FlowKind = "receipt" | "contact-submit" | "contact-transcribe" | "contact-interview";
-/** Product AI flows share plan usage; guests also share Tokyo day and address caps. */
-export type FlowLimits = { monthlyDefault: number; guestDaily: number; guestAddressDaily: number; contactSubmitAddressDaily: number };
+/** A user with an entitlement row uses its monthly plan limit. Everyone else (guest devices and accounts without a grant) shares the Tokyo daily cap and address cap. */
+export type FlowLimits = { guestDaily: number; guestAddressDaily: number; contactSubmitAddressDaily: number };
 export type FlowReservation = "reserved" | "ai_quota_exceeded" | "invalid_flow";
 function quotaCondition(kind: FlowKind, user: string, now: number, ipDayMac: string, limits: FlowLimits): { sql: string; values: unknown[] } {
   const day = dayKey(now);
   if (kind === "receipt") return {
-    sql: `CASE WHEN guest THEN
+    sql: `CASE WHEN daily THEN
         ((SELECT COUNT(*) FROM ai_receipt_flows WHERE user_id = ? AND day = ? AND kind = 'receipt' AND counted = 1) +
          (SELECT COUNT(*) FROM ai_category_suggestion_flows WHERE user_id = ? AND day = ? AND counted = 1)) < ?
         AND ((SELECT COUNT(*) FROM ai_receipt_flows WHERE ip_day_mac = ? AND day = ? AND kind = 'receipt' AND counted = 1) +
@@ -72,13 +72,11 @@ export async function reserveFlow(db: Db, user: string, flow: string, imageMac: 
     // concurrent retries idempotent; existing flows remain usable at quota.
     db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, day, kind, ip_day_mac, created_at, image_mac, dispatched)
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0 FROM (
-      SELECT EXISTS (SELECT 1 FROM guest_devices WHERE user_id = ?) AS guest,
-        CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-          THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-          ELSE ? END AS monthly_limit
+      SELECT (EXISTS (SELECT 1 FROM guest_devices WHERE user_id = ?) OR NOT EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)) AS daily,
+        (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?) AS monthly_limit
     ) WHERE ${quota.sql}
     ON CONFLICT(user_id, flow_id) DO NOTHING`)
-      .bind(user, flow, monthKey(now), dayKey(now), kind, ipDayMac, now, imageMac, user, user, user, limits.monthlyDefault, ...quota.values),
+      .bind(user, flow, monthKey(now), dayKey(now), kind, ipDayMac, now, imageMac, user, user, user, ...quota.values),
     db.prepare("SELECT flow_id FROM ai_receipt_flows WHERE user_id = ? AND flow_id = ?").bind(user, flow),
     // Without a reserved row this UPDATE matches nothing, so quota rejection has no side effect.
     attemptStatement(db, user, flow, "gemini", imageMac, now),
@@ -105,13 +103,11 @@ export async function reserveCategorySuggestionFlow(db: Db, user: string, flow: 
   const quota = quotaCondition("receipt", user, now, ipDayMac, limits);
   const result = await db.prepare(`INSERT INTO ai_category_suggestion_flows(user_id,flow_id,month,day,ip_day_mac,input_mac,created_at,attempts)
     SELECT ?,?,?,?,?,?,?,0 FROM (
-      SELECT EXISTS (SELECT 1 FROM guest_devices WHERE user_id = ?) AS guest,
-        CASE WHEN EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)
-          THEN (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?)
-          ELSE ? END AS monthly_limit
+      SELECT (EXISTS (SELECT 1 FROM guest_devices WHERE user_id = ?) OR NOT EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)) AS daily,
+        (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?) AS monthly_limit
     ) WHERE ${quota.sql}
     ON CONFLICT(user_id,flow_id) DO NOTHING`)
-    .bind(user, flow, monthKey(now), dayKey(now), ipDayMac, mac, now, user, user, user, limits.monthlyDefault, ...quota.values).run();
+    .bind(user, flow, monthKey(now), dayKey(now), ipDayMac, mac, now, user, user, user, ...quota.values).run();
   if (!result.success) throw new Error("flow_reservation_unavailable");
   const exists = await db.prepare("SELECT flow_id FROM ai_category_suggestion_flows WHERE user_id=? AND flow_id=?")
     .bind(user, flow).first<{ flow_id: string }>();

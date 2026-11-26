@@ -11,7 +11,7 @@ const origin = "https://guest.example.test";
 const secret = "synthetic-guest-signing-secret";
 const testingTurnstileSecret = "1x0000000000000000000000000000000AA";
 const now = Date.parse("2026-10-06T03:00:00Z") / 1000;
-const limits: FlowLimits = { monthlyDefault: 30, guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
+const limits: FlowLimits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
 const turnstilePass = () => vi.fn<typeof fetch>(async () => Response.json({ success: true, hostname: "guest.example.test", action: "guest" }));
 
 let sqlite: DatabaseSync;
