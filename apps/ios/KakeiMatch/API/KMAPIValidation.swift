@@ -31,6 +31,7 @@ indirect enum KMAPIShape: Sendable {
     case object([String: KMAPIShape], optional: Set<String> = [])
     case array(KMAPIShape, max: Int)
     case dictionary(KMAPIShape)
+    case oneOf([KMAPIShape])
     case text(min: Int = 1, max: Int = 500)
     case integer(min: Int = 0, max: Int = 9_007_199_254_740_991)
     case decimal(min: Decimal, max: Decimal)
@@ -64,6 +65,8 @@ indirect enum KMAPIShape: Sendable {
         case (.dictionary(let element), .object(let values)):
             guard values.count <= 100 else { throw KMAPIError.invalidResponse }
             try values.values.forEach { try element.validate($0) }
+        case (.oneOf(let shapes), _):
+            guard shapes.contains(where: { (try? $0.validate(value)) != nil }) else { throw KMAPIError.invalidResponse }
         case (.text(let min, let max), .string(let text)):
             guard text.utf16.count <= max, text.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count >= min else { throw KMAPIError.invalidResponse }
         case (.integer(let min, let max), .number(let number)):
