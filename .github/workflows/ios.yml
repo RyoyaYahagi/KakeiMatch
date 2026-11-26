@@ -149,6 +149,10 @@ jobs:
           echo "xcode=$xcode" >> "$GITHUB_OUTPUT"
           echo "macos=$macos" >> "$GITHUB_OUTPUT"
           echo "Cache metadata: macos=$macos xcode=$xcode"
+      # Recovery from a poisoned cache: bump the key prefix (e.g. ios-deriveddata-v1 -> v2)
+      # or delete the bad entry with `gh cache list` + `gh cache delete <id>`.
+      # Keep hashFiles inputs strictly to tracked files (no Package.resolved glob, because
+      # xcodebuild creates untracked Package.resolved files during the build).
       - name: Restore DerivedData cache
         id: deriveddata-cache
         if: steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != ''
@@ -156,9 +160,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/ios/DerivedData
-          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
+          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
           restore-keys: |
-            ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-
+            ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift') }}-
       - name: Discard partial DerivedData after cache restore failure
         if: steps.deriveddata-cache.outcome == 'failure'
         continue-on-error: true
@@ -250,17 +254,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       # Index.noindex is large and unused by xcodebuild; remove it before saving.
+      # Reuse the primary key computed during restore so untracked build outputs
+      # cannot shift the save key away from the restore key.
       - name: Remove DerivedData Index before caching
-        if: success() && steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        if: success() && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: rm -rf DerivedData/Index.noindex
       - name: Save DerivedData cache
-        if: success() && steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        if: success() && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: apps/ios/DerivedData
-          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
+          key: ${{ steps.deriveddata-cache.outputs.cache-primary-key }}
 
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
