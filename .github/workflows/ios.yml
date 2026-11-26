@@ -58,8 +58,64 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # A pull request checks out its merge commit; the first parent is the base branch.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+          # Full history lets the mtime restoration step recover each file's last
+          # commit timestamp for incremental DerivedData builds, while keeping HEAD^1
+          # for pull-request changed-path checks.
+          fetch-depth: 0
+      # actions/checkout resets all file mtimes to checkout time, which makes Xcode
+      # recompile every file even with a restored DerivedData cache. Restore each
+      # tracked file's mtime to its last commit timestamp (and keep PR-changed files
+      # at current time so they are always newer than any main cache). Failure is
+      # tolerated so a git timestamp hiccup never blocks the build.
+      - name: Restore source file mtimes from git history
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import time
+
+          root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+          tracked = set(
+              subprocess.check_output(["git", "-C", root, "ls-files", "-z"]).split(b"\x00")[:-1]
+          )
+          raw = subprocess.check_output(
+              ["git", "-C", root, "log", "-m", "--first-parent", "--format=%x00COMMIT:%ct%x00", "-z", "--name-only"]
+          )
+          mtimes = {}
+          cur_ts = None
+          for token in raw.split(b"\x00"):
+              token = token.lstrip(b"\n")
+              if not token:
+                  continue
+              if token.startswith(b"COMMIT:"):
+                  cur_ts = int(token[7:])
+              elif cur_ts is not None and token in tracked and token not in mtimes:
+                  mtimes[token] = cur_ts
+                  if len(mtimes) == len(tracked):
+                      break
+
+          restored = 0
+          for rel, ts in mtimes.items():
+              full = os.path.join(root.encode(), rel)
+              if os.path.lexists(full) and not os.path.islink(full):
+                  os.utime(full, (ts, ts))
+                  restored += 1
+
+          touched_pr = 0
+          if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+              now = time.time()
+              changed = subprocess.check_output(
+                  ["git", "-C", root, "diff", "--name-only", "-z", "HEAD^1", "HEAD"]
+              ).split(b"\x00")[:-1]
+              for rel in changed:
+                  full = os.path.join(root.encode(), rel)
+                  if os.path.lexists(full) and not os.path.islink(full):
+                      os.utime(full, (now, now))
+                      touched_pr += 1
+
+          print(f"Restored mtime for {restored}/{len(tracked)} tracked files; touched {touched_pr} PR-changed files.")
+          PY
       # Spotlight indexing (mds/mdworker) competes with the build and simulator
       # for CPU on the hosted runner. Nothing in this workflow searches with
       # Spotlight. Failure is tolerated but reported as a warning.
@@ -84,6 +140,43 @@ jobs:
       # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
+      - name: Compute DerivedData cache key metadata
+        id: cache-env
+        continue-on-error: true
+        run: |
+          xcode=$(xcodebuild -version | tr '\n' '-' | sed 's/[^A-Za-z0-9._-]/-/g; s/-*$//')
+          macos="$(sw_vers -productVersion)-$(sw_vers -buildVersion)"
+          echo "xcode=$xcode" >> "$GITHUB_OUTPUT"
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
+          echo "Cache metadata: macos=$macos xcode=$xcode"
+      - name: Restore DerivedData cache
+        id: deriveddata-cache
+        if: steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != ''
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/ios/DerivedData
+          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
+          restore-keys: |
+            ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-
+      - name: Discard partial DerivedData after cache restore failure
+        if: steps.deriveddata-cache.outcome == 'failure'
+        continue-on-error: true
+        run: rm -rf DerivedData
+      - name: Report DerivedData cache restore status
+        if: always()
+        continue-on-error: true
+        run: |
+          hit="${{ steps.deriveddata-cache.outputs.cache-hit }}"
+          matched="${{ steps.deriveddata-cache.outputs.cache-matched-key }}"
+          outcome="${{ steps.deriveddata-cache.outcome }}"
+          echo "DerivedData cache outcome=$outcome hit=${hit:-false} matched=${matched:-none}"
+          {
+            echo "### DerivedData cache"
+            echo "- Restore outcome: \`${outcome:-skipped}\`"
+            echo "- Exact cache hit: \`${hit:-false}\`"
+            echo "- Matched key: \`${matched:-none}\`"
+          } >> "$GITHUB_STEP_SUMMARY" || true
       - name: Run macOS core tests without a simulator
         run: swift test --package-path .
       - name: Validate UI shard coverage
@@ -128,9 +221,11 @@ jobs:
           "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" generate
       - name: Build once for all test jobs
         run: |
+          defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES || true
           xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
             -destination "$DESTINATION" -derivedDataPath DerivedData \
-            -resultBundlePath Build.xcresult build-for-testing CODE_SIGNING_ALLOWED=NO
+            -resultBundlePath Build.xcresult build-for-testing \
+            CODE_SIGNING_ALLOWED=NO IgnoreFileSystemDeviceInodeChanges=YES
       - name: Package test products preserving permissions and symlinks
         run: tar -czf test-products.tar.gz -C DerivedData/Build Products
       - uses: actions/upload-artifact@v4
@@ -154,6 +249,18 @@ jobs:
           path: apps/ios/Build.xcresult
           if-no-files-found: warn
           retention-days: 14
+      # Index.noindex is large and unused by xcodebuild; remove it before saving.
+      - name: Remove DerivedData Index before caching
+        if: success() && steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: rm -rf DerivedData/Index.noindex
+      - name: Save DerivedData cache
+        if: success() && steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: apps/ios/DerivedData
+          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift', 'apps/ios/**/Package.resolved') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
 
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
