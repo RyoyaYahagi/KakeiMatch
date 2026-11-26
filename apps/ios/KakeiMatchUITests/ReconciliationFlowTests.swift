@@ -51,30 +51,38 @@ final class ReconciliationFlowTests: XCTestCase {
         XCTAssertEqual(app.buttons["reconciliation.count.一致"].label, "一致 4件")
         app.terminate()
     }
-    @MainActor func testReferenceStatesLightDarkAndEmptyImporter() {
+    @MainActor func testReferenceStatesAndEmptyImporterInLight() {
         continueAfterFailure = false
-        for appearance in ["light", "dark"] {
-            let app = launch(appearance)
-            XCTAssertTrue(app.buttons["reconciliation.runAgain"].waitForExistence(timeout: 5))
-            XCTAssertTrue(app.buttons["reconciliation-matched"].waitForExistence(timeout: 10))
-            if appearance == "dark" { capture(app, "needs-review-dark") }
-            tap("reconciliation-matched", app: app)
-            capture(app, "matched-" + appearance)
-            app.terminate()
-            let empty = launch(appearance, fixture: "empty")
-            XCTAssertTrue(empty.staticTexts["明細を取り込んでから照合してください。"].waitForExistence(timeout: 5))
-            XCTAssertFalse(empty.buttons["reconciliation.runAgain"].exists)
-            XCTAssertTrue(empty.buttons["statement-file"].waitForExistence(timeout: 10))
-            capture(empty, "empty-" + appearance)
-            tap("reconciliation.importButton", app: empty)
-            XCTAssertTrue(empty.staticTexts["CSVファイルを選択してください。"].waitForExistence(timeout: 5))
-            tap("statement-provider", app: empty)
-            empty.buttons["イオンカード"].tap()
-            XCTAssertTrue(empty.staticTexts["statement-import-availability"].waitForExistence(timeout: 5))
-            XCTAssertFalse(empty.buttons["statement-file"].isEnabled)
-            XCTAssertFalse(empty.buttons["reconciliation.importButton"].isEnabled)
-            empty.terminate()
-        }
+        checkReferenceStatesAndEmptyImporter(appearance: "light")
+    }
+
+    // Main pushes run the dark pass too; pull requests skip it as a screenshot-only method.
+    @MainActor func testReferenceStatesAndEmptyImporterInDark() {
+        continueAfterFailure = false
+        checkReferenceStatesAndEmptyImporter(appearance: "dark")
+    }
+
+    @MainActor private func checkReferenceStatesAndEmptyImporter(appearance: String) {
+        let app = launch(appearance)
+        XCTAssertTrue(app.buttons["reconciliation.runAgain"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["reconciliation-matched"].waitForExistence(timeout: 10))
+        if appearance == "dark" { capture(app, "needs-review-dark") }
+        tap("reconciliation-matched", app: app)
+        capture(app, "matched-" + appearance)
+        app.terminate()
+        let empty = launch(appearance, fixture: "empty")
+        XCTAssertTrue(empty.staticTexts["明細を取り込んでから照合してください。"].waitForExistence(timeout: 5))
+        XCTAssertFalse(empty.buttons["reconciliation.runAgain"].exists)
+        XCTAssertTrue(empty.buttons["statement-file"].waitForExistence(timeout: 10))
+        capture(empty, "empty-" + appearance)
+        tap("reconciliation.importButton", app: empty)
+        XCTAssertTrue(empty.staticTexts["CSVファイルを選択してください。"].waitForExistence(timeout: 5))
+        tap("statement-provider", app: empty)
+        empty.buttons["イオンカード"].tap()
+        XCTAssertTrue(empty.staticTexts["statement-import-availability"].waitForExistence(timeout: 5))
+        XCTAssertFalse(empty.buttons["statement-file"].isEnabled)
+        XCTAssertFalse(empty.buttons["reconciliation.importButton"].isEnabled)
+        empty.terminate()
     }
     @MainActor func testCountsNavigateToHistoryAndPending() {
         continueAfterFailure = false

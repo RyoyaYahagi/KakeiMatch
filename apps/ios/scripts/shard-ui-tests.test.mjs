@@ -183,3 +183,16 @@ test('the generated table replaces only the marked block', () => {
   assert.throws(() => replaceWeightTable('no markers', 'x'), /markers/);
   assert.ok(Object.keys(estimates).every(name => name.includes('/test')));
 });
+
+test('dark passes split out of the light tests run on main only, and the light passes run on every push', async () => {
+  const all = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  const dark = ['EntryFlowTests/testManualExpenseScreensInDark', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark'];
+  const light = ['EntryFlowTests/testManualExpenseScreensAndSaveInLight', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInLight'];
+  for (const name of [...dark, ...light]) assert.ok(all.includes(name), `${name} is not a UI test`);
+  const pullRequest = selectTests(all, { skipScreenshots: true });
+  const main = selectTests(all, { skipScreenshots: false });
+  assert.deepEqual(dark.filter(name => pullRequest.includes(name)), [], 'pull requests must skip the dark passes');
+  assert.deepEqual(dark.filter(name => !main.includes(name)), [], 'main must still run the dark passes');
+  assert.deepEqual(light.filter(name => !pullRequest.includes(name)), [], 'pull requests must keep the light passes');
+  assert.deepEqual(dark.filter(name => !screenshotOnly.includes(name)), [], 'the dark passes must be listed as screenshot-only');
+});

@@ -141,6 +141,10 @@ final class AddButtonHitAreaTests: XCTestCase {
         XCTAssertTrue(app.buttons["chooser.expense"].waitForExistence(timeout: 5))
         app.buttons["chooser.expense"].tap()
         XCTAssertTrue(app.otherElements["manualEntry.screen"].waitForExistence(timeout: 10))
+        // At Accessibility XL the save button stays tappable above the tab bar before the keyboard opens.
+        let save = app.buttons["entry.saveButton"]
+        XCTAssertTrue(save.isHittable, "タップできません: 保存ボタン")
+        XCTAssertLessThanOrEqual(save.frame.maxY, app.buttons["home-tab"].frame.minY + 1, "下部ナビと重なっています")
 
         let amount = app.textFields["manual-transaction-amount"]
         XCTAssertTrue(amount.waitForExistence(timeout: 5))

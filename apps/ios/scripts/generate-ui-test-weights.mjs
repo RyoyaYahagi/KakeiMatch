@@ -9,7 +9,17 @@ const shardScript = new URL('./shard-ui-tests.mjs', import.meta.url);
 const defaultSeconds = 30;
 
 // Methods with no measurement yet. Replace each with a measured value once a run has it.
-export const estimates = {};
+export const estimates = {
+  // Split from one test into light (pull requests) and dark (main only). The split is estimated from the code: the dark pass repeats the same navigation.
+  'EntryFlowTests/testManualExpenseScreensAndSaveInLight': 54,
+  'EntryFlowTests/testManualExpenseScreensInDark': 50,
+  'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInLight': 34,
+  'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark': 35,
+  // Trimmed by removing a repeated part: the calendar dark pass, the search-result confirm and undo, and the XL manual-entry leg.
+  'RecordsFlowTests/testSearchPeriodOpensCalendar': 30,
+  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 49,
+  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 95,
+};
 
 // Xcode prints one line per passed method: Test Case '-[KakeiMatchUITests.Class method]' passed (12.3 seconds)
 const passedLine = /Test Case '-\[KakeiMatchUITests\.(\w+) (\w+)\]' passed \(([\d.]+) seconds\)/g;

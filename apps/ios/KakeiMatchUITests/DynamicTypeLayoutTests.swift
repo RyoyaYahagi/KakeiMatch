@@ -36,17 +36,8 @@ final class DynamicTypeLayoutTests: XCTestCase {
         if let visibleRecord = visibleRecords.first { assertTappable(visibleRecord, screen: screen) }
         screenshot(app, named: "dynamic-type-xl-records")
 
-        app.buttons["home-tab"].tap()
-        app.buttons["add-record"].tap()
-        XCTAssertTrue(app.buttons["chooser.expense"].waitForExistence(timeout: 5))
-        app.buttons["chooser.expense"].tap()
-        XCTAssertTrue(app.otherElements["manualEntry.screen"].waitForExistence(timeout: 10))
-        assertTappable(app.textFields["manual-transaction-amount"], screen: screen)
-        assertTappable(app.buttons["entry.saveButton"], screen: screen)
-        assertAboveNavigation(app.buttons["entry.saveButton"], app: app)
-        screenshot(app, named: "dynamic-type-xl-manual-entry")
-
-        app.buttons["home-tab"].tap()
+        // The manual-entry form at this size is checked in AddButtonHitAreaTests, including
+        // that its save button stays above the tab bar.
         app.buttons["settings-tab"].tap()
         XCTAssertTrue(app.otherElements["settings.screen"].waitForExistence(timeout: 10))
         assertTappable(app.buttons["settings-tab"], screen: screen)
