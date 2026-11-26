@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import {
   assignShards, discoverTests, durations, featureIdentifiers, screenshotOnly, selectForChanges, selectTests,
-  shardCountFor, smokeClasses, uiTestFiles, unitTestSeconds, validateCoverage,
+  smokeClasses, uiTestFiles, unitTestSeconds, validateCoverage,
 } from './shard-ui-tests.mjs';
 import {
   buildWeights, estimates, formatWeightTable, median, parseDurations, replaceWeightTable,
@@ -48,12 +48,20 @@ test('spreads expensive methods first, with stable ties and new-method defaults'
   assert.deepEqual(assignShards([...tests].reverse(), 3, weights), shards);
 });
 
-test('rejects omissions, duplicates, unknown tests, empty shards and invalid counts', () => {
+test('rejects omissions, duplicates, unknown tests and invalid counts', () => {
   const tests = ['A', 'B'];
-  for (const assigned of [[['A']], [['A'], ['A']], [['A'], ['C']], [['A', 'B'], []]]) {
+  for (const assigned of [[['A']], [['A'], ['A']], [['A'], ['C']]]) {
     assert.throws(() => validateCoverage(tests, assigned.map(names => ({ tests: names }))), /exactly one/);
   }
-  for (const count of [0, -1, 1.5, NaN, 3]) assert.throws(() => assignShards(tests, count), /Shard count/);
+  for (const count of [0, -1, 1.5, NaN]) assert.throws(() => assignShards(tests, count), /Shard count/);
+});
+
+test('accepts empty shards, so a short selection still fills every matrix entry', () => {
+  const tests = ['A', 'B'];
+  assert.doesNotThrow(() => validateCoverage(tests, [{ tests: ['A', 'B'] }, { tests: [] }]));
+  const shards = assignShards(tests, 4, { A: 200, B: 200 });
+  assert.deepEqual(shards.map(shard => shard.tests), [['A'], ['B'], [], []]);
+  assert.equal(assignShards(['A', 'B', 'C'], 4, { A: 10, B: 10, C: 10 }).length, 4);
 });
 
 test('repository tests fill four shards with and without screenshot-only methods', async () => {
@@ -110,12 +118,6 @@ test('a deleted feature folder or test file adds no tests', () => {
     ['FixtureLaunchTests/testBoot', 'NavigationSmokeTests/testTabs']);
 });
 
-test('uses fewer shards for a small selection', () => {
-  assert.equal(shardCountFor(['A', 'B'], 4, { A: 30, B: 30 }), 1);
-  assert.equal(shardCountFor(['A', 'B', 'C'], 4, { A: 400, B: 400, C: 400 }), 3);
-  assert.equal(shardCountFor(['A', 'B'], 4, { A: 900, B: 900 }), 2);
-});
-
 test('repository mapping covers every UI test class through a feature or the smoke set', async () => {
   const features = await featureIdentifiers(new URL('../KakeiMatch/Features/', import.meta.url));
   const testFiles = await uiTestFiles(new URL('../KakeiMatchUITests/', import.meta.url));
@@ -139,12 +141,18 @@ test('shard 0 starts with the unit-test seconds counted', () => {
   const shards = assignShards(['A', 'B', 'C', 'D'], 2, { A: 100, B: 100, C: 100, D: 100 }, { firstShardSeconds: 200 });
   assert.deepEqual(shards.map(shard => shard.tests), [['C'], ['A', 'B', 'D']]);
   assert.deepEqual(shards.map(shard => shard.estimatedSeconds), [300, 300]);
-  assert.equal(unitTestSeconds, 200);
+  assert.equal(unitTestSeconds, 121);
 });
 
-test('a selection that fits in 450 seconds runs on one simulator', () => {
-  assert.equal(shardCountFor(['A', 'B'], 4, { A: 200, B: 200 }), 1);
-  assert.equal(shardCountFor(['A', 'B'], 4, { A: 250, B: 250 }), 2);
+test('a partial selection under 450 seconds keeps four shards', async () => {
+  const features = await featureIdentifiers(new URL('../KakeiMatch/Features/', import.meta.url));
+  const testFiles = await uiTestFiles(new URL('../KakeiMatchUITests/', import.meta.url));
+  const discovered = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  const selection = selectForChanges(discovered, ['apps/ios/KakeiMatch/Features/Receipt/ReceiptView.swift'], { features, testFiles });
+  assert.equal(selection.all, false);
+  const shards = assignShards(selection.tests, 4, Object.fromEntries(selection.tests.map(name => [name, 10])));
+  assert.equal(shards.length, 4);
+  assert.equal(shards.flatMap(shard => shard.tests).length, selection.tests.length);
 });
 
 test('reads passed durations from xcodebuild output and ignores other lines', () => {
@@ -182,4 +190,17 @@ test('the generated table replaces only the marked block', () => {
     "before\n// BEGIN generated weights\nexport const durations = {\n  'A/testB': 7,\n};\n// END generated weights\nafter");
   assert.throws(() => replaceWeightTable('no markers', 'x'), /markers/);
   assert.ok(Object.keys(estimates).every(name => name.includes('/test')));
+});
+
+test('dark passes split out of the light tests run on main only, and the light passes run on every push', async () => {
+  const all = await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url));
+  const dark = ['EntryFlowTests/testManualExpenseScreensInDark', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark'];
+  const light = ['EntryFlowTests/testManualExpenseScreensAndSaveInLight', 'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInLight'];
+  for (const name of [...dark, ...light]) assert.ok(all.includes(name), `${name} is not a UI test`);
+  const pullRequest = selectTests(all, { skipScreenshots: true });
+  const main = selectTests(all, { skipScreenshots: false });
+  assert.deepEqual(dark.filter(name => pullRequest.includes(name)), [], 'pull requests must skip the dark passes');
+  assert.deepEqual(dark.filter(name => !main.includes(name)), [], 'main must still run the dark passes');
+  assert.deepEqual(light.filter(name => !pullRequest.includes(name)), [], 'pull requests must keep the light passes');
+  assert.deepEqual(dark.filter(name => !screenshotOnly.includes(name)), [], 'the dark passes must be listed as screenshot-only');
 });

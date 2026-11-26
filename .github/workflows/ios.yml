@@ -342,14 +342,6 @@ jobs:
           path: apps/ios/parity-report.json
           if-no-files-found: warn
           retention-days: 14
-      - name: Upload unit test results
-        if: always() && matrix.shard == 0
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-test-results-attempt-${{ github.run_attempt }}
-          path: apps/ios/UnitTests.xcresult
-          if-no-files-found: warn
-          retention-days: 14
       # Still run the UI tests when only the unit tests failed, so one run reports both.
       - name: XCUITest and screenshots
         timeout-minutes: 26
@@ -357,9 +349,15 @@ jobs:
         run: |
           test_args=()
           while IFS= read -r test_name; do
+            # An empty shard file holds one blank line; it names no test.
+            [ -n "$test_name" ] || continue
             test_args+=("-only-testing:KakeiMatchUITests/$test_name")
           done < shard-tests.txt
-          test "${#test_args[@]}" -gt 0
+          # A short selection can leave this shard without tests. That is a pass, not a skip.
+          if [ "${#test_args[@]}" -eq 0 ]; then
+            echo "No UI tests in this shard; nothing to run."
+            exit 0
+          fi
           xctestruns=(DerivedData/Build/Products/*.xctestrun)
           test "${#xctestruns[@]}" -eq 1
           if ! source "$RUNNER_TEMP/observe-ios-test.sh"; then
@@ -374,8 +372,18 @@ jobs:
           if [ -d UITests.xcresult ]; then
             xcrun xcresulttool export attachments --path UITests.xcresult --output-path screenshots
           fi
+      # A passing pull request shard skips these diagnostic uploads. They run after every
+      # test step, so job.status is final here and a failure in any step keeps them.
+      - name: Upload unit test results
+        if: always() && matrix.shard == 0 && !(github.event_name == 'pull_request' && job.status == 'success')
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results-attempt-${{ github.run_attempt }}
+          path: apps/ios/UnitTests.xcresult
+          if-no-files-found: warn
+          retention-days: 14
       - name: Upload UI test results
-        if: always()
+        if: always() && !(github.event_name == 'pull_request' && job.status == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: ios-test-results-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
@@ -385,7 +393,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       - name: Upload reference screenshots
-        if: always()
+        if: always() && !(github.event_name == 'pull_request' && job.status == 'success')
         uses: actions/upload-artifact@v4
         with:
           name: ios-reference-screenshots-shard-${{ matrix.shard }}-attempt-${{ github.run_attempt }}
@@ -424,6 +432,8 @@ jobs:
               > "$output/host.log" 2>&1 || true
             wait "$simulator_log_pid" || true
           done
+      # Kept on every run: these logs exist only when startup took over 180 seconds,
+      # and a passing run is where that slowness would otherwise leave no evidence.
       - name: Upload slow test startup logs
         if: always() && steps.startup-logs.outputs.available == 'true'
         continue-on-error: true

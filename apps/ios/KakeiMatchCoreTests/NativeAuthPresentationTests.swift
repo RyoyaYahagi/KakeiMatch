@@ -18,6 +18,15 @@ struct NativeAuthPresentationTests {
         #expect(KMNativeAuthPresentation.usageFraction(plan: "free", used: 3, limit: nil) == nil)
     }
 
+    @Test func dailyCapUsageSaysTodayAndKeepsMonthlyCopyForPlans() {
+        #expect(KMNativeAuthPresentation.usageSummary(plan: "free", period: "day", used: 2, limit: 5) == "今日のAI読み取り 2 / 5回 · Free")
+        #expect(KMNativeAuthPresentation.usageSummary(plan: "free", period: "day", used: 3, limit: nil) == "今日のAI読み取り 3回 · Free · 上限なし")
+        #expect(KMNativeAuthPresentation.usageSummary(plan: "free", period: "month", used: 3, limit: 10) == "今月の読み取り 3 / 10回 · Free")
+        #expect(KMNativeAuthPresentation.settingsRowValue(plan: "free", period: "day", used: 2, limit: 5) == "今日 2/5回")
+        #expect(KMNativeAuthPresentation.settingsRowValue(plan: "free", period: "day", used: 3, limit: nil) == "今日 3回")
+        #expect(KMNativeAuthPresentation.settingsRowValue(plan: "free", period: "month", used: 3, limit: 10) == "今月 3/10回")
+    }
+
     @Test func meterClampsAndNeverDividesByZero() {
         #expect(KMNativeAuthPresentation.usageFraction(plan: "guest", used: 0, limit: 5) == 0)
         #expect(KMNativeAuthPresentation.usageFraction(plan: "guest", used: 9, limit: 5) == 1)

@@ -41,7 +41,7 @@ final class KMNativeAuthModel {
 
     var usageSummary: String {
         guard let usage else { return usageMessage }
-        return KMNativeAuthPresentation.usageSummary(plan: usage.plan.rawValue, used: usage.used, limit: usage.limit)
+        return KMNativeAuthPresentation.usageSummary(plan: usage.plan.rawValue, period: usage.period.rawValue, used: usage.used, limit: usage.limit)
     }
 
     var usageFraction: Double? {
@@ -235,8 +235,8 @@ final class KMNativeAuthModel {
         do {
             let value = try await service.guestUsage()
             usage = value
-            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, used: value.used, limit: value.limit)
-            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, used: value.used, limit: value.limit)
+            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
+            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
         } catch let error as KMAPIError where error == .nativeAuthenticationRequired || error == .authenticationRequired {
             usage = nil
             usageMessage = KMNativeAuthPresentation.signedOutFreeUsage
@@ -252,8 +252,8 @@ final class KMNativeAuthModel {
         do {
             let value = try await service.accountUsage()
             usage = value
-            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, used: value.used, limit: value.limit)
-            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, used: value.used, limit: value.limit)
+            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
+            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
         } catch {
             usage = nil
             usageMessage = KMNativeAuthPresentation.usageUnavailable

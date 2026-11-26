@@ -56,15 +56,20 @@ artifact（CIの保存成果物）は次のとおりです。
 | 名前 | 内容 | 保存期間 |
 | --- | --- | --- |
 | `ios-test-products` | 実行権限・シンボリックリンクを維持した `DerivedData/Build/Products` のtar。`.xctestrun` とアプリ・テストバンドルを含む | 1日 |
-| `ios-build-results` | `Build.xcresult` | 14日 |
-| `ios-test-results` | shard 0がSimulatorで実行したSwift Testingの `UnitTests.xcresult` | 14日 |
-| `ios-test-results-shard-0`〜`3` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt` | 14日 |
-| `ios-reference-screenshots-shard-0`〜`3` | 各shardのPNGと `manifest.json` | 14日 |
-| `ios-reference-screenshots` | 全shardのPNGと統合した `manifest.json`。従来の取得手順との互換用。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |
-| `ios-visual-regression` | PWA参照画像とiOSスクリーンショットの並列画像・差分画像・`index.html` / `index.md` / `report.json`。mainへのpushと手動実行で作成 | 14日 |
-| `parity-report` | Swift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
+| `ios-build-results-attempt-<N>` | `Build.xcresult` | 14日 |
+| `ios-test-results-attempt-<N>` | shard 0がSimulatorで実行したSwift Testingの `UnitTests.xcresult`。PRで成功したときは作らない | 14日 |
+| `parity-report-attempt-<N>` | shard 0がSwift Testingの添付から集めた互換性検査のJSON。名前・形式は従来どおり | 14日 |
+| `ios-test-results-shard-<S>-attempt-<N>` | 各shardの `UITests.xcresult` とテスト割り当て `shard-tests.txt`。PRで成功したshardは作らない | 14日 |
+| `ios-reference-screenshots-shard-<S>-attempt-<N>` | 各shardのPNGと `manifest.json`。PRで成功したshardは作らない | 14日 |
+| `ios-startup-shard-<S>-attempt-<N>` | 起動が180秒を超えたshardのシミュレータ・ホストのログ。起動が遅いときだけ作り、PRで成功したときも作る | 14日 |
+| `ios-reference-screenshots-attempt-<N>` | 全shardのPNGと統合した `manifest.json`。mainへのpushと手動実行で全テストが成功したときに作成 | 14日 |
+| `ios-visual-regression-attempt-<N>` | PWA参照画像とiOSスクリーンショットの並列画像・差分画像・`index.html` / `index.md` / `report.json`。mainへのpushと手動実行で作成 | 14日 |
 
-成功した実行では、従来どおり `gh run download <run-id> -n ios-reference-screenshots -D /tmp/ios-results` で全PNGと統合manifestを取得できます。失敗した実行のスクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗時も各ジョブのxcresultと取得できた添付を保存します。
+`<N>` は実行の試行番号（`github.run_attempt`）、`<S>` はshard番号（0〜3）です。`ios-test-products` は接尾辞なしで、1日だけ保存します。
+
+PRの実行でshardが成功したときは、xcresultと参照スクリーンショットを保存しません。失敗したshardは従来どおり保存します。mainへのpushと手動実行は省略しません。
+
+mainへのpushと手動実行で全テストが成功した実行では、`gh run download <run-id> --pattern 'ios-reference-screenshots-attempt-*' -D /tmp/ios-results` で全PNGと統合manifestを取得できます。失敗した実行のスクリーンショットは `gh run download <run-id> --pattern 'ios-reference-screenshots-shard-*' -D /tmp/ios-results` で取得できます。artifactごとのディレクトリを保ち、PNGのUUIDと画面名は同じディレクトリの `manifest.json` で確認します。manifestを上書きするため、複数shardを同じディレクトリへ展開しないでください。失敗したジョブのxcresultと取得できた添付は、PR・main・手動実行のどれでも保存します。
 
 DEBUGビルドだけ `KM_UI_TEST_APPEARANCE=light|dark` を受け付け、UIテストでOS設定を変えずに外観を固定します。通常起動とReleaseはシステム設定に従います。
 

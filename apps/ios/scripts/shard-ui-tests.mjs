@@ -4,89 +4,92 @@ import { pathToFileURL } from 'node:url';
 // Seconds per UI test method, written by generate-ui-test-weights.mjs from CI logs. Do not edit the table by hand.
 // Every UI test needs an entry, and shard-ui-tests.test.mjs fails when one is missing or deleted.
 // BEGIN generated weights
+// Measured from macos-26 runs. Pull requests: 45611315818, 45712539279, 45720081011. Main: 45723472510.
 export const durations = {
-  'AddButtonHitAreaTests/testAddButtonAccessibilityOrderAndLandscapeLock': 28,
-  'AddButtonHitAreaTests/testAddTileCornerBoundaryRespondsJustInsideAndIgnoresJustOutside': 55,
-  'AddButtonHitAreaTests/testAddTileOnlyRespondsInsideItsRaisedShapeOnHomeTab': 48,
-  'AddButtonHitAreaTests/testAddTileTracksDynamicTypeAndKeyboard': 52,
-  'AddButtonHitAreaTests/testAddTileTracksMoneyForwardRoute': 19,
-  'AddButtonHitAreaTests/testTapBesideRaisedTileStillActivatesUnderlyingRecordRow': 27,
-  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 9,
+  'AddButtonHitAreaTests/testAddButtonAccessibilityOrderAndLandscapeLock': 51,
+  'AddButtonHitAreaTests/testAddTileCornerBoundaryRespondsJustInsideAndIgnoresJustOutside': 44,
+  'AddButtonHitAreaTests/testAddTileOnlyRespondsInsideItsRaisedShapeOnHomeTab': 52,
+  'AddButtonHitAreaTests/testAddTileTracksDynamicTypeAndKeyboard': 59,
+  'AddButtonHitAreaTests/testAddTileTracksMoneyForwardRoute': 22,
+  'AddButtonHitAreaTests/testTapBesideRaisedTileStillActivatesUnderlyingRecordRow': 48,
+  'AppShellSettingsTests/testLegacyScreenLockPreferenceNoLongerLocksAnUpgradedApp': 26,
   'AppShellSettingsTests/testThemeSelectionChangesTheWholeApplicationImmediately': 20,
-  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 23,
-  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 21,
+  'BackupFlowTests/testBackupInitialScreenshotsInLightAndDark': 24,
+  'BackupFlowTests/testBackupPageShowsPWACopyDisclosureAndActionStatus': 20,
   'BudgetFlowTests/testBudgetInitialDarkScreenshot': 10,
-  'BudgetFlowTests/testBudgetInitialLightScreenshot': 17,
-  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 19,
-  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 21,
-  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 25,
-  'DriveSyncFlowTests/testDriveSyncInitialScreenshotsInLightAndDark': 22,
-  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 15,
-  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 81,
-  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 43,
-  'EntryFlowTests/testManualExpenseScreensAndSaveInLightAndDark': 104,
-  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 6,
-  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 22,
+  'BudgetFlowTests/testBudgetInitialLightScreenshot': 13,
+  'BudgetFlowTests/testHomeOpensBudgetSavesAndReflectsUpdatedTotal': 18,
+  'ContactFlowTests/testContactInitialScreenshotsInLightAndDark': 22,
+  'ContactFlowTests/testSettingsContactSubmitShowsFailureAndKeepsDraft': 36,
+  'DriveSyncFlowTests/testDriveSyncInitialScreenshotsInLightAndDark': 23,
+  'DriveSyncFlowTests/testSettingsRowShowsOffAndPageOpensWithToggleOff': 18,
+  'DynamicTypeLayoutTests/testAccessibilityXLHomeRecordsEntryAndSettingsStayInsideScreen': 95,
+  'DynamicTypeLayoutTests/testAccessibilityXLReceiptAndReconciliationStayInsideScreen': 49,
+  'EntryFlowTests/testManualExpenseScreensAndSaveInLight': 54,
+  'EntryFlowTests/testManualExpenseScreensInDark': 50,
+  'FixtureLaunchTests/testInvalidFixtureShowsErrorInsteadOfEmptyHousehold': 7,
+  'FixtureLaunchTests/testNamedFixturesBootWithoutChangingPlaceholderScreens': 20,
   'HomeBottomInsetTests/testHomeLastRecordClearsBottomNavigationInBothAppearances': 21,
-  'HomeFlowTests/testAttentionOpensReconciliation': 10,
-  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 83,
+  'HomeFlowTests/testAttentionOpensReconciliation': 11,
+  'HomeFlowTests/testHomeReferenceStatesInLightAndDark': 119,
   'HomeFlowTests/testMonthSwitchAndCategoryDisclosureStayReachableAboveNavigation': 13,
-  'MasterManagementFlowTests/testCreateCategoryFromSettings': 18,
-  'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots': 18,
-  'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark': 33,
-  'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark': 22,
-  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 18,
+  'MasterManagementFlowTests/testCreateCategoryFromSettings': 24,
+  'MasterManagementFlowTests/testMasterCategoriesInitialScreenshots': 17,
+  'MoneyForwardFlowTests/testMoneyForwardImportScreenshotsLightAndDark': 36,
+  'MuseExportFlowTests/testMuseExportInitialScreenshotsInLightAndDark': 26,
+  'MuseExportFlowTests/testSettingsOpensScreenWithDefaultRangeAndSharesGeneratedFile': 21,
   'NativeAuthFlowTests/testGuestUsagePasskeyLoginAndLogout': 25,
   'NativeAuthFlowTests/testGuestUsageScreenshotInDark': 13,
-  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 19,
-  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 49,
-  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 18,
-  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 16,
-  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 15,
+  'NativeAuthFlowTests/testUnsupportedDeviceExplainsCloudStopAndKeepsLocalUse': 18,
+  'NavigationSmokeTests/testBottomNavigationAndReferenceScreenshots': 53,
+  'PayrollFlowTests/testPayrollConfirmDarkScreenshot': 15,
+  'PayrollFlowTests/testPayrollConfirmedFieldsRequireReviewCheckbox': 17,
+  'PayrollFlowTests/testPayrollConfirmLightScreenshot': 16,
   'PayrollFlowTests/testPayrollIncomeFlowAndConfirmedBreakdown': 15,
-  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 15,
-  'PayrollFlowTests/testPayrollInitialLightScreenshot': 13,
-  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 25,
+  'PayrollFlowTests/testPayrollInitialDarkScreenshot': 14,
+  'PayrollFlowTests/testPayrollInitialLightScreenshot': 15,
+  'ReceiptFlowTests/testAppliedReceiptDetailZoomsImageAndEditsItemCategory': 27,
   'ReceiptFlowTests/testDecliningAIConsentKeepsManualReceiptEntryAvailable': 17,
-  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 30,
-  'ReceiptFlowTests/testScreensDark': 72,
-  'ReceiptFlowTests/testScreensLight': 68,
-  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 26,
-  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 37,
-  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 22,
-  'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 14,
-  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 34,
-  'ReconciliationFlowTests/testReferenceStatesLightDarkAndEmptyImporter': 68,
-  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 26,
-  'ReconciliationFlowTests/testUnmatchedWithKnownUseCreatesPrefilledRecordAndRerunsReconciliation': 25,
-  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 31,
-  'RecordsFlowTests/testDeleteLayoutAtAccessibilityXLFromSearchResult': 25,
+  'ReceiptFlowTests/testPendingReceiptCanCorrectItemCategoryRegisterAndReturnToRecords': 32,
+  'ReceiptFlowTests/testScreensDark': 67,
+  'ReceiptFlowTests/testScreensLight': 72,
+  'ReceiptFlowTests/testUnfinishedPendingInputIsRestoredAfterLeavingTheEditor': 27,
+  'ReceiptFlowTests/testWarningCorrectionSaveAndRecords': 30,
+  'ReconciliationBadgeTests/testReconciliationBadgeCountAccessibilityAndEmptyState': 28,
+  'ReconciliationFlowTests/testCountsNavigateToHistoryAndPending': 17,
+  'ReconciliationFlowTests/testManualMatchHistoryAndConfirmedUndo': 39,
+  'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark': 35,
+  'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInLight': 34,
+  'ReconciliationFlowTests/testSuspectedRequiresConfirmationAndCanBeCleared': 25,
+  'ReconciliationFlowTests/testUnmatchedWithKnownUseCreatesPrefilledRecordAndRerunsReconciliation': 28,
+  'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 32,
+  'RecordsFlowTests/testDeleteLayoutAtAccessibilityXLFromSearchResult': 28,
   'RecordsFlowTests/testDeleteLayoutOnIPhoneSE3FromSearchResult': 30, // no measurement yet: default
-  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 29,
-  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 17,
-  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 18,
-  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 18,
-  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 65,
+  'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 32,
+  'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 18,
+  'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 19,
+  'RecordsFlowTests/testPayrollBreakdownLightScreenshot': 17,
+  'RecordsFlowTests/testRecordsSearchDetailEditDeleteUndoAndReturn': 49,
   'RecordsFlowTests/testSearchChipsSelectRequestedCondition': 31,
-  'RecordsFlowTests/testSearchPeriodOpensCalendar': 56,
-  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 46,
-  'RecurringFlowTests/testCatchUpDialogDarkScreenshot': 30,
-  'RecurringFlowTests/testCatchUpDialogLightScreenshot': 44,
-  'RecurringFlowTests/testCatchUpHistoryDarkScreenshot': 37,
-  'RecurringFlowTests/testCatchUpHistoryLightScreenshot': 36,
+  'RecordsFlowTests/testSearchPeriodOpensCalendar': 30,
+  'RecurringFlowTests/testCatchUpCurrentMonthAppearsInRecordsAndCanBeUndoneFromHistory': 49,
+  'RecurringFlowTests/testCatchUpDialogDarkScreenshot': 36,
+  'RecurringFlowTests/testCatchUpDialogLightScreenshot': 40,
+  'RecurringFlowTests/testCatchUpHistoryDarkScreenshot': 59,
+  'RecurringFlowTests/testCatchUpHistoryLightScreenshot': 40,
   'RecurringFlowTests/testCreateRecurringScheduleFromSettings': 31,
-  'RecurringFlowTests/testRecurringInitialDarkScreenshot': 10,
+  'RecurringFlowTests/testRecurringInitialDarkScreenshot': 8,
   'RecurringFlowTests/testRecurringInitialLightScreenshot': 10,
   'RecurringFlowTests/testRecurringSpendingExclusionIsSavedAndAppliedToGeneratedRecord': 40,
-  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 33,
-  'SettingsFlowTests/testDarkSettingsRootScreenshot': 10,
-  'SettingsFlowTests/testGuestCanReachPolicyAndSupportFromSettings': 13,
+  'SettingsFlowTests/testAppInformationOpensAndReturnsToSettings': 32,
+  'SettingsFlowTests/testDarkSettingsRootScreenshot': 12,
+  'SettingsFlowTests/testGuestCanReachPolicyAndSupportFromSettings': 12,
   'SettingsFlowTests/testThemeSelectionUpdatesRowAndSettingsNavigation': 21,
   'UXExplorationTests/testU1EmptyHomeShowsTabsAndBudgetSetup': 17,
-  'UXExplorationTests/testU2EmptyEntryObservesSourceAccountTrap': 40,
-  'UXExplorationTests/testU3EditsRegisteredRecordCategory': 36,
-  'UXExplorationTests/testU4ReconciliationEmptyAndPopulatedStates': 38,
-  'UXExplorationTests/testU5SettingsRowsAndBudgetDiscovery': 24,
+  'UXExplorationTests/testU2EmptyEntryObservesSourceAccountTrap': 45,
+  'UXExplorationTests/testU3EditsRegisteredRecordCategory': 38,
+  'UXExplorationTests/testU4ReconciliationEmptyAndPopulatedStates': 36,
+  'UXExplorationTests/testU5SettingsRowsAndBudgetDiscovery': 28,
 };
 // END generated weights
 
@@ -118,6 +121,9 @@ export const screenshotOnly = [
   'PayrollFlowTests/testPayrollInitialDarkScreenshot',
   'PayrollFlowTests/testPayrollConfirmLightScreenshot',
   'PayrollFlowTests/testPayrollConfirmDarkScreenshot',
+  // Dark passes split out of the light tests. Their behaviour matches the light pass, which pull requests still run.
+  'EntryFlowTests/testManualExpenseScreensInDark',
+  'ReconciliationFlowTests/testReferenceStatesAndEmptyImporterInDark',
 ];
 
 export async function discoverTests(directory) {
@@ -146,21 +152,21 @@ export function selectTests(tests, { skipScreenshots = false, skipped = screensh
 
 export function validateCoverage(tests, shards) {
   const assigned = shards.flatMap(shard => shard.tests);
-  if (shards.some(shard => shard.tests.length === 0)
-      || assigned.length !== tests.length
+  if (assigned.length !== tests.length
       || new Set(assigned).size !== assigned.length
       || tests.some(name => !assigned.includes(name))) {
-    throw new Error('Every selected test must appear in exactly one non-empty shard');
+    throw new Error('Every selected test must appear in exactly one shard');
   }
 }
 
-// Shard 0 also runs the Swift Testing unit tests, about this many seconds on its simulator.
-export const unitTestSeconds = 200;
+// Shard 0 also runs the Swift Testing unit tests. Median of four macos-26 runs (118 to 148 seconds across runs).
+export const unitTestSeconds = 121;
 
 // firstShardSeconds is time that shard 0 spends before its UI tests start.
+// A selection smaller than count leaves some shards empty; ui-tests still needs every matrix entry.
 export function assignShards(tests, count, weights = durations, { firstShardSeconds = 0 } = {}) {
-  if (!Number.isInteger(count) || count < 1 || count > tests.length) {
-    throw new Error('Shard count must be an integer between 1 and the test count');
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error('Shard count must be a positive integer');
   }
   const weight = name => weights[name] ?? 30;
   const ordered = [...tests].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b, 'en'));
@@ -249,12 +255,6 @@ export function selectForChanges(tests, changedPaths, { features, testFiles }) {
   return { all: false, tests: tests.filter(name => classes.has(name.split('/')[0])) };
 }
 
-// Fewer shards for a small selection: about 450 seconds of tests per simulator.
-export function shardCountFor(tests, maximum, weights = durations) {
-  const seconds = tests.reduce((sum, name) => sum + (weights[name] ?? 30), 0);
-  return Math.max(1, Math.min(maximum, tests.length, Math.ceil(seconds / 450)));
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const skipScreenshots = args.includes('--skip-screenshots');
@@ -264,7 +264,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [count, index] = args.filter((arg, position) => arg !== '--skip-screenshots'
     && (changedIndex === -1 || (position !== changedIndex && position !== changedIndex + 1)));
   let tests = selectTests(await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url)), { skipScreenshots });
-  let shardCount = Number(count);
+  const shardCount = Number(count);
   if (changedFile !== undefined) {
     const changed = (await readFile(changedFile, 'utf8')).split('\n').filter(Boolean);
     const selection = selectForChanges(tests, changed, {
@@ -273,7 +273,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     });
     console.error(selection.all ? 'Changed paths need every UI test.' : `Selected ${selection.tests.length} UI tests for the changed paths.`);
     tests = selection.tests;
-    if (!selection.all) shardCount = shardCountFor(tests, shardCount);
   }
   const shards = assignShards(tests, shardCount, durations, { firstShardSeconds: unitTestSeconds });
   if (index === undefined) {
