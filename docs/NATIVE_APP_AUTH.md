@@ -69,7 +69,7 @@ POST /api/native/ai/token {challengeId,keyId,assertion}
 
 用途・鍵・セッションはchallenge行に固定されます。別用途や別セッションのchallengeで交換できません。署名を検証してからcounterを比較更新し、競合した要求は失敗扱いにします。
 
-ゲスト作成は既存の `guest_devices` に記録し、Webとネイティブの合計で接続元あたり1日10件に制限します。接続元の生IPは保存せず、既存の暦日別HMACを使います。鍵ごとにguest userは1つです。ネイティブにはWeb用guest secretを発行しません。レシートの1日5回、接続元の1日20回、全体費用・緊急停止も既存処理を通るため維持されます。[実装: native-auth.ts / guest-ai.ts / receipt-ai-usage.ts / worker.ts]
+ゲスト作成は既存の `guest_devices` に記録し、Webとネイティブの合計で接続元あたり1日10件に制限します。接続元の生IPは保存せず、既存の暦日別HMACを使います。鍵ごとにguest userは1つです。アカウントに結び付いた鍵では、利用主体はそのアカウントで、新しいguest userは作りません。付与のない利用主体は、Asia/Tokyoの暦日で1日5回まで数えます。ネイティブにはWeb用guest secretを発行しません。レシートの1日5回、接続元の1日20回、全体費用・緊急停止も既存処理を通るため維持されます。[実装: native-auth.ts / guest-ai.ts / receipt-ai-usage.ts / worker.ts]
 
 ### Passkey ceremony
 
