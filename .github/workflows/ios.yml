@@ -254,14 +254,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
       # Index.noindex is large and unused by xcodebuild; remove it before saving.
-      # Reuse the primary key computed during restore so untracked build outputs
-      # cannot shift the save key away from the restore key.
+      # Save only on pushes to main so PR runs reuse main's warm cache without growing
+      # total repository cache usage. Reuse the primary key computed during restore so
+      # untracked build outputs cannot shift the save key away from the restore key.
       - name: Remove DerivedData Index before caching
-        if: success() && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         run: rm -rf DerivedData/Index.noindex
       - name: Save DerivedData cache
-        if: success() && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
