@@ -146,11 +146,10 @@ export function selectTests(tests, { skipScreenshots = false, skipped = screensh
 
 export function validateCoverage(tests, shards) {
   const assigned = shards.flatMap(shard => shard.tests);
-  if (shards.some(shard => shard.tests.length === 0)
-      || assigned.length !== tests.length
+  if (assigned.length !== tests.length
       || new Set(assigned).size !== assigned.length
       || tests.some(name => !assigned.includes(name))) {
-    throw new Error('Every selected test must appear in exactly one non-empty shard');
+    throw new Error('Every selected test must appear in exactly one shard');
   }
 }
 
@@ -158,9 +157,10 @@ export function validateCoverage(tests, shards) {
 export const unitTestSeconds = 200;
 
 // firstShardSeconds is time that shard 0 spends before its UI tests start.
+// A selection smaller than count leaves some shards empty; ui-tests still needs every matrix entry.
 export function assignShards(tests, count, weights = durations, { firstShardSeconds = 0 } = {}) {
-  if (!Number.isInteger(count) || count < 1 || count > tests.length) {
-    throw new Error('Shard count must be an integer between 1 and the test count');
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error('Shard count must be a positive integer');
   }
   const weight = name => weights[name] ?? 30;
   const ordered = [...tests].sort((a, b) => weight(b) - weight(a) || a.localeCompare(b, 'en'));
@@ -249,12 +249,6 @@ export function selectForChanges(tests, changedPaths, { features, testFiles }) {
   return { all: false, tests: tests.filter(name => classes.has(name.split('/')[0])) };
 }
 
-// Fewer shards for a small selection: about 450 seconds of tests per simulator.
-export function shardCountFor(tests, maximum, weights = durations) {
-  const seconds = tests.reduce((sum, name) => sum + (weights[name] ?? 30), 0);
-  return Math.max(1, Math.min(maximum, tests.length, Math.ceil(seconds / 450)));
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const skipScreenshots = args.includes('--skip-screenshots');
@@ -264,7 +258,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const [count, index] = args.filter((arg, position) => arg !== '--skip-screenshots'
     && (changedIndex === -1 || (position !== changedIndex && position !== changedIndex + 1)));
   let tests = selectTests(await discoverTests(new URL('../KakeiMatchUITests/', import.meta.url)), { skipScreenshots });
-  let shardCount = Number(count);
+  const shardCount = Number(count);
   if (changedFile !== undefined) {
     const changed = (await readFile(changedFile, 'utf8')).split('\n').filter(Boolean);
     const selection = selectForChanges(tests, changed, {
@@ -273,7 +267,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     });
     console.error(selection.all ? 'Changed paths need every UI test.' : `Selected ${selection.tests.length} UI tests for the changed paths.`);
     tests = selection.tests;
-    if (!selection.all) shardCount = shardCountFor(tests, shardCount);
   }
   const shards = assignShards(tests, shardCount, durations, { firstShardSeconds: unitTestSeconds });
   if (index === undefined) {
