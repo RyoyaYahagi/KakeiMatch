@@ -39,7 +39,6 @@ export default defineConfig(({ mode, isPreview }) => {
         NATIVE_APP_ATTEST_ENVIRONMENT: nativeVariable('NATIVE_APP_ATTEST_ENVIRONMENT'),
         AI_EMERGENCY_STOP: bindings.secret(),
         AI_GUARDRAILS_JSON: bindings.secret(),
-        AI_FREE_MONTHLY_LIMIT: bindings.text('30'),
         AI_GUEST_DAILY_LIMIT: bindings.text('5'),
         GEMINI_API_KEY: bindings.secret(),
         GITHUB_ISSUES_TOKEN: bindings.secret(),

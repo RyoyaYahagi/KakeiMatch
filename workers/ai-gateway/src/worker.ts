@@ -16,7 +16,6 @@ const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
 const DECISIONS_MODEL = "gemini-decision-1";
 const DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions";
 const TOKEN_LIFETIME_SECONDS = 10 * 60;
-const DEFAULT_FREE_MONTHLY_AI_LIMIT = 30;
 const DEFAULT_GUEST_DAILY_AI_LIMIT = 5;
 // Caps guests who share or rotate an address, and Issue floods from one address.
 const GUEST_ADDRESS_DAILY_AI_LIMIT = 20;
@@ -45,7 +44,7 @@ export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
 export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT"> {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
   AI_USER_RATE_LIMIT?: RateLimitBinding;
-  ACCOUNT_DB?: AccountD1Binding; AI_FREE_MONTHLY_LIMIT?: string; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
+  ACCOUNT_DB?: AccountD1Binding; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
   FEEDBACK_ENCRYPTION_KEY?: string;
   // Contact AI features are not counted against a plan; this per-minute limit is their abuse guard.
   CONTACT_RATE_LIMIT?: RateLimitBinding;
@@ -53,16 +52,12 @@ export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, 
 type HandlerOptions = { fetchImpl?: typeof fetch; nowSeconds?: () => number };
 
 type Plan = "free" | "pro" | "family";
-function freeLimit(env: GatewayEnv): number {
-  const configured = Number(env.AI_FREE_MONTHLY_LIMIT);
-  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_FREE_MONTHLY_AI_LIMIT;
-}
-function guestLimit(env: GatewayEnv): number {
+export function guestLimit(env: GatewayEnv): number {
   const configured = Number(env.AI_GUEST_DAILY_LIMIT);
   return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_GUEST_DAILY_AI_LIMIT;
 }
 function flowLimits(env: GatewayEnv): FlowLimits {
-  return { monthlyDefault: freeLimit(env), guestDaily: guestLimit(env), guestAddressDaily: GUEST_ADDRESS_DAILY_AI_LIMIT, contactSubmitAddressDaily: CONTACT_SUBMITS_PER_ADDRESS_DAILY };
+  return { guestDaily: guestLimit(env), guestAddressDaily: GUEST_ADDRESS_DAILY_AI_LIMIT, contactSubmitAddressDaily: CONTACT_SUBMITS_PER_ADDRESS_DAILY };
 }
 function readPlan(value: unknown): Plan {
   if (value === "free" || value === "pro" || value === "family") return value;
@@ -79,10 +74,19 @@ export async function issueAiToken(userId: string, secret: string, now: number):
   const encodedSignature = btoa(String.fromCharCode(...signature)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   return `${head}.${payload}.${encodedSignature}`;
 }
-async function entitlement(db: AccountD1Binding, userId: string, defaultLimit: number): Promise<{ plan: Plan; limit: number | null }> {
-  const row = await db.prepare("SELECT plan, monthly_ai_limit AS monthlyAiLimit FROM account_entitlements WHERE user_id = ?").bind(userId).first<{ plan: string; monthlyAiLimit: number | null }>();
-  if (!row) return { plan: "free", limit: defaultLimit };
-  return { plan: readPlan(row.plan), limit: row.monthlyAiLimit === null ? null : row.monthlyAiLimit };
+/** Only an explicit entitlement row sets a monthly plan. Accounts without one, like guests, use the daily cap. */
+export async function usageSummary(db: AccountD1Binding, user: string, now: number, env: GatewayEnv): Promise<Record<string, unknown>> {
+  const row = await db.prepare("SELECT plan, monthly_ai_limit AS monthlyAiLimit FROM account_entitlements WHERE user_id = ?").bind(user).first<{ plan: string; monthlyAiLimit: number | null }>();
+  if (!row) {
+    const limit = guestLimit(env);
+    const used = await guestDayUsage(db, user, dayKey(now));
+    const guest = await db.prepare("SELECT 1 AS found FROM guest_devices WHERE user_id = ?").bind(user).first();
+    return { plan: guest ? "guest" : "free", period: "day", day: dayKey(now), used, limit, remaining: Math.max(0, limit - used) };
+  }
+  const month = monthKey(now);
+  const used = await flowUsage(db, user, month);
+  const limit = row.monthlyAiLimit;
+  return { plan: readPlan(row.plan), period: "month", month, used, limit, remaining: limit === null ? null : Math.max(0, limit - used) };
 }
 
 function json(status: number, value: unknown): Response {
@@ -441,9 +445,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
         if (!monthBounds(month)) return json(400, { error: "invalid_month" });
         return json(200, await monthlyCosts(env.ACCOUNT_DB, account.user.id, month));
       }
-      const month = monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
-      const [ent, used] = await Promise.all([entitlement(env.ACCOUNT_DB, account.user.id, freeLimit(env)), flowUsage(env.ACCOUNT_DB, account.user.id, month)]);
-      return json(200, { plan: ent.plan, period: "month", month, used, limit: ent.limit, remaining: ent.limit === null ? null : Math.max(0, ent.limit - used) });
+      return json(200, await usageSummary(env.ACCOUNT_DB, account.user.id, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))(), env));
     } catch { return json(503, { error: "temporarily_unavailable" }); }
   }
   if (url.pathname === "/api/ai/guest") return handleGuestRequest(request, env as GuestEnv, options);

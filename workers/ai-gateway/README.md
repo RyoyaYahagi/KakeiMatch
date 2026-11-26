@@ -31,7 +31,7 @@ npm run --prefix workers/ai-gateway build
 
 `npm run --prefix workers/ai-gateway dev` starts the Worker locally with the Gateway Vite and Cloudflare configuration. CI builds the admin assets and runs `test/admin-e2e.mjs` against a local preview with synthetic admin responses.
 
-The Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_FREE_MONTHLY_LIMIT` with the provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf --help` and `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
+The Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_GUEST_DAILY_LIMIT` with the provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf --help` and `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
 
 ## Gemini classification
 

@@ -7,7 +7,7 @@ Cloud accountはAIなどのクラウド機能を使うためのアカウント�
 | 端末内に保存する家計データ | Cloudflare D1に保存するアカウント情報 |
 | --- | --- |
 | Actual Budgetデータ | Better Authのusers、sessions、passkeys |
-| レシートと画像 | entitlement（planと月間上限） |
+| レシートと画像 | entitlement（付与がある場合のplanと月間上限）。付与がなければ日次上限 |
 | 明細ファイルとcanonical rows | provider別の月間AI利用数 |
 | 照合状態と判断 | 必要最小限の認証metadata |
 
@@ -29,7 +29,7 @@ Passkey登録・認証にはBetter Authの公式Passkey pluginを使います。
 
 ## AI entitlementと利用量
 
-planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。初期設定では新規アカウントは `free` になり、既定の月間上限は30回です。freeの上限は `AI_FREE_MONTHLY_LIMIT` で一箇所から変更します。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。
+planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。新規アカウントには付与（entitlement）がなく、AIは1日5回（Asia/Tokyoの暦日、`AI_GUEST_DAILY_LIMIT`）で数えます。付与は運用者が `account:set-plan` で書き込みます。付与された `free` の月間上限は `AI_FREE_MONTHLY_LIMIT`（書き込み時の値）、`pro` は `AI_PRO_MONTHLY_LIMIT` です。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。
 
 Plusは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitはPlusでも有効です。管理者はCloudflare D1に対する `account:set-plan` 運用commandでPlus（`family`）を割り当てます。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
 

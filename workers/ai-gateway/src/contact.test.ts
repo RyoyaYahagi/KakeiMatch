@@ -145,7 +145,8 @@ describe('contact Gateway with real SQLite migrations', () => {
     env.CONTACT_RATE_LIMIT = { limit: async ({ key }) => { keys.push(key); return { success: !key.startsWith('contact-address:') }; } };
     expect((await run(request(audio, '/api/contact/transcribe'), fetchImpl)).status).toBe(429); expect(fetchImpl).not.toHaveBeenCalled();
     expect(keys).toEqual(['contact:synthetic-user', expect.stringMatching(/^contact-address:[0-9a-f]{64}$/)]);
-    env.CONTACT_RATE_LIMIT = { limit: async () => ({ success: true }) }; env.AI_FREE_MONTHLY_LIMIT = '1';
+    env.CONTACT_RATE_LIMIT = { limit: async () => ({ success: true }) };
+    sqlite.exec("INSERT INTO account_entitlements(user_id,plan,monthly_ai_limit,updated_at) VALUES ('synthetic-user','free',1,0)");
     sqlite.exec("INSERT INTO ai_receipt_flows(user_id,flow_id,month,created_at,image_mac,dispatched) VALUES ('synthetic-user','existing','2026-10',1,'synthetic',1)");
     // A used-up receipt quota does not stop a transcription, which is not counted.
     const transcribed = vi.fn<typeof fetch>().mockResolvedValueOnce(Response.json(provider('合成の問い合わせ本文')));

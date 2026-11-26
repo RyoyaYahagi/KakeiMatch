@@ -2,9 +2,9 @@ import { makeSignature } from 'better-auth/crypto';
 import { handleAuthRequest, handleAccountRequest, handleVerifiedNativePasskeyRequest, type AccountEnv, type AccountD1BatchResult } from './account-auth';
 import type { AppAttestConfig } from './app-attest';
 import { addressDayMac, GUEST_CREATIONS_PER_ADDRESS_DAILY } from './guest-ai';
-import { dayKey, guestDayUsage } from './receipt-ai-usage';
+import { dayKey } from './receipt-ai-usage';
 import { readRequestBytes } from './request-body';
-import { handleRequest as handleAiRequest, issueAiToken, type GatewayEnv } from './worker';
+import { handleRequest as handleAiRequest, issueAiToken, usageSummary, type GatewayEnv } from './worker';
 
 export interface NativeEnv extends GatewayEnv {
   NATIVE_APP_TEAM_ID?: string;
@@ -43,8 +43,9 @@ function configured(request: Request, env: NativeEnv): Config | null {
     return { appId: env.NATIVE_APP_ID!, environment: env.NATIVE_APP_ATTEST_ENVIRONMENT as Config['environment'], origin: origin.origin, rpId: origin.hostname };
   } catch { return null; }
 }
-function enabled(env: NativeEnv): env is NativeEnv & { ACCOUNT_DB: Db; BETTER_AUTH_SECRET: string; AI_GATEWAY_AUTH_SECRET: string } {
-  return Boolean(env.ACCOUNT_DB && (env.BETTER_AUTH_SECRET?.length ?? 0) >= 32 && (env.AI_GATEWAY_AUTH_SECRET?.length ?? 0) >= 32 && env.AI_USER_RATE_LIMIT);
+// Guest and AI paths never need BETTER_AUTH_SECRET; only the account routes that forward a Better Auth cookie do.
+function enabled(env: NativeEnv): env is NativeEnv & { ACCOUNT_DB: Db; AI_GATEWAY_AUTH_SECRET: string } {
+  return Boolean(env.ACCOUNT_DB && (env.AI_GATEWAY_AUTH_SECRET?.length ?? 0) >= 32 && env.AI_USER_RATE_LIMIT);
 }
 function encode(bytes: Uint8Array) { return btoa(String.fromCharCode(...bytes)).replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_'); }
 function decode(value: string): Uint8Array {
@@ -86,8 +87,8 @@ async function resolveSessionHash(db: Db, config: Config, now: number, digest: s
     LEFT JOIN session s ON s.id=n.auth_session_id AND s.userId=n.user_id
     WHERE n.token_hash=? AND n.expires_at>? AND k.revoked_at IS NULL AND k.origin=? AND k.app_id=? AND k.environment=?
       AND NOT EXISTS (SELECT 1 FROM account_deletion_tombstones WHERE user_id=n.user_id)
-      AND ((n.identity='guest' AND k.guest_user_id=n.user_id) OR (n.identity='account' AND s.expiresAt>? AND k.account_user_id=n.user_id))`)
-    .bind(digest, now, config.origin, config.appId, config.environment, now * 1000).first<SessionRow>();
+      AND ((n.identity='guest' AND (k.guest_user_id=n.user_id OR k.account_user_id=n.user_id)) OR (n.identity='account' AND k.account_user_id=n.user_id))`)
+    .bind(digest, now, config.origin, config.appId, config.environment).first<SessionRow>();
 }
 async function newSession(db: Db, id: string, user: string, now: number, auth?: { id: string; expiresAt: number }) {
   const token = randomToken();
@@ -223,7 +224,8 @@ export async function handleNativeRequest(request: Request, env: NativeEnv, opti
         if (!saved.success) throw new Error('token_write_failed');
         return json(200, { token, expiresAt });
       }
-      let user = registered.guest_user_id;
+      // The usage holder is the account once the key is bound; a bound key never creates a second guest.
+      let user = registered.account_user_id ?? registered.guest_user_id;
       if (!user) {
         user = crypto.randomUUID();
         const secretDigest = Array.from(await hash(utf8.encode(randomToken())), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -356,7 +358,8 @@ async function authenticatedRequest(request: Request, env: NativeEnv & { ACCOUNT
   if (!session) return json(401, { error: 'unauthorized' });
   const accountOnly = targetPath.startsWith('/api/auth/') || targetPath.startsWith('/api/account/') || targetPath === '/api/ai/costs' || targetPath.startsWith('/api/contact');
   if (accountOnly && session.identity !== 'account') return json(401, { error: 'unauthorized' });
-  const headers = await internalHeaders(request, config, env, session);
+  // AI routes authenticate with the issued bearer only, so they never carry a Better Auth cookie.
+  const headers = await internalHeaders(request, config, env, aiPaths.includes(targetPath) ? null : session);
   const contentType = request.headers.get('content-type');
   if (contentType) headers.set('content-type', contentType); else headers.delete('content-type');
   const target = new URL(targetPath, config.origin); target.search = url.search;
@@ -365,12 +368,8 @@ async function authenticatedRequest(request: Request, env: NativeEnv & { ACCOUNT
     // Stream the unchanged body through existing size/schema/quota/provider/cost guards.
     return withoutCookies(await handleAiRequest(new Request(target, { method: 'POST', headers, body: request.body, duplex: 'half' } as RequestInit), env, options));
   }
-  if (targetPath === '/api/ai/usage' && session.identity === 'guest') {
-    const configuredLimit = Number(env.AI_GUEST_DAILY_LIMIT);
-    const limit = Number.isSafeInteger(configuredLimit) && configuredLimit > 0 ? configuredLimit : 5;
-    const used = await guestDayUsage(db, session.user_id, dayKey(now));
-    return json(200, { plan: 'guest', period: 'day', day: dayKey(now), used, limit, remaining: Math.max(0, limit - used) });
-  }
+  // Computed here, not forwarded: a key-bound session has no Better Auth cookie to forward.
+  if (targetPath === '/api/ai/usage') return json(200, await usageSummary(db, session.user_id, now, env));
   const forwarded = new Request(target, { method: request.method, headers, ...(request.body ? { body: request.body, duplex: 'half' } : {}) } as RequestInit);
   if (targetPath.startsWith('/api/ai/')) return withoutCookies(await handleAiRequest(forwarded, env, options));
   if (targetPath === '/api/account/delete') return withoutCookies(await handleAccountRequest(forwarded, env as AccountEnv));

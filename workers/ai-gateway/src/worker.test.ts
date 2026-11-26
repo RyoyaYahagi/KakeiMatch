@@ -48,7 +48,7 @@ const fetchOk = (value: unknown, status = 200): typeof fetch => vi.fn(async (_ur
   }
   return Response.json(value, { status });
 }) as typeof fetch;
-const limits = (monthlyDefault: number) => ({ monthlyDefault, guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 });
+const limits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
 const migrations = ["0001_auth.sql", "0002_entitlements_usage.sql", "0003_receipt_ai_flows.sql", "0004_ai_provider_costs.sql", "0005_ai_global_guardrails.sql", "0006_contact_submissions.sql", "0007_account_deletion.sql", "0014_guest_ai.sql", "0015_uncounted_provider_errors.sql", "0016_category_suggestion_flows.sql", "0017_jev_upstream_circuits.sql"].map(name => readFileSync(new URL(`../migrations/${name}`, import.meta.url), "utf8"));
 function sqliteDb() {
   const sqlite = new DatabaseSync(":memory:");
@@ -80,17 +80,18 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
   afterEach(async () => { await dispose(); });
 
   it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
+    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES ('synthetic-user', 'free', 2, 0)").bind().run();
     const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
-    const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, limits(2), "receipt", "synthetic-address")));
+    const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, limits, "receipt", "synthetic-address")));
     expect(reservations.filter(result => result === "reserved")).toHaveLength(2);
     expect(await db.prepare("SELECT COUNT(*) AS count FROM ai_receipt_flows WHERE user_id='synthetic-user' AND dispatched=0").bind().first<{ count: number }>())
       .toEqual({ count: 2 });
     expect(await flowUsage(db, "synthetic-user", "2026-09")).toBe(0);
     expect(reservations.filter(result => result !== "reserved")).toEqual(Array(6).fill("ai_quota_exceeded"));
     const admittedFlow = candidates[reservations.indexOf("reserved")]!;
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, limits(2), "receipt", "synthetic-address")).toBe("reserved");
-    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, limits(2), "receipt", "synthetic-address")).toBe("invalid_flow");
-    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, limits(2), "receipt", "synthetic-address")).toBe("ai_quota_exceeded");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, `mac-${admittedFlow}`, now, limits, "receipt", "synthetic-address")).toBe("reserved");
+    expect(await reserveFlow(db, "synthetic-user", admittedFlow, "another-mac", now, limits, "receipt", "synthetic-address")).toBe("invalid_flow");
+    expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "another-mac", now, limits, "receipt", "synthetic-address")).toBe("ai_quota_exceeded");
   });
 });
 
@@ -114,6 +115,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
   const gemini = (flowId = crypto.randomUUID(), at = now, provider?: typeof fetch) => handleRequest(request("gemini", { ...image, flowId }, bearer("synthetic-user", at)), env, options(provider, at));
+  const grant = (monthlyAiLimit: number | null, user = "synthetic-user") => db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES (?, 'free', ?, 0) ON CONFLICT(user_id) DO UPDATE SET monthly_ai_limit = excluded.monthly_ai_limit").bind(user, monthlyAiLimit).run();
   it("extracts payroll with existing authentication, quota and no stored provider input", async () => {
     const value = { ...emptyPayroll(), employerName: 'Synthetic Employer', paymentDate: '2026-10-25', netPayYen: 250000 };
     const provider = fetchOk({ output_text: JSON.stringify(value) });
@@ -141,7 +143,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   const eventCount = async () => (await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events").bind().first<{ count: number }>())?.count ?? 0;
 
   it("counts Gemini and its validated Jev continuation once, including retries at quota", async () => {
-    env.AI_FREE_MONTHLY_LIMIT = "1";
+    await grant(1);
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
     expect((await gemini(flowId)).status).toBe(200);
@@ -174,24 +176,31 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     // Account check, admission, reservation, dispatch, completion and the category grant.
     expect(roundTrips).toBe(6);
   });
-  it("counts an explicit reanalysis as a new flow and reports the default Free 30", async () => {
+  it("counts an explicit reanalysis as a new flow and reports the daily Free cap of 5 without a grant", async () => {
     expect((await gemini()).status).toBe(200);
     expect((await gemini()).status).toBe(200);
-    expect(await usage()).toMatchObject({ used: 2, limit: 30, remaining: 28, plan: "free" });
+    expect(await usage()).toMatchObject({ used: 2, limit: 5, remaining: 3, plan: "free", period: "day", day: "2026-09-30" });
+  });
+  it("stops an account without a grant after five receipts a day, not thirty a month", async () => {
+    for (let i = 0; i < 5; i++) expect((await gemini()).status).toBe(200);
+    expect((await gemini()).status).toBe(429);
+    expect(await usage()).toMatchObject({ used: 5, limit: 5, remaining: 0, period: "day" });
+    expect((await gemini(crypto.randomUUID(), now + 86_400)).status).toBe(200);
   });
   it("reserves quota atomically under concurrent distinct and duplicate flows", async () => {
-    env.AI_FREE_MONTHLY_LIMIT = "2";
+    await grant(2);
     const results = await Promise.all(Array.from({ length: 8 }, () => gemini()));
     expect(results.filter(result => result.status === 200)).toHaveLength(2);
     expect(results.filter(result => result.status === 429)).toHaveLength(6);
     expect(await usage()).toMatchObject({ used: 2 });
     const flowId = crypto.randomUUID();
-    env.AI_FREE_MONTHLY_LIMIT = "3";
+    await grant(3);
     const duplicates = await Promise.all([gemini(flowId), gemini(flowId)]);
     expect(duplicates.map(result => result.status)).toEqual([200, 200]);
     expect(await usage()).toMatchObject({ used: 3 });
   });
   it("resets at midnight in Asia/Tokyo and keeps a cross-month continuation in its starting month", async () => {
+    await grant(30);
     const flowId = crypto.randomUUID();
     expect((await gemini(flowId)).status).toBe(200);
     const midnight = now + 60;
@@ -208,7 +217,6 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(429);
     expect(await usage()).toMatchObject({ used: 0, remaining: 0 });
     await db.prepare("UPDATE account_entitlements SET plan = 'family', monthly_ai_limit = NULL WHERE user_id = ?").bind("synthetic-user").run();
-    env.AI_FREE_MONTHLY_LIMIT = "1";
     for (let i = 0; i < 3; i++) expect((await gemini()).status).toBe(200);
     expect(await usage()).toMatchObject({ plan: "family", used: 3, limit: null, remaining: null });
   });
@@ -220,6 +228,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(429);
   });
   it("does not add legacy provider rows to new usage, even in the cutover month", async () => {
+    await grant(30);
     await db.prepare("INSERT INTO ai_usage VALUES (?, '2026-09', 40, 25)").bind("synthetic-user").run();
     expect(await usage()).toMatchObject({ used: 0, remaining: 30 });
     expect((await gemini()).status).toBe(200);
@@ -282,7 +291,8 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(provider).toHaveBeenCalledTimes(1);
   });
   it("counts category suggestions in plan usage and shares the monthly quota with receipts", async () => {
-    env.AI_FREE_MONTHLY_LIMIT = "1";
+    await grant(1);
+    await grant(1, "other-user");
     const categories = [{ id: "local-food", name: "食費" }];
     const suggestion = (flowId: string, user = "synthetic-user") => handleRequest(
       request("category-suggestion", { flowId, sourceCategoryName: "Market", categories }, bearer(user)), env,
@@ -306,14 +316,14 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       await db.prepare("INSERT INTO guest_devices(user_id,secret_hash,created_at,created_day,created_ip_day_mac,last_used_at) VALUES (?, ?, ?, ?, ?, ?)")
         .bind(user, `synthetic-${user}-hash`, now, day, "creation-address", now).run();
     }
-    const onePerGuestDay = { ...limits(1), guestDaily: 1, guestAddressDaily: 20 };
+    const onePerGuestDay = { ...limits, guestDaily: 1, guestAddressDaily: 20 };
     expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-a", now, onePerGuestDay, "usage-address-a")).toBe("reserved");
     expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-b", now, onePerGuestDay, "usage-address-a")).toBe("ai_quota_exceeded");
     await db.prepare("UPDATE ai_category_suggestion_flows SET dispatched=1 WHERE user_id='synthetic-user'").bind().run();
     expect(await guestDayUsage(db, "synthetic-user", day)).toBe(1);
     expect(await reserveFlow(db, "synthetic-user", crypto.randomUUID(), "receipt-mac", now, onePerGuestDay, "receipt", "usage-address-a")).toBe("ai_quota_exceeded");
 
-    const onePerAddress = { ...limits(30), guestDaily: 5, guestAddressDaily: 1 };
+    const onePerAddress = { ...limits, guestDaily: 5, guestAddressDaily: 1 };
     expect(await reserveCategorySuggestionFlow(db, "synthetic-user", crypto.randomUUID(), "mac-c", now, onePerAddress, "shared-address")).toBe("reserved");
     expect(await reserveCategorySuggestionFlow(db, "other-user", crypto.randomUUID(), "mac-d", now, onePerAddress, "shared-address")).toBe("ai_quota_exceeded");
   });
