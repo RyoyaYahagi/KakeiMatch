@@ -426,8 +426,10 @@ jobs:
               > "$output/host.log" 2>&1 || true
             wait "$simulator_log_pid" || true
           done
+      # Kept on every run: these logs exist only when startup took over 180 seconds,
+      # and a passing run is where that slowness would otherwise leave no evidence.
       - name: Upload slow test startup logs
-        if: always() && steps.startup-logs.outputs.available == 'true' && !(github.event_name == 'pull_request' && job.status == 'success')
+        if: always() && steps.startup-logs.outputs.available == 'true'
         continue-on-error: true
         timeout-minutes: 1
         uses: actions/upload-artifact@v4
