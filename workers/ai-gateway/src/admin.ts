@@ -1,4 +1,4 @@
-import type { AccountD1Database, AccountEnv } from "./account-auth";
+import type { AccountD1Database, AccountEnv } from "./account-db";
 import { monthBounds } from "./ai-provider-costs";
 import { monthKey } from "./receipt-ai-usage";
 import { analyzeFeedback, createFeedbackIssue, deleteFeedback, getFeedback, listFeedback, revealFeedbackOriginal, updateFeedbackStatus,
@@ -7,7 +7,6 @@ import { analyzeFeedback, createFeedbackIssue, deleteFeedback, getFeedback, list
 export const ADMIN_OPERATOR_PRINCIPAL_ID = "admin-operator";
 
 export interface AdminEnv extends AccountEnv {
-  ADMIN_USER_IDS?: string;
   ADMIN_ACCESS_EMAILS?: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;

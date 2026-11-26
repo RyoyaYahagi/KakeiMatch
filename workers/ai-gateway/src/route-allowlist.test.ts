@@ -5,8 +5,6 @@ const state = vi.hoisted(() => ({ status: 403 }));
 const handlers = vi.hoisted(() => ({
   aiRequest: vi.fn(async () => Response.json({ source: 'ai' })),
   adminGateway: vi.fn(async () => Response.json({ source: 'admin-gateway' })),
-  authRequest: vi.fn(async () => Response.json({ source: 'auth' })),
-  accountRequest: vi.fn(async () => Response.json({ source: 'account' })),
   nativeRequest: vi.fn(async () => Response.json({ source: 'native' })),
   appleAppSiteAssociation: vi.fn(() => Response.json({ webcredentials: { apps: [] } })),
 }));
@@ -16,7 +14,6 @@ vi.mock('./admin', () => ({
     : { response: Response.json({ error: 'denied' }, { status: state.status }) },
 }));
 vi.mock('./worker', () => ({ handleRequest: handlers.aiRequest, handleAdminGatewayRequest: handlers.adminGateway }));
-vi.mock('./account-auth', () => ({ handleAuthRequest: handlers.authRequest, handleAccountRequest: handlers.accountRequest }));
 vi.mock('./native-auth', () => ({
   handleNativeRequest: handlers.nativeRequest,
   appleAppSiteAssociation: handlers.appleAppSiteAssociation,
@@ -31,8 +28,6 @@ const BROWSER_HTML_ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0
 
 function expectNoRetiredHandlersOrAssets(assets: { mock: unknown }) {
   expect(handlers.aiRequest).not.toHaveBeenCalled();
-  expect(handlers.authRequest).not.toHaveBeenCalled();
-  expect(handlers.accountRequest).not.toHaveBeenCalled();
   expect(assets).not.toHaveBeenCalled();
 }
 
