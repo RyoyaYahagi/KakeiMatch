@@ -94,15 +94,6 @@ struct KMAIUsage: Codable, Sendable {
         self.supportId = supportId
     }
 }
-struct KMAICosts: Codable, Sendable {
-    struct Provider: Codable, Sendable {
-        let requests: Int; let inputTokens: Int; let outputTokens: Int
-        let costUsdMicros: Int; let unknownRequests: Int
-    }
-    struct Providers: Codable, Sendable { let gemini: Provider; let jev: Provider }
-    let month: KMYearMonth; let currency: String; let totalUsdMicros: Int
-    let unknownRequests: Int; let providers: Providers
-}
 struct KMCategoryOption: Codable, Sendable { let id: String; let name: String }
 struct KMCategoryAnswers: Codable, Sendable {
     struct Answer: Codable, Sendable {
@@ -127,11 +118,6 @@ struct KMPayrollResponse: Codable, Sendable {
     }
     let extraction: Extraction; let model: String; let promptVersion: String
 }
-struct KMContactResult: Codable, Sendable {
-    enum Kind: String, Codable, Sendable { case bug, improvement, question }
-    let feedbackId: String; let kind: Kind; let reply: String; let issueUrl: String?
-}
-struct KMTranscription: Codable, Sendable { let text: String }
 
 struct KMImageRequest: Codable, Sendable {
     let flowId: String; let imageBase64: String; let contentType: String; let maskingConfirmed: Bool?
@@ -158,9 +144,3 @@ struct KMCategoryRequest: Codable, Sendable {
 struct KMCategorySuggestionRequest: Codable, Sendable {
     let flowId: String; let sourceCategoryName: String; let categories: [KMCategoryOption]
 }
-struct KMContactRequest: Codable, Sendable {
-    let flowId: String; let kind: KMContactResult.Kind; let message: String
-    let originalMessage: String?
-    let diagnostic: KMContactDiagnosticContext?
-}
-struct KMAudioRequest: Codable, Sendable { let flowId: String; let audioBase64: String; let contentType: String }

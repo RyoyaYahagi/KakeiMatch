@@ -228,37 +228,6 @@ enum KMContactPresentation {
         )
     }
 
-    /// The attachment is optional, but a present attachment must match the Worker schema
-    /// exactly. This check runs before the typed request is encoded.
-    static func isValidForWorker(_ context: KMContactDiagnosticContext) -> Bool {
-        guard context.version == 1,
-              diagnosticScreens.contains(context.currentScreen),
-              context.network == "online" || context.network == "offline",
-              context.events.count <= maximumDiagnosticEvents else { return false }
-        for event in context.events {
-            guard (0...maximumDiagnosticAgeSeconds).contains(event.secondsAgo) else { return false }
-            switch event.type {
-            case "screen_open":
-                guard let screen = event.screen, diagnosticScreens.contains(screen),
-                      event.action == nil, event.errorCode == nil, event.online == nil else { return false }
-            case "action":
-                guard let screen = event.screen, diagnosticScreens.contains(screen),
-                      let action = event.action, safeActions.contains(action),
-                      event.errorCode == nil, event.online == nil else { return false }
-            case "error":
-                guard let screen = event.screen, diagnosticScreens.contains(screen),
-                      let code = event.errorCode, safeErrorCodes.contains(code),
-                      event.action == nil, event.online == nil else { return false }
-            case "network":
-                guard event.online != nil, event.screen == nil,
-                      event.action == nil, event.errorCode == nil else { return false }
-            default:
-                return false
-            }
-        }
-        return true
-    }
-
     /// PWA keeps failures in the draft and distinguishes login, configuration, and network
     /// causes. Keep those classes separate so a Simulator-only failure is not reported as an
     /// offline network problem.

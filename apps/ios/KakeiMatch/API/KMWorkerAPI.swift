@@ -408,16 +408,6 @@ actor KMWorkerAPI {
         return result
     }
 
-    func costs(month: KMYearMonth) async throws -> KMAICosts {
-        guard month.rawValue >= "2000-01", month.rawValue <= "9998-12" else { throw KMAPIError.invalidRequest }
-        let result: KMAICosts = try await send("GET", "/api/ai/costs", query: [URLQueryItem(name: "month", value: month.rawValue)], shape: KMAPIShapes.costs)
-        let g = result.providers.gemini, j = result.providers.jev
-        guard result.month == month, result.totalUsdMicros == g.costUsdMicros + j.costUsdMicros,
-              result.unknownRequests == g.unknownRequests + j.unknownRequests,
-              g.unknownRequests <= g.requests, j.unknownRequests <= j.requests else { throw KMAPIError.invalidResponse }
-        return result
-    }
-
     func readReceipt(image: KMRedactedReceiptImage, flowID: UUID = UUID()) async throws -> KMReceiptExtraction {
         let body = try imageBody(image.upload, flowID: flowID, maskingConfirmed: nil)
         let token = try await accessToken()
@@ -466,28 +456,6 @@ actor KMWorkerAPI {
         let result: KMCategorySuggestion = try await send("POST", "/api/ai/category-suggestion", body: body, authorization: "Bearer \(token)", shape: .object(["categoryId": .nullable(.text(max: 128))]))
         guard result.categoryId == nil || categories.contains(where: { $0.id == result.categoryId }) else { throw KMAPIError.invalidResponse }
         return result
-    }
-
-    func submitContact(kind: KMContactResult.Kind, message: String, originalMessage: String? = nil,
-                       diagnostic: KMContactDiagnosticContext? = nil, flowID: UUID) async throws -> KMContactResult {
-        try KMAPIValidation.flow(flowID)
-        if let diagnostic, !KMContactPresentation.isValidForWorker(diagnostic) { throw KMAPIError.invalidRequest }
-        let body = try KMAPIValidation.request(KMContactRequest(flowId: flowID.uuidString, kind: kind, message: message,
-                                                               originalMessage: originalMessage, diagnostic: diagnostic),
-                                               shape: KMAPIShapes.contactRequest)
-        guard body.count <= 20 * 1024 else { throw KMAPIError.invalidRequest }
-        let token = try await accessToken(allowGuest: false)
-        let result: KMContactResult = try await send("POST", "/api/contact", body: body, authorization: "Bearer \(token)", shape: KMAPIShapes.contactResult)
-        guard result.kind == kind else { throw KMAPIError.invalidResponse }
-        return result
-    }
-
-    /// The caller retains this flow ID for an explicit retry of the same recording.
-    func transcribe(audio: KMUploadAudio, flowID: UUID) async throws -> KMTranscription {
-        try KMAPIValidation.flow(flowID)
-        let body = try JSONEncoder().encode(KMAudioRequest(flowId: flowID.uuidString, audioBase64: audio.data.base64EncodedString(), contentType: audio.contentType))
-        let token = try await accessToken(allowGuest: false)
-        return try await send("POST", "/api/contact/transcribe", body: body, authorization: "Bearer \(token)", shape: .object(["text": .text(max: 4000)]))
     }
 
     func clearAccessToken() throws {
