@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { handleRequest, usageSummary, type AccountD1Binding, type GatewayEnv } from "./worker";
 import { addressDayMac } from "./guest-ai";
 import { dayKey, reserveFlow, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
 import { sqliteD1 } from "./test-support/sqlite-d1";
@@ -46,25 +46,14 @@ function tokenRequest(guest: string) {
 }
 
 describe("guest AI", () => {
-  it("exchanges the guest secret for a short AI token and reports today's usage", async () => {
+  it("no longer serves the Web token or usage routes, and reports guest usage from the shared summary", async () => {
     const value = await guestSecret();
-    const token = await handleRequest(tokenRequest(value), env, { nowSeconds: () => now });
-    expect(token.status).toBe(200);
-    const { token: jwt } = await token.json() as { token: string };
-    expect(JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString())).toMatchObject({ sub: guestId(), aud: "kakeimatch-ai" });
-    expect((await handleRequest(tokenRequest("A".repeat(43)), env)).status).toBe(401);
+    expect((await handleRequest(tokenRequest(value), env, { nowSeconds: () => now })).status).toBe(404);
+    expect((await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { authorization: `Guest ${value}` } }), env)).status).toBe(404);
 
     await reserveFlow(db, guestId(), crypto.randomUUID(), "mac", now, limits, "receipt", "address");
     sqlite.exec("UPDATE ai_receipt_flows SET dispatched = 1");
-    const usage = await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { authorization: `Guest ${value}` } }), env, { nowSeconds: () => now });
-    expect(await usage.json()).toEqual({ plan: "guest", period: "day", day: "2026-10-06", used: 1, limit: 5, remaining: 4 });
-    // The developer cost route was retired with the account features.
-    expect((await handleRequest(new Request(`${origin}/api/ai/costs`, { headers: { authorization: `Guest ${value}` } }), env)).status).toBe(404);
-  });
-
-  it("rejects a Web request that carries no guest secret, even with a valid origin", async () => {
-    expect((await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { origin } }), env)).status).toBe(401);
-    expect((await handleRequest(new Request(`${origin}/api/ai/token`, { method: "POST", headers: { origin } }), env)).status).toBe(401);
+    expect(await usageSummary(db, guestId(), now, env)).toEqual({ plan: "guest", period: "day", day: "2026-10-06", used: 1, limit: 5, remaining: 4 });
   });
 
   it("allows five receipts per guest per Tokyo day and twenty per address", async () => {

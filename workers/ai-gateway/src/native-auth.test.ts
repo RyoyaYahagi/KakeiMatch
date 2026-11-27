@@ -250,7 +250,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
   });
 
   it('keeps all Web POST Origin checks and prevents native credentials from becoming Web credentials', async () => {
-    for (const path of ['/api/ai/token', '/api/ai/gemini', '/api/ai/payroll', '/api/ai/jev']) {
+    for (const path of ['/api/ai/gemini', '/api/ai/payroll', '/api/ai/jev']) {
       for (const headers of [{}, { origin: 'https://evil.example.test' }] as Record<string, string>[]) {
         const response = await handleWebRequest(request(path, {}, headers), env, { nowSeconds: () => now });
         expect(response.status, path).toBe(403);

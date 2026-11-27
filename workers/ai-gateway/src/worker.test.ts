@@ -941,13 +941,12 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await response.json()).toEqual(receipt);
     expect(await usage()).toMatchObject({ used: 1 });
   });
-  it("requires same origin, signed AI audience and a guest secret for token/usage", async () => {
+  it("requires same origin and signed AI audience for the AI routes", async () => {
     expect((await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer(), { origin: "https://attacker.invalid" }), env, options())).status).toBe(403);
     for (const claims of [{ exp: now }, { exp: now + 901 }, { aud: "other" }]) expect((await handleRequest(request("gemini", image, bearer("synthetic-user", now, claims)), env, options())).status).toBe(401);
-    // Neither a missing credential nor a Better Auth cookie authenticates token or usage.
-    expect((await handleRequest(new Request(`${origin}/api/ai/usage`), env, options())).status).toBe(401);
-    expect((await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { cookie: "__Secure-better-auth.session_token=synthetic" } }), env, options())).status).toBe(401);
-    expect((await handleRequest(request("token", {}), env, options())).status).toBe(401);
+    // The Worker no longer serves the Web token and usage routes; the native routes issue and read them.
+    expect((await handleRequest(new Request(`${origin}/api/ai/usage`), env, options())).status).toBe(404);
+    expect((await handleRequest(request("token", {}), env, options())).status).toBe(404);
   });
   it("rejects a previously signed AI token as soon as its account is deleted", async () => {
     await db.prepare("INSERT INTO account_deletion_tombstones(user_id) VALUES (?)").bind("synthetic-user").run();

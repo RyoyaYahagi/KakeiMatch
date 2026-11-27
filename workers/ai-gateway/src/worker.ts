@@ -5,7 +5,7 @@ import { classificationPayload, parseClassification, type ContactEnv } from './c
 import { guardrailConfig, costAdmission, refreshCircuitStatement, providerCircuit, type CircuitScope, type CostAdmission } from "./ai-global-guardrails";
 import { assertCostEventCompleted, beginCostEventStatement, completeCostEventStatement } from "./ai-provider-costs";
 import { monthKey, dayKey, flowMac, flowUsage, guestDayUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement, reserveCategorySuggestionFlow, markCategorySuggestionDispatchedStatement, releaseUndispatchedCategorySuggestionFlow, uncountFlow, uncountCategorySuggestionFlow, type FlowLimits } from "./receipt-ai-usage";
-import { addressDayMac, guestFromRequest, hasGuestAuthorization, touchGuest, type GuestEnv } from "./guest-ai";
+import { addressDayMac, type GuestEnv } from "./guest-ai";
 import { isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-db";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
@@ -408,26 +408,6 @@ function normalizeDecisionsCategoryResponse(decoded: unknown, expected: string[]
 
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === "/api/ai/token" || url.pathname === "/api/ai/usage") {
-    const method = url.pathname.endsWith("/token") ? "POST" : "GET";
-    if (request.method !== method) return json(405, { error: "method_not_allowed" });
-    const origin = request.headers.get("origin");
-    if ((origin !== null && origin !== url.origin) || (method === "POST" && origin !== url.origin)) return json(403, { error: "forbidden_origin" });
-    // Only a guest's device secret authenticates here; a cookie or a Web origin alone never does.
-    if (!hasGuestAuthorization(request)) return json(401, { error: "unauthorized" });
-    if (!env.ACCOUNT_DB || !env.AI_GATEWAY_AUTH_SECRET) return json(503, { error: "not_configured" });
-    const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-    try {
-      const guest = await guestFromRequest(request, env.ACCOUNT_DB);
-      if (!guest) return json(401, { error: "unauthorized" });
-      if (method === "POST") {
-        await touchGuest(env.ACCOUNT_DB, guest, now);
-        return json(200, { token: await issueAiToken(guest, env.AI_GATEWAY_AUTH_SECRET, now), expiresAt: now + TOKEN_LIFETIME_SECONDS });
-      }
-      const limit = guestLimit(env); const used = await guestDayUsage(env.ACCOUNT_DB, guest, dayKey(now));
-      return json(200, { plan: "guest", period: "day", day: dayKey(now), used, limit, remaining: Math.max(0, limit - used) });
-    } catch { return json(503, { error: "temporarily_unavailable" }); }
-  }
   const categorySuggestion = url.pathname === "/api/ai/category-suggestion";
   if (url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/payroll" && url.pathname !== "/api/ai/jev" && !categorySuggestion) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
