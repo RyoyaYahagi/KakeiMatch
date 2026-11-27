@@ -375,7 +375,7 @@ extension ReceiptModelTests {
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
         // App Attest is already registered, so the reading goes straight to the token exchange.
-        credentials.write(Data("c3ludGhldGlj".utf8), key: "app-attest-key-id")
+        credentials.write(Data(ReceiptSupportedAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
         credentials.write(Data([1]), key: "app-attest-registered")
         if guest {
             let value = "{\"sessionToken\":\"" + String(repeating: "a", count: 43) + "\",\"expiresAt\":1800000600}"
@@ -525,8 +525,9 @@ extension ReceiptModelTests {
 }
 
 private struct ReceiptSupportedAttest: KMAppAttesting {
+    static let syntheticKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
     var isSupported: Bool { true }
-    func generateKey() async throws -> String { "c3ludGhldGlj" }
+    func generateKey() async throws -> String { Self.syntheticKeyID }
     func attest(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x01]) }
     func assertion(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x02]) }
 }
