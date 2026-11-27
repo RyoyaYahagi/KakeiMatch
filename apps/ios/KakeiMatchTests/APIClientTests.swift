@@ -198,7 +198,7 @@ struct APIClientTests {
     private static let options = [KMCategoryOption(id: "food", name: "合成カテゴリ")]
 
     enum Endpoint: String, CaseIterable, Sendable {
-        case guestConfig, guestCreate, token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe, accountSession, passkeys, deletePasskey, signOut, delete
+        case guestConfig, guestCreate, token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe, delete
         var path: String {
             switch self {
             case .guestConfig, .guestCreate: "/api/ai/guest"
@@ -211,15 +211,11 @@ struct APIClientTests {
             case .suggestion: "/api/ai/category-suggestion"
             case .contact: "/api/contact"
             case .transcribe: "/api/contact/transcribe"
-            case .accountSession: "/api/auth/get-session"
-            case .passkeys: "/api/auth/passkey/list-user-passkeys"
-            case .deletePasskey: "/api/auth/passkey/delete-passkey"
-            case .signOut: "/api/auth/sign-out"
             case .delete: "/api/account/delete"
             }
         }
         var method: String {
-            switch self { case .guestConfig, .usage, .costs, .accountSession, .passkeys: "GET"; case .delete: "DELETE"; default: "POST" }
+            switch self { case .guestConfig, .usage, .costs: "GET"; case .delete: "DELETE"; default: "POST" }
         }
         var body: String {
             switch self {
@@ -234,10 +230,6 @@ struct APIClientTests {
             case .suggestion: #"{"categoryId":"food"}"#
             case .contact: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#
             case .transcribe: #"{"text":"合成の問い合わせです。"}"#
-            case .accountSession: #"{"user":{"id":"synthetic-user","name":"合成利用者","email":"synthetic@example.test","emailVerified":false,"image":null,"createdAt":"2027-01-01T00:00:00Z","updatedAt":"2027-01-01T00:00:00Z"},"session":{"id":"synthetic-session","userId":"synthetic-user","token":"synthetic-token","expiresAt":"2027-01-25T00:00:00Z","createdAt":"2027-01-01T00:00:00Z","updatedAt":"2027-01-01T00:00:00Z","ipAddress":null,"userAgent":null}}"#
-            case .passkeys: #"[{"id":"synthetic-key","name":"合成端末","publicKey":"synthetic-public-key","userId":"synthetic-user","credentialID":"synthetic-credential","counter":0,"deviceType":"multiDevice","backedUp":true,"transports":"internal","createdAt":"2027-01-01T00:00:00Z","aaguid":null}]"#
-            case .deletePasskey: #"{"status":true}"#
-            case .signOut: #"{"success":true}"#
             case .delete: #"{"deleted":true,"localHouseholdDataPreserved":true}"#
             }
         }
@@ -275,10 +267,6 @@ struct APIClientTests {
         case .suggestion: _ = try await client.suggestCategory(sourceCategoryName: "合成分類", categories: Self.options, flowID: Self.flow)
         case .contact: _ = try await client.submitContact(kind: .bug, message: "合成の問い合わせです。", flowID: Self.flow)
         case .transcribe: _ = try await client.transcribe(audio: KMUploadAudio(data: Data([0, 0, 0, 0] + Array("ftyp".utf8)), contentType: "audio/mp4"), flowID: Self.flow)
-        case .accountSession: _ = try await client.accountSession()
-        case .passkeys: _ = try await client.listPasskeys()
-        case .deletePasskey: try await client.deletePasskey(id: "synthetic-key")
-        case .signOut: try await client.signOut()
         case .delete: _ = try await client.deleteAccount()
         }
     }
@@ -302,9 +290,7 @@ struct APIClientTests {
     @Test(arguments: Endpoint.allCases)
     @MainActor
     func allEndpointsRejectMalformedResponses(endpoint: Endpoint) async throws {
-        var invalidBodies = ["{}", "null", "[]", "not-json", String(endpoint.body.dropLast()) + ",\"unknown\":true}"]
-        if endpoint == .accountSession { invalidBodies.removeAll { $0 == "null" } }
-        if endpoint == .passkeys { invalidBodies.removeAll { $0 == "[]" } }
+        let invalidBodies = ["{}", "null", "[]", "not-json", String(endpoint.body.dropLast()) + ",\"unknown\":true}"]
         for invalid in invalidBodies {
             APIStub.reset { request in .init(body: request.url?.path == endpoint.path ? String(invalid) : Self.token) }
             await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client()) }
@@ -332,8 +318,6 @@ struct APIClientTests {
     @Test
     func betterAuthFailuresAndUnknownErrorsDoNotExposeMessages() async throws {
         let api = try client()
-        APIStub.reset { _ in .init(status: 401, body: #"{"code":"UNAUTHORIZED","message":"synthetic private detail"}"#) }
-        await #expect(throws: KMAPIError.authenticationRequired) { _ = try await api.accountSession() }
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"synthetic_private_detail"}"#) }
         await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.guestConfiguration() }
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"not_configured","unknown":true}"#) }
@@ -377,7 +361,7 @@ struct APIClientTests {
     }
 
     @Test
-    func nativeSignOutAndAccountDeletionClearAccountButPreserveGuestCredential() async throws {
+    func nativeAccountDeletionClearsAccountButPreservesGuestCredential() async throws {
         let store = APITestCredentials()
         let session = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
         let guest = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
@@ -387,15 +371,10 @@ struct APIClientTests {
             #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
             #expect(request.value(forHTTPHeaderField: "Origin") == nil)
             #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
-            if request.url?.path == "/api/native/auth/sign-out" { return .init(body: #"{"success":true}"#) }
             if request.url?.path == "/api/native/account/delete" { return .init(body: #"{"deleted":true,"localHouseholdDataPreserved":true}"#) }
             throw URLError(.badServerResponse)
         }
         let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        try await api.signOut()
-        #expect(store.read("session") == nil)
-        #expect(store.read("guest") == Data(guest.utf8))
-        store.write(Data(session.utf8), key: "session")
         let deletion = try await api.deleteAccount()
         #expect(deletion.localHouseholdDataPreserved)
         #expect(store.read("session") == nil)

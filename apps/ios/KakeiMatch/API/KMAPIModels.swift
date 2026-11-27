@@ -135,24 +135,6 @@ struct KMContactResult: Codable, Sendable {
 }
 struct KMTranscription: Codable, Sendable { let text: String }
 struct KMAccountDeletion: Codable, Sendable { let deleted: Bool; let localHouseholdDataPreserved: Bool }
-struct KMSignOut: Codable, Sendable { let success: Bool }
-struct KMPasskeyDeleted: Codable, Sendable { let status: Bool }
-struct KMCloudSession: Codable, Sendable {
-    struct User: Codable, Sendable {
-        let id: String; let name: String; let email: String; let emailVerified: Bool
-        let image: String?; let createdAt: Date; let updatedAt: Date
-    }
-    struct Session: Codable, Sendable {
-        let id: String; let userId: String; let token: String; let expiresAt: Date
-        let createdAt: Date; let updatedAt: Date; let ipAddress: String?; let userAgent: String?
-    }
-    let user: User; let session: Session
-}
-struct KMCloudPasskey: Codable, Sendable {
-    let id: String; let name: String?; let publicKey: String; let userId: String; let credentialID: String
-    let counter: Int; let deviceType: String; let backedUp: Bool; let transports: String?
-    let createdAt: Date?; let aaguid: String?
-}
 
 struct KMImageRequest: Codable, Sendable {
     let flowId: String; let imageBase64: String; let contentType: String; let maskingConfirmed: Bool?

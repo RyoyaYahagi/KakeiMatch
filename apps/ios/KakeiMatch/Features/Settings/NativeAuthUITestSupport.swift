@@ -9,8 +9,6 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
     nonisolated let appAttestSupported: Bool
     private var signedIn: Bool
     private var guest: Bool
-    private var passkeys: [KMCloudPasskey]
-    private let clock = Date(timeIntervalSince1970: 1_792_000_000)
     private let initial: Initial
     private let supportId: String?
 
@@ -20,12 +18,6 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
         appAttestSupported = initial != .unsupported
         signedIn = initial == .signedIn || initial == .signedInDaily
         guest = initial == .guest
-        let base = Date(timeIntervalSince1970: 1_792_000_000)
-        passkeys = signedIn ? [.init(
-            id: "ui-passkey-1", name: "この端末", publicKey: "synthetic", userId: "ui-user",
-            credentialID: "c3ludGhldGlj", counter: 0, deviceType: "singleDevice", backedUp: false,
-            transports: "internal", createdAt: base, aaguid: nil
-        )] : []
     }
 
     func nativeConfiguration() async throws -> KMNativeConfiguration {
@@ -36,27 +28,11 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
     func signInWithPasskey() async throws { signedIn = true }
     func registerPasskey(context _: String, name _: String) async throws { signedIn = true }
 
-    func addPasskey(name: String) async throws {
+    func addPasskey(name _: String) async throws {
         guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
-        passkeys.append(.init(
-            id: "ui-passkey-\(passkeys.count + 1)", name: name, publicKey: "synthetic", userId: "ui-user",
-            credentialID: "c3ludGhldGlj", counter: 0, deviceType: "singleDevice", backedUp: false,
-            transports: "internal", createdAt: clock, aaguid: nil
-        ))
     }
 
     func startGuest() async throws { guest = true }
-
-    func accountSession() async throws -> KMCloudSession? {
-        guard signedIn else { return nil }
-        return .init(
-            user: .init(id: "ui-user", name: "テスト利用者", email: "ui@example.test", emailVerified: true,
-                        image: nil, createdAt: clock, updatedAt: clock),
-            session: .init(id: "ui-session", userId: "ui-user", token: "ui-session-token",
-                           expiresAt: clock.addingTimeInterval(3_600), createdAt: clock, updatedAt: clock,
-                           ipAddress: nil, userAgent: nil)
-        )
-    }
 
     func accountUsage() async throws -> KMAIUsage {
         guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
@@ -74,21 +50,9 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
                      used: 2, limit: 5, remaining: 3, supportId: supportId)
     }
 
-    func listPasskeys() async throws -> [KMCloudPasskey] {
-        guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
-        return passkeys
-    }
-
-    func deletePasskey(id: String) async throws {
-        guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
-        passkeys.removeAll { $0.id == id }
-    }
-
     func issueAccountAIToken() async throws {
         guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
     }
-
-    func signOut() async throws { signedIn = false }
 
     func deleteAccount() async throws -> KMAccountDeletion {
         signedIn = false

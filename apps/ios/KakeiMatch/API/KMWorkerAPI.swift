@@ -553,36 +553,6 @@ actor KMWorkerAPI {
         return try await send("POST", "/api/contact/transcribe", body: body, authorization: "Bearer \(token)", shape: .object(["text": .text(max: 4000)]))
     }
 
-    func accountSession() async throws -> KMCloudSession? {
-        let result: KMCloudSession? = try await send("GET", "/api/auth/get-session", shape: KMAPIShapes.cloudSession)
-        if let result {
-            guard result.session.userId == result.user.id, result.session.expiresAt > now(),
-                  result.session.createdAt <= result.session.updatedAt else { throw KMAPIError.invalidResponse }
-        }
-        return result
-    }
-
-    func listPasskeys() async throws -> [KMCloudPasskey] {
-        let result: [KMCloudPasskey] = try await send("GET", "/api/auth/passkey/list-user-passkeys", shape: KMAPIShapes.passkeys)
-        guard Set(result.map(\.id)).count == result.count else { throw KMAPIError.invalidResponse }
-        return result
-    }
-
-    func deletePasskey(id: String) async throws {
-        struct Body: Codable { let id: String }
-        let body = try KMAPIValidation.request(Body(id: id), shape: .object(["id": .text(max: 128)]))
-        let result: KMPasskeyDeleted = try await send("POST", "/api/auth/passkey/delete-passkey", body: body, shape: .object(["status": .boolean]))
-        guard result.status else { throw KMAPIError.invalidResponse }
-    }
-
-    func signOut() async throws {
-        try clearAccessToken()
-        let result: KMSignOut = try await send("POST", "/api/auth/sign-out", body: Data("{}".utf8), shape: .object(["success": .boolean]))
-        guard result.success else { throw KMAPIError.invalidResponse }
-        try credentials.write(nil, key: "session")
-        try clearAccessToken()
-    }
-
     func deleteAccount() async throws -> KMAccountDeletion {
         try clearAccessToken()
         let result: KMAccountDeletion = try await send("DELETE", "/api/account/delete", shape: .object(["deleted": .boolean, "localHouseholdDataPreserved": .boolean]))

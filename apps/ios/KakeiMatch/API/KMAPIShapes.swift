@@ -1,13 +1,6 @@
 import Foundation
 
 enum KMAPIShapes {
-    static let instant = KMAPIShape.text(max: 40) // Date decoding below verifies ISO8601 including timezone.
-    static let cloudSession: KMAPIShape = .nullable(.object([
-        "user": .object(["id": .text(max: 128), "name": .text(max: 120), "email": .text(max: 254), "emailVerified": .boolean,
-                         "image": .nullable(.text(max: 2048)), "createdAt": instant, "updatedAt": instant], optional: ["image"]),
-        "session": .object(["id": .text(max: 128), "userId": .text(max: 128), "token": .text(max: 8192), "expiresAt": instant,
-                            "createdAt": instant, "updatedAt": instant, "ipAddress": .nullable(.text(max: 128)), "userAgent": .nullable(.text(max: 2048))], optional: ["ipAddress", "userAgent"])
-    ]))
     /// A monthly plan answers with `month`; an account without an entitlement row, or a guest-linked one, answers with the daily cap and `day`.
     static let accountUsage: KMAPIShape = .oneOf([
         .object([
@@ -21,11 +14,6 @@ enum KMAPIShapes {
             "supportId": .nullable(.text(max: 128)),
         ], optional: ["supportId"]),
     ])
-    static let passkeys: KMAPIShape = .array(.object([
-        "id": .text(max: 128), "name": .nullable(.text(max: 500)), "publicKey": .text(max: 8192), "userId": .text(max: 128),
-        "credentialID": .text(max: 2048), "counter": .integer(), "deviceType": .values(["singleDevice", "multiDevice"]),
-        "backedUp": .boolean, "transports": .nullable(.text(min: 0, max: 500)), "createdAt": .nullable(instant), "aaguid": .nullable(.text(max: 36))
-    ], optional: ["name", "transports", "createdAt", "aaguid"]), max: 100)
     static let yen = KMAPIShape.nullable(.integer())
     static let receipt: KMAPIShape = .object([
         "documentKind": .values(["receipt", "not_receipt", "unknown"]), "merchant": .nullable(.text()),
