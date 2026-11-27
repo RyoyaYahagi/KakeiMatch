@@ -204,6 +204,8 @@ struct APIClientTests {
     /// Answers the native token exchange only. Any other path returns nil.
     private static func nativeTokenReply(_ path: String?) -> APIStub.Reply? {
         switch path {
+        case "/api/native/config":
+            return APIStub.Reply(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         case "/api/native/challenge":
             return APIStub.Reply(body: #"{"challengeId":"00000000-0000-4000-8000-000000000007","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 5, count: 32)) + #"","expiresAt":1800000060}"#)
         case "/api/native/ai/token":
@@ -222,7 +224,7 @@ struct APIClientTests {
     private static let options = [KMCategoryOption(id: "food", name: "合成カテゴリ")]
 
     enum Endpoint: String, CaseIterable, Sendable {
-        case token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe, delete
+        case token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe
         var path: String {
             switch self {
             case .token: "/api/native/ai/token"
@@ -234,11 +236,10 @@ struct APIClientTests {
             case .suggestion: "/api/native/ai/category-suggestion"
             case .contact: "/api/native/contact"
             case .transcribe: "/api/native/contact/transcribe"
-            case .delete: "/api/native/account/delete"
             }
         }
         var method: String {
-            switch self { case .usage, .costs: "GET"; case .delete: "DELETE"; default: "POST" }
+            switch self { case .usage, .costs: "GET"; default: "POST" }
         }
         var body: String {
             switch self {
@@ -251,7 +252,6 @@ struct APIClientTests {
             case .suggestion: #"{"categoryId":"food"}"#
             case .contact: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#
             case .transcribe: #"{"text":"合成の問い合わせです。"}"#
-            case .delete: #"{"deleted":true,"localHouseholdDataPreserved":true}"#
             }
         }
     }
@@ -286,7 +286,6 @@ struct APIClientTests {
         case .suggestion: _ = try await client.suggestCategory(sourceCategoryName: "合成分類", categories: Self.options, flowID: Self.flow)
         case .contact: _ = try await client.submitContact(kind: .bug, message: "合成の問い合わせです。", flowID: Self.flow)
         case .transcribe: _ = try await client.transcribe(audio: KMUploadAudio(data: Data([0, 0, 0, 0] + Array("ftyp".utf8)), contentType: "audio/mp4"), flowID: Self.flow)
-        case .delete: _ = try await client.deleteAccount()
         }
     }
 
@@ -371,27 +370,6 @@ struct APIClientTests {
         let configuration = try await api.nativeConfiguration()
         #expect(configuration.available)
         #expect(configuration.rpId == "synthetic.example.test")
-    }
-
-    @Test
-    func nativeAccountDeletionClearsAccountButPreservesGuestCredential() async throws {
-        let store = APITestCredentials()
-        let session = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        let guest = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(session.utf8), key: "session")
-        store.write(Data(guest.utf8), key: "guest")
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
-            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
-            if request.url?.path == "/api/native/account/delete" { return .init(body: #"{"deleted":true,"localHouseholdDataPreserved":true}"#) }
-            throw URLError(.badServerResponse)
-        }
-        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
-        let deletion = try await api.deleteAccount()
-        #expect(deletion.localHouseholdDataPreserved)
-        #expect(store.read("session") == nil)
-        #expect(store.read("guest") == Data(guest.utf8))
     }
 
     @Test
