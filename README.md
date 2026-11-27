@@ -62,10 +62,10 @@ OCRの精度100%は目指していません。成功の基準は機能の数で�
 
 ### アカウントとサポート
 
-- **Passkeyログイン**: パスワードを使わず、Face IDなどでログインします。アカウントはAI機能の利用時だけ必要です
+- **ログイン**: 廃止しました（S6・S7で撤去）。AI機能はアカウントなしでも1日5回まで使えます
 - **AI利用枠**: 利用者ごとの月間利用回数と、サービス全体の費用上限を設けています
 - **お問い合わせ**: 音声で入力でき、問い合わせは運用担当者専用の受信箱へ保存され、担当者が確認してから必要なものを課題として登録します
-- **アカウント削除**: 本人がアカウントを削除できます。端末の家計データは削除されません
+- **アカウント削除**: 撤去しました（S7）。端末の家計データは端末に残ります
 
 ## 設計で大事にしたこと
 
@@ -103,7 +103,7 @@ iOS アプリは家計データを端末内に保存します。クラウド機�
 | 端末内保存 | SQLite（iOS） |
 | サーバー | Cloudflare Workers、Cloudflare Vite Plugin、`cf` CLI |
 | データベース | Cloudflare D1（アカウントとAI利用量のみ） |
-| 認証 | Better Auth、Passkey（WebAuthn） |
+| 認証 | App Attest（ネイティブ）、ネイティブセッションと短期token |
 | AI | Gemini API（レシート読み取り、文字起こし、カテゴリ分類） |
 | 検証・解析 | Zod、csv-parse |
 | テスト | Vitest、Playwright（合成データによるブラウザーE2E）、GitHub Actions |
@@ -133,8 +133,8 @@ iOS アプリは家計データを端末内に保存します。クラウド機�
 - [口座間振替](docs/LOCAL_TRANSFERS.md)と[定期収入・定期支出](docs/LOCAL_RECURRING_TRANSACTIONS.md)
 - [記録の検索・絞り込み](docs/LOCAL_TRANSACTION_SEARCH.md)
 - [月次ダッシュボード](docs/LOCAL_MONTHLY_DASHBOARD.md)、[口座残高](docs/LOCAL_ACCOUNT_BALANCES.md)、[月予算（全体／カテゴリ別）](docs/LOCAL_MONTHLY_BUDGETS.md)
-- [Cloud account](docs/CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1
-- [iOSネイティブ認証境界](docs/NATIVE_APP_AUTH.md): App Attest、Passkey、専用token、公開前の設定
+- [Cloud account](docs/CLOUD_ACCOUNT.md): AI利用、権限、D1
+- [iOSネイティブ認証境界](docs/NATIVE_APP_AUTH.md): App Attest、専用token、公開前の設定
 - [管理画面](docs/ADMIN.md)、[お問い合わせ](docs/CONTACT.md)と[端末内の診断](docs/LOCAL_DIAGNOSTICS.md)
 
 **データと運用**

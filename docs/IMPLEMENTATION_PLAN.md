@@ -6,7 +6,7 @@
 
 本番clientは `apps/pwa` で、Cloudflare Workerから配信します。本番の正規URLは `https://kakeimatch.yhgry.workers.dev` です。ブラウザー保存領域はURLごとに分かれるため、利用開始後もこのURLを維持してください。previewは合成データだけで使用します。
 
-家計簿、レシート、明細、照合状態は利用者の端末に保存します。ブラウザー版Actualエンジンが家計簿を管理し、KakeiMatchのIndexedDBが記録と原本を保存します。Cloud accountは家計操作に不要です。CloudflareのBetter AuthとD1は、本人確認、session、Passkey、招待・回復、利用権限、AI利用量だけに使います。Gemini（レシート読み取りとカテゴリ分類）への要求は同一originのWorker routeを通します。
+家計簿、レシート、明細、照合状態は利用者の端末に保存します。ブラウザー版Actualエンジンが家計簿を管理し、KakeiMatchのIndexedDBが記録と原本を保存します。Cloud accountは家計操作に不要です。CloudflareのD1とApp Attestのネイティブセッションは、本人確認、利用権限、AI利用量だけに使います（Passkey・招待・回復は S6・S7 で撤去）。Gemini（レシート読み取りとカテゴリ分類）への要求は同一originのWorker routeを通します。
 
 ## 現在の利用フロー
 
@@ -24,7 +24,7 @@ AIはレシート値やカテゴリを提案します。照合、データ境界
 - [アーキテクチャ](ARCHITECTURE.md): 本番構成とデータ境界
 - [ローカル利用フロー](LOCAL_FIRST_FLOW.md): synthetic browser / iPhone確認手順
 - [バックアップと復元](LOCAL_BACKUP.md): `.kmb` export、staged restore、整理、既知の制約
-- [Cloud account](CLOUD_ACCOUNT.md): Passkey、AI利用、権限、D1の運用
+- [Cloud account](CLOUD_ACCOUNT.md): AI利用、権限、D1の運用
 - [デプロイ](DEPLOYMENT.md): 本番とpreviewの運用
 - [明細形式](STATEMENT_FORMATS.md): 確認済みの明細形式
 

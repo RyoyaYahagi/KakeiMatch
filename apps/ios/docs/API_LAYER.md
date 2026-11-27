@@ -2,9 +2,9 @@
 
 ## 結論と実装範囲
 
-`API/KMWorkerAPI.swift` はネイティブ専用 Worker 境界の通信アダプターです。Passkey 操作は `AuthenticationServices` adapter、App Attest は `DeviceCheck` adapter に分離し、どちらもprotocol stubで置き換えられます。画面と `Data/` は変更しません。通常の家計操作はCloud accountへ依存させません。[構成: docs/ARCHITECTURE.md、実装: API/KMWorkerAPI.swift / KMNativeSecurity.swift]
+`API/KMWorkerAPI.swift` はネイティブ専用 Worker 境界の通信アダプターです。Passkey 操作（退役）の `AuthenticationServices` adapter は残るが呼びません。App Attest は `DeviceCheck` adapter に分離し、どちらもprotocol stubで置き換えられます。画面と `Data/` は変更しません。通常の家計操作はCloud accountへ依存させません。[構成: docs/ARCHITECTURE.md、実装: API/KMWorkerAPI.swift / KMNativeSecurity.swift]
 
-**既定の `.native` は全要求で Origin / Cookie を送らず、`/api/native/*` のみを呼びます。** App Attestが非対応の端末ではネイティブのクラウド機能を停止し、TurnstileやPWA経由へfallbackしません。`.existingWorkerCompatibility` は従来Worker APIを使う明示的な互換モードで、アプリ真正性の証明ではありません。Worker側も本PRで実装し、合成証明書・Passkey・D1のテストを追加しました。署名済み実機から実サーバーへの通信は未確認です。[Workerの設計と公開前手順](../../../docs/NATIVE_APP_AUTH.md)を参照してください。
+**既定の `.native` は全要求で Origin / Cookie を送らず、`/api/native/*` のみを呼びます。** App Attestが非対応の端末ではネイティブのクラウド機能を停止し、TurnstileやPWA経由へfallbackしません。`.existingWorkerCompatibility` は従来Worker APIを使う明示的な互換モードで、アプリ真正性の証明ではありません。Worker側も本PRで実装し、合成証明書・D1のテストを追加しました（Passkey のテストは S6・S7 で撤去）。署名済み実機から実サーバーへの通信は未確認です。[Workerの設計と公開前手順](../../../docs/NATIVE_APP_AUTH.md)を参照してください。
 
 ```swift
 // Preview は合成データ専用。資格情報の Keychain service も host ごとに分かれる。
@@ -15,7 +15,7 @@ let config = try KMAPIConfiguration(
 let api = KMWorkerAPI(configuration: config)
 ```
 
-本番の既定 URL は `https://kakeimatch.yhgry.workers.dev`。HTTPS origin のみ許可し、userinfo・path・query・fragment・非標準 port は拒否します。Keychain service はhost別で、`WhenUnlockedThisDeviceOnly`・同期なしです。session、guest session、App Attest key IDは分離して保存し、短期AI tokenは再起動後に復元しません。provider API key、bootstrap secret、JWT署名鍵は端末へ持ちません。自動再試行、redirect追従、HTTP cache、共有Cookie jarを使いません。[実装: API/KMCloudCredentials.swift、API/KMWorkerAPI.swift]
+本番の既定 URL は `https://kakeimatch.yhgry.workers.dev`。HTTPS origin のみ許可し、userinfo・path・query・fragment・非標準 port は拒否します。Keychain service はhost別で、`WhenUnlockedThisDeviceOnly`・同期なしです。ネイティブセッション（ゲスト）、App Attest key IDは分離して保存し、短期AI tokenは再起動後に復元しません。provider API key、bootstrap secret、JWT署名鍵は端末へ持ちません。自動再試行、redirect追従、HTTP cache、共有Cookie jarを使いません。[実装: API/KMCloudCredentials.swift、API/KMWorkerAPI.swift]
 
 ## Native API と端末認証
 
@@ -25,8 +25,8 @@ let api = KMWorkerAPI(configuration: config)
 | --- | --- |
 | 設定 | `GET /api/native/config`。`available`、`rpId`、`appAttestEnvironment` の相互整合を検証。RP IDは接続hostと一致必須 |
 | 鍵登録 | 一度だけ `DCAppAttestService.generateKey()` し、Appleが返すcanonical標準base64・32-byte key IDをhost別Keychainへ保存。challengeはcanonical base64urlで、復号後が必ず32 byte・120秒以内。`attestKey` のclientDataHashはその32 byteへのSHA-256。成功登録フラグを保存し、以後attestしない。失敗時に別鍵を自動生成しない |
-| ゲスト | `purpose:guest` challenge後にApp Attest assertionを送り、`POST /api/native/guest` の43文字sessionToken・最大14日期限を保存。Turnstileの既存 `createGuest` はnative modeで拒否 |
-| AI token | `purpose:token` challengeとNative sessionによるApp Attest assertionで43文字・最大600秒のopaque tokenを取得。残り30秒を超える間だけメモリcacheを再利用し、Keychainへ保存しない。contact以外のAI要求はBearer opaque token、account/usage/costsはNative sessionを使う |
+| ゲスト | `purpose:guest` challenge後にApp Attest assertionを送り、`POST /api/native/guest` の43文字sessionToken・最大14日期限を保存。Turnstileのゲスト作成（退役）はネイティブでは使わない |
+| AI token | `purpose:token` challengeとNative sessionによるApp Attest assertionで43文字・最大600秒のopaque tokenを取得。残り30秒を超える間だけメモリcacheを再利用し、Keychainへ保存しない。AI要求はBearer opaque token、usageはNative sessionを使う |
 | Passkey | 退役。`/api/native/passkey/*` は410を返す。アプリはPasskeyを使わない |
 | その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。signout・account deleteではaccount sessionとAI tokenを消し、guest session・家計データは保持 |
 
@@ -96,7 +96,7 @@ Geminiのレシート、Gemini Decisionsのカテゴリ分類、Geminiの給与�
 
 アカウント優先で `/token` を呼び、401時だけ保存済みゲストへ切り替える。contactは `allowGuest:false`。保存済みゲストが無効なら合言葉を削除し、勝手に新規作成しない。JWTの残り時間が**30秒超**の時だけメモリキャッシュを再利用し、account限定要求にguest JWTを使わない。JWT発行の最大期限は600秒として検証する。401後に有料要求を自動再送しない。[PWA (2026/10), ai-auth.ts / guest-ai.ts; 実装: KMWorkerAPI.swift]
 
-端末合言葉、session Cookie、短期JWTはhost別Keychain serviceへ保存する。`WhenUnlockedThisDeviceOnly`、同期なし。JWTはPWAの再起動時再取得に合わせ**Keychainから復元しない**。期限更新・logoutで削除する。再起動直後は古いKeychain JWTが残っていても読まず、次のtoken要求前に削除する。sessionは14日、24時間後の利用による更新はWorkerのSet-Cookieで受ける。共有Cookie jarやSafari Cookieを暗黙に流用しない。`installAccountSession` は将来の承認済み認証adapter用の境界であり、利用者にCookieの貼付けを求める導線ではない。[Cloud account, Passkeyとsession; 実装: KMCloudCredentials.swift / KMWorkerAPI.swift]
+端末合言葉、ネイティブセッション、短期AI tokenはhost別Keychain serviceへ保存する。`WhenUnlockedThisDeviceOnly`、同期なし。AI tokenは再起動後に**Keychainから復元しない**。期限更新・logoutで削除する。再起動直後は古いKeychain JWTが残っていても読まず、次のtoken要求前に削除する。sessionは14日、ネイティブセッションは発行から14日固定で、利用に応じて延長しない。共有Cookie jarやSafari Cookieを暗黙に流用しない。`installAccountSession` は将来の承認済み認証adapter用の境界であり、利用者にCookieの貼付けを求める導線ではない。[Cloud account, Passkeyとsession; 実装: KMCloudCredentials.swift / KMWorkerAPI.swift]
 
 logout・account削除はAIキャッシュとsessionを破棄するが、ゲストの合言葉と家計データを消さない。実行中の古い資格情報による応答は世代番号で拒否する。APIは家計Repositoryを参照しない。[実装: KMWorkerAPI.swift]
 
@@ -147,7 +147,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 
-未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのPasskeyおよびApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。ログイン・利用状況とレシートのゲスト確認はstubとXCUITestで検証し、実端末のPasskey・AASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
+未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。レシートのゲスト確認はstubとXCUITestで検証し、実端末のAASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
 
 ## 参照資料
 
