@@ -9,7 +9,7 @@ type Overview = {
 };
 type ProviderCosts = { requests: number; inputTokens: number; outputTokens: number; costUsdMicros: number; unknownRequests: number };
 type Costs = { month: string; currency: 'USD'; totalUsdMicros: number; unknownRequests: number; providers: { gemini: ProviderCosts; jev: ProviderCosts } };
-type AdminUser = { id: string; plan: string; createdAt: string | number; lastAiUseAt: string | number | null; aiRequests: number; kind: string; enabled: boolean };
+type AdminUser = { id: string; subject: 'account' | 'guest'; entitlement: string | null; createdAt: string | number; lastAiUseAt: string | number | null; aiRequests: number };
 type AdminError = { code: string; requests: number; lastSeen: number };
 type Feedback = { id: string; kind: string | null; status: string; message: string; createdAt: string | number; updatedAt?: string | number; aiSummary?: string | null; diagnostics?: unknown; githubIssueNumber?: number | null; githubIssueUrl?: string | null };
 
@@ -78,7 +78,7 @@ app.innerHTML = `
       <ul id="errors-list" class="admin-list"></ul>
     </section>
     <section id="admin-panel-users" class="admin-panel" role="tabpanel" aria-label="ユーザー" hidden>
-      <div class="admin-section-heading"><div><h2>アカウント</h2><p class="muted">家計簿やレシートの内容は含みません。</p></div><button id="users-refresh" class="secondary" type="button">更新</button></div>
+      <div class="admin-section-heading"><div><h2>利用者</h2><p class="muted">家計簿やレシートの内容は含みません。</p></div><button id="users-refresh" class="secondary" type="button">更新</button></div>
       <ul id="users-list" class="admin-list"></ul>
     </section>
   </main>`;
@@ -195,13 +195,13 @@ async function loadUsers() {
     const data = await getJson<{ users: AdminUser[] }>('/api/admin/users?limit=100');
     if (requestId !== panelRequests.users || activePanel !== 'users') return;
     const list = app!.querySelector<HTMLUListElement>('#users-list')!; list.replaceChildren();
-    if (!data.users.length) list.append(element('li', 'empty muted', 'アカウントはありません。'));
+    if (!data.users.length) list.append(element('li', 'empty muted', '利用者はいません。'));
     for (const user of data.users) {
       const row = element<HTMLLIElement>('li', 'admin-list-row admin-user-row');
-      row.append(element('strong', undefined, user.id), element('span', 'muted', `${user.plan} · ${user.kind} · ${user.enabled ? '有効' : '無効'} · AI ${count(user.aiRequests)}回`), element('small', 'muted', `作成 ${dateLabel(user.createdAt)} · 最終AI利用 ${dateLabel(user.lastAiUseAt)}`));
+      row.append(element('strong', undefined, user.id), element('span', 'muted', `${user.subject === 'guest' ? 'ゲスト' : 'アカウント'} · 付与 ${user.entitlement ?? 'なし'} · AI ${count(user.aiRequests)}回`), element('small', 'muted', `作成 ${dateLabel(user.createdAt)} · 最終AI利用 ${dateLabel(user.lastAiUseAt)}`));
       list.append(row);
     }
-    setStatus('アカウント情報を更新しました。');
+    setStatus('利用者の情報を更新しました。');
   } catch (error) { if (requestId === panelRequests.users && activePanel === 'users') errorView(error); }
 }
 
