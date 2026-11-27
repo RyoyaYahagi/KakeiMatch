@@ -7,7 +7,7 @@ case "${1:-}" in
     xcodebuild -version
     simulator_name="${SIMULATOR_NAME:-iPhone 17}"
     case "$simulator_name" in
-      "iPhone 17"|"iPhone SE (3rd generation)") ;;
+      "iPhone 17") ;;
       *) echo "Unsupported simulator: $simulator_name" >&2; exit 2 ;;
     esac
     device_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]["com.apple.CoreSimulator.SimRuntime.iOS-26-2"]; m=[x for x in d if x["name"] == sys.argv[1]]; len(m) == 1 or sys.exit(f"Expected one {sys.argv[1]} simulator in iOS 26.2, found {len(m)}"); print(m[0]["udid"])' "$simulator_name")
