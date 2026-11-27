@@ -106,13 +106,13 @@ App Attestは本人認証の代わりではありません。ゲストはその�
 | 表 | 保存するもの |
 | --- | --- |
 | `native_app_keys` | 鍵ID、origin・App ID・環境、公開鍵、receipt、counter、guest/account対応、登録・失効時刻 |
-| `native_sessions` | セッションSHA-256、鍵・user・参照先の Better Auth session（`auth_session_id`、外部キー）、identity、期限 |
+| `native_sessions` | セッションSHA-256、鍵・user、identity、期限 |
 | `native_challenges` | 乱数challenge、用途・鍵・セッション参照、期限・消費時刻 |
 | `native_ai_tokens` | token SHA-256、audience、セッション参照、期限 |
 
 家計データ・画像・App Attest秘密鍵・生のセッション/AI tokenは保存しません。定期handlerが期限切れのchallenge・token・セッション行を削除します。削除前でも毎要求の期限検査で拒否します。
 
-userの削除は外部キーでnative session / AI tokenへ伝播します。`native_sessions.auth_session_id` は Better Auth の `session(id)` への外部キー（`ON DELETE CASCADE`）で、この表は残ります（S8で表を整理するまで）。Better Auth の session 行が削除されれば、紐づくネイティブセッションも削除されます。鍵は監査とcounter再利用防止のため残します。鍵を緊急失効する場合は、対象環境のD1で `native_app_keys.revoked_at` を現在のUnix秒へ更新します。新鍵登録で既存keyIdを上書きしません。鍵IDは端末識別に関わるmetadataなので、ログやPRへ掲載しません。
+userの削除は外部キーでnative session / AI tokenへ伝播します。[`0020_remove_account_auth_tables.sql`](../workers/ai-gateway/migrations/0020_remove_account_auth_tables.sql) で `native_sessions` から旧 `auth_session_id` 列と Better Auth 関連表を外し、既存のネイティブセッション行は自然失効まで保持します（`account_deletion_tombstones` とトリガーは維持）。鍵は監査とcounter再利用防止のため残します。鍵を緊急失効する場合は、対象環境のD1で `native_app_keys.revoked_at` を現在のUnix秒へ更新します。新鍵登録で既存keyIdを上書きしません。鍵IDは端末識別に関わるmetadataなので、ログやPRへ掲載しません。
 
 ## 6. 設定と環境の分離
 
