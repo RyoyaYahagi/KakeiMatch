@@ -812,7 +812,12 @@ struct APIClientTests {
     func tokenRefreshesAtThirtySecondsAndNeverRestoresFromDisk() async throws {
         let clock = Mutex(Self.now)
         let store = Self.nativeCredentials()
-        APIStub.reset { request in Self.aiReply(request, body: "{}") }
+        APIStub.reset { request in
+            // The challenge expires 60 seconds after the test clock, so it must move with the clock.
+            guard request.url?.path == "/api/native/challenge" else { return Self.aiReply(request, body: "{}") }
+            let expiresAt = Int(clock.withLock { $0 }.timeIntervalSince1970) + 60
+            return APIStub.Reply(body: #"{"challengeId":"00000000-0000-4000-8000-000000000007","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 5, count: 32)) + #"","expiresAt":\#(expiresAt)}"#)
+        }
         let tokenExchanges = { APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/ai/token" }.count } }
         let api = try client(credentials: store, clock: { clock.withLock { $0 } })
         _ = try await api.accessToken(allowGuest: false)
