@@ -229,6 +229,7 @@ jobs:
           xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
             -destination "$DESTINATION" -derivedDataPath DerivedData \
             -resultBundlePath Build.xcresult build-for-testing \
+            -enableCodeCoverage NO \
             CODE_SIGNING_ALLOWED=NO IgnoreFileSystemDeviceInodeChanges=YES
       - name: Package test products preserving permissions and symlinks
         run: tar -czf test-products.tar.gz -C DerivedData/Build Products
@@ -458,6 +459,7 @@ jobs:
           fi
           observe_ios_test swift-testing xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
+            -enableCodeCoverage NO \
             -only-testing:KakeiMatchTests test-without-building
       - name: Generate parity report
         if: always() && matrix.shard == 0
@@ -496,6 +498,7 @@ jobs:
           fi
           observe_ios_test xcuitest xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UITests.xcresult -parallel-testing-enabled NO \
+            -enableCodeCoverage NO \
             "${test_args[@]}" test-without-building
       - name: Export screenshots
         if: always()
