@@ -4,7 +4,7 @@ Cloudflare Worker for the native app API and the admin screen. The D1 binding st
 
 ## Identity boundary and account routes
 
-The iOS app uses `/api/native/*`, with Passkey and App Attest for authentication. `src/hosting.ts` serves the native API, AASA, and the Access-protected admin UI and API. Signing secrets and provider keys are Worker bindings.
+The iOS app uses `/api/native/*`, with App Attest sessions for authentication (Passkey was retired). `src/hosting.ts` serves the native API, AASA, and the Access-protected admin UI and API. Signing secrets and provider keys are Worker bindings.
 
 
 The account D1 database contains identity/auth records, `account_entitlements`, and `ai_receipt_flows` usage/idempotency metadata, plus the support Inbox and metadata-only admin audits. It does not contain household data. Missing entitlement rows use the configured `AI_FREE_MONTHLY_LIMIT` (30 by default). Plus (stored as the internal plan ID `family`) has a null monthly limit, meaning no monthly product quota; the existing per-user/provider rate limit remains active. Pro is admin-set only and has a finite limit. Monthly buckets follow Asia/Tokyo calendar months; continuations remain in their starting month.
@@ -31,7 +31,7 @@ npm run --prefix workers/ai-gateway build
 
 `npm run --prefix workers/ai-gateway dev` starts the Worker locally with the Gateway Vite and Cloudflare configuration. CI builds the admin assets and runs `test/admin-e2e.mjs` against a local preview with synthetic admin responses.
 
-The Worker supplies `ACCOUNT_DB`, `BETTER_AUTH_SECRET`, `AI_GATEWAY_AUTH_SECRET`, and `AI_GUEST_DAILY_LIMIT` with the provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf --help` and `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
+The Worker supplies `ACCOUNT_DB`, `AI_GATEWAY_AUTH_SECRET`, and `AI_GUEST_DAILY_LIMIT` with the provider and rate-limit bindings. Provision real secret values with the current `cf` commands after checking `cf --help` and `cf cli search`; never pass values in shell arguments, save them in Git, or copy them between worktrees.
 
 ## Gemini classification
 
@@ -41,7 +41,7 @@ Apply versioned SQL under `migrations/` before deployment. For Issue #60, apply 
 
 Production uses `https://kakeimatch.yhgry.workers.dev` for the native API and the admin screen. The default Issue #39 preview uses a separate synthetic-test D1 database.
 
-See the [deployment guide](../../docs/DEPLOYMENT.md) for production updates, owner secret handling, operator invites, and Passkey/provider/iPhone checks.
+See the [deployment guide](../../docs/DEPLOYMENT.md) for production updates, owner secret handling, provider keys, and iPhone checks.
 
 ## Provider cost events (Issue #117)
 
@@ -61,4 +61,4 @@ The iOS app uses native contact routes. Transcription uses inline Base64 audio w
 
 ## Cloud account deletion (Issue #151)
 
-The native account deletion route requires a valid native session and resolves the user ID from that session. The D1 batch atomically writes an opaque-ID tombstone and deletes the user, cascading credentials, sessions, invites, entitlements, AI usage/cost records, and contact idempotency state. The tombstone and database trigger prevent a stale Passkey registration from restoring the deleted user ID. AI bearer JWTs are checked against the live account row on every request, so deletion invalidates them immediately. If cleanup fails, the D1 batch rolls back and the endpoint returns 503.
+The native account deletion route was retired in S7 unit 1 and returns 410; the following describes the former design. It requires a valid native session and resolves the user ID from that session. The D1 batch atomically writes an opaque-ID tombstone and deletes the user, cascading credentials, sessions, invites, entitlements, AI usage/cost records, and contact idempotency state. The tombstone and database trigger prevent a stale Passkey registration from restoring the deleted user ID. AI bearer JWTs are checked against the live account row on every request, so deletion invalidates them immediately. If cleanup fails, the D1 batch rolls back and the endpoint returns 503.

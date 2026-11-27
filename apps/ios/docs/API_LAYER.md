@@ -19,7 +19,7 @@ let api = KMWorkerAPI(configuration: config)
 
 ## Native API と端末認証
 
-`.native` のURLは `/api` を `/api/native` に置き換えます。`GET /api/native/config` は端末認証前に確認できる公開情報です。鍵登録とPasskey開始も専用のchallenge経路を使い、検証完了まではaccount sessionを発行しません。設定値がない場合はWorkerの `available:false` を表示し、その他のnative要求は `503 not_configured` などの理由で失敗として扱います。成功要求にもOrigin/Cookieを付けません。
+`.native` のURLは `/api` を `/api/native` に置き換えます。`GET /api/native/config` は端末認証前に確認できる公開情報です。鍵登録は専用のchallenge経路を使い、検証完了までネイティブセッションを発行しません。設定値がない場合はWorkerの `available:false` を表示し、その他のnative要求は `503 not_configured` などの理由で失敗として扱います。成功要求にもOrigin/Cookieを付けません。
 
 | 操作 | native要求と検証 |
 | --- | --- |
@@ -27,10 +27,10 @@ let api = KMWorkerAPI(configuration: config)
 | 鍵登録 | 一度だけ `DCAppAttestService.generateKey()` し、Appleが返すcanonical標準base64・32-byte key IDをhost別Keychainへ保存。challengeはcanonical base64urlで、復号後が必ず32 byte・120秒以内。`attestKey` のclientDataHashはその32 byteへのSHA-256。成功登録フラグを保存し、以後attestしない。失敗時に別鍵を自動生成しない |
 | ゲスト | `purpose:guest` challenge後にApp Attest assertionを送り、`POST /api/native/guest` の43文字sessionToken・最大14日期限を保存。Turnstileの既存 `createGuest` はnative modeで拒否 |
 | AI token | `purpose:token` challengeとNative sessionによるApp Attest assertionで43文字・最大600秒のopaque tokenを取得。残り30秒を超える間だけメモリcacheを再利用し、Keychainへ保存しない。contact以外のAI要求はBearer opaque token、account/usage/costsはNative sessionを使う |
-| Passkey | `POST /api/native/passkey/options` のBetter Auth optionsからcanonicalな32-byte challengeを復号し、明示された `rpId` または `rp.id` が接続hostと一致する場合だけ `ASAuthorizationPlatformPublicKeyCredentialProvider` へ渡す。RP IDをhostへ補完しない。招待登録はcontextを渡し、Passkey追加（contextなし）はNative account sessionで認証する。登録では `user.id`、認証では存在する `allowCredentials` も復号して渡す。platform requestはuser verificationをrequiredにする。verify時のApp Attest hashはoptions.challenge bytesのSHA-256。Workerだけがchallenge状態を保持し、端末Cookie jarは使わない |
+| Passkey | 退役。`/api/native/passkey/*` は410を返す。アプリはPasskeyを使わない |
 | その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。signout・account deleteではaccount sessionとAI tokenを消し、guest session・家計データは保持 |
 
-画面との接続は `Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` です。`KMNativeAuthService` は `KMWorkerAPI` の必要最小限の操作だけをprotocolにし、テストはstubを注入します。設定の「ログイン・利用状況」は `nativeConfiguration` → `accountSession` → usage/passkey の順に読み、未ログインならguest usage、ログイン中ならaccount usageとPasskey一覧を表示します。`signInWithPasskey`・`registerPasskey(context:)`・`addPasskey`・`signOut`・`deleteAccount` は成功後にsnapshotを取り直します。ログアウトと本人削除はaccount sessionとAI tokenだけを消し、guest sessionと家計データを消しません。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続けます。
+画面との接続（退役分）: 設定のログイン・Passkey画面は S6 で撤去済み。`KMNativeAuthService` などの service 層は残るが、UI からは呼ばない。ゲストの利用状況は `usage` で読む。ログアウトと本人削除の経路は退役し、ゲストの合言葉と家計データは従来どおり消さない。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続ける。
 
 未ログインでAIを使う最初のレシート読み取りは、token取得が `nativeAuthenticationRequired` で止まった時に確認ダイアログを出し、`createNativeGuest()` の後に同じ写真の読み取りを再開します。これはPWAのTurnstile確認に相当するゲートで、キャンセル・失敗でも画像と手入力は保持します。ゲスト作成の日次上限はWorkerが決め、端末は結果だけを表示します。
 
@@ -38,37 +38,29 @@ SimulatorまたはApp Attest非対応端末はnativeクラウド認証・AI利�
 
 Apple公式資料では、Passkey用platform providerの役割とRP ID指定、App Attestの端末側鍵生成・attestation/assertion、Associated Domainsのwebcredentials entitlementが定義されています。実装は公式APIの責務に留め、server-side検証を端末で代替しません。[Apple Passkeys: `ASAuthorizationPlatformPublicKeyCredentialProvider` / “Supporting passkeys”; Apple DeviceCheck: `DCAppAttestService` / “Establishing your app’s integrity”; Apple Xcode: “Supporting associated domains”]
 
-## endpoint 一覧（従来Worker互換モード）
+## endpoint 一覧（現行 Worker）
 
-この節の正本は `workers/ai-gateway/src/hosting.ts`、`workers/ai-gateway/src/{worker,guest-ai,account-auth,contact,feedback,payroll-schema,ai-provider-costs}.ts`。認証 plugin 部分は lockfile が固定する Better Auth / Passkey **1.7.6** の配布ソース（`dist/api/routes/{session,sign-out}.mjs`、Passkey `dist/index.mjs`）も確認した。下表の JSON は省略記法であり、`?` はキー省略可、`T|null` はキー必須・null 許可を表す。[Worker (2026/10), routing / schemas; Better Auth (2026/10), routes]
+この節の正本は `workers/ai-gateway/src/hosting.ts`（公開入口と410）、`workers/ai-gateway/src/native-auth.ts`（ネイティブ境界）、`workers/ai-gateway/src/worker.ts`（AIの処理と利用量）。下表の JSON は省略記法であり、`?` はキー省略可、`T|null` は null を許す値です。
 
-認証記号: **S** = サーバーが検証した Better Auth session Cookie、**G** = `Authorization: Guest <43文字の端末合言葉>`、**B** = `Authorization: Bearer <10分のAI JWT>`、**O** = 接続先 origin と一致する Origin ヘッダー必須。GET で Origin を付ける場合も一致が必要（guest config は検査しない）。B の `sub` はサーバーが決め、要求に user ID を入れない。[Worker (2026/10), handleRequest / authenticate; Account (2026/10), getAccountSession]
+認証記号: **N** = `Authorization: Native <43文字のネイティブセッション>`（発行から14日固定）、**B** = `Authorization: Bearer <43文字のAI token>`（最大600秒、専用audience）、**A** = App Attest assertion を `purpose` 付きの challenge 経由で送る要求。ネイティブ要求は Origin と Cookie を受け付けず、403 を返します。Cookie は認証に使いません。
 
-| method / path | request | response schema | 認証 / iOS 実装 |
+| method / path | request | response | 認証 |
 | --- | --- | --- | --- |
-| GET `/api/ai/guest` | なし | `{guestAvailable:Bool,turnstileSiteKey:String|null}` | 公開、実装済み |
-| POST `/api/ai/guest` | `{turnstileToken:String(1…2048)}`、4 KiB以下 | 201 `{guestSecret:base64url(43)}` | O + Turnstile、通信のみ。確認UIなし |
-| POST `/api/ai/token` | bodyなし | `{token:JWT,expiresAt:Unix秒Int}` | S または G、O、実装済み |
-| GET `/api/ai/usage` | なし | アカウント `{plan:free|pro|family,period:month,month:YYYY-MM,used:Int,limit:Int|null,remaining:Int|null}` / ゲスト `{plan:guest,period:day,day:YYYY-MM-DD,used:Int,limit:Int,remaining:Int}` | S または G。B では取得しない。実装済み |
-| GET `/api/ai/costs?month=YYYY-MM` | month省略時は日本の当月。iOSは明示指定 | `{month,currency:USD,totalUsdMicros:Int,unknownRequests:Int,providers:{gemini:Cost,jev:Cost}}` | S のみ、実装済み |
-| POST `/api/ai/gemini` | `{flowId:UUIDv4,imageBase64,contentType:image/jpeg|image/png|image/webp}` | Receipt（下記） | B + O、実装済み |
-| POST `/api/ai/payroll` | 上記 + `{maskingConfirmed:true}` | `{extraction:Payroll,model:String(1…100),promptVersion:payroll-v1}` | B + O、実装済み |
-| POST `/api/ai/jev` | `{flowId,receipt:{merchant:String|null,totalAmountYen:Int|null,items:[{name,amountYen:Int|null}]},categories:[{id,name}],itemIndexes?:[Int]}` | `{model:String,answers:{categoryまたはitem_N:Choice}}` | B + O、実装済み |
-| POST `/api/ai/category-suggestion` | `{flowId,sourceCategoryName:String(1…200),categories:[{id,name}]}` | `{categoryId:候補内ID|null}` | B + O、実装済み |
-| POST `/api/contact` | `{flowId,kind:bug|improvement|question,message:String(1…4000),originalMessage?:String(1…4000),diagnostic?:Diagnostic}`、20 KiB以下 | `{feedbackId,kind,reply,issueUrl:null}` | B + O。PWA / iOS は account のみ。通信実装済み。診断情報は利用者が同意した時だけ添付 |
-| POST `/api/contact/transcribe` | `{flowId,audioBase64,contentType:audio/mp4|audio/webm|audio/ogg|audio/wav|audio/mpeg}` | `{text:String(1…4000)}` | B + O。PWA は account のみ。iOS は音声入力を作らないため呼ばない |
-| POST `/api/contact/interview` | `{flowId,message,history:[{question,answer}]最大4,finish:Bool,diagnostic?:Diagnostic}` | `{status:ask|ready,kind,question,recommendation,summary}` | B + O。旧互換用、通常PWAから呼ばないため移植しない |
-| GET `/api/auth/get-session` | なし | `{user:User,session:Session}|null` | S、実装済み |
-| GET `/api/auth/passkey/list-user-passkeys` | なし | `[Passkey]` | S、実装済み |
-| POST `/api/auth/passkey/delete-passkey` | `{id:PasskeyのID}` | `{status:true}` | S + Better Auth CSRF、実装済み |
-| POST `/api/auth/sign-out` | `{}` | `{success:true}`（現在のPasskey専用設定） | S + Better Auth CSRF、実装済み |
-| DELETE `/api/account/delete` | bodyなし、user IDなし | `{deleted:true,localHouseholdDataPreserved:true}` | S + O、実装済み |
-| GET `/api/auth/passkey/generate-register-options` | query `name?,context?:招待token,authenticatorAttachment?` | WebAuthn `PublicKeyCredentialCreationOptionsJSON`（challenge,rp,user,pubKeyCredParams,excludeCredentials等） | session または招待、未実装 |
-| POST `/api/auth/passkey/verify-registration` | `{response:RegistrationResponseJSON,name?,createSession?:Bool}` | Passkey。session作成時は `{...Passkey,session,user}`、Set-Cookie | challenge Cookie / 招待のサーバー検証、未実装 |
-| GET `/api/auth/passkey/generate-authenticate-options` | なし | WebAuthn `PublicKeyCredentialRequestOptionsJSON`（challenge,rpId,allowCredentials等） | challenge Cookieを発行、未実装 |
-| POST `/api/auth/passkey/verify-authentication` | `{response:AuthenticationResponseJSON}` | `{session,user}`、Set-Cookie | challenge Cookie + WebAuthn検証、未実装 |
+| GET `/api/native/config` | なし | `{available:Bool,rpId:String|null,appAttestEnvironment:String|null}` | 公開 |
+| POST `/api/native/challenge` | `{purpose:attest|guest|token,keyId}` | `{challengeId,challenge,expiresAt}`（120秒・一回限り） | `token` は N |
+| POST `/api/native/attest` | `{challengeId,keyId,attestation}` | `{registered:true}` | App Attest の鍵登録 |
+| POST `/api/native/guest` | `{challengeId,keyId,assertion}` | 201 `{sessionToken,expiresAt}` | A。ゲスト作成は日次上限あり |
+| POST `/api/native/ai/token` | `{challengeId,keyId,assertion}` | 200 `{token,expiresAt}` | N + A。opaque、最大600秒 |
+| POST `/api/native/ai/gemini`・`/payroll`・`/jev`・`/category-suggestion` | 各AI要求（下記） | 各AI応答 | B |
+| GET `/api/native/ai/usage` | なし | 付与あり `{plan,period:"month",month,used,limit,remaining,supportId}`、付与なし `{plan:guest|free,period:"day",day,used,limit,remaining,supportId}` | N |
 
-管理者用 `POST /api/account/{invites,recovery}` は bootstrap secret が必要であり、ネイティブアプリの呼び出し対象外。招待発行は `{email,name}`、回復は `{email,name?}`、201応答は `{context:招待token,expiresAt:ISO8601,inviteUrl}`。アプリに管理者 secret を入れない。admin Inbox API も対象外。[Account (2026/10), handleAccountRequest]
+`supportId` は利用者の内部IDで、問い合わせのときの照合に使います。画面には表示しません。
+
+退役した経路は410 `{error:"gone"}` を返します。ネイティブでは `/api/native/passkey/*`、`/api/native/auth/*`、`/api/native/account/*`、`/api/native/contact*`、`/api/native/ai/costs` です。Web の `/api/auth/*`、`/api/account/*`、`/api/ai/*`、`/api/contact*`、`/api/ai/guest` は公開入口（`hosting.ts`）で410を返します。
+
+管理画面（`/admin`、`/api/admin/*`）は Cloudflare Access の JWT で認可し、ネイティブアプリは呼びません。
+
+退役: 招待・回復の `POST /api/account/{invites,recovery}` は単位1で削除し、410を返す。アプリに管理者 secret を入れない。admin Inbox API も対象外。
 
 ### JSON の詳細と検証
 
@@ -76,9 +68,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 - **Payroll**: `documentKind:pay_slip|not_pay_slip|unknown`、`employerName,paymentDate,payPeriod` はnullable、`payType:salary|bonus|other`、`grossPayYen,netPayYen` はnullable整数円、`deductions:{incomeTaxYen,residentTaxYen,healthInsuranceYen,pensionYen,employmentInsuranceYen,otherYen,totalYen}` は全キー必須nullable整数円、`allowances:[{name,amountYen}]`、`warnings:[{field:既知field|null,code:unreadable|uncertain|amount_mismatch}]` 各最大30。ラベルはNFKC後の7桁以上の番号、氏名・住所等の識別情報ラベル、URL、@を拒否。支給日補完・手取り再計算はしない。[Payroll (2026/10), payrollSchema]
 - **Choice**: `{type:choice,choice:候補内ID,confidence:Decimal(0…1),probabilities:{全候補ID:Decimal(0…1)}}`。回答キー集合・候補集合が要求と一致し、確率和の誤差が0.02以内、choice が最大確率であることを検証する。画面の提案値はPWAと同じく最大確率0.75以上・2位との差0.15以上の時だけ返す。[PWA (2026/10), safeCategoryResponse]
 - **分類要求**（route名 `/api/ai/jev` と費用応答の `jev` キーは旧provider名の名残で、現在の送信先はGemini Decisions API）: Geminiの同じ抽出値を元に店名・品目名を200 UTF-16単位以内、先頭30品目に絞る。学習済みの分類を先に適用し、未分類indexだけを渡す責任は呼び出し元サービスにある。候補は1…100件、ID一意・1…128文字、名前1…100文字。ローカル学習履歴・画像・家計簿全体を送らない。[PWA (2026/10), local-receipts.ts / local-category-learning.ts]
-- **Cost**: `{requests,inputTokens,outputTokens,costUsdMicros,unknownRequests}` は非負の安全整数。合計料金・不明件数はprovider和と一致、`unknownRequests<=requests`。通貨はUSD。金額にDoubleを使わない。[Costs (2026/10), monthlyCosts]
-- **User / Session**: Userは`{id,name,email,emailVerified,image?:String|null,createdAt,updatedAt}`、Sessionは`{id,userId,token,expiresAt,createdAt,updatedAt,ipAddress?:String|null,userAgent?:String|null}`。日時はtimezone付きISO8601。user ID一致とsession期限を検証する。native境界は `ipAddress` / `userAgent` を省略し、D1のepoch millisecondsで返るUserとPasskeyの `createdAt` をISO8601へ直す。取得結果は保存・ログ・診断へ入れない。[Better Auth (2026/10), get-session; 実装: KMAPIModels.swift]
-- **Passkey**: `{id,name?:String|null,publicKey,userId,credentialID,counter:Int>=0,deviceType:singleDevice|multiDevice,backedUp:Bool,transports?:String|null,createdAt?:ISO8601|null,aaguid?:String|null}`。一覧のID重複を拒否。[Better Auth (2026/10), Passkey schema / listPasskeys]
+- **Cost（保存形式。`/api/ai/costs` は退役）**: `{requests,inputTokens,outputTokens,costUsdMicros,unknownRequests}` は非負の安全整数。合計料金・不明件数はprovider和と一致、`unknownRequests<=requests`。通貨はUSD。金額にDoubleを使わない。[Costs (2026/10), monthlyCosts]
 - **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSも同じrecorderを `Features/Contact/ContactDiagnosticRecorder.swift` に持ち、40件・15分・contact除外・明示同意の条件と、画面名・操作種別・安全なエラーコード・オンライン状態・相対秒だけの固定語彙を揃えた。iOSは送信前に同じschemaで自己検証し、未知キー・未知値・欠けた項目を含む診断情報は送らない。native gatewayはbodyを変えず `/api/contact` へ転送し、Workerが同じschemaで再検証する。任意文字列JSONを受ける代用品は作らない。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts; 実装: ContactPresentation.swift / KMWorkerAPI.swift]
 
 すべての応答はJSON Content-Type・1 MiB上限・形の検証を経てCodableへdecodeする。未知キー、未知enum、欠けたnullable必須キー、整数円の小数・負値・JS安全整数超過、実在しない日付、範囲外indexを正常値として返さない。Receiptの日付はWorkerの簡易正規表現より厳しく暦日を検証する。欠損を空値に置換しない。[実装: KMAPIValidation.swift / KMAPIShapes.swift]
@@ -126,7 +116,7 @@ logout・account削除はAIキャッシュとsessionを破棄するが、ゲス�
 
 PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact画面は `contact-ui.ts:errorMessage`、給与明細画面は `payroll-ui.ts` の文脈別文言に合わせる。APIは生のserver message・未知errorを画面へ出さない。[PWA (2026/10), gatewayError / contact-ui.ts / payroll-ui.ts]
 
-問い合わせのnative経路は `/api/native/contact` がbodyをそのまま `/api/contact` へ転送する。Worker設定不足は `503 not_configured`、未ログインは `401 unauthorized`、不正な本文・診断情報は `400 invalid_request`、同じflowIdで内容を変えた再送は `409 invalid_flow`、レート制限は `429 rate_limited`、保存鍵の設定不良も `503 not_configured` で返る。iOSはこれらを既存の `KMAPIError` へ分類し、ログイン・設定不足・入力・混雑を別の文言にする。SimulatorやApp Attest非対応端末は要求前に `nativeUnsupported` で止まり、通信失敗として扱わない。[Worker (2026/10), handleRequest / contact.ts / native-auth.ts; 実装: KMWorkerAPI.swift / ContactPresentation.swift]
+問い合わせのnative経路（`/api/native/contact*`）は単位1で410を返すため、以下の応答は退役前の契約として残す。旧経路は `/api/native/contact` がbodyをそのまま `/api/contact` へ転送していた。Worker設定不足は `503 not_configured`、未ログインは `401 unauthorized`、不正な本文・診断情報は `400 invalid_request`、同じflowIdで内容を変えた再送は `409 invalid_flow`、レート制限は `429 rate_limited`、保存鍵の設定不良も `503 not_configured` で返る。iOSはこれらを既存の `KMAPIError` へ分類し、ログイン・設定不足・入力・混雑を別の文言にする。SimulatorやApp Attest非対応端末は要求前に `nativeUnsupported` で止まり、通信失敗として扱わない。[Worker (2026/10), handleRequest / contact.ts / native-auth.ts; 実装: KMWorkerAPI.swift / ContactPresentation.swift]
 
 ## 画像・音声の前処理
 
@@ -144,11 +134,11 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 | --- | --- |
 | GET config | `{available,rpId,appAttestEnvironment}` を返す。未設定時は利用不可にし、native credential endpointは失敗閉鎖 |
 | challenge/attest | purpose別に32-byte challengeを発行し120秒で失効。登録済み鍵、nonce、counter/replay、App ID、環境をWorkerで検証 |
-| guest/session | guestは同じApp Attest鍵から同じuserを再利用し、session tokenは14日固定。token発行・Passkey追加時のaccount認可はWorker側で強制 |
-| Passkey | Better AuthのWebAuthn challenge/verificationを維持し、native responseのorigin/RP条件を検証。challenge状態はWorker側だけに保持 |
+| guest/session | guestは同じApp Attest鍵から同じuserを再利用し、session tokenは14日固定。AI token発行はネイティブセッションとApp Attest assertionで認可する |
+| Passkey | 退役（410）。Passkeyの検証とchallenge状態は現行Workerにない |
 | preview | host・RP ID・App Attest環境・Keychain serviceを本番から分離。previewは合成データ専用 |
 
-この表のendpoint・schema・期限は本PRのWorker実装と対応します。合成Passkeyの認証・招待登録、失効、Origin拒否、利用枠・費用停止をWorker側のテストで検証します。Apple資料ではPasskey platform providerがRP IDとchallengeを使うこと、App Attestで鍵・attestation/assertionを生成してサーバーが検証すること、Associated Domainsにwebcredentials entitlementが必要なことを確認しました。[Apple Passkeys / Apple DeviceCheck / Apple Associated Domains、参照資料]
+この表のendpoint・schema・期限は現行Worker（`native-auth.ts`）と対応します。ネイティブのゲスト作成、AI token、Origin拒否、利用枠・費用停止はWorker側のテストで検証します。Passkeyの検証は退役により対象外です。Apple資料ではPasskey platform providerがRP IDとchallengeを使うこと、App Attestで鍵・attestation/assertionを生成してサーバーが検証すること、Associated Domainsにwebcredentials entitlementが必要なことを確認しました。[Apple Passkeys / Apple DeviceCheck / Apple Associated Domains、参照資料]
 
 
 ## 検証と未実装
