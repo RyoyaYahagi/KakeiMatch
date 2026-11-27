@@ -827,7 +827,7 @@ struct APIClientTests {
         clock.withLock { $0 = Self.now.addingTimeInterval(570) }
         _ = try await api.accessToken(allowGuest: false)
         #expect(tokenExchanges() == 2)
-        let relaunched = try client(credentials: store)
+        let relaunched = try client(credentials: store, clock: { clock.withLock { $0 } })
         _ = try await relaunched.accessToken(allowGuest: false)
         #expect(tokenExchanges() == 3)
         try await api.clearAccessToken()

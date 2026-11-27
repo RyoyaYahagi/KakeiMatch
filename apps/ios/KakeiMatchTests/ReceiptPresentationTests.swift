@@ -374,6 +374,9 @@ extension ReceiptModelTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
+        // App Attest is already registered, so the reading goes straight to the token exchange.
+        credentials.write(Data("c3ludGhldGlj".utf8), key: "app-attest-key-id")
+        credentials.write(Data([1]), key: "app-attest-registered")
         if guest {
             let value = "{\"sessionToken\":\"" + String(repeating: "a", count: 43) + "\",\"expiresAt\":1800000600}"
             credentials.write(Data(value.utf8), key: "guest")
