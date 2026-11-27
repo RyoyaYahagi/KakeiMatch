@@ -91,8 +91,8 @@ async function resolveSessionHash(db: Db, config: Config, now: number, digest: s
 async function newSession(db: Db, id: string, user: string, now: number) {
   const token = randomToken();
   const expiresAt = now + SESSION_SECONDS;
-  const result = await db.prepare(`INSERT INTO native_sessions(token_hash,key_id,user_id,auth_session_id,identity,created_at,expires_at)
-    VALUES (?,?,?,NULL,'guest',?,?)`).bind(await tokenHash(token), id, user, now, expiresAt).run();
+  const result = await db.prepare(`INSERT INTO native_sessions(token_hash,key_id,user_id,identity,created_at,expires_at)
+    VALUES (?,?,?,'guest',?,?)`).bind(await tokenHash(token), id, user, now, expiresAt).run();
   if (!result.success || result.meta?.changes !== 1) throw new Error('native_session_failed');
   return { sessionToken: token, expiresAt };
 }
