@@ -224,34 +224,28 @@ struct APIClientTests {
     private static let options = [KMCategoryOption(id: "food", name: "合成カテゴリ")]
 
     enum Endpoint: String, CaseIterable, Sendable {
-        case token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe
+        case token, usage, receipt, payroll, jev, suggestion
         var path: String {
             switch self {
             case .token: "/api/native/ai/token"
             case .usage: "/api/native/ai/usage"
-            case .costs: "/api/native/ai/costs"
             case .receipt: "/api/native/ai/gemini"
             case .payroll: "/api/native/ai/payroll"
             case .jev: "/api/native/ai/jev"
             case .suggestion: "/api/native/ai/category-suggestion"
-            case .contact: "/api/native/contact"
-            case .transcribe: "/api/native/contact/transcribe"
             }
         }
         var method: String {
-            switch self { case .usage, .costs: "GET"; default: "POST" }
+            switch self { case .usage: "GET"; default: "POST" }
         }
         var body: String {
             switch self {
             case .token: APIClientTests.token
             case .usage: #"{"plan":"free","period":"month","month":"2027-01","used":1,"limit":30,"remaining":29}"#
-            case .costs: #"{"month":"2027-01","currency":"USD","totalUsdMicros":0,"unknownRequests":0,"providers":{"gemini":{"requests":0,"inputTokens":0,"outputTokens":0,"costUsdMicros":0,"unknownRequests":0},"jev":{"requests":0,"inputTokens":0,"outputTokens":0,"costUsdMicros":0,"unknownRequests":0}}}"#
             case .receipt: APIClientTests.receipt
             case .payroll: APIClientTests.payroll
             case .jev: #"{"model":"synthetic-model","answers":{"category":{"type":"choice","choice":"food","confidence":1,"probabilities":{"food":1}}}}"#
             case .suggestion: #"{"categoryId":"food"}"#
-            case .contact: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#
-            case .transcribe: #"{"text":"合成の問い合わせです。"}"#
             }
         }
     }
@@ -271,7 +265,6 @@ struct APIClientTests {
         switch endpoint {
         case .token: _ = try await client.accessToken(allowGuest: false)
         case .usage: _ = try await client.usage()
-        case .costs: _ = try await client.costs(month: KMYearMonth("2027-01"))
         case .receipt: _ = try await client.readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
         case .payroll:
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
@@ -284,8 +277,6 @@ struct APIClientTests {
             let extraction = try KMAPIValidation.decode(KMReceiptExtraction.self, data: Data(Self.receipt.replacingOccurrences(of: "\"merchant\":null", with: "\"merchant\":\"合成店\"").utf8), shape: KMAPIShapes.receipt)
             _ = try await client.classify(extraction: extraction, flowID: Self.flow, categories: Self.options)
         case .suggestion: _ = try await client.suggestCategory(sourceCategoryName: "合成分類", categories: Self.options, flowID: Self.flow)
-        case .contact: _ = try await client.submitContact(kind: .bug, message: "合成の問い合わせです。", flowID: Self.flow)
-        case .transcribe: _ = try await client.transcribe(audio: KMUploadAudio(data: Data([0, 0, 0, 0] + Array("ftyp".utf8)), contentType: "audio/mp4"), flowID: Self.flow)
         }
     }
 
@@ -338,11 +329,11 @@ struct APIClientTests {
 
     @Test
     func failuresAndUnknownErrorsDoNotExposeMessages() async throws {
-        let api = try client()
+        let api = try client(credentials: Self.nativeCredentials())
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"synthetic_private_detail"}"#) }
-        await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.costs(month: KMYearMonth("2027-01")) }
+        await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.usage() }
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"not_configured","unknown":true}"#) }
-        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.costs(month: KMYearMonth("2027-01")) }
+        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.usage() }
     }
 
     @Test
@@ -370,91 +361,6 @@ struct APIClientTests {
         let configuration = try await api.nativeConfiguration()
         #expect(configuration.available)
         #expect(configuration.rpId == "synthetic.example.test")
-    }
-
-    @Test
-    func nativeContactRequiresAccountSessionAndKeepsOpaqueTokenBearer() async throws {
-        let store = APITestCredentials()
-        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(accountSession.utf8), key: "session")
-        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
-        store.write(Data([1]), key: "app-attest-registered")
-        let challenge = KMNativeCrypto.base64URL(Data(repeating: 3, count: 32))
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
-            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
-            switch request.url?.path {
-            case "/api/native/config":
-                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
-            case "/api/native/challenge":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-                #expect(try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any] != nil)
-                return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000005","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
-            case "/api/native/ai/token":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-                return .init(body: #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000500}"#)
-            case "/api/native/contact":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "T", count: 43))
-                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                #expect(body["message"] as? String == "synthetic contact")
-                let diagnostic = body["diagnostic"] as? [String: Any]
-                #expect(diagnostic?["version"] as? Int == 1)
-                #expect(diagnostic?["currentScreen"] as? String == "settings")
-                #expect(diagnostic?["network"] as? String == "online")
-                let events = diagnostic?["events"] as? [[String: Any]]
-                #expect(events?.count == 4)
-                #expect(events?[0]["type"] as? String == "screen_open")
-                #expect(events?[1]["action"] as? String == "receipt_ai_started")
-                #expect(events?[2]["errorCode"] as? String == "storage")
-                #expect(events?[3]["online"] as? Bool == true)
-                #expect(events?.allSatisfy { $0["secondsAgo"] as? Int != nil } == true)
-                return .init(body: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#)
-            default: throw URLError(.badServerResponse)
-            }
-        }
-        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
-        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "settings", network: "online", events: [
-            .init(type: "screen_open", secondsAgo: 5, screen: "home"),
-            .init(type: "action", secondsAgo: 3, screen: "records", action: "receipt_ai_started"),
-            .init(type: "error", secondsAgo: 2, screen: "records", errorCode: "storage"),
-            .init(type: "network", secondsAgo: 1, online: true),
-        ])
-        let result = try await api.submitContact(kind: .bug, message: "synthetic contact", diagnostic: diagnostic, flowID: Self.flow)
-        #expect(result.kind == .bug)
-        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
-            "/api/native/config", "/api/native/challenge", "/api/native/ai/token", "/api/native/contact"
-        ])
-    }
-
-    @Test
-    func contactRejectsAnInvalidDiagnosticBeforeSending() async throws {
-        let store = APITestCredentials()
-        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(accountSession.utf8), key: "session")
-        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
-        store.write(Data([1]), key: "app-attest-registered")
-        APIStub.reset { _ in throw URLError(.badServerResponse) }
-        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
-        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "home", network: "online", events: [
-            .init(type: "screen_open", secondsAgo: 1),
-        ])
-        await #expect(throws: KMAPIError.invalidRequest) {
-            _ = try await api.submitContact(kind: .question, message: "synthetic", diagnostic: diagnostic, flowID: Self.flow)
-        }
-        #expect(APIStub.state.withLock { $0.requests.isEmpty })
-    }
-
-    @Test
-    func guestSessionCannotUseAccountOnlyContactAPI() async throws {
-        let store = APITestCredentials()
-        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(guestSession.utf8), key: "guest")
-        APIStub.reset { _ in throw URLError(.badServerResponse) }
-        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
-        await #expect(throws: KMAPIError.nativeAuthenticationRequired) {
-            _ = try await api.submitContact(kind: .question, message: "synthetic", flowID: Self.flow)
-        }
-        #expect(APIStub.state.withLock { $0.requests.isEmpty })
     }
 
     @Test
@@ -896,10 +802,10 @@ struct APIClientTests {
     @Test
     func networkAndInvalidContentTypesStayDistinct() async throws {
         APIStub.reset { _ in throw URLError(.notConnectedToInternet) }
-        let api = try client()
-        await #expect(throws: KMAPIError.network) { _ = try await api.costs(month: KMYearMonth("2027-01")) }
-        APIStub.reset { _ in .init(body: Endpoint.costs.body, contentType: "text/html") }
-        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.costs(month: KMYearMonth("2027-01")) }
+        let api = try client(credentials: Self.nativeCredentials())
+        await #expect(throws: KMAPIError.network) { _ = try await api.usage() }
+        APIStub.reset { _ in .init(body: Endpoint.usage.body, contentType: "text/html") }
+        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.usage() }
     }
 
     @Test
@@ -1436,15 +1342,14 @@ struct APIClientTests {
     @Test
     func cancellationIsNotConvertedToNetworkFailure() async throws {
         APIStub.reset { _ in throw URLError(.cancelled) }
-        let api = try client()
-        await #expect(throws: CancellationError.self) { _ = try await api.costs(month: KMYearMonth("2027-01")) }
+        let api = try client(credentials: Self.nativeCredentials())
+        await #expect(throws: CancellationError.self) { _ = try await api.usage() }
     }
 
     @Test
     func mediaAndConfigurationRejectUnsafeInputsBeforeNetwork() throws {
         #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage(data: Data([0xff, 0xd8, 0xff]), contentType: "image/png") }
         #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage(data: Data(repeating: 0, count: 6 * 1024 * 1024 + 1), contentType: "image/jpeg") }
-        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadAudio(data: Data("not audio".utf8), contentType: "audio/mp4") }
         for url in ["http://example.test", "https://secret@example.test", "https://example.test/api", "https://example.test/?token=secret"] {
             #expect(throws: KMAPIError.invalidRequest) { _ = try KMAPIConfiguration(baseURL: URL(string: url)!) }
         }
