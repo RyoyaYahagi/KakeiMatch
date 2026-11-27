@@ -18,7 +18,6 @@ protocol KMNativeAuthService: Sendable {
     func guestUsage() async throws -> KMAIUsage
 
     func issueAccountAIToken() async throws
-    func deleteAccount() async throws -> KMAccountDeletion
 }
 
 extension KMWorkerAPI: KMNativeAuthService {

@@ -4,7 +4,6 @@ import Foundation
 /// Cloud-only adapter. Does not read/write household repositories or retry paid requests.
 actor KMWorkerAPI {
     enum Identity: String, Sendable { case account, guest }
-    private struct AuthFailure: Codable { let code: String?; let message: String }
     private struct Failure: Codable { let error: String }
     private let configuration: KMAPIConfiguration
     private let session: URLSession
@@ -491,15 +490,6 @@ actor KMWorkerAPI {
         return try await send("POST", "/api/contact/transcribe", body: body, authorization: "Bearer \(token)", shape: .object(["text": .text(max: 4000)]))
     }
 
-    func deleteAccount() async throws -> KMAccountDeletion {
-        try clearAccessToken()
-        let result: KMAccountDeletion = try await send("DELETE", "/api/account/delete", shape: .object(["deleted": .boolean, "localHouseholdDataPreserved": .boolean]))
-        guard result.deleted, result.localHouseholdDataPreserved else { throw KMAPIError.invalidResponse }
-        try credentials.write(nil, key: "session")
-        try clearAccessToken()
-        return result
-    }
-
     func clearAccessToken() throws {
         credentialRevision += 1; cachedToken = nil
         try credentials.write(nil, key: "ai-token")
@@ -546,14 +536,7 @@ actor KMWorkerAPI {
               data.count <= 1024 * 1024,
               http.value(forHTTPHeaderField: "Content-Type")?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "application/json" else { throw KMAPIError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else {
-            let code: String?
-            if path.hasPrefix("/api/auth/"), let json = try? JSONDecoder().decode(KMAPIJSON.self, from: data),
-               case .object(let object) = json, object["message"] != nil {
-                _ = try KMAPIValidation.decode(AuthFailure.self, data: data, shape: .object(["code": .text(max: 100), "message": .text(max: 2000)], optional: ["code"]))
-                code = http.statusCode == 401 ? "unauthorized" : nil
-            } else {
-                code = try KMAPIValidation.decode(Failure.self, data: data, shape: .object(["error": .text(max: 100)])).error
-            }
+            let code = try KMAPIValidation.decode(Failure.self, data: data, shape: .object(["error": .text(max: 100)])).error
             let error = KMAPIError.from(status: http.statusCode, code: code)
             if http.statusCode == 401, authorization?.hasPrefix("Bearer ") == true { try clearAccessToken() }
             throw error

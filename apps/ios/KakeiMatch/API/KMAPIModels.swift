@@ -132,7 +132,6 @@ struct KMContactResult: Codable, Sendable {
     let feedbackId: String; let kind: Kind; let reply: String; let issueUrl: String?
 }
 struct KMTranscription: Codable, Sendable { let text: String }
-struct KMAccountDeletion: Codable, Sendable { let deleted: Bool; let localHouseholdDataPreserved: Bool }
 
 struct KMImageRequest: Codable, Sendable {
     let flowId: String; let imageBase64: String; let contentType: String; let maskingConfirmed: Bool?

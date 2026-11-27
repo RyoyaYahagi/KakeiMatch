@@ -54,9 +54,5 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
         guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
     }
 
-    func deleteAccount() async throws -> KMAccountDeletion {
-        signedIn = false
-        return .init(deleted: true, localHouseholdDataPreserved: true)
-    }
 }
 #endif
