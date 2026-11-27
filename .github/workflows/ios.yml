@@ -276,7 +276,10 @@ jobs:
   ui-tests:
     if: ${{ !github.event.pull_request.draft }}
     runs-on: macos-26
-    timeout-minutes: 35
+    # The wait for build counts toward this limit. In run 45810505033 the build job was queued
+    # for about 24 minutes and then ran for about 8 minutes. Test steps keep their own limits
+    # (Swift Testing 10, XCUITest 26), so this limit covers the wait plus those steps.
+    timeout-minutes: 75
     # Job permissions replace the workflow's, so contents: read is repeated.
     # actions: read is only for listing this run's artifacts while waiting for build.
     permissions:
@@ -323,16 +326,30 @@ jobs:
       # build uploads ios-test-products after its swift test and build-for-testing pass.
       # Wait while build is queued or running; the job timeout is the outer limit.
       # Fail at once if build ends without the upload, or if the upload is still missing
-      # 300 seconds after build succeeded.
+      # 300 seconds after build succeeded. A failed API call is retried, so one transient
+      # error does not end the wait.
       - name: Wait for build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Each call has a 60-second limit; a failed or timed-out call is retried up to 5 times.
+          api() {
+            local attempt output
+            for attempt in 1 2 3 4 5; do
+              if output=$(perl -e 'alarm 60; exec @ARGV' gh api "$@"); then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              echo "::warning::gh api failed (attempt $attempt of 5): $1" >&2
+              sleep 10
+            done
+            return 1
+          }
           started=$(date +%s)
           build_completed_at=""
           last_build_status=""
           while :; do
-            build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            build=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
               --jq '.jobs[] | select(.name == "build") | [.status, (.conclusion // "")] | @tsv')
             build_status=${build%%$'\t'*}
             build_conclusion=${build#*$'\t'}
@@ -340,7 +357,7 @@ jobs:
               echo "build job: ${build_status:-not listed} ${build_conclusion}"
               last_build_status=$build_status
             fi
-            artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=ios-test-products" \
+            artifacts=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=ios-test-products" \
               --jq '[.artifacts[] | select(.expired | not)] | length')
             if [ "$artifacts" -gt 0 ]; then
               break
