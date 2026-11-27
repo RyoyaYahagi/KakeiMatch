@@ -272,18 +272,18 @@ jobs:
 
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
-  # Shards start with build rather than after it, so each simulator boots while build compiles.
+  # Shards start after build completes (needs: build), so they do not hold macOS runners while waiting for build artifacts.
   # The shard list is fixed to UI_SHARD_COUNT; build fails if the matrix, UI_SHARD_COUNT and ui-shards.json disagree.
   ui-tests:
     if: ${{ !github.event.pull_request.draft }}
     needs: build
     runs-on: macos-26
-    # The wait for build counts toward this limit. In run 45810505033 the build job was queued
-    # for about 24 minutes and then ran for about 8 minutes. Test steps keep their own limits
-    # (Swift Testing 10, XCUITest 26), so this limit covers the wait plus those steps.
+    # Shards start after build completes (needs: build), so build queue/run time does not count
+    # toward this limit. Kept at 75 minutes for now as headroom around runner setup and the
+    # per-step limits (Swift Testing 10, XCUITest 26).
     timeout-minutes: 75
     # Job permissions replace the workflow's, so contents: read is repeated.
-    # actions: read is only for listing this run's artifacts while waiting for build.
+    # actions: read is only for listing this run's jobs and artifacts in the build-artifact check step.
     permissions:
       contents: read
       actions: read
@@ -326,10 +326,10 @@ jobs:
       - name: Select Xcode and start simulator in background
         run: bash scripts/ci-simulator.sh start
       # build uploads ios-test-products after its swift test and build-for-testing pass.
-      # Wait while build is queued or running; the job timeout is the outer limit.
-      # Fail at once if build ends without the upload, or if the upload is still missing
-      # 300 seconds after build succeeded. A failed API call is retried, so one transient
-      # error does not end the wait.
+      # Because ui-tests has needs: build, the artifact is normally already available; this
+      # step verifies it and waits up to 300 seconds after build succeeded if the upload is
+      # not yet visible in the API. A failed API call is retried, so one transient error
+      # does not end the check.
       - name: Wait for build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
