@@ -276,6 +276,7 @@ jobs:
   # The shard list is fixed to UI_SHARD_COUNT; build fails if the matrix, UI_SHARD_COUNT and ui-shards.json disagree.
   ui-tests:
     if: ${{ !github.event.pull_request.draft }}
+    needs: build
     runs-on: macos-26
     # The wait for build counts toward this limit. In run 45810505033 the build job was queued
     # for about 24 minutes and then ran for about 8 minutes. Test steps keep their own limits
