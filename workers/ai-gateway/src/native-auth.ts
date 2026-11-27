@@ -362,6 +362,8 @@ async function authenticatedRequest(request: Request, env: NativeEnv & { ACCOUNT
   const headers = await internalHeaders(request, config, env, aiPaths.includes(targetPath) ? null : session);
   const contentType = request.headers.get('content-type');
   if (contentType) headers.set('content-type', contentType); else headers.delete('content-type');
+  const receiptSchema = request.headers.get('x-kakeimatch-receipt-schema');
+  if (receiptSchema && targetPath === '/api/ai/gemini') headers.set('x-kakeimatch-receipt-schema', receiptSchema);
   const target = new URL(targetPath, config.origin); target.search = url.search;
   if (aiPaths.includes(targetPath)) {
     headers.set('authorization', `Bearer ${await issueAiToken(session.user_id, env.AI_GATEWAY_AUTH_SECRET, now)}`);

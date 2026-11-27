@@ -364,4 +364,63 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect(sqlite.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').get(keyId)).toEqual({ guest_user_id: null });
     expect((await run('/api/native/auth/get-session', undefined, { authorization: `Native ${session.sessionToken}` })).status).toBe(401);
   });
+
+  it('forwards X-KakeiMatch-Receipt-Schema: 2 on /api/native/ai/gemini and strips v2 fields when omitted', async () => {
+    await registerKey();
+    const session = await (await guestLogin()).json() as { sessionToken: string };
+    const native = { authorization: `Native ${session.sessionToken}` };
+    const tokenChallenge = await (await issueChallenge('token', keyId, native)).json() as { challengeId: string };
+    const access = await (await run('/api/native/ai/token', { challengeId: tokenChallenge.challengeId, keyId, assertion: 'proof' }, native)).json() as { token: string };
+    env.GEMINI_API_KEY = 'synthetic-provider-key';
+    const extraction = {
+      documentKind: 'receipt',
+      merchant: 'Synthetic Shop',
+      purchasedDate: '2026-11-01',
+      purchasedTime: '12:00',
+      totalAmountYen: 2331,
+      taxAmountYen: null,
+      taxes: [
+        { ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124 },
+        { ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59 },
+      ],
+      items: [
+        { name: 'Synthetic Yogurt', amountYen: 1550, taxRatePercent: 8 },
+        { name: 'Synthetic Soap', amountYen: 598, taxRatePercent: 10 },
+      ],
+      warnings: [],
+    };
+    const provider = vi.fn<typeof fetch>(async () => Response.json({ output_text: JSON.stringify(extraction) }));
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1]).toString('base64');
+
+    const v2 = await handleNativeRequest(
+      request('/api/native/ai/gemini', { flowId: crypto.randomUUID(), contentType: 'image/png', imageBase64: png }, {
+        authorization: `Bearer ${access.token}`,
+        'x-kakeimatch-receipt-schema': '2',
+      }),
+      env,
+      { nowSeconds: () => now, fetchImpl: provider },
+    );
+    expect(v2.status).toBe(200);
+    expect(await v2.json()).toMatchObject({
+      taxAmountYen: 183,
+      taxes: extraction.taxes,
+      items: extraction.items,
+    });
+
+    const v1 = await handleNativeRequest(
+      request('/api/native/ai/gemini', { flowId: crypto.randomUUID(), contentType: 'image/png', imageBase64: png }, {
+        authorization: `Bearer ${access.token}`,
+      }),
+      env,
+      { nowSeconds: () => now, fetchImpl: provider },
+    );
+    expect(v1.status).toBe(200);
+    const v1Body = await v1.json() as Record<string, unknown>;
+    expect(v1Body.taxAmountYen).toBe(183);
+    expect(v1Body).not.toHaveProperty('taxes');
+    expect(v1Body.items).toEqual([
+      { name: 'Synthetic Yogurt', amountYen: 1550 },
+      { name: 'Synthetic Soap', amountYen: 598 },
+    ]);
+  });
 });
