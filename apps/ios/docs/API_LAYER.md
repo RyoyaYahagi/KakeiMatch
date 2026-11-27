@@ -4,7 +4,7 @@
 
 `API/KMWorkerAPI.swift` はネイティブ専用 Worker 境界の通信アダプターです。Passkey 操作（退役）の `AuthenticationServices` adapter は残るが呼びません。App Attest は `DeviceCheck` adapter に分離し、どちらもprotocol stubで置き換えられます。画面と `Data/` は変更しません。通常の家計操作はCloud accountへ依存させません。[構成: docs/ARCHITECTURE.md、実装: API/KMWorkerAPI.swift / KMNativeSecurity.swift]
 
-**既定の `.native` は全要求で Origin / Cookie を送らず、`/api/native/*` のみを呼びます。** App Attestが非対応の端末ではネイティブのクラウド機能を停止し、TurnstileやPWA経由へfallbackしません。`.existingWorkerCompatibility` は従来Worker APIを使う明示的な互換モードで、アプリ真正性の証明ではありません。Worker側も本PRで実装し、合成証明書・D1のテストを追加しました（Passkey のテストは S6・S7 で撤去）。署名済み実機から実サーバーへの通信は未確認です。[Workerの設計と公開前手順](../../../docs/NATIVE_APP_AUTH.md)を参照してください。
+**既定の `.native` は全要求で Origin / Cookie を送らず、`/api/native/*` のみを呼びます。** App Attestが非対応の端末ではネイティブのクラウド機能を停止し、TurnstileやPWA経由へfallbackしません。`.existingWorkerCompatibility` は従来Worker APIを使う明示的な互換モードで、アプリ真正性の証明ではありません。Worker 側の合成証明書・D1 のテストは残る（Passkey のテストは S6・S7 で撤去）。署名済み実機から実サーバーへの通信は未確認です。[Workerの設計と公開前手順](../../../docs/NATIVE_APP_AUTH.md)を参照してください。
 
 ```swift
 // Preview は合成データ専用。資格情報の Keychain service も host ごとに分かれる。
@@ -28,9 +28,9 @@ let api = KMWorkerAPI(configuration: config)
 | ゲスト | `purpose:guest` challenge後にApp Attest assertionを送り、`POST /api/native/guest` の43文字sessionToken・最大14日期限を保存。Turnstileのゲスト作成（退役）はネイティブでは使わない |
 | AI token | `purpose:token` challengeとNative sessionによるApp Attest assertionで43文字・最大600秒のopaque tokenを取得。残り30秒を超える間だけメモリcacheを再利用し、Keychainへ保存しない。AI要求はBearer opaque token、usageはNative sessionを使う |
 | Passkey | 退役。`/api/native/passkey/*` は410を返す。アプリはPasskeyを使わない |
-| その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。signout・account deleteではaccount sessionとAI tokenを消し、guest session・家計データは保持 |
+| その他 | 既存APIのmethod/body/response schemaを維持してnative pathへ移行。ログアウト（signOut）と本人削除（deleteAccount）の経路はWorkerで退役（410）。AI tokenの消去（clearAccessToken）ではゲストの合言葉・ネイティブセッション・家計データを保持 |
 
-画面との接続（退役分）: 設定のログイン・Passkey画面は S6 で撤去済み。`KMNativeAuthService` などの service 層は残るが、UI からは呼ばない。ゲストの利用状況は `usage` で読む。ログアウトと本人削除の経路は退役し、ゲストの合言葉と家計データは従来どおり消さない。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続ける。
+画面との接続（退役分）: 設定のログイン・Passkey画面は S6 で撤去済み。`KMNativeAuthService` の要件のうち、Passkey・ログアウト・本人削除の経路は画面から呼ばれず、Worker 側は410を返す。iOS 側の死に経路（`accountSession`・`listPasskeys`・`deletePasskey`・`signOut` と、それぞれの `KMWorkerAPI` の実装）は PR #463 で削除する（#463 が未マージの間は残る）。`deleteAccount` は残り、テストだけが呼ぶ。ゲストの利用状況は `usage` で読む。画面は `KMRepositories` を参照しないため、認証できない状態でも端末内の家計簿は動き続ける。
 
 未ログインでAIを使う最初のレシート読み取りは、token取得が `nativeAuthenticationRequired` で止まった時に確認ダイアログを出し、`createNativeGuest()` の後に同じ写真の読み取りを再開します。これはPWAのTurnstile確認に相当するゲートで、キャンセル・失敗でも画像と手入力は保持します。ゲスト作成の日次上限はWorkerが決め、端末は結果だけを表示します。
 
@@ -69,7 +69,7 @@ Apple公式資料では、Passkey用platform providerの役割とRP ID指定、A
 - **Choice**: `{type:choice,choice:候補内ID,confidence:Decimal(0…1),probabilities:{全候補ID:Decimal(0…1)}}`。回答キー集合・候補集合が要求と一致し、確率和の誤差が0.02以内、choice が最大確率であることを検証する。画面の提案値はPWAと同じく最大確率0.75以上・2位との差0.15以上の時だけ返す。[PWA (2026/10), safeCategoryResponse]
 - **分類要求**（route名 `/api/ai/jev` と費用応答の `jev` キーは旧provider名の名残で、現在の送信先はGemini Decisions API）: Geminiの同じ抽出値を元に店名・品目名を200 UTF-16単位以内、先頭30品目に絞る。学習済みの分類を先に適用し、未分類indexだけを渡す責任は呼び出し元サービスにある。候補は1…100件、ID一意・1…128文字、名前1…100文字。ローカル学習履歴・画像・家計簿全体を送らない。[PWA (2026/10), local-receipts.ts / local-category-learning.ts]
 - **Cost（保存形式。`/api/ai/costs` は退役）**: `{requests,inputTokens,outputTokens,costUsdMicros,unknownRequests}` は非負の安全整数。合計料金・不明件数はprovider和と一致、`unknownRequests<=requests`。通貨はUSD。金額にDoubleを使わない。[Costs (2026/10), monthlyCosts]
-- **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSも同じrecorderを `Features/Contact/ContactDiagnosticRecorder.swift` に持ち、40件・15分・contact除外・明示同意の条件と、画面名・操作種別・安全なエラーコード・オンライン状態・相対秒だけの固定語彙を揃えた。iOSは送信前に同じschemaで自己検証し、未知キー・未知値・欠けた項目を含む診断情報は送らない。native gatewayはbodyを変えず `/api/contact` へ転送し、Workerが同じschemaで再検証する。任意文字列JSONを受ける代用品は作らない。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts; 実装: ContactPresentation.swift / KMWorkerAPI.swift]
+- **Diagnostic**: `{version:1,currentScreen:固定語彙,network:online|offline,events:[固定語彙event]最大20}`。eventはscreen_open/action/error/network、相対秒は0…900。PWA recorderはメモリで40件・15分だけ保持し、contact内の操作を除外し、利用者の明示同意時だけ添付する。iOSも同じrecorderを `Core/Diagnostics/ContactDiagnosticRecorder.swift` に持ち、40件・15分・contact除外・明示同意の条件と、画面名・操作種別・安全なエラーコード・オンライン状態・相対秒だけの固定語彙を揃えた。iOSは送信前に同じschemaで自己検証し、未知キー・未知値・欠けた項目を含む診断情報は送らない。問い合わせ送信の経路（`/api/native/contact*`）は単位1で410を返す。この schema は退役前の契約の記録として残す。任意文字列JSONを受ける代用品は作らない。[Contact (2026/10), parseDiagnosticContext; PWA, contact-diagnostics.ts; 実装: Core/Diagnostics/ContactPresentation.swift / KMWorkerAPI.swift]
 
 すべての応答はJSON Content-Type・1 MiB上限・形の検証を経てCodableへdecodeする。未知キー、未知enum、欠けたnullable必須キー、整数円の小数・負値・JS安全整数超過、実在しない日付、範囲外indexを正常値として返さない。Receiptの日付はWorkerの簡易正規表現より厳しく暦日を検証する。欠損を空値に置換しない。[実装: KMAPIValidation.swift / KMAPIShapes.swift]
 
@@ -94,11 +94,11 @@ Geminiのレシート、Gemini Decisionsのカテゴリ分類、Geminiの給与�
 
 以下のJWT / Cookieの説明は従来Worker互換モードのものです。native modeは前節の固定期限session・opaque AI tokenを使い、Set-Cookieを保存しません。
 
-アカウント優先で `/token` を呼び、401時だけ保存済みゲストへ切り替える。contactは `allowGuest:false`。保存済みゲストが無効なら合言葉を削除し、勝手に新規作成しない。JWTの残り時間が**30秒超**の時だけメモリキャッシュを再利用し、account限定要求にguest JWTを使わない。JWT発行の最大期限は600秒として検証する。401後に有料要求を自動再送しない。[PWA (2026/10), ai-auth.ts / guest-ai.ts; 実装: KMWorkerAPI.swift]
+アカウント優先で `/token` を呼び、401時だけ保存済みゲストへ切り替える。問い合わせ（退役）は `allowGuest:false`。保存済みゲストが無効なら合言葉を削除し、勝手に新規作成しない。JWTの残り時間が**30秒超**の時だけメモリキャッシュを再利用し、account限定要求にguest JWTを使わない。JWT発行の最大期限は600秒として検証する。401後に有料要求を自動再送しない。この互換モードの `/api/ai/token`・`/api/ai/usage`・`/api/ai/guest` は公開入口で410を返すため、既定の `.native` では使わない。[PWA (2026/10), ai-auth.ts / guest-ai.ts; 実装: KMWorkerAPI.swift]
 
 端末合言葉、ネイティブセッション、短期AI tokenはhost別Keychain serviceへ保存する。`WhenUnlockedThisDeviceOnly`、同期なし。AI tokenは再起動後に**Keychainから復元しない**。期限更新・logoutで削除する。再起動直後は古いKeychain JWTが残っていても読まず、次のtoken要求前に削除する。sessionは14日、ネイティブセッションは発行から14日固定で、利用に応じて延長しない。共有Cookie jarやSafari Cookieを暗黙に流用しない。`installAccountSession` は将来の承認済み認証adapter用の境界であり、利用者にCookieの貼付けを求める導線ではない。[Cloud account, Passkeyとsession; 実装: KMCloudCredentials.swift / KMWorkerAPI.swift]
 
-logout・account削除はAIキャッシュとsessionを破棄するが、ゲストの合言葉と家計データを消さない。実行中の古い資格情報による応答は世代番号で拒否する。APIは家計Repositoryを参照しない。[実装: KMWorkerAPI.swift]
+AI tokenの消去（`clearAccessToken()`）はAI tokenだけを消し、ゲストの合言葉・ネイティブセッション・家計データを消さない。ログアウト（`signOut`）の経路は退役（410）で、`signOut` は PR #463 で削除する。本人削除（`deleteAccount`）もWorkerで退役（410）しており、iOS 側は残るがテストだけが呼ぶ。実行中の古い資格情報による応答は世代番号で拒否する。APIは家計Repositoryを参照しない。[実装: KMWorkerAPI.swift]
 
 | Worker error | iOS enum | PWA対応・画面への引き継ぎ |
 | --- | --- | --- |
@@ -122,7 +122,7 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 **通常レシート**はPWAの送信前縮小・変換・自動マスキングが存在しない。保存時はJPEG/PNG/WebP・署名・10 MiB上限、送信時は元bytesをBase64化し6 MiB超を拒否する。iOS は送信前に画像を JPEG に描き直し、元画像のメタデータを除去する。端末内の文字・バーコード検出で機密情報を隠し、再検証に通った `KMRedactedReceiptImage` だけを送信する。マスクを検証できない場合は送信を停止する。HEIC は拒否する。[PWA (2026/10), local-receipts.ts:analyze; Security, Cloud account and AI]
 
-**給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。`Features/Payroll/PayrollView` がマスキング画像・同意を表示し、送信後/失敗/画面移動時に画像を破棄する。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: KMUploadMedia.swift / Features/Payroll/PayrollView.swift]
+**給与明細**は `financial-image.ts` と同じく、JPEG/PNG/WebP・20 MiB以下を入力とし、向きを反映、長辺最大1800px、利用者指定の正規化座標の矩形を黒塗り、最小幅/高さ0.005、JPEG品質0.9で新しいラスタを作り6 MiB以下にする。`KMMaskedPayrollImage.prepare` は確認Boolなしに作れない。EXIF/GPSを引き継がない。自動個人情報検出はしない。`Features/Payroll/PayrollView` がマスキング画像・同意を表示し、送信後/失敗/画面移動時に画像を破棄する。SwiftのData/URLSessionのコピーを含む全メモリのゼロ消去は保証しない。CanvasとImageIOのJPEGは同一bytesではない。[PWA (2026/10), financial-image.ts / payroll-ui.ts; 実装: API/KMUploadMedia.swift / Features/Payroll/PayrollView.swift]
 
 音声（PWAのみ）は2 MiB上限と形式署名を検証する。MP4は要求では`audio/mp4`、WorkerがGoogle向けに`audio/m4a`へ変換する。最大60秒の録音停止・同じ録音flowIdでの明示再試行・画面移動時停止はUI側で実装する。APIは録音しない。iOSは利用者の決定により音声入力（録音・文字起こし）を作らず、`/api/contact/transcribe` を呼ばない。設定の「お問い合わせ」行にも「声でも送れます」を出さず、問い合わせ画面にも音声の文言・ボタンを置かない。[Contact (2026/10), parseContactInput / transcriptionPayload; docs/CONTACT.md; 利用者決定 2026/10]
 
@@ -145,15 +145,17 @@ PWAのレシート文言は `receiptMessage(isGuest:)` に対応する。contact
 
 `KakeiMatchTests/APIClientTests.swift` はSwift Testing + URLProtocolおよびApp Attest stubでnative config、App Attest/guest/token/AI要求、Origin/Cookie不送信、base64url challenge hash、token期限と互換APIの既存検証を確認する。AI応答はレシート・カテゴリ分類・給与明細それぞれの未知キー、nullable必須キーの欠落、型・範囲、整数円、ID参照、件数上限を合成fixtureで拒否することを確認する。実Worker、Apple App Attest、実Passkey、Geminiへ接続しない。LinuxにXcodeがないためmacOSの`ios.yml`成功が必要です。[実装: APIClientTests.swift; .github/workflows/ios.yml]
 
-CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。Cookie 更新テストは固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
+CI は `CODE_SIGNING_ALLOWED=NO` のため、Keychain の保存・更新・削除・host分離・`WhenUnlockedThisDeviceOnly`・エラー時の拒否は Security API 呼び出しだけを stub にして検証する。署名済みアプリでの実 Keychain の読み書きは別途実機確認が必要。互換モードのCookie更新テスト（`guestDailyUsageAndCookieRefreshFollowServerValues`）は固定時計と同じ基準の Expires を使い、実時計に依存する Max-Age で判定しない。給与画像は縮小寸法・黒塗り・逆方向の矩形指定・GPS非継承を合成画像で確認する。[実装: APIClientTests.swift / KMCloudCredentials.swift; .github/workflows/ios.yml]
 
-未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。レシートのゲスト確認はstubとXCUITestで検証し、実端末のAASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、手動session Cookie導入も提供しません。[実装: API/]
+未確認・未実装: Swiftクライアントから実Workerへのend-to-end通信、実機でのApp Attest検証、署名済みbuildのentitlement、実際のApple App ID prefixとAssociated Domainsの一致、実機Keychain、診断recorder/添付、録音UI。レシートのゲスト確認はstubとXCUITestで検証し、実端末のAASA・App Attestは未検証です。Simulator / App Attest非対応時はクラウド機能を停止します。Team IDはソースへ置かず、利用者がCookieを貼り付ける導線は提供しません（`installAccountSession` は境界のAPIで、テストだけが呼ぶ）。[実装: API/]
 
 ## 参照資料
 
+注: `apps/pwa` と PWA 由来の参照（`[PWA (2026/10)]`）は、PWA の撤去（#435）より前の 2026/10 時点の記録です。現在のリポジトリには存在しません。
+
 [Worker, 2026/10] KakeiMatch. `workers/ai-gateway/src/hosting.ts`, `workers/ai-gateway/src/{worker,guest-ai}.ts`.
 
-[Account, 2026/10] KakeiMatch. `workers/ai-gateway/src/account-auth.ts`, `docs/CLOUD_ACCOUNT.md`.
+[Account, 2026/10] KakeiMatch. `workers/ai-gateway/src/account-db.ts`（旧 `account-auth.ts` は S7 で削除）、`docs/CLOUD_ACCOUNT.md`。
 
 [PWA, 2026/10] KakeiMatch. `apps/pwa/src/{ai-auth,guest-ai,local-receipts,local-category-learning,receipt-reading-progress,payroll-ui,local-payroll,financial-image,contact-ui,contact-diagnostics,moneyforward-category-suggestion,main}.ts`.
 
