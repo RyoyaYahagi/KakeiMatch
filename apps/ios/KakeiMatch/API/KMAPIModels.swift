@@ -64,14 +64,12 @@ enum KMAPIError: Error, Equatable, Sendable {
 }
 
 struct KMAIToken: Codable, Sendable { let token: String; let expiresAt: Int }
-struct KMGuestConfiguration: Codable, Sendable { let guestAvailable: Bool; let turnstileSiteKey: String? }
 struct KMNativeConfiguration: Codable, Sendable {
     let available: Bool
     let rpId: String?
     let appAttestEnvironment: String?
 }
 
-struct KMGuestCreated: Codable, Sendable { let guestSecret: String }
 struct KMAIUsage: Codable, Sendable {
     enum Plan: String, Codable, Sendable { case free, pro, family, guest }
     enum Period: String, Codable, Sendable { case month, day }

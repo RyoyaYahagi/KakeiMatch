@@ -38,9 +38,6 @@ enum KMAPIShapes {
                                         "code": .values(["unreadable", "uncertain", "amount_mismatch"])]), max: 30)
         ]), "model": .text(max: 100), "promptVersion": .values(["payroll-v1"])
     ])
-    static let token: KMAPIShape = .object(["token": .text(max: 8192), "expiresAt": .integer(min: 1)])
-    static let guestConfig: KMAPIShape = .object(["guestAvailable": .boolean, "turnstileSiteKey": .nullable(.text(max: 2048))])
-    static let guestCreated: KMAPIShape = .object(["guestSecret": .text(min: 43, max: 43)])
     static let contactResult: KMAPIShape = .object(["feedbackId": .text(max: 128), "kind": .values(["bug", "improvement", "question"]), "reply": .text(max: 2000), "issueUrl": .null])
     static let contactDiagnostic: KMAPIShape = .object([
         "version": .integer(min: 1, max: 1),

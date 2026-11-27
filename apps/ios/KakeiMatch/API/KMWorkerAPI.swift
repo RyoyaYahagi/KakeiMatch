@@ -384,89 +384,27 @@ actor KMWorkerAPI {
         return try KMAPIValidation.decode(T.self, data: data, shape: shape)
     }
 
-    /// Integration seam for an approved future login adapter, NOT a login implementation.
-    func installAccountSession(value: String, expiresAt: Date) throws {
-        guard configuration.originPolicy != .native else { throw KMAPIError.nativeUnsupported }
-        guard validCookie(value), expiresAt > now(), expiresAt.timeIntervalSince(now()) <= 14 * 86400 + 60 else { throw KMAPIError.invalidRequest }
-        try credentials.write(KMJSON.encoder().encode(KMStoredSession(value: value, expiresAt: expiresAt)), key: "session")
-        try clearAccessToken()
-    }
-
-    func guestConfiguration() async throws -> KMGuestConfiguration {
-        guard configuration.originPolicy != .native else { throw KMAPIError.nativeUnsupported }
-        let result: KMGuestConfiguration = try await send("GET", "/api/ai/guest", shape: KMAPIShapes.guestConfig)
-        guard result.guestAvailable == (result.turnstileSiteKey != nil) else { throw KMAPIError.invalidResponse }
-        return result
-    }
-
-    /// Requires a real, single-use Turnstile token from an approved web flow.
-    /// Never fabricates a robot-check result or installs a guest automatically.
-    func createGuest(turnstileToken: String) async throws {
-        guard configuration.originPolicy != .native else { throw KMAPIError.nativeUnsupported }
-        struct Body: Codable { let turnstileToken: String }
-        let body = try KMAPIValidation.request(Body(turnstileToken: turnstileToken), shape: .object(["turnstileToken": .text(max: 2048)]))
-        let revision = credentialRevision
-        let result: KMGuestCreated = try await send("POST", "/api/ai/guest", body: body, shape: KMAPIShapes.guestCreated)
-        guard revision == credentialRevision else { throw CancellationError() }
-        guard validGuestSecret(result.guestSecret) else { throw KMAPIError.invalidResponse }
-        try credentials.write(Data(result.guestSecret.utf8), key: "guest")
-        try clearAccessToken()
-    }
-
     func accessToken(allowGuest: Bool = true) async throws -> String {
-        if configuration.originPolicy == .native { return try await nativeAccessToken(allowGuest: allowGuest) }
-        let seconds = Int(now().timeIntervalSince1970)
-        if let cachedToken, cachedToken.value.expiresAt > seconds + 30,
-           allowGuest || cachedToken.identity == .account { return cachedToken.value.token }
-        try credentials.write(nil, key: "ai-token")
-        cachedToken = nil
-        let revision = credentialRevision
-        do {
-            let token: KMAIToken = try await send("POST", "/api/ai/token", shape: KMAPIShapes.token)
-            return try cache(token, identity: .account, revision: revision)
-        } catch KMAPIError.authenticationRequired {
-            guard allowGuest else { throw KMAPIError.authenticationRequired }
-        }
-        guard revision == credentialRevision else { throw CancellationError() }
-        guard let data = try credentials.read("guest"), let secret = String(data: data, encoding: .utf8), validGuestSecret(secret) else {
-            throw KMAPIError.nativeAuthenticationRequired
-        }
-        do {
-            let token: KMAIToken = try await send("POST", "/api/ai/token", authorization: "Guest \(secret)", shape: KMAPIShapes.token)
-            return try cache(token, identity: .guest, revision: revision)
-        } catch KMAPIError.authenticationRequired {
-            if revision == credentialRevision { try credentials.write(nil, key: "guest") }
-            throw KMAPIError.nativeAuthenticationRequired
-        }
+        try await nativeAccessToken(allowGuest: allowGuest)
     }
 
     func usage(as identity: Identity = .account) async throws -> KMAIUsage {
         var authorization: String?
         if identity == .guest {
-            if configuration.originPolicy == .native {
-                let guest: NativeSessionResponse?
-                do { guest = try credentials.read("guest").map { try KMJSON.decoder().decode(NativeSessionResponse.self, from: $0) } }
-                catch { throw KMAPIError.credentialStorage }
-                guard let guest, guest.expiresAt > Int(now().timeIntervalSince1970),
-                      guest.sessionToken.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else { throw KMAPIError.nativeAuthenticationRequired }
-                authorization = "Native \(guest.sessionToken)"
-            } else {
-                guard let data = try credentials.read("guest"), let secret = String(data: data, encoding: .utf8), validGuestSecret(secret) else { throw KMAPIError.nativeAuthenticationRequired }
-                authorization = "Guest \(secret)"
-            }
-        } else if configuration.originPolicy == .native {
+            let guest: NativeSessionResponse?
+            do { guest = try credentials.read("guest").map { try KMJSON.decoder().decode(NativeSessionResponse.self, from: $0) } }
+            catch { throw KMAPIError.credentialStorage }
+            guard let guest, guest.expiresAt > Int(now().timeIntervalSince1970),
+                  guest.sessionToken.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else { throw KMAPIError.nativeAuthenticationRequired }
+            authorization = "Native \(guest.sessionToken)"
+        } else {
             authorization = try nativeSessionAuthorization(required: true)
         }
-        let shape: KMAPIShape = (identity == .guest && configuration.originPolicy != .native) ? .object([
-            "plan": .values(["guest"]), "period": .values(["day"]), "day": .date,
-            "used": .integer(), "limit": .nullable(.integer()), "remaining": .nullable(.integer()),
-            "supportId": .nullable(.text(max: 128)),
-        ], optional: ["supportId"]) : KMAPIShapes.accountUsage
-        let result: KMAIUsage = try await send("GET", "/api/ai/usage", authorization: authorization, shape: shape)
+        let result: KMAIUsage = try await send("GET", "/api/ai/usage", authorization: authorization, shape: KMAPIShapes.accountUsage)
         if let limit = result.limit {
             guard result.remaining == max(0, limit - result.used) else { throw KMAPIError.invalidResponse }
         } else {
-            guard (identity == .account || configuration.originPolicy == .native), result.remaining == nil else { throw KMAPIError.invalidResponse }
+            guard result.remaining == nil else { throw KMAPIError.invalidResponse }
         }
         return result
     }
@@ -570,10 +508,8 @@ actor KMWorkerAPI {
     private func cache(_ token: KMAIToken, identity: Identity, revision: Int) throws -> String {
         guard revision == credentialRevision else { throw CancellationError() }
         let seconds = Int(now().timeIntervalSince1970)
-        let tokenPattern = configuration.originPolicy == .native ? #"^[A-Za-z0-9_-]{43}$"# : #"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$"#
         guard token.expiresAt > seconds, token.expiresAt <= seconds + 600,
-              token.token.range(of: tokenPattern, options: .regularExpression) != nil else { throw KMAPIError.invalidResponse }
-        if configuration.originPolicy != .native { try credentials.write(JSONEncoder().encode(token), key: "ai-token") }
+              token.token.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else { throw KMAPIError.invalidResponse }
         cachedToken = (token, identity)
         return token.token
     }
@@ -586,29 +522,17 @@ actor KMWorkerAPI {
     private func send<T: Decodable>(_ method: String, _ path: String, body: Data? = nil, authorization: String? = nil,
                                     query: [URLQueryItem] = [], shape: KMAPIShape) async throws -> T {
         try Task.checkCancellation()
-        if configuration.originPolicy == .native, !appAttest.isSupported { throw KMAPIError.nativeUnsupported }
+        if !appAttest.isSupported { throw KMAPIError.nativeUnsupported }
         var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false)!
-        let requestPath = configuration.originPolicy == .native ? "/api/native" + String(path.dropFirst(4)) : path
-        components.path = String(requestPath); components.queryItems = query.isEmpty ? nil : query
+        components.path = "/api/native" + String(path.dropFirst(4)); components.queryItems = query.isEmpty ? nil : query
         var request = URLRequest(url: components.url!)
         request.httpMethod = method; request.httpBody = body; request.httpShouldHandleCookies = false
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
-        if configuration.originPolicy == .existingWorkerCompatibility { request.setValue(configuration.origin, forHTTPHeaderField: "Origin") }
         var requestAuthorization = authorization
-        if configuration.originPolicy == .native, requestAuthorization == nil {
-            requestAuthorization = try nativeSessionAuthorization(required: false)
-        }
+        if requestAuthorization == nil { requestAuthorization = try nativeSessionAuthorization(required: false) }
         request.setValue(requestAuthorization, forHTTPHeaderField: "Authorization")
-        if configuration.originPolicy != .native, let stored = try credentials.read("session") {
-            let cookie: KMStoredSession
-            do { cookie = try KMJSON.decoder().decode(KMStoredSession.self, from: stored) }
-            catch { throw KMAPIError.credentialStorage }
-            guard validCookie(cookie.value) else { throw KMAPIError.credentialStorage }
-            if cookie.expiresAt > now() { request.setValue("__Secure-better-auth.session_token=\(cookie.value)", forHTTPHeaderField: "Cookie") }
-            else { try credentials.write(nil, key: "session") }
-        }
         let revision = credentialRevision
         let data: Data; let response: URLResponse
         do { (data, response) = try await session.data(for: request) }
@@ -634,25 +558,7 @@ actor KMWorkerAPI {
             if http.statusCode == 401, authorization?.hasPrefix("Bearer ") == true { try clearAccessToken() }
             throw error
         }
-        let result = try KMAPIValidation.decode(T.self, data: data, shape: shape)
-        if configuration.originPolicy != .native, let header = http.value(forHTTPHeaderField: "Set-Cookie") {
-            for cookie in HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": header], for: request.url!) where cookie.name == "__Secure-better-auth.session_token" {
-                guard cookie.domain == configuration.baseURL.host, cookie.path == "/", cookie.isSecure else { throw KMAPIError.invalidResponse }
-                if let expiry = cookie.expiresDate, expiry > now() {
-                    guard validCookie(cookie.value) else { throw KMAPIError.invalidResponse }
-                    guard expiry.timeIntervalSince(now()) <= 14 * 86400 + 60 else { throw KMAPIError.invalidResponse }
-                    try credentials.write(KMJSON.encoder().encode(KMStoredSession(value: cookie.value, expiresAt: expiry)), key: "session")
-                } else { try credentials.write(nil, key: "session") }
-            }
-        }
-        return result
-    }
-
-    private func validGuestSecret(_ value: String) -> Bool {
-        value.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil
-    }
-    private func validCookie(_ value: String) -> Bool {
-        value.utf8.count <= 8192 && value.range(of: #"^[A-Za-z0-9._%+=/-]+$"#, options: .regularExpression) != nil
+        return try KMAPIValidation.decode(T.self, data: data, shape: shape)
     }
 }
 
