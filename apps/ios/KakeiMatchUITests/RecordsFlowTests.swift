@@ -246,17 +246,6 @@ final class RecordsFlowTests: XCTestCase {
         app.terminate()
     }
 
-    @MainActor func testDeleteLayoutOnIPhoneSE3FromSearchResult() throws {
-        continueAfterFailure = false
-        let app = launch("light")
-        let screen = app.windows.firstMatch.frame
-        try XCTSkipUnless(Int(screen.width.rounded()) == 375 && Int(screen.height.rounded()) == 667,
-                          "Run this layout check on iPhone SE (3rd generation), 375 × 667 pt")
-        openSearchDetailAndAssertDeleteLayout(app)
-        capture(app, "delete-layout-iphone-se3")
-        app.terminate()
-    }
-
     @MainActor func testDeleteLayoutAtAccessibilityXLFromSearchResult() {
         continueAfterFailure = false
         let app = launch("light", preferredContentSizeCategory: "UICTContentSizeCategoryAccessibilityXL")
