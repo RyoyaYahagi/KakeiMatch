@@ -8,7 +8,7 @@ Cloud accountはAIなどのクラウド機能を使うためのアカウント�
 | --- | --- |
 | Actual Budgetデータ | 利用主体（`user` 行。アカウントまたはゲスト端末） |
 | レシートと画像 | 端末ごとのApp Attest鍵、ネイティブセッション、AI用の短期token |
-| 明細ファイルとcanonical rows | entitlement（付与がある場合のplanと月間上限）。付与がなければ日次上限 |
+| 明細ファイルとcanonical rows | entitlement（有料の付与（`pro`・`family`）のplanと月間上限）。それ以外は日次上限 |
 | 照合状態と判断 | provider別・フロー別の利用数と料金の記録（HMACと段階の試行回数のみ） |
 | | 問い合わせの受付記録（管理者だけが閲覧し、90日後に自動削除） |
 
@@ -24,11 +24,13 @@ Passkey・招待・回復・アカウント削除のAPIは退役しました（`
 
 ## AI entitlementと利用量
 
-planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。新規の利用主体には付与（entitlement）がなく、AIは1日5回（Asia/Tokyoの暦日、`AI_GUEST_DAILY_LIMIT`）で数えます。付与は運用者が `account:set-plan` で書き込みます。付与された `free` の月間上限は `AI_FREE_MONTHLY_LIMIT`（書き込み時の値）、`pro` は `AI_PRO_MONTHLY_LIMIT` です。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。
+planは `free`、`pro`、`family` です（`family` は内部IDで、利用者に表示する名前は「Plus」です）。新規の利用主体には付与（entitlement）がなく、AIは1日5回（Asia/Tokyoの暦日、`AI_GUEST_DAILY_LIMIT`）で数えます。付与は運用者が `account:set-plan` で書き込みます。
+
+月間上限で数えるのは、有効なStoreKit購入がある利用者と、有料の付与（`pro`・`family`）がある利用者だけです。`free` の付与は月間上限を読まず、日次上限で数えます。`account:set-plan <id> free` は付与を消すため、「付与なし」と同じ扱いになります。`pro` は `AI_PRO_MONTHLY_LIMIT` を月間上限として書き込みます。`pro` の上限を `0` にすると、有効な購入がない利用者は0/月で止まります。有効な購入がある場合は購入が優先されます。proとPlus（`family`）はclientから設定できません。課金処理はこのIssueの範囲外です。
 
 Plusは月間AI利用量の上限を持ちません。無制限は月間product quotaがないという意味で、provider料金が無制限という意味ではありません。短時間の不正利用を抑えるrate limitはPlusでも有効です。管理者はCloudflare D1に対する `account:set-plan` 運用commandでPlus（`family`）を割り当てます。command名や実行方法は[AI Gateway運用手順](../workers/ai-gateway/README.md)を参照してください。
 
-利用量は `GET /api/native/ai/usage` で読みます。付与がある利用者は `{plan, period: "month", month, used, limit, remaining, supportId}` を返し、月はAsia/Tokyoの暦月です。付与がない利用者とゲストは `{plan, period: "day", day, used, limit, remaining, supportId}` を返し、planはゲスト端末なら `guest`、それ以外は `free` です。unlimited planでは `limit` と `remaining` は `null` です。`supportId` は問い合わせのときに利用者を特定するための内部IDで、利用者には表示しません。
+利用量は `GET /api/native/ai/usage` で読みます。有効なStoreKit購入、または有料の付与（`pro`・`family`）がある利用者は `{plan, period: "month", month, used, limit, remaining, supportId}` を返し、月はAsia/Tokyoの暦月です。それ以外（付与なし、`free` の付与、ゲスト）は `{plan, period: "day", day, used, limit, remaining, supportId}` を返し、planはゲスト端末なら `guest`、それ以外は `free` です。unlimited planでは `limit` と `remaining` は `null` です。`supportId` は問い合わせのときに利用者を特定するための内部IDで、利用者には表示しません。
 
 月間利用量はAsia/Tokyoの暦月単位で集計し、1レシート解析フローを1回として表示します。Geminiの読み取りと同じフロー内のGeminiカテゴリ分類を合わせて1回です。利用者が「AIで読み取る」を押すたびに新しいフローを作ります。形式検証後、最初のGemini送信直前に利用枠を予約します。認証失敗、形式検証失敗、利用枠超過は計上しません。provider呼び出し開始後のtimeoutと、壊れた応答は計上します（providerが処理して料金がかかった可能性があるため）。providerがエラーの状態コード（408・504を除く）を返した時は、読み取りが行われていないため計上しません。この場合も費用の記録は残し、全体の費用上限に含めます。同じフロー内の内部再試行は追加計上しません。
 
