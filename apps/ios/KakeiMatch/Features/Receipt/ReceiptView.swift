@@ -289,10 +289,14 @@ struct ReceiptView: View {
                     }.buttonStyle(.plain).accessibilityLabel("レシート画像を拡大して見る").accessibilityIdentifier("receipt.imagePreview")
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }.frame(height: 280)
-            } else if model.imageData == nil, model.receipt?.image != nil {
+            } else if model.isDecodingPreview {
+                // Reserves the preview height so the layout does not jump when the image appears.
+                RoundedRectangle(cornerRadius: KMRadius.md).fill(KMColor.surface)
+                    .frame(height: 280).accessibilityHidden(true)
+            } else if model.receipt?.image != nil {
                 Text("レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted)
-            } else if !editing, model.imageData == nil {
+            } else if !editing {
                 HStack {
                     Button("レシートを撮る") { openCamera() }.accessibilityIdentifier("receipt.cameraButton")
                     Button("写真から") { showsPhotos = true }.accessibilityIdentifier("receipt.imageInput")

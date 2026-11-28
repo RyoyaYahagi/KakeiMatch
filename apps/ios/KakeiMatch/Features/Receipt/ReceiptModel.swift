@@ -27,6 +27,8 @@ final class KMReceiptModel {
     var accounts: [KMAccount] = []
     var imageData: Data?
     var previewImage: UIImage?
+    /// True while the preview for the current `imageData` is decoding; the previous image stays until then.
+    var isDecodingPreview = false
     var imageIsSaved = false
     var pane = "overview"
     var loading = true
@@ -347,7 +349,7 @@ final class KMReceiptModel {
         } catch {
             imageData = nil; imageIsSaved = false
             previewRevision = UUID()
-            previewTask?.cancel(); previewTask = nil; previewImage = nil
+            previewTask?.cancel(); previewTask = nil; previewImage = nil; isDecodingPreview = false
             self.error = error.localizedDescription
         }
     }
@@ -358,15 +360,19 @@ final class KMReceiptModel {
         previewTask?.cancel()
         guard let data else {
             previewTask = nil
+            isDecodingPreview = false
             previewImage = nil
             return
         }
+        isDecodingPreview = true
         let task = Task.detached(priority: .userInitiated) {
             Self.decodePreviewCGImage(from: data)
         }
         previewTask = task
         let cgImage = await task.value
-        guard previewRevision == token, !task.isCancelled, !Task.isCancelled else { return }
+        // A newer call owns the state; otherwise always resolve the flag, even if this caller was cancelled.
+        guard previewRevision == token else { return }
+        isDecodingPreview = false
         previewImage = cgImage.map { UIImage(cgImage: $0) }
     }
 
