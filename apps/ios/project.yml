@@ -16,6 +16,7 @@ settings:
     MARKETING_VERSION: '0.1.0'
     CURRENT_PROJECT_VERSION: '1'
     KM_NATIVE_HOST: kakeimatch.yhgry.workers.dev
+    KM_STOREKIT_SANDBOX_UI: 'NO'
     # The iOS OAuth client ID is public information (it is also in the built
     # Info.plist and the URL scheme), so it is kept in source.
     KM_GOOGLE_CLIENT_ID: 828427548675-v5pkal203tj2d9k13k3scv9po4ag7spv.apps.googleusercontent.com
@@ -39,7 +40,10 @@ targets:
   KakeiMatch:
     type: application
     platform: iOS
-    sources: [KakeiMatch]
+    sources:
+      - path: KakeiMatch
+        excludes:
+          - Resources/KakeiMatchSandbox.storekit
     resources:
       - path: KakeiMatch/PrivacyInfo.xcprivacy
     dependencies:
@@ -87,6 +91,17 @@ targets:
           plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
           /usr/libexec/PlistBuddy -c "Delete :KMNativeAPIHost" "$plist" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :KMNativeAPIHost string ${KM_NATIVE_HOST}" "$plist"
+      - name: Inject KMStoreKitSandboxUI
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+          plist="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          /usr/libexec/PlistBuddy -c "Delete :KMStoreKitSandboxUI" "$plist" 2>/dev/null || true
+          if [ "${KM_STOREKIT_SANDBOX_UI:-NO}" = "YES" ]; then
+            /usr/libexec/PlistBuddy -c "Add :KMStoreKitSandboxUI bool true" "$plist"
+          else
+            /usr/libexec/PlistBuddy -c "Add :KMStoreKitSandboxUI bool false" "$plist"
+          fi
       - name: Inject KMGoogleSignIn
         basedOnDependencyAnalysis: false
         script: |
@@ -111,6 +126,8 @@ targets:
       - path: KakeiMatchTests/Fixtures
         buildPhase: resources
         type: folder
+      - path: KakeiMatch/Resources/KakeiMatchSandbox.storekit
+        buildPhase: resources
       - path: ../../test/fixtures/ios-parity
         buildPhase: resources
         type: folder

@@ -5,7 +5,9 @@ enum KMAPIError: Error, Equatable, Sendable {
     case authenticationRequired, quotaExceeded, aiTemporarilyPaused, rateLimited
     case network, invalidResponse, invalidRequest, invalidFlow, forbiddenOrigin
     case providerUnavailable, providerTimeout, notConfigured, botCheckFailed, guestLimitReached
-    case nativeAuthenticationRequired, nativeUnsupported, credentialStorage, server(status: Int, code: String?)
+    case nativeAuthenticationRequired, nativeUnsupported, credentialStorage
+    case storeKitInvalidJWS, storeKitEnvironmentNotAllowed, storeKitUnsupportedOwnershipType, storeKitUnknownProduct
+    case server(status: Int, code: String?)
 
     var pwaCode: String {
         switch self {
@@ -23,6 +25,10 @@ enum KMAPIError: Error, Equatable, Sendable {
         case .nativeAuthenticationRequired: "account_session_required"
         case .nativeUnsupported: "native_authentication_unavailable"
         case .credentialStorage: "storage"
+        case .storeKitInvalidJWS: "invalid_jws"
+        case .storeKitEnvironmentNotAllowed: "environment_not_allowed"
+        case .storeKitUnsupportedOwnershipType: "unsupported_ownership_type"
+        case .storeKitUnknownProduct: "unknown_product"
         case .server: "request_failed"
         }
     }
@@ -58,6 +64,10 @@ enum KMAPIError: Error, Equatable, Sendable {
         case "not_configured": return .notConfigured
         case "bot_check_failed": return .botCheckFailed
         case "guest_limit_reached": return .guestLimitReached
+        case "invalid_jws": return .storeKitInvalidJWS
+        case "environment_not_allowed": return .storeKitEnvironmentNotAllowed
+        case "unsupported_ownership_type": return .storeKitUnsupportedOwnershipType
+        case "unknown_product": return .storeKitUnknownProduct
         default: return status == 401 ? .authenticationRequired : .server(status: status, code: nil)
         }
     }
@@ -68,6 +78,42 @@ struct KMNativeConfiguration: Codable, Sendable {
     let available: Bool
     let rpId: String?
     let appAttestEnvironment: String?
+}
+
+struct KMStoreKitTransactionResponse: Codable, Equatable, Sendable {
+    enum SubscriptionStatus: String, Codable, Sendable {
+        case active
+        case inGracePeriod = "in_grace_period"
+        case inBillingRetry = "in_billing_retry"
+        case expired
+        case revoked
+    }
+
+    enum SkipReason: String, Codable, Sendable {
+        case staleOwnerTransfer = "stale_owner_transfer"
+        case ownerChangeRateLimited = "owner_change_rate_limited"
+        case staleTransaction = "stale_transaction"
+    }
+
+    let synced: Bool
+    let status: SubscriptionStatus?
+    let expiresAt: Int?
+    let productId: String?
+    let reason: SkipReason?
+
+    init(
+        synced: Bool,
+        status: SubscriptionStatus? = nil,
+        expiresAt: Int? = nil,
+        productId: String? = nil,
+        reason: SkipReason? = nil
+    ) {
+        self.synced = synced
+        self.status = status
+        self.expiresAt = expiresAt
+        self.productId = productId
+        self.reason = reason
+    }
 }
 
 struct KMAIUsage: Codable, Sendable {

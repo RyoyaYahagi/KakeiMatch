@@ -18,6 +18,7 @@ protocol KMNativeAuthService: Sendable {
     func guestUsage() async throws -> KMAIUsage
 
     func issueAccountAIToken() async throws
+    func submitStoreKitTransaction(jws: String) async throws -> KMStoreKitTransactionResponse
 }
 
 extension KMWorkerAPI: KMNativeAuthService {

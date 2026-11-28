@@ -11,6 +11,7 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
     private var guest: Bool
     private let initial: Initial
     private let supportId: String?
+    private(set) var submittedStoreKitJWS: [String] = []
 
     init(initial: Initial, supportId: String? = nil) {
         self.initial = initial
@@ -52,6 +53,17 @@ actor KMFakeNativeAuthService: KMNativeAuthService {
 
     func issueAccountAIToken() async throws {
         guard signedIn else { throw KMAPIError.nativeAuthenticationRequired }
+    }
+
+    func submitStoreKitTransaction(jws: String) async throws -> KMStoreKitTransactionResponse {
+        guard signedIn || guest else { throw KMAPIError.nativeAuthenticationRequired }
+        submittedStoreKitJWS.append(jws)
+        return KMStoreKitTransactionResponse(
+            synced: true,
+            status: .active,
+            expiresAt: nil,
+            productId: KMStoreKitConfiguration.proMonthlyProductID
+        )
     }
 
 }

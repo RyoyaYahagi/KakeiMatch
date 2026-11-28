@@ -387,6 +387,91 @@ actor KMWorkerAPI {
         try await nativeAccessToken(allowGuest: allowGuest)
     }
 
+    private struct StoreKitTransactionBody: Encodable {
+        let signedTransactionInfo: String
+    }
+
+    private static let storeKitTransactionResponseShape: KMAPIShape = .oneOf([
+        .object([
+            "synced": .boolean,
+            "status": .values(["active", "in_grace_period", "in_billing_retry", "expired", "revoked"]),
+            "expiresAt": .nullable(.integer()),
+            "productId": .text(max: 128),
+        ]),
+        .object([
+            "synced": .boolean,
+            "reason": .values(["stale_owner_transfer", "owner_change_rate_limited", "stale_transaction"]),
+        ]),
+    ])
+
+    /// Submits a verified StoreKit 2 JWS transaction to the Worker using the
+    /// active Native session (account session if present, otherwise guest session).
+    func submitStoreKitTransaction(jws: String) async throws -> KMStoreKitTransactionResponse {
+        let trimmed = jws.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, jws.utf8.count <= 48 * 1024 else {
+            throw KMAPIError.invalidRequest
+        }
+        let body = try KMAPIValidation.request(
+            StoreKitTransactionBody(signedTransactionInfo: jws),
+            shape: .object(["signedTransactionInfo": .text(max: 48 * 1024)])
+        )
+        let revision = credentialRevision
+        if let accountAuthorization = try nativeSessionAuthorization(required: false) {
+            do {
+                let result: KMStoreKitTransactionResponse = try await nativeSend(
+                    "POST",
+                    "/api/native/storekit/transactions",
+                    body: body,
+                    authorization: accountAuthorization,
+                    shape: Self.storeKitTransactionResponseShape
+                )
+                try validateStoreKitTransactionResponse(result)
+                return result
+            } catch KMAPIError.authenticationRequired {
+                try requireCredentialRevision(revision)
+                try credentials.write(nil, key: "session")
+                try clearAccessToken()
+            }
+        }
+        let guestRevision = credentialRevision
+        let guestAuthorization = try nativeGuestAuthorization()
+        do {
+            let result: KMStoreKitTransactionResponse = try await nativeSend(
+                "POST",
+                "/api/native/storekit/transactions",
+                body: body,
+                authorization: guestAuthorization,
+                shape: Self.storeKitTransactionResponseShape
+            )
+            try validateStoreKitTransactionResponse(result)
+            return result
+        } catch KMAPIError.authenticationRequired {
+            try requireCredentialRevision(guestRevision)
+            try credentials.write(nil, key: "guest")
+            throw KMAPIError.nativeAuthenticationRequired
+        }
+    }
+
+    private func nativeGuestAuthorization() throws -> String {
+        let guest: NativeSessionResponse?
+        do {
+            guest = try credentials.read("guest").map { try KMJSON.decoder().decode(NativeSessionResponse.self, from: $0) }
+        } catch {
+            throw KMAPIError.credentialStorage
+        }
+        guard let guest, guest.expiresAt > Int(now().timeIntervalSince1970),
+              guest.sessionToken.range(of: #"^[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil else {
+            throw KMAPIError.nativeAuthenticationRequired
+        }
+        return "Native \(guest.sessionToken)"
+    }
+
+    private func validateStoreKitTransactionResponse(_ response: KMStoreKitTransactionResponse) throws {
+        if response.reason != nil && response.synced {
+            throw KMAPIError.invalidResponse
+        }
+    }
+
     func usage(as identity: Identity = .account) async throws -> KMAIUsage {
         var authorization: String?
         if identity == .guest {
