@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Observation
 import UIKit
 
@@ -13,6 +15,7 @@ final class KMReceiptModel {
     var time = ""
     var memo = ""
     var tax = ""
+    var taxes: [KMReceiptTax] = []
     var excluded = false
     var categoryId = ""
     var accountId = ""
@@ -24,6 +27,9 @@ final class KMReceiptModel {
     var categories: [KMCategory] = []
     var accounts: [KMAccount] = []
     var imageData: Data?
+    var previewImage: UIImage?
+    /// True while the preview for the current `imageData` is decoding; the previous image stays until then.
+    var isDecodingPreview = false
     var imageIsSaved = false
     var pane = "overview"
     var loading = true
@@ -49,6 +55,8 @@ final class KMReceiptModel {
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var draftTask: Task<Void, Never>?
+    @ObservationIgnored private var previewTask: Task<CGImage?, Never>?
+    @ObservationIgnored private var previewRevision = UUID()
     /// Snapshot currently on screen from load/extraction; unchanged values are not re-saved.
     @ObservationIgnored private var displayedDraft: KMReceiptDraft?
     /// After the first user edit, even returning to the original values must replace the draft.
@@ -81,6 +89,21 @@ final class KMReceiptModel {
         guard case .success(let totals) = categorySummary else { return "カテゴリ別の金額を確認できません" }
         return totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
     }
+    struct CategorySummaryDisplay {
+        let count: Int
+        let text: String
+    }
+    var categorySummaryDisplay: CategorySummaryDisplay {
+        switch categorySummary {
+        case .success(let totals):
+            return .init(
+                count: totals.count,
+                text: totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
+            )
+        case .failure:
+            return .init(count: 0, text: "カテゴリ別の金額を確認できません")
+        }
+    }
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
     /// PWA local-ui.ts:read — the unfinished form, raw text included, saved after a short delay.
@@ -88,7 +111,8 @@ final class KMReceiptModel {
         .init(merchant: merchant, purchasedDate: date, purchasedTime: time.isEmpty ? nil : time,
               totalAmountText: amount, categoryId: categoryId, accountId: accountId,
               items: items, adjustments: adjustments, taxAmountText: tax,
-              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded)
+              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded,
+              taxes: taxes.isEmpty ? nil : taxes)
     }
 
     func load(_ repositories: KMRepositories?, receiptID: String?, editing: Bool = false) async {
@@ -144,6 +168,11 @@ final class KMReceiptModel {
         if let image = receipt.image {
             imageData = try await repositories?.receipts.receiptImage(blobId: image.blobId)
             imageIsSaved = imageData != nil
+            await updatePreviewImage(for: imageData)
+        } else {
+            imageData = nil
+            imageIsSaved = false
+            await updatePreviewImage(for: nil)
         }
         displayedDraft = draftSnapshot
     }
@@ -154,6 +183,7 @@ final class KMReceiptModel {
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
         time = draft.purchasedTime ?? ""
         tax = draft.taxAmountText
+        taxes = draft.taxes ?? []
         memo = draft.memo ?? ""
         excluded = draft.excludedFromSpending
         categoryId = draft.categoryId
@@ -170,14 +200,19 @@ final class KMReceiptModel {
         amount = (confirmed?.totalAmountYen ?? extraction?.totalAmountYen).map(String.init) ?? ""
         date = (confirmed?.purchasedDate ?? extraction?.purchasedDate ?? today).rawValue
         time = confirmed?.purchasedTime ?? extraction?.purchasedTime ?? ""
-        tax = (confirmed?.taxAmountYen ?? extraction?.taxAmountYen).map(String.init) ?? ""
+        let resolvedTaxes = confirmed?.taxes ?? extraction?.taxes ?? []
+        taxes = resolvedTaxes
+        let resolvedTaxYen = confirmed?.taxAmountYen ?? extraction?.taxAmountYen
+            ?? (resolvedTaxes.isEmpty ? nil : resolvedTaxes.reduce(0) { $0 + $1.taxAmountYen })
+        tax = resolvedTaxYen.map(String.init) ?? ""
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
         categoryId = confirmed?.categoryId ?? receipt.aiSuggestion.categoryId ?? ""
         accountId = confirmed?.accountId ?? accountId
         items = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
             KMReceiptItem(id: "receipt-item:\(receipt.id):\(i)", name: item.name, amountYen: item.amountYen,
                 quantity: item.quantity, unitPriceYen: item.unitPriceYen,
-                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil })
+                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil },
+                taxRatePercent: item.taxRatePercent)
         }
         adjustments = confirmed?.adjustments ?? (extraction?.adjustments ?? []).enumerated().map { i, adjustment in
             KMReceiptAdjustment(id: "receipt-adjustment:\(receipt.id):\(i)", label: adjustment.label, amountYen: adjustment.amountYen,
@@ -313,15 +348,50 @@ final class KMReceiptModel {
                 replacingReceiptId: receipt?.id, at: now)
             receipt = saved
             imageData = data; imageIsSaved = true
+            await updatePreviewImage(for: data)
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
-            categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
+            categoryId = ""; taxes = []; items = []; adjustments = []; adjustmentIsAddition = [:]
             reviewed = []; status = nil; error = nil
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
             imageData = nil; imageIsSaved = false
+            previewRevision = UUID()
+            previewTask?.cancel(); previewTask = nil; previewImage = nil; isDecodingPreview = false
             self.error = error.localizedDescription
         }
+    }
+
+    private func updatePreviewImage(for data: Data?) async {
+        previewRevision = UUID()
+        let token = previewRevision
+        previewTask?.cancel()
+        guard let data else {
+            previewTask = nil
+            isDecodingPreview = false
+            previewImage = nil
+            return
+        }
+        isDecodingPreview = true
+        let task = Task.detached(priority: .userInitiated) {
+            Self.decodePreviewCGImage(from: data)
+        }
+        previewTask = task
+        let cgImage = await task.value
+        // A newer call owns the state; otherwise always resolve the flag, even if this caller was cancelled.
+        guard previewRevision == token else { return }
+        isDecodingPreview = false
+        previewImage = cgImage.map { UIImage(cgImage: $0) }
+    }
+
+    nonisolated private static func decodePreviewCGImage(from data: Data, maxPixelSize: Int = 1200) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
     }
 
     func review(_ warning: KMReceiptPresentation.Warning) async {
@@ -365,7 +435,9 @@ final class KMReceiptModel {
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
             displayedDraft = draftSnapshot; draftSavedOnce = true
-            status = "入力内容を端末に保存しました。"
+            // Same text as main; assigned only when it changes so repeated saves do not re-render the view.
+            let savedMessage = "入力内容を端末に保存しました。"
+            if status != savedMessage { status = savedMessage }
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
             if case .notFound = failure { status = "この確認待ちレシートは削除されています。画面を開き直してください。" }
@@ -609,13 +681,19 @@ final class KMReceiptModel {
                 throw KMDataError.invalidData("時刻を確認してください。")
             }
             let taxYen = tax.isEmpty ? nil : try KMEntryPresentation.parseAmountYen(tax, allowsZero: true)
+            let confirmedTaxes: [KMReceiptTax]?
+            if !taxes.isEmpty, let taxYen, try taxes.reduce(0, { try KMYen.add($0, $1.taxAmountYen) }) == taxYen {
+                confirmedTaxes = taxes
+            } else {
+                confirmedTaxes = nil
+            }
             // The repository owns allocation validation and posting, including mixed-category splits.
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
             let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
                 purchasedTime: time.isEmpty ? nil : time, totalAmountYen: total, categoryId: fallback,
                 accountId: accountId, excludedFromSpending: excluded, memo: memo.isEmpty ? nil : memo,
-                taxAmountYen: taxYen, items: items, adjustments: adjustments)
+                taxAmountYen: taxYen, items: items, adjustments: adjustments, taxes: confirmedTaxes)
             if editing {
                 guard let current = receipt else { throw KMDataError.invalidData("登録済みのレシートを確認できません。記録一覧を開き直してください。") }
                 try await ensureCurrent(current)
