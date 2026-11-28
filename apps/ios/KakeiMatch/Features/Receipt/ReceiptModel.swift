@@ -421,6 +421,9 @@ final class KMReceiptModel {
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
             displayedDraft = draftSnapshot; draftSavedOnce = true
+            // Same text as main; assigned only when it changes so repeated saves do not re-render the view.
+            let savedMessage = "入力内容を端末に保存しました。"
+            if status != savedMessage { status = savedMessage }
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
             if case .notFound = failure { status = "この確認待ちレシートは削除されています。画面を開き直してください。" }
