@@ -98,16 +98,37 @@ enum KMReceiptPresentation {
         return CategoryLearning(categoryId: categoryId, itemCategoryIds: itemCategoryIds, appliedRules: applied)
     }
 
-    /// Matches the PWA receipt summary: item amounts are grouped by the selected
-    /// category (or the receipt's default) and sorted from largest to smallest.
-    static func categoryTotals(items: [KMReceiptItem], defaultCategoryId: String,
+    static func isUnclassifiedCategory(_ categoryId: String?) -> Bool {
+        categoryId == nil || categoryId?.isEmpty == true
+    }
+
+    static func unclassifiedItemCount(items: [KMReceiptItem]) -> Int {
+        items.reduce(0) { count, item in
+            count + (isUnclassifiedCategory(item.categoryId) ? 1 : 0)
+        }
+    }
+
+    /// Resolves nil/empty item categories to `confirmedCategoryId` only for legacy `.applied` receipts.
+    static func resolvedItemsForDisplay(_ items: [KMReceiptItem], status: KMReceipt.RegistrationStatus?,
+                                        confirmedCategoryId: String?) -> [KMReceiptItem] {
+        guard status == .applied, let fallback = confirmedCategoryId, !fallback.isEmpty else { return items }
+        return items.map { item in
+            guard isUnclassifiedCategory(item.categoryId) else { return item }
+            var resolved = item
+            resolved.categoryId = fallback
+            return resolved
+        }
+    }
+
+    /// Groups item amounts by each item's selected category without folding nil items
+    /// into another category. Unselected items always appear first as the "未選択" bucket;
+    /// selected categories follow from largest to smallest.
+    static func categoryTotals(items: [KMReceiptItem],
                                categories: [KMCategory]) throws -> [CategoryTotal] {
         var order: [String] = []
         var totals: [String: Int] = [:]
         for item in items {
-            let itemCategory = item.categoryId.flatMap { $0.isEmpty ? nil : $0 }
-            let fallback = defaultCategoryId.isEmpty ? nil : defaultCategoryId
-            let key = itemCategory ?? fallback ?? ""
+            let key = item.categoryId.flatMap { $0.isEmpty ? nil : $0 } ?? ""
             if totals[key] == nil { order.append(key) }
             totals[key] = try KMYen.add(totals[key] ?? 0, item.amountYen ?? 0)
         }
@@ -118,7 +139,10 @@ enum KMReceiptPresentation {
             return (index: index, total: total)
         }
         let sorted = indexedTotals.sorted { lhs, rhs in
-            lhs.total.amountYen == rhs.total.amountYen ? lhs.index < rhs.index : lhs.total.amountYen > rhs.total.amountYen
+            let leftUnselected = lhs.total.categoryId == nil
+            let rightUnselected = rhs.total.categoryId == nil
+            if leftUnselected != rightUnselected { return leftUnselected }
+            return lhs.total.amountYen == rhs.total.amountYen ? lhs.index < rhs.index : lhs.total.amountYen > rhs.total.amountYen
         }
         return sorted.map(\.total)
     }
