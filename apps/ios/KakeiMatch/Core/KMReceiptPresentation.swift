@@ -28,6 +28,64 @@ enum KMReceiptPresentation {
         return TotalCheck(difference: difference, taxMatches: difference != 0 && (tax ?? 0) > 0 && difference == tax)
     }
 
+    static func groupedTaxes(_ taxes: [KMReceiptTax]) -> [KMReceiptTax] {
+        var result: [KMReceiptTax] = []
+        for entry in taxes {
+            if let index = result.firstIndex(where: { $0.ratePercent == entry.ratePercent }),
+               let taxable = try? KMYen.add(result[index].taxableAmountYen, entry.taxableAmountYen),
+               let tax = try? KMYen.add(result[index].taxAmountYen, entry.taxAmountYen) {
+                result[index].taxableAmountYen = taxable
+                result[index].taxAmountYen = tax
+            } else {
+                result.append(entry)
+            }
+        }
+        return result
+    }
+
+    static func taxRateLabel(_ ratePercent: Decimal) -> String {
+        "\(NSDecimalNumber(decimal: ratePercent).stringValue)%"
+    }
+
+    static func totalTaxYen(_ taxes: [KMReceiptTax]) throws -> Int? {
+        guard !taxes.isEmpty else { return nil }
+        return try taxes.reduce(0) { try KMYen.add($0, $1.taxAmountYen) }
+    }
+
+    static func reconciledTaxesForSave(
+        taxes: [KMReceiptTax], taxAmountTexts: [String], singleTaxText: String
+    ) throws -> (taxAmountYen: Int?, taxes: [KMReceiptTax]?) {
+        if taxes.count > 1 {
+            let trimmedTexts = taxes.indices.map { index in
+                let raw = taxAmountTexts.indices.contains(index) ? taxAmountTexts[index] : String(taxes[index].taxAmountYen)
+                return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if trimmedTexts.allSatisfy(\.isEmpty) {
+                return (nil, nil)
+            }
+            var updated: [KMReceiptTax] = []
+            var total = 0
+            for (index, entry) in taxes.enumerated() {
+                let trimmed = trimmedTexts[index]
+                let amount = trimmed.isEmpty ? 0 : try KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true)
+                var next = entry
+                next.taxAmountYen = amount
+                updated.append(next)
+                total = try KMYen.add(total, amount)
+            }
+            return (total, updated)
+        }
+        let trimmed = singleTaxText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, nil) }
+        let taxYen = try KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true)
+        if taxes.count == 1 {
+            var updated = taxes[0]
+            updated.taxAmountYen = taxYen
+            return (taxYen, [updated])
+        }
+        return (taxYen, nil)
+    }
+
     static func warnings(_ extraction: KMReceiptExtraction?, reviewed: [Int]) -> [Warning] {
         guard let extraction else { return [] }
         let labels: [KMReceiptExtraction.WarningField: String] = [.merchant: "店名", .purchasedDate: "購入日", .purchasedTime: "時刻", .totalAmountYen: "合計金額", .taxAmountYen: "税額", .items: "品目", .adjustments: "値引き・調整"]
