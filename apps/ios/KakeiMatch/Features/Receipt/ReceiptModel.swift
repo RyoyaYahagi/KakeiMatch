@@ -15,6 +15,7 @@ final class KMReceiptModel {
     var time = ""
     var memo = ""
     var tax = ""
+    var taxes: [KMReceiptTax] = []
     var excluded = false
     var categoryId = ""
     var accountId = ""
@@ -110,7 +111,8 @@ final class KMReceiptModel {
         .init(merchant: merchant, purchasedDate: date, purchasedTime: time.isEmpty ? nil : time,
               totalAmountText: amount, categoryId: categoryId, accountId: accountId,
               items: items, adjustments: adjustments, taxAmountText: tax,
-              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded)
+              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded,
+              taxes: taxes.isEmpty ? nil : taxes)
     }
 
     func load(_ repositories: KMRepositories?, receiptID: String?, editing: Bool = false) async {
@@ -181,6 +183,7 @@ final class KMReceiptModel {
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
         time = draft.purchasedTime ?? ""
         tax = draft.taxAmountText
+        taxes = draft.taxes ?? []
         memo = draft.memo ?? ""
         excluded = draft.excludedFromSpending
         categoryId = draft.categoryId
@@ -197,14 +200,19 @@ final class KMReceiptModel {
         amount = (confirmed?.totalAmountYen ?? extraction?.totalAmountYen).map(String.init) ?? ""
         date = (confirmed?.purchasedDate ?? extraction?.purchasedDate ?? today).rawValue
         time = confirmed?.purchasedTime ?? extraction?.purchasedTime ?? ""
-        tax = (confirmed?.taxAmountYen ?? extraction?.taxAmountYen).map(String.init) ?? ""
+        let resolvedTaxes = confirmed?.taxes ?? extraction?.taxes ?? []
+        taxes = resolvedTaxes
+        let resolvedTaxYen = confirmed?.taxAmountYen ?? extraction?.taxAmountYen
+            ?? (resolvedTaxes.isEmpty ? nil : resolvedTaxes.reduce(0) { $0 + $1.taxAmountYen })
+        tax = resolvedTaxYen.map(String.init) ?? ""
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
         categoryId = confirmed?.categoryId ?? receipt.aiSuggestion.categoryId ?? ""
         accountId = confirmed?.accountId ?? accountId
         items = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
             KMReceiptItem(id: "receipt-item:\(receipt.id):\(i)", name: item.name, amountYen: item.amountYen,
                 quantity: item.quantity, unitPriceYen: item.unitPriceYen,
-                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil })
+                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil },
+                taxRatePercent: item.taxRatePercent)
         }
         adjustments = confirmed?.adjustments ?? (extraction?.adjustments ?? []).enumerated().map { i, adjustment in
             KMReceiptAdjustment(id: "receipt-adjustment:\(receipt.id):\(i)", label: adjustment.label, amountYen: adjustment.amountYen,
@@ -343,7 +351,7 @@ final class KMReceiptModel {
             await updatePreviewImage(for: data)
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
-            categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
+            categoryId = ""; taxes = []; items = []; adjustments = []; adjustmentIsAddition = [:]
             reviewed = []; status = nil; error = nil
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
@@ -673,13 +681,19 @@ final class KMReceiptModel {
                 throw KMDataError.invalidData("時刻を確認してください。")
             }
             let taxYen = tax.isEmpty ? nil : try KMEntryPresentation.parseAmountYen(tax, allowsZero: true)
+            let confirmedTaxes: [KMReceiptTax]?
+            if !taxes.isEmpty, let taxYen, try taxes.reduce(0, { try KMYen.add($0, $1.taxAmountYen) }) == taxYen {
+                confirmedTaxes = taxes
+            } else {
+                confirmedTaxes = nil
+            }
             // The repository owns allocation validation and posting, including mixed-category splits.
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
             let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
                 purchasedTime: time.isEmpty ? nil : time, totalAmountYen: total, categoryId: fallback,
                 accountId: accountId, excludedFromSpending: excluded, memo: memo.isEmpty ? nil : memo,
-                taxAmountYen: taxYen, items: items, adjustments: adjustments)
+                taxAmountYen: taxYen, items: items, adjustments: adjustments, taxes: confirmedTaxes)
             if editing {
                 guard let current = receipt else { throw KMDataError.invalidData("登録済みのレシートを確認できません。記録一覧を開き直してください。") }
                 try await ensureCurrent(current)
