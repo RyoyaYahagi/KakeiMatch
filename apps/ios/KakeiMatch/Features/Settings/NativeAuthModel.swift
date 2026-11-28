@@ -226,6 +226,9 @@ final class KMNativeAuthModel {
                 return "より新しい取引が既に反映されています。"
             }
         }
+        guard response.synced else {
+            return "取引はまだ反映されていません。時間をおいて再度お試しください。"
+        }
         return restored
             ? "購入を復元し、利用状況を更新しました。"
             : "購入を確認し、利用状況を更新しました。"

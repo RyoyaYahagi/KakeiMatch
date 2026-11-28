@@ -157,6 +157,32 @@ private actor FakeStoreKitService: KMStoreKitServicing {
     }
 }
 
+private actor UnsyncedResponseAuthService: KMNativeAuthService {
+    nonisolated let appAttestSupported = true
+    let response: KMStoreKitTransactionResponse
+
+    init(response: KMStoreKitTransactionResponse) {
+        self.response = response
+    }
+
+    func nativeConfiguration() async throws -> KMNativeConfiguration {
+        .init(available: true, rpId: "preview.example.test", appAttestEnvironment: "development")
+    }
+    func signInWithPasskey() async throws {}
+    func registerPasskey(context _: String, name _: String) async throws {}
+    func addPasskey(name _: String) async throws {}
+    func startGuest() async throws {}
+    func accountUsage() async throws -> KMAIUsage { throw KMAPIError.nativeAuthenticationRequired }
+    func guestUsage() async throws -> KMAIUsage {
+        .init(plan: .guest, period: .day, month: nil, day: try KMDate("2026-10-14"),
+              used: 2, limit: 5, remaining: 3, supportId: nil)
+    }
+    func issueAccountAIToken() async throws { throw KMAPIError.nativeAuthenticationRequired }
+    func submitStoreKitTransaction(jws _: String) async throws -> KMStoreKitTransactionResponse {
+        response
+    }
+}
+
 @Suite(.serialized)
 struct StoreKitAPIClientTests {
     private static let fixedNow = Date(timeIntervalSince1970: 1_764_000_000)
@@ -379,6 +405,58 @@ struct StoreKitNativeAuthModelTests {
         #expect(await storeKit.finishedTransactionIDs == [2002])
         #expect(model.hasLoaded == true)
         #expect(model.storeKitErrorMessage == nil)
+    }
+
+    @Test func unsyncedResponseWithoutReasonShowsNeutralStatusInsteadOfSuccess() async {
+        let unsyncedWithoutReason = KMStoreKitTransactionResponse(
+            synced: false,
+            status: .active,
+            expiresAt: nil,
+            productId: KMStoreKitConfiguration.proMonthlyProductID,
+            reason: nil
+        )
+        let purchaseStoreKit = FakeStoreKitService(sandbox: true)
+        let purchaseModel = KMNativeAuthModel(
+            service: UnsyncedResponseAuthService(response: unsyncedWithoutReason),
+            storeKit: purchaseStoreKit,
+            storeKitSandboxFlagEnabled: true
+        )
+        await purchaseModel.loadStoreKitSandboxIfNeeded()
+        await purchaseModel.purchaseStoreKitProduct(id: KMStoreKitConfiguration.proMonthlyProductID)
+
+        #expect(purchaseModel.storeKitErrorMessage == nil)
+        #expect(purchaseModel.storeKitStatusMessage == "取引はまだ反映されていません。時間をおいて再度お試しください。")
+        #expect(purchaseModel.storeKitStatusMessage != "購入を確認し、利用状況を更新しました。")
+
+        let restoredTx = KMStoreKitVerifiedTransaction(
+            transactionID: 3003,
+            productID: KMStoreKitConfiguration.proMonthlyProductID,
+            jwsRepresentation: "unsynced.restore.jws",
+            isSandboxOrXcode: true
+        )
+        let restoreStoreKit = FakeStoreKitService(sandbox: true, entitlements: [restoredTx])
+        let restoreModel = KMNativeAuthModel(
+            service: UnsyncedResponseAuthService(response: unsyncedWithoutReason),
+            storeKit: restoreStoreKit,
+            storeKitSandboxFlagEnabled: true
+        )
+        await restoreModel.loadStoreKitSandboxIfNeeded()
+        await restoreModel.restoreStoreKitPurchases()
+
+        #expect(restoreModel.storeKitErrorMessage == nil)
+        #expect(restoreModel.storeKitStatusMessage == "取引はまだ反映されていません。時間をおいて再度お試しください。")
+        #expect(restoreModel.storeKitStatusMessage != "購入を復元し、利用状況を更新しました。")
+
+        let staleResponse = KMStoreKitTransactionResponse(synced: false, reason: .staleTransaction)
+        let staleStoreKit = FakeStoreKitService(sandbox: true)
+        let staleModel = KMNativeAuthModel(
+            service: UnsyncedResponseAuthService(response: staleResponse),
+            storeKit: staleStoreKit,
+            storeKitSandboxFlagEnabled: true
+        )
+        await staleModel.loadStoreKitSandboxIfNeeded()
+        await staleModel.purchaseStoreKitProduct(id: KMStoreKitConfiguration.proMonthlyProductID)
+        #expect(staleModel.storeKitStatusMessage == "より新しい取引が既に反映されています。")
     }
 }
 
