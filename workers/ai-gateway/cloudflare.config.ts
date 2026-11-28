@@ -34,6 +34,10 @@ export default defineConfig(({ mode, isPreview }) => {
         STOREKIT_ALLOWED_ENVIRONMENTS: bindings.text('Sandbox'),
         // Product IDs are configured outside code; empty/unset fails closed.
         STOREKIT_PRODUCT_PLANS_JSON: bindings.secret(),
+        // App Store Server API credentials for daily subscription reconciliation (no real secrets in code).
+        APP_STORE_SERVER_API_PRIVATE_KEY: bindings.secret(),
+        APP_STORE_SERVER_API_ISSUER_ID: bindings.secret(),
+        APP_STORE_SERVER_API_KEY_ID: bindings.secret(),
         AI_EMERGENCY_STOP: bindings.secret(),
         AI_GUARDRAILS_JSON: bindings.secret(),
         AI_GUEST_DAILY_LIMIT: bindings.text('5'),
