@@ -103,4 +103,44 @@ import Testing
         #expect(model.errorMessage == nil)
         #expect(model.runFeedback == "照合しました。新しく一致したものはありません。")
     }
+    @Test func unmatchedEntryInitialValuesUseMerchantCategoryRuleAndStayEmptyWithoutRule() async throws {
+        let repositories = try KMFixtureLoader.load(named: "reconciliation")
+        let model = KMReconciliationModel(); await model.load(repositories)
+        let unmatchedRows = model.presentation.pending.filter { $0.status == .unmatchedStatement && !$0.hasCandidates }
+        #expect(unmatchedRows.count >= 2)
+        let rowWithRule = unmatchedRows[0]
+        let rowWithoutRule = unmatchedRows[1]
+
+        let initialWithoutRule = model.entryInitialValues(for: rowWithRule.statement)
+        #expect(initialWithoutRule.categoryId == nil)
+        let formWithoutRule = KMEntryFormModel(kind: .expense, initialValues: initialWithoutRule)
+        await formWithoutRule.load(repositories)
+        #expect(formWithoutRule.error == nil && formWithoutRule.categoryId.isEmpty)
+
+        let targetCategory = try #require(model.categories.first)
+        let alternativeCategory = try #require(model.categories.dropFirst().first)
+        let normalizedMerchant = KMCategoryLearningService.normalizeName(rowWithRule.statement.merchant)
+        for index in 1...3 {
+            try await repositories.categoryLearning.saveCategoryObservation(KMCategoryLearningObservation(
+                targetType: .categoryLearning, receiptId: "unmatched-rule-obs-\(index)",
+                normalizedMerchant: normalizedMerchant, merchantCategoryId: targetCategory.id,
+                items: [], confirmedAt: repositories.referenceDate))
+        }
+        await model.load(repositories)
+
+        let initialWithRule = model.entryInitialValues(for: rowWithRule.statement)
+        #expect(initialWithRule.categoryId == targetCategory.id)
+        let formWithRule = KMEntryFormModel(kind: .expense, initialValues: initialWithRule)
+        await formWithRule.load(repositories)
+        #expect(formWithRule.error == nil && formWithRule.categoryId == targetCategory.id)
+
+        formWithRule.categoryId = alternativeCategory.id
+        #expect(formWithRule.categoryId == alternativeCategory.id)
+
+        let otherInitial = model.entryInitialValues(for: rowWithoutRule.statement)
+        #expect(otherInitial.categoryId == nil)
+        let otherForm = KMEntryFormModel(kind: .expense, initialValues: otherInitial)
+        await otherForm.load(repositories)
+        #expect(otherForm.error == nil && otherForm.categoryId.isEmpty)
+    }
 }
