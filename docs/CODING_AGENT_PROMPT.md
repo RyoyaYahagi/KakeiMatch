@@ -1,5 +1,7 @@
 # Coding Agent Prompt — Initial Implementation
 
+> 注: この文書は初期の実装指示（Actual Budget と Better Auth を前提にした時期）の記録です。現行の仕様は [README.md](../README.md)、[PRODUCT.md](PRODUCT.md)、[ARCHITECTURE.md](ARCHITECTURE.md) を正とします。認証の項（Better Auth・bootstrap）は S7 で撤去済みです。
+
 この文書は旧Next.jsサーバー構成の開発・検証記録です。現在の本番PWAの起動要件ではありません。現行構成は[アーキテクチャ](ARCHITECTURE.md)、旧構成の任意実行は[legacy手順](../legacy/README.md)を参照してください。
 
 あなたは `RyoyaYahagi/KakeiMatch` の初期実装を担当してください。

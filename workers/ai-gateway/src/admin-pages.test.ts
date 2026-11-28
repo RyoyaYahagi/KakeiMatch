@@ -8,7 +8,6 @@ vi.mock('./admin', () => ({
     : { response: Response.json({ error: 'denied' }, { status: state.status }) },
 }));
 vi.mock('./worker', () => ({ handleRequest: vi.fn(), handleAdminGatewayRequest: async () => Response.json({ overview: 'safe metadata' }) }));
-vi.mock('./account-auth', () => ({ handleAuthRequest: vi.fn(), handleAccountRequest: vi.fn() }));
 
 describe('admin document routing', () => {
   beforeEach(() => { state.status = 403; });

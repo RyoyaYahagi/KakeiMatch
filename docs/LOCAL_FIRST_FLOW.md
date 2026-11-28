@@ -1,5 +1,7 @@
 # PWAのローカル保存フローとiPhoneでの合成データ確認
 
+> 注: Web版（PWA）は終了しています。この文書の PWA と Web API の記述は退役前の仕様の記録で、現行のネイティブ境界は [NATIVE_APP_AUTH.md](NATIVE_APP_AUTH.md) を正とします。
+
 現在の主アプリは `apps/pwa` のPWA（Progressive Web App、ブラウザーからホーム画面へ追加できるWebアプリ）です。家計データを端末に保存し、Cloud accountはAIの認証・利用量・プランにだけ使います。旧Next.jsとserver-side household storageはlegacy参照として残り、production起動経路から外れています。
 
 Issue #39のpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。previewは合成データ専用で、既存の家計簿profileを開かないでください。Actualブラウザー版によるレシート・明細・照合・offline reloadと、backup/restore・原本整理・全消去のsynthetic E2Eはpreviewで成功しました。rootのlintではlegacyのimg要素に関する既存warningが2件あり、typecheck、283件のroot test、23件のWorker test、2件のPWA service-worker test、33件の照合評価scenarioは失敗0件でした。`cf` はbeta.5でした。

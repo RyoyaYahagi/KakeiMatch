@@ -1,4 +1,4 @@
-import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-auth";
+import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-db";
 import { costUsdMicros, monthBounds, pricingFor, type Provider } from "./ai-provider-costs";
 import { monthKey } from "./receipt-ai-usage";
 

@@ -1,5 +1,7 @@
 # Architecture
 
+> 注: この文書は legacy 構成の記録です。Better Auth・Passkey・招待の記述は、S6・S7 で現行の Worker から撤去済みです。現行の構成は [ARCHITECTURE.md](../ARCHITECTURE.md) を正とします。
+
 > Issue #39開始時点のアーキテクチャ記録です。サーバー中心の説明は履歴であり、現在の本番構成・起動手順ではありません。現在の説明は[現行アーキテクチャ](../ARCHITECTURE.md)を参照してください。
 
 ## 現行アプリ

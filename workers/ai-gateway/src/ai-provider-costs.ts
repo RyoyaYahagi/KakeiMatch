@@ -1,5 +1,5 @@
 import type { CostAdmission } from "./ai-global-guardrails";
-import type { AccountD1Statement, AccountEnv } from "./account-auth";
+import type { AccountD1Statement, AccountEnv } from "./account-db";
 
 type Db = AccountEnv["ACCOUNT_DB"];
 export type Provider = "gemini" | "jev";
@@ -95,14 +95,4 @@ export function monthBounds(month: string): { start: number; end: number } | nul
   const start = Date.parse(`${month}-01T00:00:00+09:00`) / 1000;
   const next = new Date(start * 1000 + 9 * 3600_000); next.setUTCMonth(next.getUTCMonth() + 1);
   return { start, end: next.getTime() / 1000 - 9 * 3600 };
-}
-export async function monthlyCosts(db: Db, user: string, month: string) {
-  const bounds = monthBounds(month);
-  if (!bounds) throw new Error("invalid_month");
-  const aggregate = async (provider: Provider) => await db.prepare(`SELECT COUNT(*) AS requests, COALESCE(SUM(input_tokens),0) AS inputTokens, COALESCE(SUM(output_tokens),0) AS outputTokens,
-    COALESCE(SUM(estimated_cost_usd_micros),0) AS costUsdMicros, COALESCE(SUM(CASE WHEN metering_status='unknown' THEN 1 ELSE 0 END),0) AS unknownRequests
-    FROM ai_provider_cost_events WHERE user_id=? AND provider=? AND dispatched_at>=? AND dispatched_at<?`).bind(user,provider,bounds.start,bounds.end).first<{requests:number;inputTokens:number;outputTokens:number;costUsdMicros:number;unknownRequests:number}>();
-  const [gemini, jev] = await Promise.all([aggregate("gemini"), aggregate("jev")]);
-  if (!gemini || !jev || ![...Object.values(gemini), ...Object.values(jev), gemini.costUsdMicros + jev.costUsdMicros, gemini.unknownRequests + jev.unknownRequests].every(value => count(value) !== null)) throw new Error("metering_unavailable");
-  return { month, currency: "USD", totalUsdMicros: gemini.costUsdMicros + jev.costUsdMicros, unknownRequests: gemini.unknownRequests + jev.unknownRequests, providers: {gemini,jev} };
 }

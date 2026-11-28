@@ -12,9 +12,9 @@
 
 Issue #39では本番route、D1、secretを準備・検証せず、本番deployもしません。preview deployは合成データによる回帰確認専用です。現在の `cf` CLIを使う前に `cf --help` と `cf cli search` を確認してください。古いWrangler手順からcommandを推測しないでください。専用previewには `pnpm deploy:preview` を使います。確認済みpreview URLは <https://kakeimatch-issue-39-kakeimatch-issue-39-preview.yhgry.workers.dev> です。rootの `deploy` scriptはproduction modeを選び、本番サービスへ変更を加える可能性があります。別途明示的な依頼がない限り実行しないでください。
 
-旧 PWA の Issue #39 では、プレビュー上で Actual ブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実Passkey認証や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
+旧 PWA の Issue #39 では、プレビュー上で Actual ブラウザー版を使ったレシート、明細、照合、offline reloadと、backup/restore、原本整理、全消去を合成データで確認しました。Cloud auth secretsは設定していないため、認証要求は403で拒否されます。signed-outのlocal flowとmock AI応答を確認した結果であり、実認証（当時のPasskey。S6で撤去）や実provider要求の確認ではありません。iPhone実機でのIssue #39後の追加確認は、利用者からホーム画面からの起動、保存済みデータの閲覧、オフライン起動、backup導線の4項目とも問題なしと報告されました。iOS/Safariのバージョンは未記録です。
 
-本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker secret bindingは `BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET`、`TURNSTILE_SECRET_KEY`、`GEMINI_API_KEY` です。Workerは `AI_USER_RATE_LIMIT` と、お問い合わせ用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_FREE_MONTHLY_LIMIT`、`AI_GUEST_DAILY_LIMIT`、`TURNSTILE_SITE_KEY`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL` です。`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどのモデル名です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` を使い、モデルはWorkerのコードで `gemini-decision-1` に固定されます。追加のprovider keyや環境変数は必要ありません。Issue #39では本番値の検証やbindingのprovisioningを行いません。
+本番ではaccount専用D1を `ACCOUNT_D1_ID` と `ACCOUNT_D1_NAME` で選びます。Worker の secret binding は `AI_GATEWAY_AUTH_SECRET`、`GEMINI_API_KEY`、`GITHUB_ISSUES_TOKEN`、`FEEDBACK_ENCRYPTION_KEY`、`ADMIN_ACCESS_EMAILS`、`CF_ACCESS_TEAM_DOMAIN`、`CF_ACCESS_AUD`、`AI_EMERGENCY_STOP`、`AI_GUARDRAILS_JSON` です。Workerは `AI_USER_RATE_LIMIT` と、管理画面のAI分析用の `CONTACT_RATE_LIMIT` も設定します。通常のtext設定は `AI_GUEST_DAILY_LIMIT`、`CLOUD_ACCOUNT_ORIGIN`、`GEMINI_MODEL`、`GITHUB_ISSUES_REPOSITORY`、ネイティブの `NATIVE_APP_*` です。`GEMINI_MODEL` はInteractions APIを使うレシート読み取りなどのモデル名です。カテゴリ分類はレシート読み取りと同じ `GEMINI_API_KEY` を使い、モデルはWorkerのコードで `gemini-decision-1` に固定されます。追加のprovider keyや環境変数は必要ありません。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`TURNSTILE_*`、`ADMIN_USER_IDS` は Worker の設定から参照しません（S7で参照を外した。Cloudflare 上の実体の削除はS8の作業です）。`AI_FREE_MONTHLY_LIMIT` と `AI_PRO_MONTHLY_LIMIT` は Worker の設定ではなく、`account:set-plan` の実行時に読む運用の入力です。Issue #39では本番値の検証やbindingのprovisioningを行いません。
 
 カテゴリ分類はGemini Decisions API（`POST https://generativelanguage.googleapis.com/v1beta/decisions`）へ、コードで固定したモデル `gemini-decision-1` を指定して送ります。`workers/ai-gateway/cloudflare.config.ts` の `GEMINI_MODEL`（既定 `gemini-3.5-flash-lite`）は、レシート読み取りなどGemini Interactions APIを使う機能のモデルで、分類には効きません。本番Workerの既存 `GEMINI_API_KEY` が両方の機能で共有されるため、この変更に伴う新しいsecret登録はありません。Cloudflareの `kakeimatch` Workerで読み取り用Gemini keyが既に設定されていることを確認してください。分類のAPI要求が失敗した場合は他providerへ再送せず、分類を停止します。
 
@@ -48,7 +48,7 @@ npm ci
 cp .dev.vars.example .dev.vars
 ```
 
-既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`BETTER_AUTH_SECRET`、`ACCOUNT_BOOTSTRAP_SECRET`、`AI_GATEWAY_AUTH_SECRET` はそれぞれ `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。Geminiを実際に呼び出す場合は、レシート読み取りとカテゴリ分類で共通の `GEMINI_API_KEY` を設定します。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
+既に `.dev.vars` がある場合はコピーで上書きせず、足りない設定だけ追加します。`.dev.vars` はGitの管理対象外です。`AI_GATEWAY_AUTH_SECRET` は `openssl rand -hex 32` で生成したローカル専用値へ置き換えます。本番の値をコピーしません。Geminiを実際に呼び出す場合は、レシート読み取りとカテゴリ分類で共通の `GEMINI_API_KEY` を設定します。API利用に費用が発生する場合があります。問い合わせを試さない場合は、`GITHUB_ISSUES_TOKEN` を雛形のままにします。
 
 次に、開発サーバーと同じ保存先にあるローカルD1だけを更新します。IDは `cloudflare.config.ts` の開発用 `ACCOUNT_DB` と一致させます。`--local` と `--persist-to .wrangler/state` を省略しないでください。
 
@@ -88,7 +88,6 @@ Cloudflare側のBuild variablesに、次の値を登録します。build用の�
 | --- | --- |
 | `ACCOUNT_D1_ID` | 既存の本番account専用D1のID |
 | `ACCOUNT_D1_NAME` | 同じ本番D1の名前 |
-| `TURNSTILE_SITE_KEY` | 本番用の公開site key |
 
 GitHubへのデプロイ用Secret登録は不要です。公開用のAPI tokenはWorkers Builds側で設定します。Gemini等のprovider keyやアプリの認証secretは、引き続き本番WorkerのSecret bindingで管理し、build用に複製しません。[Cloudflare公式「Configuration」](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)
 
@@ -166,28 +165,15 @@ npm exec -- cf deploy --mode production-deploy
 
 公開後は `GET /` が410、未認証の管理画面が拒否されること、`/.well-known/apple-app-site-association` がネイティブ認証の設定に従って応答することを確認します。認証済みの実AI確認は本人が行います。
 
-## 本人による招待と実機確認
+## 本人による実機確認
 
-リポジトリrootのzshで次を実行すると、bootstrap secretとメールアドレス・表示名を対話入力して招待を発行できます。招待URLは本人だけが使用し、Gitや公開ログへ保存しません。
-
-```sh
-read -rs 'ACCOUNT_BOOTSTRAP_SECRET?本番bootstrap secret: '
-echo
-export ACCOUNT_BOOTSTRAP_SECRET
-read -r 'account_email?招待先メールアドレス: '
-read -r 'account_name?表示名: '
-ACCOUNT_ADMIN_URL=https://kakeimatch.yhgry.workers.dev \
-node workers/ai-gateway/scripts/account-invite.mjs invite "$account_email" "$account_name"
-unset ACCOUNT_BOOTSTRAP_SECRET account_email account_name
-```
-
-本人が招待URLからPasskey / Face IDを登録してログインします。家族の招待にも同じ手順を使えます。Plus（内部ID `family`）の付与には既存の `account:set-plan` を使い、本人の明示指示なしに実ユーザーのplanを変更しません。
+本人の招待は S6・S7 で撤去しました（`scripts/account-invite.mjs` と `/api/account/*` は削除、410）。新しい利用者の追加はありません。Plus（内部ID `family`）の付与には既存の `account:set-plan` を使い、本人の明示指示なしに実ユーザーのplanを変更しません。
 
 実家計データを使わず、「テストマート、牛乳220円、パン180円、合計400円」の合成レシート画像で確認します。Gemini解析と同じflowのカテゴリ分類は合わせて利用量1回となり、明示的な再解析ではさらに1回増えることを確認します。
 
 iPhoneでは本人が次を確認します。
 
-1. iOS アプリを開き、Passkey でログインする。
+1. iOS アプリを開き、レシートの読み取りでゲストの確認（App Attest）を通す。
 2. 合成レシートを AI で読み取り、端末の家計簿へ登録する。
 3. 初回解析と同じflowのカテゴリ分類で利用量が1回だけ増え、再解析ではさらに1回増える。
 4. アプリを終了・再起動し、端末内データが保持される。

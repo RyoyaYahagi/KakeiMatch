@@ -1,14 +1,12 @@
 import { PAYROLL_SCHEMA, PAYROLL_PROMPT } from './payroll';
 import { payrollSchema } from './payroll-schema';
 import { handleAdminRequest, type AdminEnv } from './admin';
-import { classificationPayload, parseClassification } from './contact';
-import { parseContactInput, parseContactInterviewInput, parseContactInterview, transcriptionPayload, contactInterviewPayload, type ContactEnv } from './contact';
-import { submitContactToInbox } from './feedback';
+import { classificationPayload, parseClassification, type ContactEnv } from './contact';
 import { guardrailConfig, costAdmission, refreshCircuitStatement, providerCircuit, type CircuitScope, type CostAdmission } from "./ai-global-guardrails";
-import { assertCostEventCompleted, beginCostEventStatement, completeCostEventStatement, monthlyCosts, monthBounds } from "./ai-provider-costs";
+import { assertCostEventCompleted, beginCostEventStatement, completeCostEventStatement } from "./ai-provider-costs";
 import { monthKey, dayKey, flowMac, flowUsage, guestDayUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement, reserveCategorySuggestionFlow, markCategorySuggestionDispatchedStatement, releaseUndispatchedCategorySuggestionFlow, uncountFlow, uncountCategorySuggestionFlow, type FlowLimits } from "./receipt-ai-usage";
-import { addressDayMac, guestFromRequest, handleGuestRequest, hasGuestAuthorization, touchGuest, type GuestEnv } from "./guest-ai";
-import { getAccountSession, isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-auth";
+import { addressDayMac, type GuestEnv } from "./guest-ai";
+import { isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-db";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -47,7 +45,7 @@ export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, 
   AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
   FEEDBACK_ENCRYPTION_KEY?: string;
-  // Contact AI features are not counted against a plan; this per-minute limit is their abuse guard.
+  // Admin feedback analysis is not counted against a plan; this per-minute limit is its abuse guard.
   CONTACT_RATE_LIMIT?: RateLimitBinding;
 }
 type HandlerOptions = { fetchImpl?: typeof fetch; nowSeconds?: () => number };
@@ -459,48 +457,8 @@ function normalizeDecisionsCategoryResponse(decoded: unknown, expected: string[]
 
 export async function handleRequest(request: Request, env: GatewayEnv, options: HandlerOptions = {}): Promise<Response> {
   const url = new URL(request.url);
-  if (url.pathname === "/api/ai/token" || url.pathname === "/api/ai/usage" || url.pathname === "/api/ai/costs") {
-    const method = url.pathname.endsWith("/token") ? "POST" : "GET";
-    if (request.method !== method) return json(405, { error: "method_not_allowed" });
-    const origin = request.headers.get("origin");
-    if ((origin !== null && origin !== url.origin) || (method === "POST" && origin !== url.origin)) return json(403, { error: "forbidden_origin" });
-    // A guest sends its device secret instead of a session cookie. Developer costs stay account-only.
-    if (hasGuestAuthorization(request) && url.pathname !== "/api/ai/costs") {
-      if (!env.ACCOUNT_DB || !env.AI_GATEWAY_AUTH_SECRET) return json(503, { error: "not_configured" });
-      const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-      try {
-        const guest = await guestFromRequest(request, env.ACCOUNT_DB);
-        if (!guest) return json(401, { error: "unauthorized" });
-        if (method === "POST") {
-          await touchGuest(env.ACCOUNT_DB, guest, now);
-          return json(200, { token: await issueAiToken(guest, env.AI_GATEWAY_AUTH_SECRET, now), expiresAt: now + TOKEN_LIFETIME_SECONDS });
-        }
-        const limit = guestLimit(env); const used = await guestDayUsage(env.ACCOUNT_DB, guest, dayKey(now));
-        return json(200, { plan: "guest", period: "day", day: dayKey(now), used, limit, remaining: Math.max(0, limit - used) });
-      } catch { return json(503, { error: "temporarily_unavailable" }); }
-    }
-    if (!env.ACCOUNT_DB || !env.BETTER_AUTH_SECRET) return json(503, { error: "not_configured" });
-    let account;
-    try { account = await getAccountSession(request, env as AccountEnv); } catch { return json(503, { error: "temporarily_unavailable" }); }
-    if (!account) return json(401, { error: "unauthorized" });
-    if (method === "POST") {
-      if (!env.AI_GATEWAY_AUTH_SECRET) return json(503, { error: "not_configured" });
-      const now = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
-      return json(200, { token: await issueAiToken(account.user.id, env.AI_GATEWAY_AUTH_SECRET, now), expiresAt: now + TOKEN_LIFETIME_SECONDS });
-    }
-    try {
-      if (url.pathname === "/api/ai/costs") {
-        const month = url.searchParams.get("month") ?? monthKey((options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
-        if (!monthBounds(month)) return json(400, { error: "invalid_month" });
-        return json(200, await monthlyCosts(env.ACCOUNT_DB, account.user.id, month));
-      }
-      return json(200, await usageSummary(env.ACCOUNT_DB, account.user.id, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))(), env));
-    } catch { return json(503, { error: "temporarily_unavailable" }); }
-  }
-  if (url.pathname === "/api/ai/guest") return handleGuestRequest(request, env as GuestEnv, options);
-  const contact = url.pathname === "/api/contact" || url.pathname === "/api/contact/transcribe" || url.pathname === "/api/contact/interview";
   const categorySuggestion = url.pathname === "/api/ai/category-suggestion";
-  if (!contact && url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/payroll" && url.pathname !== "/api/ai/jev" && !categorySuggestion) return json(404, { error: "not_found" });
+  if (url.pathname !== "/api/ai/gemini" && url.pathname !== "/api/ai/payroll" && url.pathname !== "/api/ai/jev" && !categorySuggestion) return json(404, { error: "not_found" });
   if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
   if (request.headers.get("origin") !== url.origin) return json(403, { error: "forbidden_origin" });
   const identity = await authenticate(request, env.AI_GATEWAY_AUTH_SECRET, (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))());
@@ -511,25 +469,16 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
   } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!env.AI_USER_RATE_LIMIT) return json(503, { error: "not_configured" });
   const provider = "gemini";
-  const geminiRoute = contact || url.pathname.endsWith("/gemini") || url.pathname.endsWith("/payroll");
+  const geminiRoute = url.pathname.endsWith("/gemini") || url.pathname.endsWith("/payroll");
   let limit: { success: boolean };
   try { limit = await env.AI_USER_RATE_LIMIT.limit({ key: `${identity}:${provider}` }); } catch { return json(503, { error: "temporarily_unavailable" }); }
   if (!limit.success) return json(429, { error: "rate_limited" });
   const requestNow = (options.nowSeconds ?? (() => Math.floor(Date.now() / 1000)))();
   if (!env.AI_GATEWAY_AUTH_SECRET) return json(503, { error: "not_configured" });
   const addressMac = await addressDayMac(env.AI_GATEWAY_AUTH_SECRET, request, requestNow);
-  if (contact) {
-    // Contact features are free to use, so each identity and each address get a tighter per-minute limit.
-    if (!env.CONTACT_RATE_LIMIT) return json(503, { error: "not_configured" });
-    try {
-      for (const key of [`contact:${identity}`, `contact-address:${addressMac}`]) {
-        if (!(await env.CONTACT_RATE_LIMIT.limit({ key })).success) return json(429, { error: "rate_limited" });
-      }
-    } catch { return json(503, { error: "temporarily_unavailable" }); }
-  }
   if (!(request.headers.get("content-type") ?? "").toLowerCase().startsWith("application/json")) return json(415, { error: "unsupported_media_type" });
   let bytes: Uint8Array | null;
-  try { bytes = await readRequestBody(request, contact ? (url.pathname.endsWith('/transcribe') ? 3 * 1024 * 1024 : 20 * 1024) : MAX_JSON_BYTES); } catch { return json(400, { error: "invalid_request" }); }
+  try { bytes = await readRequestBody(request, MAX_JSON_BYTES); } catch { return json(400, { error: "invalid_request" }); }
   if (!bytes) return json(413, { error: "request_too_large" });
   let body: unknown;
   try { body = JSON.parse(new TextDecoder().decode(bytes)) as unknown; } catch { return json(400, { error: "invalid_request" }); }
@@ -568,111 +517,6 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     if (!result) return invalidProviderResponse(env, eventId, "gemini", clock());
     const answer = (result as { answers: Record<string, { choice: string; confidence: number }> }).answers.category;
     return json(200, { categoryId: answer.confidence >= 0.4 ? answer.choice : null });
-  }
-  if (contact) {
-    const transcribe = url.pathname.endsWith('/transcribe');
-    const interview = url.pathname.endsWith('/interview');
-    if (!env.ACCOUNT_DB) return json(503, { error: 'not_configured' });
-    if ((transcribe || interview) && !env.GEMINI_API_KEY) return json(503, { error: 'not_configured' });
-    const clock = options.nowSeconds ?? (() => Math.floor(Date.now() / 1000));
-    const now = clock();
-    const fetchImpl = options.fetchImpl ?? fetch;
-    const model = env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
-
-    if (interview) {
-      const input = parseContactInterviewInput(body);
-      if (!input) return json(400, { error: 'invalid_request' });
-      const payload = contactInterviewPayload(input, model);
-      const callGemini = async (): Promise<string> => {
-        const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
-        const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, 'contact-interview', input);
-        const reservation = await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, flowLimits(env), 'contact-interview', addressMac);
-        if (reservation !== 'reserved') throw new Error(reservation);
-        const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
-          'https://generativelanguage.googleapis.com/v1beta/interactions',
-          { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
-          30_000, fetchImpl, clock, admission, env);
-        if (!response.ok) throw new Error(response.status === 429 ? 'rate_limited' : 'provider_unavailable');
-        const text = geminiOutputText(decoded);
-        if (!text || !text.trim() || text.length > 8000) {
-          await invalidProviderResponse(env, eventId, 'gemini', clock());
-          throw new Error('invalid_provider_response');
-        }
-        try { parseContactInterview(text); } catch {
-          await invalidProviderResponse(env, eventId, 'gemini', clock());
-          throw new Error('invalid_provider_response');
-        }
-        return text;
-      };
-      try {
-        return json(200, parseContactInterview(await callGemini()));
-      } catch (error) {
-        const code = error instanceof Error ? error.message : '';
-        const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
-          invalid_flow: 409, provider_timeout: 504, rate_limited: 429, provider_unavailable: 503, invalid_provider_response: 502 };
-        return json(statuses[code] ?? 503, { error: Object.hasOwn(statuses, code) ? code : 'temporarily_unavailable' });
-      }
-    }
-
-    const input = parseContactInput(body, transcribe);
-    if (!input) return json(400, { error: 'invalid_request' });
-    if (!transcribe) {
-      if (!env.FEEDBACK_ENCRYPTION_KEY) return json(503, { error: 'not_configured' });
-      const kind = input.kind!;
-      const inputMac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, 'contact', {
-        kind, message: input.input, originalMessage: input.originalMessage ?? null, diagnostic: input.diagnostic ?? null,
-      });
-      const existing = await env.ACCOUNT_DB.prepare('SELECT input_mac,state FROM contact_submissions WHERE user_id=? AND flow_id=?')
-        .bind(identity, input.flowId).first<{ input_mac: string; state: string }>();
-      if (existing && existing.input_mac !== inputMac) return json(409, { error: 'invalid_flow' });
-      if (!existing || existing.state !== 'done') {
-        try {
-          const reservation = await reserveFlow(env.ACCOUNT_DB, identity, input.flowId, inputMac, now, flowLimits(env), 'contact-submit', addressMac);
-          if (reservation !== 'reserved') return json(reservation === 'ai_quota_exceeded' ? 429 : 409, { error: reservation });
-        } catch { return json(503, { error: 'temporarily_unavailable' }); }
-      }
-      try {
-        const result = await submitContactToInbox({ db: env.ACCOUNT_DB, user: identity, flowId: input.flowId, inputMac,
-          kind: kind!, message: input.input, originalMessage: input.originalMessage, diagnostic: input.diagnostic,
-          encryptionKey: env.FEEDBACK_ENCRYPTION_KEY, now });
-        const count = await env.ACCOUNT_DB.prepare("UPDATE ai_receipt_flows SET dispatched=1,counted=0 WHERE user_id=? AND flow_id=? AND kind='contact-submit'")
-          .bind(identity, input.flowId).run();
-        if (!count.success) return json(503, { error: 'temporarily_unavailable' });
-        return json(200, result);
-      } catch (error) {
-        const code = error instanceof Error ? error.message : '';
-        const statuses: Record<string, number> = { not_configured: 503, invalid_request: 400, invalid_flow: 409, invalid_provider_response: 502 };
-        return json(statuses[code] ?? 503, { error: Object.hasOwn(statuses, code) ? code : 'temporarily_unavailable' });
-      }
-    }
-
-    const payload = transcriptionPayload(input.input, input.contentType!);
-    const callGemini = async (): Promise<string> => {
-      const admission = await prepareDispatch(env, 'gemini', payload.model, payload, now);
-      const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, 'contact-transcribe', input);
-      const reservation = await reserveFlow(env.ACCOUNT_DB!, identity, input.flowId, mac, now, flowLimits(env), 'contact-transcribe', addressMac);
-      if (reservation !== 'reserved') throw new Error(reservation);
-      const { response, decoded, eventId } = await dispatchProvider(env.ACCOUNT_DB!, identity, input.flowId, 'gemini', payload.model, now,
-        'https://generativelanguage.googleapis.com/v1beta/interactions',
-        { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY! }, body: JSON.stringify(payload) },
-        30_000, fetchImpl, clock, admission, env);
-      if (!response.ok) throw new Error(response.status === 429 ? 'rate_limited' : 'provider_unavailable');
-      const text = geminiOutputText(decoded);
-      if (!text || text.trim().length === 0 || text.length > (transcribe ? 4000 : 8000)) {
-        await invalidProviderResponse(env, eventId, 'gemini', clock());
-        throw new Error('invalid_provider_response');
-      }
-      return text;
-    };
-    try {
-      return json(200, { text: await callGemini() });
-    } catch (error) {
-      const code = error instanceof Error ? error.message : '';
-      const statuses: Record<string, number> = { not_configured: 503, ai_temporarily_paused: 503, ai_quota_exceeded: 429,
-        invalid_flow: 409, provider_timeout: 504, rate_limited: 429, provider_unavailable: 503,
-        invalid_provider_response: 502 };
-      return json(statuses[code] ?? 503, { error: Object.hasOwn(statuses, code) ? code : 'temporarily_unavailable' });
-    }
   }
   if (!isRecord(body) || typeof body.flowId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(body.flowId)) return json(400, { error: "invalid_flow" });
   const flowId = body.flowId;

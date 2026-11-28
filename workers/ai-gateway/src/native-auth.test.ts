@@ -43,7 +43,7 @@ beforeEach(async () => {
   const { handleNativeRequest: handle } = await import('./native-auth');
   handleNativeRequest = handle;
   env = {
-    ACCOUNT_DB: sqliteD1(sqlite), BETTER_AUTH_SECRET: secret, AI_GATEWAY_AUTH_SECRET: secret,
+    ACCOUNT_DB: sqliteD1(sqlite), AI_GATEWAY_AUTH_SECRET: secret,
     AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) }, CLOUD_ACCOUNT_ORIGIN: origin,
     NATIVE_APP_TEAM_ID: teamId, NATIVE_APP_ID: appId, NATIVE_APP_ORIGIN: origin, NATIVE_APP_RP_ID: 'native.example.test',
     NATIVE_APP_ATTEST_ENVIRONMENT: 'development',
@@ -113,9 +113,9 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect((await handleNativeRequest(new Request(`${origin}/api/native/challenge`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{' }), env, { nowSeconds: () => now })).status).toBe(400);
     expect((await run('/api/native/challenge', { purpose: 'attest', keyId, userId: 'attacker' })).status).toBe(400);
     expect((await run('/api/native/challenge', { purpose: 'attest', keyId, padding: 'x'.repeat(70_000) })).status).toBe(400);
-    for (const path of ['/api/native/admin', '/api/native/account/invites', '/api/native/account/recovery', '/api/native/auth/sign-in']) {
+    for (const [path, status] of [['/api/native/admin', 404], ['/api/native/account/invites', 410], ['/api/native/account/recovery', 410], ['/api/native/auth/sign-in', 410]] as const) {
       const response = await run(path, {});
-      expect(response.status).toBe(404);
+      expect(response.status, path).toBe(status);
     }
     expect(count('native_challenges')).toBe(0);
   });
@@ -230,7 +230,8 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     const access = await issued.json() as { token: string; expiresAt: number };
     expect(access.token).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(access.expiresAt).toBe(now + 600);
-    expect((await run('/api/native/auth/get-session', undefined, { authorization: `Native ${access.token}` })).status).toBe(401);
+    // An AI access token is never a native session.
+    expect((await run('/api/native/ai/usage', undefined, { authorization: `Native ${access.token}` })).status).toBe(401);
     const { issueAiToken } = await import('./worker');
     const webToken = await issueAiToken('synthetic-web-user', secret, now);
     expect((await run('/api/native/ai/gemini', {}, { authorization: `Bearer ${webToken}` })).status).toBe(401);
@@ -249,7 +250,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
   });
 
   it('keeps all Web POST Origin checks and prevents native credentials from becoming Web credentials', async () => {
-    for (const path of ['/api/ai/guest', '/api/ai/token', '/api/ai/gemini', '/api/ai/payroll', '/api/ai/jev', '/api/contact']) {
+    for (const path of ['/api/ai/gemini', '/api/ai/payroll', '/api/ai/jev']) {
       for (const headers of [{}, { origin: 'https://evil.example.test' }] as Record<string, string>[]) {
         const response = await handleWebRequest(request(path, {}, headers), env, { nowSeconds: () => now });
         expect(response.status, path).toBe(403);
@@ -347,8 +348,8 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect(addressRejected.status).toBe(429);
     expect(await addressRejected.json()).toEqual({ error: 'ai_quota_exceeded' });
     expect(provider).not.toHaveBeenCalled();
-    expect((await run('/api/native/ai/costs', undefined, native)).status).toBe(401);
-    expect((await run('/api/native/contact', {}, { authorization: `Bearer ${access.token}` })).status).toBe(401);
+    expect((await run('/api/native/ai/costs', undefined, native)).status).toBe(410);
+    expect((await run('/api/native/contact', {}, { authorization: `Bearer ${access.token}` })).status).toBe(410);
   });
 
   it('invalidates native sessions and AI tokens through key, session, and user deletion cascades', async () => {
@@ -362,7 +363,7 @@ describe('native authentication HTTP boundary and D1 effects', () => {
     expect(count('native_sessions')).toBe(0);
     expect(count('native_ai_tokens')).toBe(0);
     expect(sqlite.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').get(keyId)).toEqual({ guest_user_id: null });
-    expect((await run('/api/native/auth/get-session', undefined, { authorization: `Native ${session.sessionToken}` })).status).toBe(401);
+    expect((await run('/api/native/ai/usage', undefined, { authorization: `Native ${session.sessionToken}` })).status).toBe(401);
   });
 
   it('forwards X-KakeiMatch-Receipt-Schema: 2 on /api/native/ai/gemini and strips v2 fields when omitted', async () => {

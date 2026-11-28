@@ -6,15 +6,9 @@ import { Miniflare } from "miniflare";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flowUsage, guestDayUsage, monthKey, reserveCategorySuggestionFlow, reserveFlow } from "./receipt-ai-usage";
 import { requestReservation } from "./ai-global-guardrails";
-import { deleteAccountData } from "./account-auth";
-import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { handleRequest, usageSummary, type AccountD1Binding, type GatewayEnv } from "./worker";
 import { sqliteD1 } from "./test-support/sqlite-d1";
 
-const accountState = vi.hoisted(() => ({ session: true, userId: "synthetic-user" }));
-vi.mock("./account-auth", async (importOriginal) => {
-  const original = await importOriginal<typeof import("./account-auth")>();
-  return { ...original, getAccountSession: vi.fn(async () => accountState.session ? { user: { id: accountState.userId }, session: { id: "session" } } : null) };
-});
 const secret = "synthetic-ai-gateway-signing-secret-for-tests";
 const now = Date.parse("2026-09-30T14:59:00Z") / 1000;
 const receipt = { documentKind: "receipt", merchant: "Synthetic Shop", purchasedDate: "2026-09-30", purchasedTime: "12:30", totalAmountYen: 3284, taxAmountYen: null, items: [{ name: "Synthetic Item", amountYen: 3284 }], warnings: [] };
@@ -100,8 +94,6 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   let dispose: () => Promise<void>;
   let env: GatewayEnv;
   beforeEach(async () => {
-    accountState.session = true;
-    accountState.userId = "synthetic-user";
     if (mode === "D1") {
       const instance = new Miniflare({ script: "export default { fetch() { return new Response('ok'); } }", modules: true, compatibilityDate: "2026-08-01", d1Databases: { ACCOUNT_DB: "ai-flow-test" } });
       dispose = () => instance.dispose();
@@ -110,7 +102,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       for (const migration of migrations) await d1.exec(migration.replace(/^--.*$/gm, "").replace(/\s+/g, " "));
     } else { ({ db, dispose } = sqliteDb()); }
     for (const user of ["synthetic-user", "other-user"]) await db.prepare("INSERT INTO user(id, name, email, createdAt, updatedAt) VALUES (?, 'Test', ?, 0, 0)").bind(user, `${user}@example.invalid`).run();
-    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, BETTER_AUTH_SECRET: "synthetic-auth-secret", GEMINI_API_KEY: "synthetic-gemini-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
+    env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, GEMINI_API_KEY: "synthetic-gemini-key", AI_USER_RATE_LIMIT: { limit: vi.fn(async () => ({ success: true })) } };
   });
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
@@ -138,8 +130,12 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       expect(JSON.stringify(log.mock.calls)).not.toContain('synthetic-secret');
     } finally { log.mockRestore(); }
   });
-  const usage = async (at = now) => (await handleRequest(new Request(`${origin}/api/ai/usage`), env, options(undefined, at))).json();
-  const costs = async (month: string, at = now) => (await handleRequest(new Request(`${origin}/api/ai/costs?month=${month}`), env, options(undefined, at))).json();
+  const usage = async (at = now, user = "synthetic-user") => usageSummary(db, user, at, env);
+  // Account deletion is retired; the AI path still refuses a user whose tombstone exists.
+  const retireAccount = async (user: string) => {
+    await db.prepare("INSERT INTO account_deletion_tombstones(user_id) VALUES (?)").bind(user).run();
+    await db.prepare("DELETE FROM user WHERE id=?").bind(user).run();
+  };
   const eventCount = async () => (await db.prepare("SELECT COUNT(*) AS count FROM ai_provider_cost_events").bind().first<{ count: number }>())?.count ?? 0;
 
   it("counts Gemini and its validated Jev continuation once, including retries at quota", async () => {
@@ -302,7 +298,6 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await usage()).toMatchObject({ used: 1, remaining: 0, limit: 1 });
     expect((await gemini()).status).toBe(429);
 
-    accountState.userId = "other-user";
     const otherReceipt = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("other-user")), env, options());
     expect(otherReceipt.status).toBe(200);
     const provider = fetchOk({ model: "gemini-decision-1", answers: { category: { type: "choice", choice: "local-food", probabilities: { "local-food": 1 }, confidence: 1 } } });
@@ -443,30 +438,6 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
       "reserved_cost_usd_micros", "billing_mode", "cached_input_tokens", "completed_at", "dispatched_at", "estimated_cost_usd_micros", "flow_id", "id", "input_tokens", "input_usd_per_million_micros", "metering_status", "model", "output_tokens", "output_usd_per_million_micros", "pricing_version", "provider", "requested_model", "safe_error_code", "thinking_tokens", "total_tokens", "user_id",
     ].sort());
   });
-  it("isolates monthly costs by authenticated user and Tokyo dispatch month", async () => {
-    const flowId = crypto.randomUUID();
-    const metered = { modelVersion: "gemini-3.5-flash-lite", usage: { total_input_tokens: 1, total_output_tokens: 0, total_thought_tokens: 0, total_cached_tokens: 0, total_tokens: 1 }, output_text: JSON.stringify(receipt) };
-    expect((await gemini(flowId, now, fetchOk(metered))).status).toBe(200);
-    const october = now + 60;
-    expect((await gemini(crypto.randomUUID(), october, fetchOk(metered))).status).toBe(200);
-    expect(await costs("2026-09", now)).toMatchObject({ totalUsdMicros: 1, unknownRequests: 0, providers: { gemini: { requests: 1, inputTokens: 1 } } });
-    expect(await costs("2026-10", october)).toMatchObject({ totalUsdMicros: 1, unknownRequests: 0, providers: { gemini: { requests: 1, inputTokens: 1 } } });
-    accountState.userId = "other-user";
-    const otherUserCosts = await handleRequest(new Request(`${origin}/api/ai/costs?month=2026-09&userId=synthetic-user`), env, options());
-    expect(await otherUserCosts.json()).toMatchObject({ totalUsdMicros: 0, unknownRequests: 0, providers: { gemini: { requests: 0, inputTokens: 0 } } });
-    accountState.userId = "synthetic-user";
-    expect((await handleRequest(new Request(`${origin}/api/ai/costs?month=2026-13`), env, options())).status).toBe(400);
-    accountState.session = false;
-    expect((await handleRequest(new Request(`${origin}/api/ai/costs?month=2026-09`), env, options())).status).toBe(401);
-  });
-  it("rejects unsafe monthly sums rather than returning rounded token counts", async () => {
-    for (let i = 0; i < 2; i++) {
-      await db.prepare(`INSERT INTO ai_provider_cost_events(id,user_id,provider,requested_model,model,metering_status,dispatched_at,input_tokens,output_tokens,total_tokens)
-        VALUES (?,?,'gemini','gemini-3.5-flash-lite','gemini-3.5-flash-lite','unknown',?,?,0,?)`)
-        .bind(crypto.randomUUID(), "synthetic-user", now, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER).run();
-    }
-    expect((await handleRequest(new Request(`${origin}/api/ai/costs?month=2026-09`), env, options())).status).toBe(503);
-  });
   it("applies the Family global ceiling across users and counts in-flight reservations", async () => {
     env.AI_GUARDRAILS_JSON = JSON.stringify({
       dailyCostUsdMicros: 50_000, monthlyCostUsdMicros: 50_000,
@@ -497,9 +468,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(provider).toHaveBeenCalledTimes(1);
     expect(await eventCount()).toBe(1);
     expect(await usage()).toMatchObject({ used: 1 });
-    accountState.userId = "other-user";
-    expect(await usage()).toMatchObject({ used: 0 });
-    accountState.userId = "synthetic-user";
+    expect(await usage(now, "other-user")).toMatchObject({ used: 0 });
     releaseProvider();
     expect((await first).status).toBe(200);
   });
@@ -1085,17 +1054,12 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await response.json()).toEqual(receipt);
     expect(await usage()).toMatchObject({ used: 1 });
   });
-  it("requires same origin, signed AI audience and an account session for token/usage", async () => {
+  it("requires same origin and signed AI audience for the AI routes", async () => {
     expect((await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer(), { origin: "https://attacker.invalid" }), env, options())).status).toBe(403);
     for (const claims of [{ exp: now }, { exp: now + 901 }, { aud: "other" }]) expect((await handleRequest(request("gemini", image, bearer("synthetic-user", now, claims)), env, options())).status).toBe(401);
-    accountState.session = false;
-    expect((await handleRequest(new Request(`${origin}/api/ai/usage`), env, options())).status).toBe(401);
-    expect((await handleRequest(request("token", {}), env, options())).status).toBe(401);
-    accountState.session = true;
-    const token = await handleRequest(request("token", { userId: "attacker" }), env, options());
-    const body = await token.json() as { token: string; expiresAt: number };
-    expect(JSON.parse(Buffer.from(body.token.split(".")[1], "base64url").toString())).toMatchObject({ sub: "synthetic-user", aud: "kakeimatch-ai" });
-    expect(body.expiresAt).toBe(now + 600);
+    // The Worker no longer serves the Web token and usage routes; the native routes issue and read them.
+    expect((await handleRequest(new Request(`${origin}/api/ai/usage`), env, options())).status).toBe(404);
+    expect((await handleRequest(request("token", {}), env, options())).status).toBe(404);
   });
   it("rejects a previously signed AI token as soon as its account is deleted", async () => {
     await db.prepare("INSERT INTO account_deletion_tombstones(user_id) VALUES (?)").bind("synthetic-user").run();
@@ -1114,7 +1078,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     const pending = gemini(crypto.randomUUID(), now, provider);
     await providerStarted;
 
-    await deleteAccountData(env.ACCOUNT_DB!, "synthetic-user");
+    await retireAccount("synthetic-user");
     finish(Response.json({
       modelVersion: "gemini-3.5-flash-lite",
       usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },

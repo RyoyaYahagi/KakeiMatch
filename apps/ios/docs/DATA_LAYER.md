@@ -189,7 +189,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 - `LocalStoreTests`：再open後のCRUD/設定/残高、SQLite triggerによる途中失敗とrollback、0→4の作成・1/2/3→4移行・未来版の非破壊拒否、実際のPWA生成 `.kmb` の移行、破損・未知kind/field・path・サイズ・旧portable版・nullable必須キー等の拒否、Actual未来版/非円通貨/複雑な定期登録/不正分割のstaging失敗と既存データ保持。原本欠損の許可、振替/分割/開始残高/offbudget/旧native予算のprojection、ZIP traversal/symlink拒否も確認する。基本形scheduleの投影・PWA生成済み日の処理済み登録・古い次回日からの二重生成防止・複雑なscheduleの拒否、PWA MoneyForward履歴の投影と作成行だけの取消も、SQLiteとin-memoryの両方で確認する。
 - 共通fixtureはPR #279の合成データ。`synthetic.kmb` には `fixture.json` の11取引に加えて画像付きレシート登録分2,138円があり、12取引・支出26,868円になる。レシートは登録済み11＋空下書き1、明細7、照合一致4/要確認1/記録なし2、予算80,000円を確認する。fixtureの7品目は `.kmb` では確認値に保存されていないため、品目を捏造しない。
 - 通常起動だけpersistentへ注入する。Debug `-UITestFixture` とPreviewは従来のin-memoryで、利用者のDBへ触れない。
-- 閲覧・既存Repositoryの保存/検索/集計/復元はオフライン。AI抽出/分類、Cloud認証、問い合わせは別のAPI境界。ログアウトやアカウント削除からこのDBを消さない。
+- 閲覧・既存Repositoryの保存/検索/集計/復元はオフライン。AI抽出/分類と端末確認（App Attest）は別のAPI境界。ログアウトや資格情報の失効からこのDBを消さない。
 - 照合の7操作は `KMSQLiteStore` から共通ドメイン処理へ委譲する。取引・口座・判断と `service-state`（prepared snapshot、別名、却下、手動確認、取消履歴）を一括保存する。SQLite失敗は全体をrollbackするため、外部Actual I/Oのprocessing状態からの回復とは異なる。
 - 学習観測はレシートID単位で置換し古い確認時刻を無視する。ルールは保存履歴から導出する。定期補完は選択日・masterを検証し、安定登録IDの取引と処理済み日を同時保存する。取引を削除しても処理済み日は残す。
 - 旧v1/portable runにはSwiftのprepared snapshotがない。結果・判断は維持するが、次の判断には再照合を要求する。TSのfingerprintをSwiftで有効と推測しない。
@@ -201,7 +201,7 @@ iPadの複数ウィンドウ（複数scene）は生成Info.plistの `UIApplicati
 
 ## 参照資料
 
-[PWA, 2026/10] KakeiMatch. [`local-backup-format.ts`](../../../src/lib/local-backup-format.ts)、[`local-backup.ts`](../../../apps/pwa/src/local-backup.ts)、[`local-data.ts`](../../../src/lib/local-data.ts)、[`Actual adapter`](../../../src/lib/actual-browser-ledger.ts)。入力hashは `backup-validator-sources.txt`。
+[PWA, 2026/10] KakeiMatch. [`local-backup-format.ts`](../../../src/lib/local-backup-format.ts)、`local-backup.ts`（PWA の実装。#435 で撤去）、[`local-data.ts`](../../../src/lib/local-data.ts)、[`Actual adapter`](../../../src/lib/actual-browser-ledger.ts)。入力hashは `backup-validator-sources.txt`。
 
 [Actual API, 26.9.0] Actual Budget. 導入済み `@actual-app/api/dist/index.js` の `loot-core/src/server/{schema,cloud-storage,util/zip,migrate/migrations}.ts`、同bundleのSQL migration群。https://github.com/actualbudget/actual
 

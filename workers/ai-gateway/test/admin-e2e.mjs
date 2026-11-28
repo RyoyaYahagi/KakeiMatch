@@ -30,7 +30,7 @@ await context.route('**/api/admin/**', async route => {
     },
   } });
   if (url.pathname.endsWith('/errors')) return route.fulfill({ json: { errors: [{ code: 'provider_timeout', requests: 4, lastSeen: 1791417600 }] } });
-  if (url.pathname.endsWith('/users')) return route.fulfill({ json: { users: [{ id: 'synthetic-user', plan: 'family', createdAt: 1790000000, lastAiUseAt: 1791417600, aiRequests: 12, kind: 'registered', enabled: true }] } });
+  if (url.pathname.endsWith('/users')) return route.fulfill({ json: { users: [{ id: 'synthetic-user', subject: 'account', entitlement: 'family', createdAt: 1790000000, lastAiUseAt: 1791417600, aiRequests: 12 }] } });
   if (url.pathname.endsWith('/feedback')) return route.fulfill({ json: { items: [{ id: 'feedback-1', createdAt: 1791417600, updatedAt: 1791417600, kind: 'bug', status: feedbackStatus, message: '支出一覧を開くと閉じます。', aiSummary: feedbackSummary, diagnostics: { version: 1, code: 'ui_error' }, githubIssueNumber: feedbackIssue ? 235 : null, githubIssueUrl: feedbackIssue ? 'https://github.com/example/repo/issues/235' : null }] } });
   if (url.pathname.endsWith('/feedback/feedback-1/original')) return route.fulfill({ json: { message: '支出一覧を開くと閉じます。 original@example.com' } });
   if (url.pathname.endsWith('/feedback/feedback-1/analyze')) { feedbackSummary = '支出一覧で画面が閉じる不具合。'; return route.fulfill({ json: { aiSummary: feedbackSummary } }); }
