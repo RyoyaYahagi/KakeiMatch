@@ -74,7 +74,7 @@ describe.each(["SQLite", "D1"])("provisional product-flow reservations with %s",
   afterEach(async () => { await dispose(); });
 
   it("counts concurrent provisional slots against admission but exposes only dispatched flows as usage", async () => {
-    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES ('synthetic-user', 'free', 2, 0)").bind().run();
+    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES ('synthetic-user', 'pro', 2, 0)").bind().run();
     const candidates = Array.from({ length: 8 }, () => crypto.randomUUID());
     const reservations = await Promise.all(candidates.map(flow => reserveFlow(db, "synthetic-user", flow, `mac-${flow}`, now, limits, "receipt", "synthetic-address")));
     expect(reservations.filter(result => result === "reserved")).toHaveLength(2);
@@ -107,7 +107,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
   afterEach(async () => { await dispose(); });
   const options = (fetchImpl = fetchOk({ output_text: JSON.stringify(receipt) }), at = now) => ({ fetchImpl, nowSeconds: () => at });
   const gemini = (flowId = crypto.randomUUID(), at = now, provider?: typeof fetch) => handleRequest(request("gemini", { ...image, flowId }, bearer("synthetic-user", at)), env, options(provider, at));
-  const grant = (monthlyAiLimit: number | null, user = "synthetic-user") => db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES (?, 'free', ?, 0) ON CONFLICT(user_id) DO UPDATE SET monthly_ai_limit = excluded.monthly_ai_limit").bind(user, monthlyAiLimit).run();
+  const grant = (monthlyAiLimit: number | null, user = "synthetic-user") => db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES (?, 'pro', ?, 0) ON CONFLICT(user_id) DO UPDATE SET monthly_ai_limit = excluded.monthly_ai_limit").bind(user, monthlyAiLimit).run();
   it("extracts payroll with existing authentication, quota and no stored provider input", async () => {
     const value = { ...emptyPayroll(), employerName: 'Synthetic Employer', paymentDate: '2026-10-25', netPayYen: 250000 };
     const provider = fetchOk({ output_text: JSON.stringify(value) });
@@ -149,7 +149,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect((await gemini()).status).toBe(429);
   });
   // Miniflare D1 statements cannot be instrumented, so count round trips on SQLite.
-  it.skipIf(mode === "D1")("reads a receipt with six D1 round trips", async () => {
+  it.skipIf(mode === "D1")("reads a receipt with seven D1 round trips", async () => {
     let roundTrips = 0;
     const counted: AccountD1Binding = {
       batch: async statements => { roundTrips++; return db.batch(statements); },
@@ -169,8 +169,8 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     env.ACCOUNT_DB = counted;
     const response = await handleRequest(request("gemini", { ...image, flowId: crypto.randomUUID() }), env, options(fetchOk({ model: "gemini-3.5-flash-lite", output_text: JSON.stringify(receipt) })));
     expect(response.status).toBe(200);
-    // Account check, admission, reservation, dispatch, completion and the category grant.
-    expect(roundTrips).toBe(6);
+    // Account check, admission, entitlement, reservation, dispatch, completion and the category grant.
+    expect(roundTrips).toBe(7);
   });
   it("counts an explicit reanalysis as a new flow and reports the daily Free cap of 5 without a grant", async () => {
     expect((await gemini()).status).toBe(200);
@@ -209,7 +209,7 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(await usage()).toMatchObject({ used: 1 });
   });
   it("keeps Family unlimited and respects zero-limit entitlements", async () => {
-    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES (?, 'free', 0)").bind("synthetic-user").run();
+    await db.prepare("INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit) VALUES (?, 'pro', 0)").bind("synthetic-user").run();
     expect((await gemini()).status).toBe(429);
     expect(await usage()).toMatchObject({ used: 0, remaining: 0 });
     await db.prepare("UPDATE account_entitlements SET plan = 'family', monthly_ai_limit = NULL WHERE user_id = ?").bind("synthetic-user").run();
