@@ -204,15 +204,17 @@ final class KMReceiptModel {
         amount = (confirmed?.totalAmountYen ?? extraction?.totalAmountYen).map(String.init) ?? ""
         date = (confirmed?.purchasedDate ?? extraction?.purchasedDate ?? today).rawValue
         time = confirmed?.purchasedTime ?? extraction?.purchasedTime ?? ""
-        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(confirmed?.taxes ?? extraction?.taxes ?? [])
+        let sourceTaxes = confirmed != nil ? (confirmed?.taxes ?? []) : (extraction?.taxes ?? [])
+        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(sourceTaxes)
         taxes = resolvedTaxes
         taxAmountTexts = resolvedTaxes.map { String($0.taxAmountYen) }
         let resolvedTaxYen: Int?
-        if resolvedTaxes.count > 1 {
+        if let confirmed {
+            resolvedTaxYen = confirmed.taxAmountYen ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
+        } else if resolvedTaxes.count > 1 {
             resolvedTaxYen = try? KMReceiptPresentation.totalTaxYen(resolvedTaxes)
         } else {
-            resolvedTaxYen = confirmed?.taxAmountYen ?? extraction?.taxAmountYen
-                ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
+            resolvedTaxYen = extraction?.taxAmountYen ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
         }
         tax = resolvedTaxYen.map(String.init) ?? ""
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
