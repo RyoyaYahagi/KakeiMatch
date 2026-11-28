@@ -715,12 +715,6 @@ final class KMReceiptModel {
                     blockedByUnclassifiedItems = true
                     throw KMDataError.invalidData("カテゴリが未選択の品目が\(unclassified)件あります。品目一覧でカテゴリを選択してください。")
                 }
-                for item in items {
-                    guard let itemCategoryId = item.categoryId,
-                          categories.contains(where: { $0.id == itemCategoryId }) else {
-                        throw KMDataError.invalidData("品目のカテゴリを選び直してください。")
-                    }
-                }
             }
             let fallback = items.isEmpty ? categoryId : (items.first?.categoryId ?? "")
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
