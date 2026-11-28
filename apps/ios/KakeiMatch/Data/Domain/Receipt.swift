@@ -1,5 +1,11 @@
 import Foundation
 
+struct KMReceiptTax: Codable, Equatable, Sendable {
+    var ratePercent: Decimal
+    var taxableAmountYen: Int
+    var taxAmountYen: Int
+}
+
 // TS: apps/pwa/src/local-receipts.ts — ReceiptItem
 struct KMReceiptItem: Codable, Equatable, Sendable, Identifiable {
     var id: String
@@ -8,6 +14,7 @@ struct KMReceiptItem: Codable, Equatable, Sendable, Identifiable {
     var quantity: Decimal?
     var unitPriceYen: Int?
     var categoryId: String?
+    var taxRatePercent: Decimal?
 }
 
 // TS: apps/pwa/src/local-receipts.ts — ReceiptAdjustment
@@ -31,6 +38,7 @@ struct KMConfirmedReceipt: Codable, Equatable, Sendable {
     var taxAmountYen: Int?
     var items: [KMReceiptItem]?
     var adjustments: [KMReceiptAdjustment]?
+    var taxes: [KMReceiptTax]?
 }
 
 // TS: src/lib/receipt-extraction.ts — ReceiptExtractionResult
@@ -50,6 +58,7 @@ struct KMReceiptExtraction: Codable, Equatable, Sendable {
         var amountYen: Int?
         var quantity: Decimal?
         var unitPriceYen: Int?
+        var taxRatePercent: Decimal?
     }
 
     struct Adjustment: Codable, Equatable, Sendable {
@@ -74,6 +83,7 @@ struct KMReceiptExtraction: Codable, Equatable, Sendable {
     var items: [Item]
     var adjustments: [Adjustment]?
     var warnings: [Warning]
+    var taxes: [KMReceiptTax]?
 }
 
 // TS: apps/pwa/src/local-receipts.ts — LocalReceipt
@@ -163,6 +173,7 @@ struct KMReceiptDraft: Codable, Equatable, Sendable {
     var taxAmountText: String
     var memo: String?
     var excludedFromSpending: Bool
+    var taxes: [KMReceiptTax]?
 
     /// PWA local-ui.ts: an empty form is saved but not restored over confirmed/extracted values.
     var isUseful: Bool {

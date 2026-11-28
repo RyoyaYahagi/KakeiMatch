@@ -73,4 +73,98 @@ struct ReceiptAllocationTests {
         input = try value(); input.items![0].id = input.items![1].id
         #expect(throws: (any Error).self) { try KMReceiptAllocation.validate(input, allowZero: true) }
     }
+    @Test func rateGroupedTaxAllocationRegressionWithTargetedDiscount() throws {
+        // 8% group: subtotal 1550 (1000 + 620 - 70 targeted discount), tax 124, all food -> 1674.
+        // 10% group: subtotal 598, tax 59, household -> 657. Total: 2331.
+        let input = KMConfirmedReceipt(
+            merchant: "Synthetic Store",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 2331,
+            categoryId: "food",
+            accountId: "cash",
+            taxAmountYen: 183,
+            items: [
+                .init(id: "a", name: "Synthetic bento", amountYen: 1000, categoryId: "food", taxRatePercent: 8),
+                .init(id: "b", name: "Synthetic fruit", amountYen: 620, categoryId: "food", taxRatePercent: 8),
+                .init(id: "c", name: "Synthetic detergent", amountYen: 598, categoryId: "household", taxRatePercent: 10),
+            ],
+            adjustments: [
+                .init(id: "d", label: "値引き", amountYen: -70, targetItemId: "a"),
+            ],
+            taxes: [
+                .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+                .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+            ]
+        )
+        try KMReceiptAllocation.validate(input, allowZero: false)
+        let allocations = try KMReceiptAllocation.allocations(input)
+        #expect(allocations == [
+            .init(categoryId: "food", amountYen: 1674),
+            .init(categoryId: "household", amountYen: 657),
+        ])
+        #expect(allocations.reduce(0) { $0 + $1.amountYen } == 2331)
+
+        var mismatched = input
+        mismatched.totalAmountYen = 2332
+        #expect(throws: (any Error).self) { try KMReceiptAllocation.allocations(mismatched) }
+    }
+    @Test func partialItemTaxRatesFallbackToOverallProportion() throws {
+        // Item a has 8% rate (food 1000), item b has no tax rate (household 500).
+        // 8% tax (80) goes to 8% group (food); unmatched 10% tax (50) falls back to overall 1000:500 (+33/+17).
+        let input = KMConfirmedReceipt(
+            merchant: "Synthetic Store",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 1630,
+            categoryId: "food",
+            accountId: "cash",
+            taxAmountYen: 130,
+            items: [
+                .init(id: "a", name: "Synthetic apple", amountYen: 1000, categoryId: "food", taxRatePercent: 8),
+                .init(id: "b", name: "Synthetic soap", amountYen: 500, categoryId: "household"),
+            ],
+            adjustments: [],
+            taxes: [
+                .init(ratePercent: 8, taxableAmountYen: 1000, taxAmountYen: 80),
+                .init(ratePercent: 10, taxableAmountYen: 500, taxAmountYen: 50),
+            ]
+        )
+        let allocations = try KMReceiptAllocation.allocations(input)
+        #expect(allocations == [
+            .init(categoryId: "food", amountYen: 1113),
+            .init(categoryId: "household", amountYen: 517),
+        ])
+        #expect(allocations.reduce(0) { $0 + $1.amountYen } == 1630)
+    }
+    @Test func mixedInclusiveAndExclusiveRateGroupsAndTaxValidation() throws {
+        // 8% group is already tax-inclusive (1080 == 1000 + 80); 10% group is exclusive (500 + 50).
+        let input = KMConfirmedReceipt(
+            merchant: "Synthetic Store",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 1630,
+            categoryId: "food",
+            accountId: "cash",
+            taxAmountYen: 130,
+            items: [
+                .init(id: "a", name: "Synthetic food", amountYen: 1080, categoryId: "food", taxRatePercent: 8),
+                .init(id: "b", name: "Synthetic soap", amountYen: 500, categoryId: "household", taxRatePercent: 10),
+            ],
+            adjustments: [],
+            taxes: [
+                .init(ratePercent: 8, taxableAmountYen: 1000, taxAmountYen: 80),
+                .init(ratePercent: 10, taxableAmountYen: 500, taxAmountYen: 50),
+            ]
+        )
+        #expect(try amounts(input) == [1080, 550])
+
+        var invalidRate = input
+        invalidRate.taxes = [.init(ratePercent: 0, taxableAmountYen: 1000, taxAmountYen: 0)]
+        #expect(throws: (any Error).self) { try KMReceiptAllocation.validate(invalidRate, allowZero: false) }
+
+        var invalidItemRate = input
+        invalidItemRate.items![0].taxRatePercent = 101
+        #expect(throws: (any Error).self) { try KMReceiptAllocation.validate(invalidItemRate, allowZero: false) }
+    }
 }
