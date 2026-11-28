@@ -81,7 +81,6 @@ enum KMReceiptAllocation {
             guard totals[index].amountYen >= 0 else { throw fail() }
             if let rate = item.taxRatePercent, let gIndex = rateOrder.firstIndex(of: rate) {
                 groupWeights[gIndex][index] = try KMYen.add(groupWeights[gIndex][index], adjustment.amountYen)
-                guard groupWeights[gIndex][index] >= 0 else { throw fail() }
             }
         }
         if untargeted != 0 { try distribute(&totals, amount: untargeted) }
@@ -168,7 +167,8 @@ enum KMReceiptAllocation {
             if let gIndex = rateOrder.firstIndex(of: mergedRates[index]) {
                 let weights = groupWeights[gIndex]
                 let groupSum = try weights.reduce(0) { try KMYen.add($0, $1) }
-                if groupSum > 0 {
+                // A rate group that a targeted discount pushed below zero falls back to the whole-amount proportion.
+                if groupSum > 0, weights.allSatisfy({ $0 >= 0 }) {
                     let shares = try allocateShares(weights: weights, amount: tax)
                     for catIndex in totals.indices {
                         totals[catIndex].amountYen = try KMYen.add(totals[catIndex].amountYen, shares[catIndex])
