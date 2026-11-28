@@ -101,4 +101,66 @@ import Testing
             try await store.saveReceiptDraft(draft(), receiptId: "missing-synthetic-receipt", at: timestamp)
         }
     }
+
+    @Test func savingOneDraftWritesOnlyThatRowAdvancesRevisionAndPreservesLedger() async throws {
+        let directory = try temporary(); defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try KMSQLiteStore(directory: directory)
+        try await store.saveAccount(.init(id: "test-cash", name: "合成現金", accountType: .cash))
+        try await store.saveCategory(.init(id: "test-food", name: "食費"))
+        let ledgerRow = try await store.saveManual(.init(
+            kind: .expense, amountYen: 500, date: KMDate("2026-10-14"),
+            payeeName: "合成台帳店", categoryId: "test-food", accountId: "test-cash",
+            memo: nil, importedId: "ledger-row"
+        ))
+        let first = try await store.saveReceiptImage(data: png, contentType: "image/png", at: timestamp)
+        let second = try await store.saveReceiptImage(data: replacementPNG, contentType: "image/png", at: timestamp)
+        let secondDraft = draft("別の下書き")
+        try await store.saveReceiptDraft(secondDraft, receiptId: second.id, at: timestamp)
+
+        let dbURL = directory.appendingPathComponent(try store.profile().current.uuidString)
+            .appendingPathComponent("household.sqlite")
+        let sql = try KMSQLite(url: dbURL)
+        let revisionBefore = try KMStoreDatabase(url: dbURL).revision()
+
+        // Fail if saving `first`'s draft deletes or re-inserts any other row in `objects`.
+        try sql.execute(
+            "CREATE TRIGGER forbid_other_deletes BEFORE DELETE ON objects "
+            + "WHEN OLD.collection != 'receipt-drafts' OR OLD.id != '\(first.id)' "
+            + "BEGIN SELECT RAISE(ABORT,'rewrote other row'); END"
+        )
+        try sql.execute(
+            "CREATE TRIGGER forbid_other_inserts BEFORE INSERT ON objects "
+            + "WHEN NEW.collection != 'receipt-drafts' OR NEW.id != '\(first.id)' "
+            + "BEGIN SELECT RAISE(ABORT,'rewrote other row'); END"
+        )
+
+        let firstDraft = draft("一件目の下書き")
+        try await store.saveReceiptDraft(firstDraft, receiptId: first.id, at: timestamp)
+        let revisionAfterInsert = try KMStoreDatabase(url: dbURL).revision()
+        #expect(revisionAfterInsert == revisionBefore + 1)
+
+        let firstUpdated = draft("一件目の更新")
+        try await store.saveReceiptDraft(firstUpdated, receiptId: first.id, at: timestamp.addingTimeInterval(5))
+        let revisionAfterUpdate = try KMStoreDatabase(url: dbURL).revision()
+        #expect(revisionAfterUpdate == revisionBefore + 2)
+        #expect(try sql.rows("PRAGMA user_version").first?.int("user_version") == 4)
+
+        try sql.execute("DROP TRIGGER forbid_other_deletes")
+        try sql.execute("DROP TRIGGER forbid_other_inserts")
+
+        let reopened = try KMSQLiteStore(directory: directory)
+        #expect(try await reopened.receiptDraft(receiptId: first.id) == firstUpdated)
+        #expect(try await reopened.receiptDraft(receiptId: second.id) == secondDraft)
+        #expect(try await reopened.transactions(matching: .init(limit: nil)).map(\.id) == [ledgerRow.id])
+
+        // Verify `.kmib` export/import roundtrip remains intact after single-row draft writes.
+        let backupURL = try await reopened.exportNativeBackup()
+        defer { try? FileManager.default.removeItem(at: backupURL) }
+        let restoredDir = try temporary(); defer { try? FileManager.default.removeItem(at: restoredDir) }
+        let restored = try KMSQLiteStore(directory: restoredDir)
+        try await restored.importBackup(from: backupURL)
+        #expect(try await restored.receiptDraft(receiptId: first.id) == firstUpdated)
+        #expect(try await restored.receiptDraft(receiptId: second.id) == secondDraft)
+        #expect(try await restored.transactions(matching: .init(limit: nil)).map(\.id) == [ledgerRow.id])
+    }
 }

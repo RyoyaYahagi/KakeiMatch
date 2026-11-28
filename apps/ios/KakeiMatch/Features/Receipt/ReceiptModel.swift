@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Observation
 import UIKit
 
@@ -25,6 +27,9 @@ final class KMReceiptModel {
     var categories: [KMCategory] = []
     var accounts: [KMAccount] = []
     var imageData: Data?
+    var previewImage: UIImage?
+    /// True while the preview for the current `imageData` is decoding; the previous image stays until then.
+    var isDecodingPreview = false
     var imageIsSaved = false
     var pane = "overview"
     var loading = true
@@ -50,6 +55,8 @@ final class KMReceiptModel {
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var draftTask: Task<Void, Never>?
+    @ObservationIgnored private var previewTask: Task<CGImage?, Never>?
+    @ObservationIgnored private var previewRevision = UUID()
     /// Snapshot currently on screen from load/extraction; unchanged values are not re-saved.
     @ObservationIgnored private var displayedDraft: KMReceiptDraft?
     /// After the first user edit, even returning to the original values must replace the draft.
@@ -81,6 +88,21 @@ final class KMReceiptModel {
     var categorySummaryText: String {
         guard case .success(let totals) = categorySummary else { return "カテゴリ別の金額を確認できません" }
         return totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
+    }
+    struct CategorySummaryDisplay {
+        let count: Int
+        let text: String
+    }
+    var categorySummaryDisplay: CategorySummaryDisplay {
+        switch categorySummary {
+        case .success(let totals):
+            return .init(
+                count: totals.count,
+                text: totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
+            )
+        case .failure:
+            return .init(count: 0, text: "カテゴリ別の金額を確認できません")
+        }
     }
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
@@ -146,6 +168,11 @@ final class KMReceiptModel {
         if let image = receipt.image {
             imageData = try await repositories?.receipts.receiptImage(blobId: image.blobId)
             imageIsSaved = imageData != nil
+            await updatePreviewImage(for: imageData)
+        } else {
+            imageData = nil
+            imageIsSaved = false
+            await updatePreviewImage(for: nil)
         }
         displayedDraft = draftSnapshot
     }
@@ -321,6 +348,7 @@ final class KMReceiptModel {
                 replacingReceiptId: receipt?.id, at: now)
             receipt = saved
             imageData = data; imageIsSaved = true
+            await updatePreviewImage(for: data)
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
             categoryId = ""; taxes = []; items = []; adjustments = []; adjustmentIsAddition = [:]
@@ -328,8 +356,42 @@ final class KMReceiptModel {
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
             imageData = nil; imageIsSaved = false
+            previewRevision = UUID()
+            previewTask?.cancel(); previewTask = nil; previewImage = nil; isDecodingPreview = false
             self.error = error.localizedDescription
         }
+    }
+
+    private func updatePreviewImage(for data: Data?) async {
+        previewRevision = UUID()
+        let token = previewRevision
+        previewTask?.cancel()
+        guard let data else {
+            previewTask = nil
+            isDecodingPreview = false
+            previewImage = nil
+            return
+        }
+        isDecodingPreview = true
+        let task = Task.detached(priority: .userInitiated) {
+            Self.decodePreviewCGImage(from: data)
+        }
+        previewTask = task
+        let cgImage = await task.value
+        // A newer call owns the state; otherwise always resolve the flag, even if this caller was cancelled.
+        guard previewRevision == token else { return }
+        isDecodingPreview = false
+        previewImage = cgImage.map { UIImage(cgImage: $0) }
+    }
+
+    nonisolated private static func decodePreviewCGImage(from data: Data, maxPixelSize: Int = 1200) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
     }
 
     func review(_ warning: KMReceiptPresentation.Warning) async {
@@ -373,7 +435,9 @@ final class KMReceiptModel {
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
             displayedDraft = draftSnapshot; draftSavedOnce = true
-            status = "入力内容を端末に保存しました。"
+            // Same text as main; assigned only when it changes so repeated saves do not re-render the view.
+            let savedMessage = "入力内容を端末に保存しました。"
+            if status != savedMessage { status = savedMessage }
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
             if case .notFound = failure { status = "この確認待ちレシートは削除されています。画面を開き直してください。" }
