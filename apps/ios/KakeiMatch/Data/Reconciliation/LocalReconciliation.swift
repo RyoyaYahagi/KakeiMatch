@@ -374,3 +374,43 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
         undoHistory.append(.init(resolution: value, undoneAt: value.undoRequestedAt ?? timestamp)); resolutions.remove(at: index)
     }
 }
+
+// The store persists this state (service-state). Keys added after the first release are optional on decode:
+// a stored state without them keeps the setting off, which is how that state was computed.
+extension KMLocalReconciliation.Prepared {
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        statements = try container.decode([KMStatementTransaction].self, forKey: .statements)
+        receipts = try container.decode([KMReceipt].self, forKey: .receipts)
+        imports = try container.decode([KMLocalRecord<KMStatementImport>].self, forKey: .imports)
+        transactions = try container.decode([KMTransaction].self, forKey: .transactions)
+        accounts = try container.decode([KMAccount].self, forKey: .accounts)
+        resolutions = try container.decode([KMReconciliationResolution].self, forKey: .resolutions)
+        aliases = try container.decode([KMReconciliationAlias].self, forKey: .aliases)
+        rejections = try container.decode([KMReconciliationPairRejection].self, forKey: .rejections)
+        suspected = try container.decode([KMSuspectedStatement].self, forKey: .suspected)
+        manual = try container.decode(Set<String>.self, forKey: .manual)
+        requireSamePaymentSourceForAutoMatch = try container.decodeIfPresent(Bool.self, forKey: .requireSamePaymentSourceForAutoMatch) ?? false
+    }
+}
+
+extension KMLocalReconciliation {
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        statements = try container.decode([KMStatementTransaction].self, forKey: .statements)
+        imports = try container.decode([KMLocalRecord<KMStatementImport>].self, forKey: .imports)
+        transactions = try container.decode([KMTransaction].self, forKey: .transactions)
+        accounts = try container.decode([KMAccount].self, forKey: .accounts)
+        categories = try container.decode([KMCategory].self, forKey: .categories)
+        receipts = try container.decode([KMReceipt].self, forKey: .receipts)
+        resolutions = try container.decode([KMReconciliationResolution].self, forKey: .resolutions)
+        aliases = try container.decode([KMReconciliationAlias].self, forKey: .aliases)
+        rejections = try container.decode([KMReconciliationPairRejection].self, forKey: .rejections)
+        suspected = try container.decode([KMSuspectedStatement].self, forKey: .suspected)
+        manualStatementIds = try container.decode(Set<String>.self, forKey: .manualStatementIds)
+        undoHistory = try container.decode([KMReconciliationUndo].self, forKey: .undoHistory)
+        latest = try container.decodeIfPresent(KMReconciliationRun.self, forKey: .latest)
+        requireSamePaymentSourceForAutoMatch = try container.decodeIfPresent(Bool.self, forKey: .requireSamePaymentSourceForAutoMatch) ?? false
+        preparedAtRun = try container.decodeIfPresent(Prepared.self, forKey: .preparedAtRun)
+    }
+}
