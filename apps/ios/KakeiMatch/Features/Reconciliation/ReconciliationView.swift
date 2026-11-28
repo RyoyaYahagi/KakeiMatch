@@ -96,6 +96,7 @@ struct ReconciliationView: View {
                         .lineSpacing(5).accessibilityIdentifier("reconciliation.runStatus")
                     failures
                     accountLinkPromptSection
+                    importSummarySection
                     tiles(scroll)
                     attention(scroll)
                     if model.presentation.waiting > 0 {
@@ -231,6 +232,84 @@ struct ReconciliationView: View {
         }
         .buttonStyle(KMButtonStyle(role: .secondary))
         .accessibilityIdentifier("reconciliation.accountLinkPrompt.dismiss")
+    }
+    @ViewBuilder private var importSummarySection: some View {
+        if !model.presentation.importSummaries.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("取り込みごとの状況")
+                    .font(KMTypography.body(14, weight: .bold))
+                    .foregroundStyle(KMColor.muted)
+                    .padding(.bottom, KMSpacing.space1)
+                ForEach(model.presentation.importSummaries) { summary in
+                    rule
+                    importSummaryRow(summary)
+                }
+                rule
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("reconciliation.importSummaries")
+        }
+    }
+    private func importSummaryRow(_ summary: KMReconciliationPresentation.ImportSummary) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space1) {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                        importSummaryTitle(summary)
+                        importUnprocessedBadge(summary.unprocessed)
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: KMSpacing.space2) {
+                        importSummaryTitle(summary)
+                        Spacer(minLength: 4)
+                        importUnprocessedBadge(summary.unprocessed)
+                    }
+                }
+            }
+            Text("全\(summary.total)件 · 処理済み \(summary.processed)件")
+                .font(KMTypography.body(13, weight: .semibold))
+                .foregroundStyle(KMColor.text)
+            Text(summary.breakdownLabel)
+                .font(KMTypography.note)
+                .foregroundStyle(KMColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if summary.csvNeedsReviewCount > 0 {
+                Text("CSV取込時の要確認 \(summary.csvNeedsReviewCount)件（明細未作成のため件数外）")
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, KMSpacing.space2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("reconciliation.importSummary.\(summary.id)")
+    }
+    private func importSummaryTitle(_ summary: KMReconciliationPresentation.ImportSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(KMStatementDownload.label(summary.provider))
+                .font(KMTypography.body(15, weight: .bold))
+                .foregroundStyle(KMColor.text)
+            if let importedAt = summary.importedAt {
+                Text(KMReconciliationPresentation.timestamp(importedAt))
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.muted)
+            }
+        }
+    }
+    private func importUnprocessedBadge(_ count: Int) -> some View {
+        let hasRemaining = count > 0
+        return HStack(spacing: 4) {
+            KMIcon(name: hasRemaining ? "warning" : "check", size: 14)
+            Text("未処理")
+                .font(KMTypography.body(12, weight: .bold))
+            Text("\(count)件")
+                .font(KMTypography.number(15, weight: .bold))
+        }
+        .foregroundStyle(hasRemaining ? KMColor.cUtil : KMColor.cDaily)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(hasRemaining ? KMColor.cUtilSoft : KMColor.cDailySoft, in: Capsule())
     }
     private func tiles(_ scroll: ScrollViewProxy) -> some View {
         let p = model.presentation
