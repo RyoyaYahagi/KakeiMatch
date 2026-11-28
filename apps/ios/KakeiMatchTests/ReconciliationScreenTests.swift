@@ -303,6 +303,51 @@ import Testing
         let saved = try await repositories.accounts.accounts(includeClosed: true)
         #expect(saved.first { $0.id == card.id }?.statementProvider == nil)
     }
+
+    @Test func importSummaryUpdatesCountsAcrossResolutionsAndMatchesTotal() async throws {
+        let repositories = try KMFixtureLoader.load(named: "reconciliation")
+        let model = KMReconciliationModel(); await model.load(repositories)
+        #expect(model.errorMessage == nil)
+
+        let initial = try #require(model.presentation.importSummaries.first)
+        #expect(model.presentation.importSummaries.count == 1)
+        #expect(initial.provider == .paypayCard)
+        #expect(initial.total == 7)
+        #expect(initial.sameExpense == 4)
+        #expect(initial.noReceipt == 0)
+        #expect(initial.transfer == 0)
+        #expect(initial.ignored == 0)
+        #expect(initial.unprocessed == 3)
+        #expect(initial.processed == 4)
+        #expect(initial.processed + initial.unprocessed == initial.total)
+
+        // Confirm 1 needsReview -> sameExpense +1, unprocessed -1
+        let reviewRow = try #require(model.presentation.pending.first { $0.status == .needsReview })
+        let candidate = try #require(reviewRow.candidates.first)
+        await model.perform(.confirm(statement: reviewRow.id, receipt: candidate.receiptId), repositories: repositories)
+        #expect(model.errorMessage == nil)
+
+        // Register 1 unmatched as noReceipt -> noReceipt +1, unprocessed -1
+        let category = try #require(model.categories.first)
+        let firstUnmatched = try #require(model.presentation.pending.first { $0.status == .unmatchedStatement })
+        await model.perform(.register(statement: firstUnmatched.id, category: category.id, destination: nil, excluded: false), repositories: repositories)
+        #expect(model.errorMessage == nil)
+
+        // Ignore remaining 1 unmatched -> ignored +1, unprocessed -1 (reaches 0)
+        let lastUnmatched = try #require(model.presentation.pending.first { $0.status == .unmatchedStatement })
+        await model.perform(.ignore(lastUnmatched.id), repositories: repositories)
+        #expect(model.errorMessage == nil)
+
+        let final = try #require(model.presentation.importSummaries.first)
+        #expect(final.total == 7)
+        #expect(final.sameExpense == 5)
+        #expect(final.noReceipt == 1)
+        #expect(final.transfer == 0)
+        #expect(final.ignored == 1)
+        #expect(final.unprocessed == 0)
+        #expect(final.processed == 7)
+        #expect(final.sameExpense + final.noReceipt + final.transfer + final.ignored + final.unprocessed == final.total)
+    }
 }
 
 /// Reads pass through; saving an account always fails, to exercise the provider-link failure path.
