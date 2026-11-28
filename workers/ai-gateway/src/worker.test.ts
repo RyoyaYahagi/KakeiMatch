@@ -676,6 +676,119 @@ describe.each(["SQLite", "D1"])("AI gateway receipt flows with %s", mode => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ purchasedDate: "2026-09-30", purchasedTime: "09:05", items: [{ name: "Synthetic Item", amountYen: 3284 }] });
   });
+  it("parses multi-rate taxes, sums taxAmountYen, and gates schema v2 fields behind X-KakeiMatch-Receipt-Schema: 2", async () => {
+    const multiRateExtraction = {
+      ...receipt,
+      merchant: "Synthetic Mart",
+      totalAmountYen: 2331,
+      taxAmountYen: null,
+      taxes: [
+        { ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124 },
+        { ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59 },
+      ],
+      items: [
+        { name: "Synthetic Yogurt", amountYen: 1550, taxRatePercent: 8 },
+        { name: "Synthetic Soap", amountYen: 598, taxRatePercent: 10 },
+        { name: "Synthetic Carry Bag", amountYen: 5, taxRatePercent: null },
+      ],
+    };
+
+    const v2Provider = fetchOk({ output_text: JSON.stringify(multiRateExtraction) });
+    const v2Response = await handleRequest(
+      request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("synthetic-user", now), { "x-kakeimatch-receipt-schema": "2" }),
+      env,
+      options(v2Provider),
+    );
+    expect(v2Response.status).toBe(200);
+    const v2Body = await v2Response.json() as Record<string, unknown>;
+    expect(v2Body.taxAmountYen).toBe(183);
+    expect(v2Body.taxes).toEqual([
+      { ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124 },
+      { ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59 },
+    ]);
+    expect(v2Body.items).toEqual([
+      { name: "Synthetic Yogurt", amountYen: 1550, taxRatePercent: 8 },
+      { name: "Synthetic Soap", amountYen: 598, taxRatePercent: 10 },
+      { name: "Synthetic Carry Bag", amountYen: 5, taxRatePercent: null },
+    ]);
+
+    const sentPayload = JSON.parse(String(vi.mocked(v2Provider).mock.calls[0]?.[1]?.body));
+    expect(sentPayload.input[0].text).toContain("10%税抜対象額");
+    expect(sentPayload.input[0].text).toContain("8%税額");
+    expect(sentPayload.response_format.schema.properties).toHaveProperty("taxes");
+    expect(sentPayload.response_format.schema.properties.items.items.properties).toHaveProperty("taxRatePercent");
+
+    const v1Response = await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(multiRateExtraction) }));
+    expect(v1Response.status).toBe(200);
+    const v1Body = await v1Response.json() as Record<string, unknown>;
+    expect(v1Body.taxAmountYen).toBe(183);
+    expect(v1Body).not.toHaveProperty("taxes");
+    expect(v1Body.items).toEqual([
+      { name: "Synthetic Yogurt", amountYen: 1550 },
+      { name: "Synthetic Soap", amountYen: 598 },
+      { name: "Synthetic Carry Bag", amountYen: 5 },
+    ]);
+  });
+  it("supports single-rate taxes and normalizes or drops out-of-range tax entries", async () => {
+    const singleRate = {
+      ...receipt,
+      merchant: "Synthetic Bakery",
+      totalAmountYen: 1080,
+      taxAmountYen: 0,
+      taxes: [{ ratePercent: 8, taxableAmountYen: 1000, taxAmountYen: 80 }],
+      items: [{ name: "Synthetic Loaf", amountYen: 1000, taxRatePercent: 8 }],
+    };
+    const singleResponse = await handleRequest(
+      request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("synthetic-user", now), { "X-KakeiMatch-Receipt-Schema": "2" }),
+      env,
+      options(fetchOk({ output_text: JSON.stringify(singleRate) })),
+    );
+    expect(singleResponse.status).toBe(200);
+    expect(await singleResponse.json()).toMatchObject({
+      taxAmountYen: 80,
+      taxes: [{ ratePercent: 8, taxableAmountYen: 1000, taxAmountYen: 80 }],
+      items: [{ name: "Synthetic Loaf", amountYen: 1000, taxRatePercent: 8 }],
+    });
+
+    const outOfRange = {
+      ...receipt,
+      merchant: "Synthetic Store",
+      totalAmountYen: 1100,
+      taxAmountYen: 99,
+      taxes: [
+        { ratePercent: 0, taxableAmountYen: 500, taxAmountYen: 0 },
+        { ratePercent: 101, taxableAmountYen: 500, taxAmountYen: 505 },
+        { ratePercent: 10, taxableAmountYen: -100, taxAmountYen: 10 },
+        { ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 100 },
+      ],
+      items: [
+        { name: "Synthetic Tea", amountYen: 500, taxRatePercent: 0 },
+        { name: "Synthetic Mug", amountYen: 500, taxRatePercent: 150 },
+        { name: "Synthetic Plate", amountYen: 100, taxRatePercent: 10 },
+      ],
+    };
+    const normalizedResponse = await handleRequest(
+      request("gemini", { ...image, flowId: crypto.randomUUID() }, bearer("synthetic-user", now), { "X-KakeiMatch-Receipt-Schema": "2" }),
+      env,
+      options(fetchOk({ output_text: JSON.stringify(outOfRange) })),
+    );
+    expect(normalizedResponse.status).toBe(200);
+    expect(await normalizedResponse.json()).toMatchObject({
+      taxAmountYen: 100,
+      taxes: [{ ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 100 }],
+      items: [
+        { name: "Synthetic Tea", amountYen: 500, taxRatePercent: null },
+        { name: "Synthetic Mug", amountYen: 500, taxRatePercent: null },
+        { name: "Synthetic Plate", amountYen: 100, taxRatePercent: 10 },
+      ],
+    });
+
+    const tooManyTaxes = {
+      ...receipt,
+      taxes: Array.from({ length: 11 }, (_, i) => ({ ratePercent: i + 1, taxableAmountYen: 100, taxAmountYen: i + 1 })),
+    };
+    expect((await gemini(crypto.randomUUID(), now, fetchOk({ output_text: JSON.stringify(tooManyTaxes) }))).status).toBe(502);
+  });
   it("keeps a warning's item position and drops a position that points at no entry", async () => {
     const warned = { ...receipt, warnings: [
       { field: "items", code: "zero_amount", message: "欠品のため金額が0円です。", index: 0 },
