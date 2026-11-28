@@ -2,7 +2,7 @@ import 'reflect-metadata';
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { Miniflare } from 'miniflare';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { dayKey, reserveFlow } from './receipt-ai-usage';
+import { dayKey, reserveCategorySuggestionFlow, reserveFlow } from './receipt-ai-usage';
 
 // App Attest cryptography is covered separately; this suite exercises real Better Auth/D1 wiring.
 vi.mock('./app-attest', () => ({
@@ -129,6 +129,27 @@ describe('native auth on local D1', () => {
     expect(await (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json())
       .toEqual({ plan: 'guest', period: 'day', day: dayKey(fixedNow), used: 5, limit: 5, remaining: 0, supportId: guest!.guest_user_id });
     expect(await reserveFlow(db, guest!.guest_user_id, crypto.randomUUID(), 'mac-5', fixedNow, limits, 'receipt', 'address')).toBe('ai_quota_exceeded');
+    expect(await reserveCategorySuggestionFlow(db, guest!.guest_user_id, crypto.randomUUID(), 'cat-mac-5', fixedNow, limits, 'address')).toBe('ai_quota_exceeded');
+  });
+
+  it('applies the monthly entitlement limit to a guest-origin user with an entitlement row', async () => {
+    const { db, run } = await makeFixture(fixedNow);
+    const limits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
+    const session = await guestSignIn(run);
+    const guest = await db.prepare('SELECT guest_user_id FROM native_app_keys WHERE key_id=?').bind(keyId).first<{ guest_user_id: string }>();
+    const guestUserId = guest!.guest_user_id;
+    expect(await db.prepare('SELECT 1 AS found FROM guest_devices WHERE user_id=?').bind(guestUserId).first()).toEqual({ found: 1 });
+    await db.prepare("INSERT INTO account_entitlements(user_id,plan,monthly_ai_limit,updated_at) VALUES (?,'pro',7,?)").bind(guestUserId, fixedNow).run();
+    for (let index = 0; index < 6; index++) {
+      expect(await reserveFlow(db, guestUserId, crypto.randomUUID(), `mac-${index}`, fixedNow, limits, 'receipt', 'address')).toBe('reserved');
+    }
+    expect(await reserveCategorySuggestionFlow(db, guestUserId, crypto.randomUUID(), 'cat-mac-6', fixedNow, limits, 'address')).toBe('reserved');
+    expect(await reserveFlow(db, guestUserId, crypto.randomUUID(), 'mac-7', fixedNow, limits, 'receipt', 'address')).toBe('ai_quota_exceeded');
+    expect(await reserveCategorySuggestionFlow(db, guestUserId, crypto.randomUUID(), 'cat-mac-7', fixedNow, limits, 'address')).toBe('ai_quota_exceeded');
+    await db.prepare('UPDATE ai_receipt_flows SET dispatched=1').run();
+    await db.prepare('UPDATE ai_category_suggestion_flows SET dispatched=1').run();
+    expect(await (await run('/api/native/ai/usage', undefined, `Native ${session.sessionToken}`)).json())
+      .toMatchObject({ plan: 'pro', period: 'month', used: 7, limit: 7, remaining: 0, supportId: guestUserId });
   });
 
   it('keeps the AI usage response compatible with the committed iOS fixture', async () => {
