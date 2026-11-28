@@ -49,8 +49,8 @@ struct ReceiptView: View {
         case .success: nil
         case .failure(let error): error.localizedDescription
         }
-        VStack(spacing: 0) {
-            ScrollViewReader { scroll in
+        ScrollViewReader { scroll in
+            VStack(spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: KMSpacing.space3) {
                         Text(editing ? "支出の記録を編集" : "レシートを登録する").font(KMTypography.body(22, weight: .bold)).accessibilityAddTraits(.isHeader)
@@ -65,16 +65,22 @@ struct ReceiptView: View {
                 .onChange(of: focusedField) { _, field in
                     if let field { scroll.scrollTo(field, anchor: .center) }
                 }
-            }
-            if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || totalError != nil {
-                VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                    if let totalError {
-                        Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                    }
-                    if let error = model.error {
-                        Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
-                            .accessibilityIdentifier("receipt.error")
-                    }
+                if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || totalError != nil {
+                    VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                        if let totalError {
+                            Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
+                        }
+                        if let error = model.error {
+                            Text("! \(error)").font(KMTypography.note).foregroundStyle(KMColor.danger)
+                                .accessibilityIdentifier("receipt.error")
+                            if model.blockedByUnclassifiedItems {
+                                Button(model.pane == "items" ? "未選択の品目へ移動" : "品目一覧でカテゴリを選ぶ") {
+                                    jumpToFirstUnclassifiedItem(scroll: scroll)
+                                }
+                                .buttonStyle(KMButtonStyle(role: .text))
+                                .accessibilityIdentifier("receipt.jumpToUnclassified")
+                            }
+                        }
                     if let status = model.status {
                         Text(status).font(KMTypography.note).foregroundStyle(KMColor.muted)
                             .accessibilityIdentifier("receipt-save-state")
@@ -102,6 +108,7 @@ struct ReceiptView: View {
                 .padding(.horizontal, KMSpacing.space4).padding(.vertical, KMSpacing.space3)
                 .frame(maxWidth: .infinity, alignment: .leading).background(KMColor.bg)
                 .overlay(alignment: .top) { Rectangle().fill(KMColor.border).frame(height: 1) }
+                }
             }
         }
         .accessibilityElement(children: .contain).accessibilityIdentifier("receipt.screen")
@@ -245,22 +252,31 @@ struct ReceiptView: View {
     }
 
     private var tabs: some View {
-        HStack(spacing: KMSpacing.space1) {
+        let unclassifiedCount = model.unclassifiedItemCount
+        return HStack(spacing: KMSpacing.space1) {
             tab("全体", pane: "overview", identifier: "receipt.overviewTab")
-            tab("品目一覧", pane: "items", identifier: "receipt.itemsTab")
+            tab(
+                unclassifiedCount > 0 ? "品目一覧（△\(unclassifiedCount)）" : "品目一覧",
+                pane: "items",
+                identifier: "receipt.itemsTab",
+                emphasizedWarning: unclassifiedCount > 0,
+                accessibilityLabel: unclassifiedCount > 0 ? "品目一覧、未選択\(unclassifiedCount)件" : "品目一覧"
+            )
         }
         .padding(.horizontal, KMSpacing.space1)
         .background(KMColor.sunken, in: RoundedRectangle(cornerRadius: KMRadius.lg))
     }
-    private func tab(_ title: String, pane: String, identifier: String) -> some View {
+    private func tab(_ title: String, pane: String, identifier: String,
+                     emphasizedWarning: Bool = false, accessibilityLabel: String? = nil) -> some View {
         Button { focusedField = nil; model.pane = pane } label: {
             Text(title).font(KMTypography.body(14, weight: model.pane == pane ? .bold : .medium))
-                .foregroundStyle(model.pane == pane ? KMColor.text : KMColor.muted)
+                .foregroundStyle(emphasizedWarning ? KMColor.warning : (model.pane == pane ? KMColor.text : KMColor.muted))
                 // Keep the 44pt target while the scaled label grows past 36pt.
                 .frame(maxWidth: .infinity, minHeight: dynamicTypeSize.isAccessibilitySize ? 44 : 36)
                 .background(model.pane == pane ? KMColor.surface : .clear, in: RoundedRectangle(cornerRadius: KMRadius.sm))
                 .frame(minHeight: 44)
         }.buttonStyle(.plain).accessibilityIdentifier(identifier)
+            .accessibilityLabel(accessibilityLabel ?? title)
             .accessibilityAddTraits(model.pane == pane ? .isSelected : [])
     }
 
@@ -366,6 +382,7 @@ struct ReceiptView: View {
                 row("カテゴリ", id: "receipt-category") {
                     if !model.items.isEmpty {
                         let summary = model.categorySummaryDisplay
+                        let unclassifiedCount = model.unclassifiedItemCount
                         Button { model.pane = "items" } label: {
                             VStack(alignment: .leading, spacing: KMSpacing.space1) {
                                 HStack {
@@ -373,12 +390,23 @@ struct ReceiptView: View {
                                     Spacer()
                                     Text("\(summary.count)カテゴリ ›").font(KMTypography.note).foregroundStyle(KMColor.primary)
                                 }
+                                if unclassifiedCount > 0 {
+                                    Text("△ 未選択 \(unclassifiedCount)件")
+                                        .font(KMTypography.body(12, weight: .semibold))
+                                        .foregroundStyle(KMColor.warning)
+                                        .padding(.horizontal, KMSpacing.space2)
+                                        .padding(.vertical, 2)
+                                        .background(KMColor.warningSoft, in: Capsule())
+                                        .accessibilityIdentifier("receipt.overviewUnclassified")
+                                }
                                 Text(summary.text).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
                             }
                             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("品目ごと。\(summary.text)。品目一覧を開く")
+                        .accessibilityLabel(unclassifiedCount > 0
+                            ? "品目ごと。未選択\(unclassifiedCount)件。\(summary.text)。品目一覧を開く"
+                            : "品目ごと。\(summary.text)。品目一覧を開く")
                         .accessibilityIdentifier("receipt.categoryItems")
                     } else {
                         Picker("カテゴリ", selection: $model.categoryId) {
@@ -522,7 +550,7 @@ struct ReceiptView: View {
                             HStack(spacing: KMSpacing.space2) {
                                 itemAmount(item)
                                 Spacer(minLength: 0)
-                                Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
+                                itemCategoryBadge(item.categoryId, lineLimit: 2)
                             }
                             if model.hasUnreviewedItemWarning(item.id) {
                                 Text("△ 写真と確認").font(KMTypography.note).foregroundStyle(KMColor.warning)
@@ -536,7 +564,7 @@ struct ReceiptView: View {
                             }
                             Spacer(minLength: KMSpacing.space1)
                             itemAmount(item)
-                            Text(itemCategoryName(item.categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(1)
+                            itemCategoryBadge(item.categoryId, lineLimit: 1)
                             itemChevron(item)
                         }
                     }
@@ -570,7 +598,11 @@ struct ReceiptView: View {
                         HStack {
                             Text("カテゴリ").font(KMTypography.note).foregroundStyle(KMColor.muted)
                             Spacer()
-                            Text(itemCategoryName(item.categoryId)).font(KMTypography.body(14)).foregroundStyle(KMColor.text)
+                            if KMReceiptPresentation.isUnclassifiedCategory(item.categoryId) {
+                                unselectedCategoryPill
+                            } else {
+                                Text(itemCategoryName(item.categoryId)).font(KMTypography.body(14)).foregroundStyle(KMColor.text)
+                            }
                             Image(systemName: "chevron.right").font(KMTypography.note).foregroundStyle(KMColor.muted)
                         }.frame(minHeight: 44)
                             .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
@@ -589,7 +621,42 @@ struct ReceiptView: View {
             }
             Rectangle().fill(KMColor.border).frame(height: 1)
         }
+        .id("receipt-item-row-\(item.id)")
         .disabled(model.isReading || model.saving || model.didSave)
+    }
+
+    @ViewBuilder private func itemCategoryBadge(_ categoryId: String?, lineLimit: Int) -> some View {
+        if KMReceiptPresentation.isUnclassifiedCategory(categoryId) {
+            unselectedCategoryPill
+        } else {
+            Text(itemCategoryName(categoryId)).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(lineLimit)
+        }
+    }
+
+    private var unselectedCategoryPill: some View {
+        Text("△ 未選択")
+            .font(KMTypography.body(12, weight: .semibold))
+            .foregroundStyle(KMColor.warning)
+            .padding(.horizontal, KMSpacing.space2)
+            .padding(.vertical, 2)
+            .background(KMColor.warningSoft, in: Capsule())
+            .lineLimit(1)
+    }
+
+    private func jumpToFirstUnclassifiedItem(scroll: ScrollViewProxy) {
+        focusedField = nil
+        let switchedPane = model.pane != "items"
+        model.pane = "items"
+        if let targetId = model.firstUnclassifiedItemId {
+            expandedAdjustmentID = nil
+            expandedItemID = targetId
+            let rowID = "receipt-item-row-\(targetId)"
+            if switchedPane {
+                Task { @MainActor in scroll.scrollTo(rowID, anchor: .center) }
+            } else {
+                scroll.scrollTo(rowID, anchor: .center)
+            }
+        }
     }
 
     private func itemTitle(_ item: KMReceiptItem) -> some View {
@@ -741,7 +808,7 @@ struct ReceiptView: View {
     }
 
     private func itemCategoryName(_ id: String?) -> String {
-        guard let id, !id.isEmpty else { return "カテゴリ未選択" }
+        guard let id, !id.isEmpty else { return "未選択" }
         return model.categories.first(where: { $0.id == id })?.name ?? "カテゴリを選び直してください"
     }
 

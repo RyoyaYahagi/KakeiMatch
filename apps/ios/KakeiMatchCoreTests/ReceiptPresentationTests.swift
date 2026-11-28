@@ -32,22 +32,51 @@ struct ReceiptPresentationTests {
         }
     }
 
-    @Test func categoryTotalsUseItemOverridesFallbackAndDescendingAmounts() throws {
+    @Test func categoryTotalsPlacesUnselectedBucketFirstWithoutFolding() throws {
         let categories = [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")]
         let items = [
             KMReceiptItem(id: "a", name: "合成食品", amountYen: 200, categoryId: "food"),
-            KMReceiptItem(id: "b", name: "合成日用品", amountYen: 100, categoryId: nil),
+            KMReceiptItem(id: "b", name: "合成未分類", amountYen: 100, categoryId: nil),
             KMReceiptItem(id: "c", name: "合成小物", amountYen: 50, categoryId: "daily"),
         ]
-        let totals = try KMReceiptPresentation.categoryTotals(items: items, defaultCategoryId: "daily", categories: categories)
-        #expect(totals.map(\.categoryId) == ["food", "daily"])
-        #expect(totals.map(\.amountYen) == [200, 150])
-        #expect(totals.map(\.name) == ["食費", "日用品"])
+        let totals = try KMReceiptPresentation.categoryTotals(items: items, categories: categories)
+        #expect(totals.map(\.categoryId) == [nil, "food", "daily"])
+        #expect(totals.map(\.amountYen) == [100, 200, 50])
+        #expect(totals.map(\.name) == ["未選択", "食費", "日用品"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: items) == 1)
+
+        let classifiedOnly = items.filter { $0.categoryId != nil }
+        let classifiedTotals = try KMReceiptPresentation.categoryTotals(items: classifiedOnly, categories: categories)
+        #expect(classifiedTotals.map(\.categoryId) == ["food", "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: classifiedOnly) == 0)
+
         #expect(throws: KMDataError.amountOverflow) {
             try KMReceiptPresentation.categoryTotals(
-                items: [item(KMYen.maxSafe), item(1)], defaultCategoryId: "food", categories: categories
+                items: [item(KMYen.maxSafe), item(1)], categories: categories
             )
         }
+    }
+
+    @Test func legacyAppliedReceiptResolvesNilItemCategoryWithoutAffectingPending() throws {
+        let categories = [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")]
+        let items = [
+            KMReceiptItem(id: "a", name: "合成食品", amountYen: 200, categoryId: nil),
+            KMReceiptItem(id: "b", name: "合成日用品", amountYen: 100, categoryId: "daily"),
+        ]
+        let appliedItems = KMReceiptPresentation.resolvedItemsForDisplay(
+            items, status: .applied, confirmedCategoryId: "food"
+        )
+        #expect(appliedItems.map(\.categoryId) == ["food", "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: appliedItems) == 0)
+        let appliedTotals = try KMReceiptPresentation.categoryTotals(items: appliedItems, categories: categories)
+        #expect(appliedTotals.map(\.categoryId) == ["food", "daily"])
+        #expect(appliedTotals.map(\.amountYen) == [200, 100])
+
+        let pendingItems = KMReceiptPresentation.resolvedItemsForDisplay(
+            items, status: .pending, confirmedCategoryId: "food"
+        )
+        #expect(pendingItems.map(\.categoryId) == [nil, "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: pendingItems) == 1)
     }
     @Test func categoryChoicesCountEachCategoryOnceAndIgnoreTransfers() {
         let categories = [KMCategory(id: "daily", name: "日用品"), KMCategory(id: "food", name: "食費")]
