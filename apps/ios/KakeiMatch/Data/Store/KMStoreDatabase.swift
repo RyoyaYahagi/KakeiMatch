@@ -169,6 +169,29 @@ import Foundation
         store.pendingArtifacts = []
         return nextRevision
     }
+    /// Persist a single receipt draft row without rewriting the rest of `objects`.
+    /// Preserves revision checks, active-profile guard, and v4 schema / `.kmib` compatibility.
+    @discardableResult
+    func saveReceiptDraft(_ record: KMLocalRecord<KMReceiptDraft>, expectedRevision: Int? = nil, ifActive: (() throws -> Bool)? = nil) throws -> Int {
+        var nextRevision = 0
+        let payload = try KMJSON.encoder().encode(record)
+        try sql.transaction {
+            let current = try revision()
+            if let expected = expectedRevision ?? loadedRevision {
+                guard expected == current else { throw KMDataError.invalidData("別の操作で家計簿が更新されました。再読み込みしてから保存してください。") }
+            }
+            guard current < Int.max else { throw KMDataError.invalidData("端末DBの世代番号が上限です。") }
+            nextRevision = current + 1
+            try sql.execute("UPDATE control SET revision=? WHERE id=1", [.integer(nextRevision)])
+            try sql.execute(
+                "INSERT OR REPLACE INTO objects(collection,id,ordinal,json) VALUES('receipt-drafts',?,0,?)",
+                [.text(record.id), .blob(payload)]
+            )
+            if let ifActive, try !ifActive() { throw KMDataError.staleProfile }
+        }
+        loadedRevision = nextRevision
+        return nextRevision
+    }
     func saveArtifacts(_ artifacts: [KMBackupArtifact]) throws {
         try sql.transaction {
             for artifact in artifacts {

@@ -40,6 +40,15 @@ struct ReceiptView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        let totalResult = model.totalResult
+        let totalCheck: KMReceiptPresentation.TotalCheck? = switch totalResult {
+        case .success(let value): value
+        case .failure: nil
+        }
+        let totalError: String? = switch totalResult {
+        case .success: nil
+        case .failure(let error): error.localizedDescription
+        }
         VStack(spacing: 0) {
             ScrollViewReader { scroll in
                 ScrollView {
@@ -47,8 +56,8 @@ struct ReceiptView: View {
                         Text(editing ? "支出の記録を編集" : "レシートを登録する").font(KMTypography.body(22, weight: .bold)).accessibilityAddTraits(.isHeader)
                         tabs
                         if model.loading { ProgressView("レシートを読み込んでいます。") }
-                        else if model.pane == "overview" { overview }
-                        else { itemList }
+                        else if model.pane == "overview" { overview(totalCheck: totalCheck) }
+                        else { itemList(totalCheck: totalCheck) }
                     }
                     .foregroundStyle(KMColor.text)
                     .padding(.horizontal, KMSpacing.space4).padding(.bottom, KMSpacing.space3)
@@ -57,9 +66,9 @@ struct ReceiptView: View {
                     if let field { scroll.scrollTo(field, anchor: .center) }
                 }
             }
-            if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || model.totalError != nil {
+            if model.pane == "overview" || model.didSave || model.isReading || model.error != nil || model.status != nil || totalError != nil {
                 VStack(alignment: .leading, spacing: KMSpacing.space2) {
-                    if let totalError = model.totalError {
+                    if let totalError {
                         Text("! \(totalError)").font(KMTypography.note).foregroundStyle(KMColor.danger)
                     }
                     if let error = model.error {
@@ -255,9 +264,9 @@ struct ReceiptView: View {
             .accessibilityAddTraits(model.pane == pane ? .isSelected : [])
     }
 
-    private var overview: some View {
+    private func overview(totalCheck: KMReceiptPresentation.TotalCheck?) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
-            if let data = model.imageData, let image = UIImage(data: data) {
+            if let image = model.previewImage {
                 GeometryReader { geometry in
                     let ratio = image.size.width / image.size.height
                     let width = max(0, min(geometry.size.width, 280 * ratio))
@@ -280,10 +289,10 @@ struct ReceiptView: View {
                     }.buttonStyle(.plain).accessibilityLabel("レシート画像を拡大して見る").accessibilityIdentifier("receipt.imagePreview")
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 }.frame(height: 280)
-            } else if model.receipt?.image != nil {
+            } else if model.imageData == nil, model.receipt?.image != nil {
                 Text("レシート画像の原本はありません。原本の確認・再解析はできません。保存済みの内容は利用できます。")
                     .font(KMTypography.note).foregroundStyle(KMColor.muted)
-            } else if !editing {
+            } else if !editing, model.imageData == nil {
                 HStack {
                     Button("レシートを撮る") { openCamera() }.accessibilityIdentifier("receipt.cameraButton")
                     Button("写真から") { showsPhotos = true }.accessibilityIdentifier("receipt.imageInput")
@@ -333,7 +342,7 @@ struct ReceiptView: View {
                         .font(KMTypography.number(30, weight: .bold)).keyboardType(.numberPad)
                         .accessibilityLabel("金額（円）").accessibilityIdentifier("receipt-amount")
                         .focused($focusedField, equals: "receipt-amount")
-                    if let check = model.totalCheck {
+                    if let check = totalCheck {
                         Text(check.label).font(KMTypography.note).foregroundStyle(check.matches ? KMColor.success : KMColor.warning)
                             .accessibilityLabel(check.accessibleLabel).accessibilityIdentifier("receipt-total-check")
                     }
@@ -352,19 +361,20 @@ struct ReceiptView: View {
                 }
                 row("カテゴリ", id: "receipt-category") {
                     if !model.items.isEmpty {
+                        let summary = model.categorySummaryDisplay
                         Button { model.pane = "items" } label: {
                             VStack(alignment: .leading, spacing: KMSpacing.space1) {
                                 HStack {
                                     Text("品目ごと").font(KMTypography.body(14, weight: .semibold))
                                     Spacer()
-                                    Text("\(model.categoryCount)カテゴリ ›").font(KMTypography.note).foregroundStyle(KMColor.primary)
+                                    Text("\(summary.count)カテゴリ ›").font(KMTypography.note).foregroundStyle(KMColor.primary)
                                 }
-                                Text(model.categorySummaryText).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
+                                Text(summary.text).font(KMTypography.note).foregroundStyle(KMColor.muted).lineLimit(2)
                             }
                             .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("品目ごと。\(model.categorySummaryText)。品目一覧を開く")
+                        .accessibilityLabel("品目ごと。\(summary.text)。品目一覧を開く")
                         .accessibilityIdentifier("receipt.categoryItems")
                     } else {
                         Picker("カテゴリ", selection: $model.categoryId) {
@@ -443,7 +453,7 @@ struct ReceiptView: View {
         }
     }
 
-    private var itemList: some View {
+    private func itemList(totalCheck: KMReceiptPresentation.TotalCheck?) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Button("全品目を同じカテゴリにする") { categoryTarget = .allItems }
                 .font(KMTypography.body(14, weight: .semibold)).foregroundStyle(KMColor.primary)
@@ -478,7 +488,7 @@ struct ReceiptView: View {
                 TextField("", text: field($model.tax, review: .taxAmountYen)).keyboardType(.numberPad)
                     .accessibilityLabel("税額（円・任意）").accessibilityIdentifier("receipt-tax").focused($focusedField, equals: "receipt-tax")
             }.disabled(model.isReading || model.saving || model.didSave)
-            if let check = model.totalCheck, !check.matches {
+            if let check = totalCheck, !check.matches {
                 Text("購入内容との差額は\(check.difference < 0 ? "−" : "+")\(KMAmountFormatter.yen(check.difference))です。入力した合計金額を保ちます。値引きや税額を確認してください。")
                     .font(KMTypography.note).foregroundStyle(KMColor.warning).accessibilityIdentifier("receipt-difference")
             }
@@ -805,11 +815,16 @@ struct ReceiptView: View {
             binding.wrappedValue = value; Task { await model.reviewField(review) }
         })
     }
+    @MainActor private static let purchasedDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.timeZone = TimeZone(identifier: "Asia/Tokyo")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
     private var dateBinding: Binding<Date> {
         Binding(get: {
-            let formatter = DateFormatter(); formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.timeZone = TimeZone(identifier: "Asia/Tokyo"); formatter.dateFormat = "yyyy-MM-dd"
-            return formatter.date(from: model.date) ?? repositories?.referenceDate ?? Date()
+            Self.purchasedDateFormatter.date(from: model.date) ?? repositories?.referenceDate ?? Date()
         }, set: { value in model.date = KMDate(instant: value).rawValue; Task { await model.reviewField(.purchasedDate) } })
     }
     private func showWarning(_ warning: KMReceiptPresentation.Warning) {
