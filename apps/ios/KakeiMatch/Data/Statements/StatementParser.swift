@@ -35,20 +35,26 @@ enum KMStatementParser {
     private static let paypayHeaders = ["利用日/キャンセル日", "利用店名・商品名", "利用者", "決済方法", "支払区分", "利用金額", "手数料", "支払総額", "当月支払金額", "翌月以降繰越金額", "調整額", "当月お支払日"]
     private static let rakuten11 = ["利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額", "{month}月支払金額", "当月請求額", "{month}月繰越残高", "新規サイン"]
     private static let rakuten12 = ["利用日", "利用店名・商品名", "利用者", "支払方法", "利用金額", "手数料/利息", "支払総額", "支払月", "{month}月支払金額", "当月請求額", "{month}月繰越残高", "{month}月以降請求額"]
+    private static let aeonAccountHeader = ["金融機関", "支店", "口座番号", "名義人", "", "", "", "", ""]
+    private static let aeonDetailTitle = ["ご利用明細", "", "", "", "", "", "", "", ""]
+    private static let aeonDetailHeaders = ["ご利用日", "利用者区分", "ご利用先", "支払方法", "", "", "ご利用金額", "備考", ""]
+    private static let aeonSplitTitle = ["分割・ボーナス払い明細", "", "", "", "", "", "", "", ""]
+    private static let aeonSplitHeaders = ["ご利用日", "ご利用先", "支払回数", "ご利用金額", "実質年率", "お支払い総額", "今回ご請求金額", "内手数料", "今回回数"]
+    private static let aeonSignature = "aeon-card-cp932-v1"
 
     static func parse(data: Data, provider: KMStatementProvider) -> KMStatementParseResult {
         let bom = data.starts(with: [0xef, 0xbb, 0xbf])
-        let encoding = provider == .smbcCard ? "cp932" : (bom ? "utf-8-bom" : "utf-8")
+        let isShiftJIS = provider == .smbcCard || provider == .aeonCard
+        let encoding = isShiftJIS ? "cp932" : (bom ? "utf-8-bom" : "utf-8")
         func failure(_ code: String) -> KMStatementParseResult { KMStatementParseResult(encoding: encoding, fatalErrors: [.init(rowNumber: nil, code: code)]) }
         if data.isEmpty { return failure("empty_file") }
         if data.count > maxBytes { return failure("limit_exceeded") }
         if data.contains(0) { return failure("invalid_file") }
-        let body = bom && provider != .smbcCard ? data.dropFirst(3) : data[...]
-        let stringEncoding: String.Encoding = provider == .smbcCard ? .windowsCP1252 : .utf8
+        let body = bom && !isShiftJIS ? data.dropFirst(3) : data[...]
         let text: String?
-        if provider == .smbcCard {
+        if isShiftJIS {
             text = String(data: data, encoding: .shiftJIS)
-        } else { text = String(data: Data(body), encoding: stringEncoding) }
+        } else { text = String(data: Data(body), encoding: .utf8) }
         guard let text else { return failure("invalid_file") }
         return parse(text: text, provider: provider, encoding: encoding, sourceByteCount: data.count)
     }
@@ -66,7 +72,8 @@ enum KMStatementParser {
         case .smbcCard: return smbc(rows, encoding)
         case .rakutenCard: return rakuten(rows, encoding)
         case .paypayCard: return paypay(rows, encoding)
-        case .aeonCard, .paypay: return KMStatementParseResult(totalRows: max(rows.count - 1, 0), encoding: encoding, fatalErrors: [.init(rowNumber: nil, code: "unsupported_provider")])
+        case .aeonCard: return aeon(rows, encoding)
+        case .paypay: return KMStatementParseResult(totalRows: max(rows.count - 1, 0), encoding: encoding, fatalErrors: [.init(rowNumber: nil, code: "unsupported_provider")])
         }
     }
 
@@ -93,11 +100,24 @@ enum KMStatementParser {
     private static func strictYen(_ s: String) -> Int? {
         guard s.range(of: #"^[1-9][0-9]*$"#, options: .regularExpression) != nil, let n = Int(s), n <= 9_007_199_254_740_991 else { return nil }; return n
     }
+    private static func validatedDate(year: Int, month: Int, day: Int) -> String? {
+        guard (1...12).contains(month), let valid = try? KMDate(String(format: "%04d-%02d-%02d", year, month, day)) else { return nil }
+        return valid.rawValue
+    }
     private static func date(_ s: String, flexible: Bool = false) -> String? {
         let p = flexible ? #"^([0-9]{4})/([0-9]{1,2})/([0-9]{1,2})$"# : #"^([0-9]{4})/([0-9]{2})/([0-9]{2})$"#
         guard let m = s.range(of: p, options: .regularExpression), let re = try? NSRegularExpression(pattern: p), let match = re.firstMatch(in: s, range: NSRange(m, in: s)) else { return nil }
         let parts = (1...3).compactMap { Range(match.range(at: $0), in: s).map { String(s[$0]) } }
-        guard parts.count == 3, let yyyy = Int(parts[0]), let mm = Int(parts[1]), let dd = Int(parts[2]), (1...12).contains(mm), let valid = try? KMDate(String(format: "%04d-%02d-%02d", yyyy, mm, dd)) else { return nil }; return valid.rawValue
+        guard parts.count == 3, let yyyy = Int(parts[0]), let mm = Int(parts[1]), let dd = Int(parts[2]) else { return nil }
+        return validatedDate(year: yyyy, month: mm, day: dd)
+    }
+    private static func aeonDate(_ s: String) -> String? {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.range(of: #"^[0-9]{6}$"#, options: .regularExpression) != nil,
+              let yy = Int(trimmed.prefix(2)),
+              let mm = Int(trimmed.dropFirst(2).prefix(2)),
+              let dd = Int(trimmed.suffix(2)) else { return nil }
+        return validatedDate(year: 2000 + yy, month: mm, day: dd)
     }
     private static func resultDate(_ value: String) -> KMDate { try! KMDate(value) }
     private static func rowIssue(_ number: Int, _ reason: String) -> KMStatementRowIssue { .init(rowNumber: number, reason: reason) }
@@ -126,6 +146,121 @@ enum KMStatementParser {
             let (next, overflow) = sum.addingReportingOverflow(billed!); if overflow || next > 9_007_199_254_740_991 { return empty("unsupported_layout", encoding, rows: details.count) }; sum = next
         }
         if out.needsReviewRows.isEmpty && sum != total { return empty("unsupported_layout", encoding, rows: details.count) }
+        return out
+    }
+
+    private static func aeon(_ rows: [[String]], _ encoding: String) -> KMStatementParseResult {
+        guard rows.count >= 10, rows.allSatisfy({ $0.count == 9 }) else {
+            return empty("unsupported_layout", encoding, rows: max(rows.count - 10, 0))
+        }
+        // Treat the leading metadata and bank account rows as private, opaque metadata:
+        // their values must never appear in parse results, signatures, or errors.
+        let rawBilled = rows[1][1]
+        guard rows[0][0] == "ご利用カード", !rows[0][1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, rows[0][2...].allSatisfy(\.isEmpty),
+              rows[1][0] == "今回ご請求金額", !rawBilled.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let billedTotal = yen(rawBilled), billedTotal >= 0, rows[1][2...].allSatisfy(\.isEmpty),
+              rows[2][0] == "お支払い日", !rows[2][1].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, rows[2][2...].allSatisfy(\.isEmpty),
+              rows[3][0] == "ご指定口座", rows[3][1...].allSatisfy(\.isEmpty),
+              rows[4] == aeonAccountHeader,
+              rows[5][4...].allSatisfy(\.isEmpty),
+              rows[6] == aeonDetailTitle,
+              rows[7] == aeonDetailHeaders else {
+            return empty("unsupported_layout", encoding, rows: max(rows.count - 10, 0))
+        }
+        guard let splitTitleIndex = rows[8...].firstIndex(where: { $0 == aeonSplitTitle }) else {
+            return empty("unsupported_layout", encoding, rows: max(rows.count - 8, 0))
+        }
+        let splitHeaderIndex = splitTitleIndex + 1
+        guard splitHeaderIndex < rows.count, rows[splitHeaderIndex] == aeonSplitHeaders else {
+            return empty("unsupported_layout", encoding, rows: max(rows.count - 10, 0))
+        }
+        let detailRows = Array(rows[8..<splitTitleIndex])
+        let splitDetailRows = Array(rows[(splitHeaderIndex + 1)...])
+        if splitDetailRows.contains(where: { $0 == aeonSplitTitle || $0 == aeonDetailTitle || $0 == aeonDetailHeaders || $0 == aeonSplitHeaders }) {
+            return empty("unsupported_layout", encoding, rows: detailRows.count + splitDetailRows.count)
+        }
+        let totalRows = detailRows.count + splitDetailRows.count
+        guard totalRows > 0 else {
+            return empty("header_only", encoding, signature: aeonSignature)
+        }
+
+        var out = KMStatementParseResult(totalRows: totalRows, encoding: encoding, headerSignature: aeonSignature)
+        var ordinals: [String: Int] = [:]
+        var sum = 0
+        var cancellations = Set<String>()
+        for row in detailRows {
+            let merchant = row[2].trimmingCharacters(in: .whitespacesAndNewlines)
+            if let amount = yen(row[6], signed: true), amount < 0 {
+                cancellations.insert("\(merchant)|\(-amount)")
+            }
+        }
+
+        for (offset, row) in detailRows.enumerated() {
+            let rowNumber = 8 + offset + 1
+            if row.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                out.excludedRows.append(rowIssue(rowNumber, "non_expense"))
+                continue
+            }
+            let rawDate = row[0], rawMerchant = row[2], rawMethod = row[3], rawAmount = row[6], rawNote = row[7]
+            let trimmedMerchant = rawMerchant.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedMethod = rawMethod.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedNote = rawNote.trimmingCharacters(in: .whitespacesAndNewlines)
+            let d = aeonDate(rawDate)
+            let amount = yen(rawAmount, signed: true)
+            var reason: String?
+            if d == nil { reason = "利用日を確認できません" }
+            else if trimmedMerchant.isEmpty { reason = "利用先を確認できません" }
+            else if rawMerchant.range(of: #"年会費|手数料|キャッシング|利息|遅延損害金|取消|キャンセル|返金|返品|ボーナス|海外利用"#, options: .regularExpression) != nil {
+                reason = "特殊な利用の可能性があります"
+            }
+            else if trimmedNote.range(of: #"取消|キャンセル|返金|返品"#, options: .regularExpression) != nil {
+                reason = "返金・取消の可能性があります"
+            }
+            else if rawAmount.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || amount == nil { reason = "利用金額を確認できません" }
+            else if let amount, amount < 0 { reason = "返金・取消の可能性があります" }
+            else if let amount, cancellations.contains("\(trimmedMerchant)|\(amount)") { reason = "同じCSVにキャンセル明細があるため確認してください" }
+            else if let amount, amount <= 0 { reason = "利用金額を確認できません" }
+            else if trimmedMethod != "１回" { reason = "1回払い以外の可能性があります" }
+            else if !row[4].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !row[5].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !row[8].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                reason = "通常購入の形式ではありません"
+            }
+            if let reason {
+                out.needsReviewRows.append(rowIssue(rowNumber, reason))
+                continue
+            }
+            let purchaseAmount = amount!
+            let fp = fingerprint(["aeon_card", "purchase", d!, rawMerchant, String(purchaseAmount), trimmedMethod])
+            ordinals[fp, default: 0] += 1
+            out.transactions.append(.init(
+                provider: .aeonCard,
+                usedDate: resultDate(d!),
+                merchant: rawMerchant,
+                amountYen: purchaseAmount,
+                paymentMethod: "1回払い",
+                sourceFingerprint: fp,
+                duplicateOrdinal: ordinals[fp]!
+            ))
+            let (next, overflow) = sum.addingReportingOverflow(purchaseAmount)
+            if overflow || next > 9_007_199_254_740_991 {
+                return empty("unsupported_layout", encoding, rows: totalRows)
+            }
+            sum = next
+        }
+
+        for (offset, row) in splitDetailRows.enumerated() {
+            let rowNumber = splitHeaderIndex + 1 + offset + 1
+            if row.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                out.excludedRows.append(rowIssue(rowNumber, "non_expense"))
+                continue
+            }
+            out.needsReviewRows.append(rowIssue(rowNumber, "分割・ボーナス払い明細のため確認してください"))
+        }
+
+        if out.needsReviewRows.isEmpty && sum != billedTotal {
+            return empty("unsupported_layout", encoding, rows: totalRows)
+        }
         return out
     }
 

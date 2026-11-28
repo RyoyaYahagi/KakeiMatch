@@ -11,7 +11,7 @@ struct ReconciliationImporter: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("PayPayカード、三井住友カード、楽天カードのCSVに対応しています。ファイルはこの端末で処理します。")
+            Text("PayPayカード、三井住友カード、楽天カード、イオンカードのCSVに対応しています。ファイルはこの端末で処理します。")
                 .font(KMTypography.body(14)).foregroundStyle(KMColor.muted).lineSpacing(5)
             Text("明細サービス")
             Menu {
@@ -34,16 +34,11 @@ struct ReconciliationImporter: View {
                     .font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                     .accessibilityIdentifier("statement-download-note")
             }
-            if provider == .aeonCard {
-                Text("イオンカードのCSV形式を確認中です。現在、KakeiMatchへの取り込みには対応していません。")
-                    .font(KMTypography.note).foregroundStyle(KMColor.muted).accessibilityIdentifier("statement-import-availability")
-            }
             Text("CSVファイル")
             Button { showsFiles = true } label: {
                 HStack { Text("ファイルを選択"); Text(filename ?? "選択されていません").foregroundStyle(KMColor.muted).lineLimit(1) }
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
             }.buttonStyle(.plain).accessibilityIdentifier("statement-file")
-                .disabled(provider == .aeonCard)
                 .padding(.horizontal, 12).background(KMColor.surface, in: RoundedRectangle(cornerRadius: 12))
                 .overlay { RoundedRectangle(cornerRadius: 12).stroke(KMColor.borderStrong, lineWidth: 1) }
             Button(model.isBusy ? "取り込み中…" : "取り込んで照合") {
@@ -54,7 +49,7 @@ struct ReconciliationImporter: View {
                 }
             }.buttonStyle(KMButtonStyle(role: .primary)).fixedSize(horizontal: true, vertical: false)
                 .accessibilityIdentifier("reconciliation.importButton")
-                .disabled(provider == .aeonCard || model.isBusy)
+                .disabled(model.isBusy)
             if !model.statements.isEmpty { Text("取り込み済み \(model.statements.count)件").font(KMTypography.note).foregroundStyle(KMColor.muted) }
             ForEach(model.imports) { record in
                 if let rows = record.value.needsReviewRows, !rows.isEmpty {

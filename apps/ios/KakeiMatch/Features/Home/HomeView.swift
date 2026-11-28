@@ -11,6 +11,7 @@ struct HomeView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     var onNavigate: (KMTab) -> Void = { _ in }
     var onOpenBudget: (KMYearMonth) -> Void = { _ in }
+    var onOpenCategorySearch: (KMYearMonth, String) -> Void = { _, _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: KMSpacing.space4) {
@@ -350,11 +351,12 @@ struct HomeView: View {
     }
 
     private func categoryBreakdown(_ dashboard: KMHomeDashboard) -> some View {
-        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+        let month = dashboard.snapshot.summary.yearMonth
+        return VStack(alignment: .leading, spacing: KMSpacing.space3) {
             Text("支出の内訳").font(KMTypography.body(15, weight: .bold)).foregroundStyle(KMColor.text)
                 .accessibilityAddTraits(.isHeader)
-            categoryContent(dashboard.snapshot.summary, slices: dashboard.categorySlices)
-            if !dashboard.categorySlices.isEmpty { allCategories(dashboard.categoryRows) }
+            categoryContent(dashboard.snapshot.summary, slices: dashboard.categorySlices, month: month)
+            if !dashboard.categorySlices.isEmpty { allCategories(dashboard.categoryRows, month: month) }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, KMSpacing.space4)
@@ -362,7 +364,7 @@ struct HomeView: View {
         .overlay(alignment: .bottom) { Rectangle().fill(KMColor.border).frame(height: 1) }
     }
 
-    @ViewBuilder private func categoryContent(_ summary: KMMonthlySummary, slices: [KMHomeCategorySlice]) -> some View {
+    @ViewBuilder private func categoryContent(_ summary: KMMonthlySummary, slices: [KMHomeCategorySlice], month: KMYearMonth) -> some View {
         if summary.expenseYen == 0 {
             Text("この月の支出はありません。")
                 .font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
@@ -370,12 +372,12 @@ struct HomeView: View {
             if slices.isEmpty {
                 Text("この月は返金・調整だけです。").font(KMTypography.body(15)).foregroundStyle(KMColor.muted)
             } else {
-                categoryChart(slices)
+                categoryChart(slices, month: month)
             }
         }
     }
 
-    private func categoryChart(_ slices: [KMHomeCategorySlice]) -> some View {
+    private func categoryChart(_ slices: [KMHomeCategorySlice], month: KMYearMonth) -> some View {
         VStack(alignment: .leading, spacing: KMSpacing.space3) {
             GeometryReader { geometry in
                 let availableWidth = max(0, geometry.size.width - CGFloat(max(0, slices.count - 1) * 2))
@@ -391,15 +393,30 @@ struct HomeView: View {
             .accessibilityLabel("支出の内訳：" + slices.map { "\($0.name) \($0.percentage)" }.joined(separator: "、"))
             LazyVGrid(columns: categoryColumns, alignment: .leading, spacing: KMSpacing.space1) {
                 ForEach(Array(slices.enumerated()), id: \.offset) { _, slice in
-                    HStack(spacing: KMSpacing.space2) {
-                        Circle().fill(slice.tone?.foreground ?? KMColor.cOtherSoft).frame(width: 10, height: 10)
-                        Text(slice.name).lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1).font(KMTypography.body(14))
-                        Spacer(minLength: 0)
-                        Text(slice.percentage).font(KMTypography.number(14, weight: .semibold))
-                    }.foregroundStyle(KMColor.text)
+                    if let categoryId = slice.categoryId, !categoryId.isEmpty {
+                        Button { onOpenCategorySearch(month, categoryId) } label: {
+                            categorySliceLabel(slice)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("home.category.slice.\(categoryId)")
+                    } else {
+                        categorySliceLabel(slice)
+                    }
                 }
             }
         }
+    }
+
+    private func categorySliceLabel(_ slice: KMHomeCategorySlice) -> some View {
+        HStack(spacing: KMSpacing.space2) {
+            Circle().fill(slice.tone?.foreground ?? KMColor.cOtherSoft).frame(width: 10, height: 10)
+            Text(slice.name).lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1).font(KMTypography.body(14))
+            Spacer(minLength: 0)
+            Text(slice.percentage).font(KMTypography.number(14, weight: .semibold))
+        }
+        .foregroundStyle(KMColor.text)
+        .frame(minHeight: KMLayout.minimumHit)
+        .contentShape(Rectangle())
     }
 
     /// Two PWA columns at the default size; one column when text is large enough
@@ -410,7 +427,7 @@ struct HomeView: View {
             : [GridItem(.flexible()), GridItem(.flexible())]
     }
 
-    private func allCategories(_ rows: [KMHomeCategoryRow]) -> some View {
+    private func allCategories(_ rows: [KMHomeCategoryRow], month: KMYearMonth) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button { categoriesExpanded.toggle() } label: {
                 HStack(spacing: KMSpacing.space2) {
@@ -435,16 +452,33 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, category in
                         let sign = category.amountYen < 0 ? "−" : ""
-                        Text("\(category.name) · \(sign)\(KMAmountFormatter.yen(category.amountYen)) · \(category.percentage)")
-                            .font(KMTypography.body(15)).foregroundStyle(KMColor.text)
-                            .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, KMSpacing.space3)
-                            .overlay(alignment: .bottom) {
-                                if index < rows.count - 1 { Rectangle().fill(KMColor.border).frame(height: 1) }
+                        let label = "\(category.name) · \(sign)\(KMAmountFormatter.yen(category.amountYen)) · \(category.percentage)"
+                        Group {
+                            if let categoryId = category.categoryId, !categoryId.isEmpty {
+                                Button { onOpenCategorySearch(month, categoryId) } label: {
+                                    categoryRowLabel(label)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("home.category.row.\(categoryId)")
+                            } else {
+                                categoryRowLabel(label)
                             }
+                        }
+                        .overlay(alignment: .bottom) {
+                            if index < rows.count - 1 { Rectangle().fill(KMColor.border).frame(height: 1) }
+                        }
                     }
                 }
             }
         }
+    }
+
+    private func categoryRowLabel(_ label: String) -> some View {
+        Text(label)
+            .font(KMTypography.body(15)).foregroundStyle(KMColor.text)
+            .frame(maxWidth: .infinity, minHeight: KMLayout.minimumHit, alignment: .leading)
+            .padding(.vertical, KMSpacing.space3)
+            .contentShape(Rectangle())
     }
 
     private func recentRecords(_ records: [KMTransaction]) -> some View {

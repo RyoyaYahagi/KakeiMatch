@@ -21,9 +21,95 @@ import Observation
     // This acknowledgement intentionally lasts only for this screen. Repository has no persistence API.
     var acknowledgedAttention: Set<String> = []
     var categoryRules: [KMCategoryLearningRule] = []
+    struct AccountLinkPrompt: Equatable {
+        var importId: String
+        var provider: KMStatementProvider
+    }
+    var accountLinkPrompt: AccountLinkPrompt?
+    var dismissedLinkPromptImportIds: Set<String> = []
     @ObservationIgnored private let started = ProcessInfo.processInfo.systemUptime
     private func now(_ repositories: KMRepositories) -> Date {
         repositories.fixtureName == nil ? Date() : repositories.referenceDate.addingTimeInterval(ProcessInfo.processInfo.systemUptime - started)
+    }
+
+    var linkableAccounts: [KMAccount] {
+        accounts.filter { !$0.closed && $0.accountType != .cash }
+    }
+
+    func canResolveAccount(for provider: KMStatementProvider, importId: String? = nil) -> Bool {
+        if let importId,
+           let importedId = imports.first(where: { $0.id == importId })?.value.accountId,
+           accounts.contains(where: { !$0.closed && $0.id == importedId }) {
+            return true
+        }
+        let open = linkableAccounts
+        let mapped = open.filter { $0.statementProvider == provider }
+        if !mapped.isEmpty { return true }
+        let standardName = KMStatementDownload.label(provider)
+        let named = open.filter { $0.name == standardName }
+        return named.count == 1 && named[0].statementProvider == nil
+    }
+
+    func dismissAccountLinkPrompt() {
+        guard let prompt = accountLinkPrompt else { return }
+        dismissedLinkPromptImportIds.insert(prompt.importId)
+        accountLinkPrompt = nil
+    }
+
+    func linkAccount(id accountId: String, repositories: KMRepositories?) async {
+        guard let repositories, !isBusy, let prompt = accountLinkPrompt else { return }
+        guard var account = linkableAccounts.first(where: { $0.id == accountId }) else { return }
+        isBusy = true; errorMessage = nil
+        defer { isBusy = false }
+        account.statementProvider = prompt.provider
+        do {
+            try await repositories.accounts.saveAccount(account)
+            try await reload(repositories)
+            accountLinkPrompt = nil
+            message = "「\(account.name)」を\(KMStatementDownload.label(prompt.provider))の支払元として紐付けました。"
+        } catch {
+            errorMessage = "支払元を保存できませんでした。\(error.localizedDescription)"
+        }
+    }
+
+    func entryInitialValues(for statement: KMStatementTransaction, repositories: KMRepositories?) async -> KMEntryInitialValues {
+        let importedAccount = imports.first { $0.id == statement.importId }?.value.accountId
+        let accountId: String?
+        if let importedId = importedAccount, accounts.contains(where: { !$0.closed && $0.id == importedId }) {
+            accountId = importedId
+        } else {
+            let open = accounts.filter { !$0.closed && $0.accountType != .cash }
+            let mapped = open.filter { $0.statementProvider == statement.provider }
+            if mapped.count == 1 {
+                accountId = mapped[0].id
+            } else if mapped.isEmpty {
+                let standardName = KMStatementDownload.label(statement.provider)
+                let named = open.filter { $0.name == standardName }
+                if named.count == 1, var candidate = named.first, candidate.statementProvider == nil {
+                    candidate.statementProvider = statement.provider
+                    if let repositories {
+                        do {
+                            try await repositories.accounts.saveAccount(candidate)
+                            if let index = accounts.firstIndex(where: { $0.id == candidate.id }) {
+                                accounts[index] = candidate
+                            }
+                        } catch {
+                            // Keep opening manual entry with the resolved account, but tell the user the link was not saved.
+                            errorMessage = "支払元の紐付けを保存できませんでした。\(error.localizedDescription)"
+                        }
+                    }
+                    accountId = candidate.id
+                } else {
+                    accountId = nil
+                }
+            } else {
+                accountId = nil
+            }
+        }
+        let categoryId = KMReconciliationPresentation.suggestedCategory(
+            merchant: statement.merchant, rules: categoryRules, categories: categories)
+        return KMEntryInitialValues(amountYen: statement.amountYen, payee: statement.merchant,
+            date: statement.usedDate, accountId: accountId, categoryId: categoryId)
     }
 
     enum Action {
@@ -72,6 +158,10 @@ import Observation
         self.categories = KMReconciliationPresentation.categoryChoices(categories, groups: groups)
         self.categoryRules = categoryRules
         self.presentation = projection; self.attention = attention
+        if let prompt = accountLinkPrompt,
+           linkableAccounts.isEmpty || canResolveAccount(for: prompt.provider, importId: prompt.importId) {
+            accountLinkPrompt = nil
+        }
     }
 
     func testReplay(_ repositories: KMRepositories?) async {
@@ -150,6 +240,13 @@ import Observation
             KMContactDiagnosticRecorder.shared.recordAction(.reconciliationRunStarted, screen: .reconciliation)
             _ = try await repositories.reconciliation.runReconciliation(id: UUID().uuidString, at: now(repositories))
             try await reload(repositories)
+            if !dismissedLinkPromptImportIds.contains(result.id)
+                && !linkableAccounts.isEmpty
+                && !canResolveAccount(for: provider, importId: result.id) {
+                accountLinkPrompt = AccountLinkPrompt(importId: result.id, provider: provider)
+            } else {
+                accountLinkPrompt = nil
+            }
             message = KMReconciliationPresentation.importFeedback(result); runFeedback = nil
         } catch {
             KMContactDiagnosticRecorder.shared.recordFailure(error, screen: saved ? .reconciliation : .statements)
