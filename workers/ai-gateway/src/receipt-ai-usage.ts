@@ -1,4 +1,5 @@
 import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-db";
+import { resolveEffectiveEntitlement, type StoreKitEnv } from "./entitlements";
 
 type Db = AccountEnv["ACCOUNT_DB"];
 const IMAGE_RETRY_LIFETIME_SECONDS = 10 * 60;
@@ -37,7 +38,7 @@ export async function guestDayUsage(db: Db, user: string, day: string): Promise<
   return row?.used ?? 0;
 }
 export type FlowKind = "receipt" | "contact-submit" | "contact-transcribe" | "contact-interview";
-/** A user with an entitlement row uses its monthly plan limit. Everyone else (guest devices and accounts without a grant) shares the Tokyo daily cap and address cap. */
+/** Effective entitlements come from resolveEffectiveEntitlement (manual grants + StoreKit subscriptions). Everyone on the free tier shares the Tokyo daily cap and address cap. */
 export type FlowLimits = { guestDaily: number; guestAddressDaily: number; contactSubmitAddressDaily: number };
 export type FlowReservation = "reserved" | "ai_quota_exceeded" | "invalid_flow";
 function quotaCondition(kind: FlowKind, user: string, now: number, ipDayMac: string, limits: FlowLimits): { sql: string; values: unknown[] } {
@@ -60,8 +61,21 @@ function quotaCondition(kind: FlowKind, user: string, now: number, ipDayMac: str
   };
   return { sql: "1", values: [] };
 }
-/** Reserves the product flow and counts one image-stage attempt in a single D1 round trip. */
-export async function reserveFlow(db: Db, user: string, flow: string, imageMac: string, now: number, limits: FlowLimits, kind: FlowKind, ipDayMac: string): Promise<FlowReservation> {
+/** Reserves the product flow and counts one image-stage attempt while keeping the quota check + INSERT atomic. */
+export async function reserveFlow(
+  db: Db,
+  user: string,
+  flow: string,
+  imageMac: string,
+  now: number,
+  limits: FlowLimits,
+  kind: FlowKind,
+  ipDayMac: string,
+  storeKitEnv?: StoreKitEnv,
+): Promise<FlowReservation> {
+  const effective = kind === "receipt" ? await resolveEffectiveEntitlement(db, user, now, storeKitEnv) : null;
+  const daily = effective?.period === "day" ? 1 : 0;
+  const monthlyLimit = effective?.period === "month" ? effective.monthlyAiLimit : null;
   const quota = quotaCondition(kind, user, now, ipDayMac, limits);
   const [released, , reservation, attempt] = await db.batch<AccountD1BatchResult>([
     // Reclaim interrupted reservations only when no provider event was admitted.
@@ -72,11 +86,10 @@ export async function reserveFlow(db: Db, user: string, flow: string, imageMac: 
     // concurrent retries idempotent; existing flows remain usable at quota.
     db.prepare(`INSERT INTO ai_receipt_flows(user_id, flow_id, month, day, kind, ip_day_mac, created_at, image_mac, dispatched)
     SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0 FROM (
-      SELECT (NOT EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)) AS daily,
-        (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?) AS monthly_limit
+      SELECT ? AS daily, ? AS monthly_limit
     ) WHERE ${quota.sql}
     ON CONFLICT(user_id, flow_id) DO NOTHING`)
-      .bind(user, flow, monthKey(now), dayKey(now), kind, ipDayMac, now, imageMac, user, user, ...quota.values),
+      .bind(user, flow, monthKey(now), dayKey(now), kind, ipDayMac, now, imageMac, daily, monthlyLimit, ...quota.values),
     db.prepare("SELECT flow_id FROM ai_receipt_flows WHERE user_id = ? AND flow_id = ?").bind(user, flow),
     // Without a reserved row this UPDATE matches nothing, so quota rejection has no side effect.
     attemptStatement(db, user, flow, "gemini", imageMac, now),
@@ -99,15 +112,26 @@ export async function attemptFlow(db: Db, user: string, flow: string, stage: "ge
 }
 
 /** Reserves a short-lived, data-minimal flow for a standalone category suggestion. */
-export async function reserveCategorySuggestionFlow(db: Db, user: string, flow: string, mac: string, now: number, limits: FlowLimits, ipDayMac: string): Promise<FlowReservation> {
+export async function reserveCategorySuggestionFlow(
+  db: Db,
+  user: string,
+  flow: string,
+  mac: string,
+  now: number,
+  limits: FlowLimits,
+  ipDayMac: string,
+  storeKitEnv?: StoreKitEnv,
+): Promise<FlowReservation> {
+  const effective = await resolveEffectiveEntitlement(db, user, now, storeKitEnv);
+  const daily = effective.period === "day" ? 1 : 0;
+  const monthlyLimit = effective.period === "month" ? effective.monthlyAiLimit : null;
   const quota = quotaCondition("receipt", user, now, ipDayMac, limits);
   const result = await db.prepare(`INSERT INTO ai_category_suggestion_flows(user_id,flow_id,month,day,ip_day_mac,input_mac,created_at,attempts)
     SELECT ?,?,?,?,?,?,?,0 FROM (
-      SELECT (NOT EXISTS (SELECT 1 FROM account_entitlements WHERE user_id = ?)) AS daily,
-        (SELECT monthly_ai_limit FROM account_entitlements WHERE user_id = ?) AS monthly_limit
+      SELECT ? AS daily, ? AS monthly_limit
     ) WHERE ${quota.sql}
     ON CONFLICT(user_id,flow_id) DO NOTHING`)
-    .bind(user, flow, monthKey(now), dayKey(now), ipDayMac, mac, now, user, user, ...quota.values).run();
+    .bind(user, flow, monthKey(now), dayKey(now), ipDayMac, mac, now, daily, monthlyLimit, ...quota.values).run();
   if (!result.success) throw new Error("flow_reservation_unavailable");
   const exists = await db.prepare("SELECT flow_id FROM ai_category_suggestion_flows WHERE user_id=? AND flow_id=?")
     .bind(user, flow).first<{ flow_id: string }>();

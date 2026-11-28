@@ -31,6 +31,8 @@ const APPLE_ROOT = 'MIICITCCAaegAwIBAgIQC/O+DvHN0uD7jG5yH2IXmDAKBggqhkjOPQQDAzBS
 const decoder = new Decoder({ mapsAsObjects: false, useRecords: false });
 const signatureFormatter = new AsnEcSignatureFormatter();
 const ec = { name: 'ECDSA', namedCurve: 'P-256' };
+const ALLOWED_EC_CURVES = ['P-256', 'P-384'];
+const ALLOWED_EC_HASHES = ['SHA-256', 'SHA-384'];
 const utf8 = new TextEncoder();
 const b64encode = (v: Bytes) => btoa(String.fromCharCode(...v));
 const b64 = (v: unknown, max = 64 * 1024): Bytes => {
@@ -114,7 +116,16 @@ function authData(input: Bytes, config: AppAttestConfig, requireCredential: bool
   validateExtensions(decoder.decode(input.slice(37)), config);
   return { appHash, counter };
 }
-async function verifyChain(encoded: unknown, anchor: string | Uint8Array | undefined, now: Date) {
+
+/**
+ * Verifies an X.509 certificate chain against an explicit trusted root anchor.
+ * Returns the verified chain ordered [leaf, ...intermediates, root].
+ */
+export async function verifyChain(
+  encoded: unknown,
+  anchor: string | Uint8Array | undefined,
+  now: Date,
+): Promise<X509Certificate[]> {
   if (!Array.isArray(encoded) || encoded.length < 2 || encoded.length > 4 || !Number.isFinite(now.getTime())) throw new Error('invalid_chain');
   const certs = encoded.map(item => { const der = bytes(item); if (der.length > 8192) throw new Error('invalid_certificate'); return new X509Certificate(ab(der)); });
   const root = new X509Certificate(ab(anchor instanceof Uint8Array ? anchor : b64(anchor ?? APPLE_ROOT)));
@@ -133,12 +144,14 @@ async function verifyChain(encoded: unknown, anchor: string | Uint8Array | undef
     }
     const knownCritical = ['2.5.29.19', '2.5.29.15', '2.5.29.37', '2.5.29.14', '2.5.29.35'];
     if (cert.extensions.some(ext => ext.critical && !knownCritical.includes(ext.type))) throw new Error('unsupported_critical_extension');
+    const keyAlgorithm = cert.publicKey.algorithm as { name?: string; namedCurve?: string };
+    if (keyAlgorithm.name !== 'ECDSA' || !ALLOWED_EC_CURVES.includes(keyAlgorithm.namedCurve ?? '')) throw new Error('invalid_certificate_key_algorithm');
     const algorithm = cert.signatureAlgorithm;
-    if (algorithm.name !== 'ECDSA' || !['SHA-256', 'SHA-384'].includes(algorithm.hash?.name ?? '')) throw new Error('invalid_certificate_algorithm');
+    if (algorithm.name !== 'ECDSA' || !ALLOWED_EC_HASHES.includes(algorithm.hash?.name ?? '')) throw new Error('invalid_certificate_algorithm');
     const issuer = chain[i + 1] ?? root;
     if (cert.issuer !== issuer.subject || !await cert.verify({ publicKey: issuer.publicKey, date: now })) throw new Error('invalid_certificate_signature');
   }
-  return certs[0];
+  return chain;
 }
 function coseKey(value: unknown): { x: Bytes; y: Bytes } {
   const cose = map(value);
@@ -157,7 +170,7 @@ export async function verifyAttestation(input: AttestInput, testTrustAnchor?: st
   if (outer.get('fmt') !== 'apple-appattest') throw new Error('invalid_format');
   const stmt = map(outer.get('attStmt')); exactKeys(stmt, ['x5c', 'receipt']);
   const auth = bytes(outer.get('authData'));
-  const cert = await verifyChain(stmt.get('x5c'), testTrustAnchor, input.now ?? new Date());
+  const [cert] = await verifyChain(stmt.get('x5c'), testTrustAnchor, input.now ?? new Date());
   const parsed = authData(auth, input.config, true);
   if (!equal(parsed.appHash, await sha(utf8.encode(input.config.appId))) || parsed.counter !== 0) throw new Error('invalid_authenticator_data');
   const ext = cert.getExtension('1.2.840.113635.100.8.2');
