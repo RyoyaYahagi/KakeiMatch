@@ -56,6 +56,21 @@ const DEFAULT_BATCH_LIMIT = 50;
 const DEFAULT_RECONCILE_INTERVAL_SECONDS = 20 * 60 * 60;
 const DEFAULT_EXPIRED_LOOKBACK_SECONDS = 30 * 24 * 60 * 60;
 
+async function markReconcileAttempted(
+  db: AccountEnv['ACCOUNT_DB'],
+  originalTransactionId: string,
+  now: number,
+): Promise<void> {
+  try {
+    await db
+      .prepare('UPDATE store_subscriptions SET last_reconciled_at = ? WHERE original_transaction_id = ?')
+      .bind(now, originalTransactionId)
+      .run();
+  } catch {
+    // Best-effort attempt timestamp update; never mask the primary reconcile error.
+  }
+}
+
 function parseRenewalInfo(payload: Record<string, unknown>, nowMs: number): ParsedRenewalInfo {
   let signedDateMs: number | null = null;
   if (payload.signedDate !== undefined && payload.signedDate !== null) {
@@ -252,6 +267,7 @@ export async function reconcileStoreSubscriptions(
         tx.inAppOwnershipType !== 'PURCHASED' ||
         !Object.prototype.hasOwnProperty.call(storeKitConfig.productPlans, tx.productId)
       ) {
+        await markReconcileAttempted(env.ACCOUNT_DB, row.original_transaction_id, now);
         summary.errors += 1;
         continue;
       }
@@ -266,6 +282,7 @@ export async function reconcileStoreSubscriptions(
           renewalPayload.originalTransactionId !== undefined &&
           renewalPayload.originalTransactionId !== row.original_transaction_id
         ) {
+          await markReconcileAttempted(env.ACCOUNT_DB, row.original_transaction_id, now);
           summary.errors += 1;
           continue;
         }
@@ -328,6 +345,9 @@ export async function reconcileStoreSubscriptions(
         summary.unchanged += 1;
       }
     } catch {
+      // Advance last_reconciled_at on failed attempts so persistently failing rows
+      // move to the back of the queue instead of starving healthy subscriptions.
+      await markReconcileAttempted(env.ACCOUNT_DB, row.original_transaction_id, now);
       summary.errors += 1;
       // Log without user, transaction, or JWS identifiers.
       console.warn('storekit_reconcile_item_failed', { environment: row.environment });

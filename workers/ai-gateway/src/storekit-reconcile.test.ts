@@ -423,4 +423,101 @@ describe('reconcileStoreSubscriptions', () => {
       last_reconciled_at: NOW,
     });
   });
+
+  it('does not let persistently failing rows starve healthy rows across daily runs', async () => {
+    // Two failing rows with earlier expires_at and one healthy row with later expires_at.
+    // With batchLimit: 2, day 1 picks the two failing rows; day 2 must pick and heal the healthy row.
+    seedSubscription({ originalTransactionId: 'tx-fail-1', status: 'active', expiresAt: NOW - 300 });
+    seedSubscription({ originalTransactionId: 'tx-fail-2', status: 'active', expiresAt: NOW - 200 });
+    seedSubscription({ originalTransactionId: 'tx-healthy', status: 'expired', expiresAt: NOW - 100 });
+
+    const day1 = NOW;
+    const day2 = NOW + 86400;
+    const day3 = NOW + 2 * 86400;
+    const healedExpiresSec = day2 + 30 * 86400;
+
+    const jwsHealthy = await buildStoreKitJwsFixture({
+      chain,
+      now: new Date(day2 * 1000),
+      payloadOverrides: {
+        originalTransactionId: 'tx-healthy',
+        transactionId: '2000000000000999',
+        signedDate: (day2 - 60) * 1000,
+        expiresDate: healedExpiresSec * 1000,
+      },
+    });
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const queriedByDay: string[][] = [];
+
+    const makeMockFetch = (dayQueries: string[]) =>
+      vi.fn<typeof fetch>(async input => {
+        const id = decodeURIComponent(String(input).split('/').pop() ?? '');
+        dayQueries.push(id);
+        if (id.startsWith('tx-fail-')) {
+          return new Response('upstream unavailable', { status: 503 });
+        }
+        return Response.json({
+          environment: 'Sandbox',
+          bundleId: 'jp.kakeimatch.ios',
+          data: [
+            {
+              subscriptionGroupIdentifier: 'group-1',
+              lastTransactions: [
+                {
+                  originalTransactionId: 'tx-healthy',
+                  status: 1,
+                  signedTransactionInfo: jwsHealthy.jws,
+                },
+              ],
+            },
+          ],
+        });
+      });
+
+    // Day 1: failing rows occupy batchLimit: 2, fail, and advance last_reconciled_at.
+    const day1Queries: string[] = [];
+    const summary1 = await reconcileStoreSubscriptions(env, day1, {
+      batchLimit: 2,
+      fetch: makeMockFetch(day1Queries),
+      storeKitTestTrustAnchor: chain.rootDER,
+    });
+    queriedByDay.push(day1Queries);
+    expect(summary1).toEqual({ skipped: false, checked: 2, updated: 0, unchanged: 0, errors: 2 });
+    expect(day1Queries).toEqual(['tx-fail-1', 'tx-fail-2']);
+
+    // Day 2: tx-healthy (last_reconciled_at IS NULL) is prioritized ahead of the failing rows and healed.
+    const day2Queries: string[] = [];
+    const summary2 = await reconcileStoreSubscriptions(env, day2, {
+      batchLimit: 2,
+      fetch: makeMockFetch(day2Queries),
+      storeKitTestTrustAnchor: chain.rootDER,
+    });
+    queriedByDay.push(day2Queries);
+    expect(summary2).toEqual({ skipped: false, checked: 2, updated: 1, unchanged: 0, errors: 1 });
+    expect(day2Queries[0]).toBe('tx-healthy');
+
+    // Day 3: remaining failing row gets its turn in round-robin order.
+    const day3Queries: string[] = [];
+    await reconcileStoreSubscriptions(env, day3, {
+      batchLimit: 2,
+      fetch: makeMockFetch(day3Queries),
+      storeKitTestTrustAnchor: chain.rootDER,
+    });
+    queriedByDay.push(day3Queries);
+    expect(day3Queries).toContain('tx-fail-2');
+
+    warnSpy.mockRestore();
+
+    expect(
+      sqlite
+        .prepare('SELECT status, expires_at, latest_transaction_id, last_reconciled_at FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get('tx-healthy'),
+    ).toEqual({
+      status: 'active',
+      expires_at: healedExpiresSec,
+      latest_transaction_id: '2000000000000999',
+      last_reconciled_at: day2,
+    });
+  });
 });

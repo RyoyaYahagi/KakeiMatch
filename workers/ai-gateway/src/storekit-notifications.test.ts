@@ -478,7 +478,7 @@ describe('POST /api/storekit/notifications', () => {
     expect(refundRes.status).toBe(200);
     expect(await refundRes.json()).toEqual({ received: true, outcome: 'applied', status: 'revoked' });
 
-    // Newer DID_RENEW / REFUND_REVERSED after revocation must be ignored as ignored_stale.
+    // Non-REFUND_REVERSED notifications (e.g. DID_RENEW, duplicate REFUND) after revocation stay ignored_stale.
     const txAfter = await buildStoreKitJwsFixture({
       chain,
       payloadOverrides: {
@@ -488,7 +488,7 @@ describe('POST /api/storekit/notifications', () => {
       },
     });
     const afterNotif = await signPayload(chain, {
-      notificationType: 'REFUND_REVERSED',
+      notificationType: 'DID_RENEW',
       notificationUUID: 'uuid-after-refund',
       signedDate: (NOW - 5) * 1000,
       data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txAfter.jws },
@@ -509,6 +509,149 @@ describe('POST /api/storekit/notifications', () => {
       status: 'revoked',
       revoked_at: revokedSec,
       revocation_reason: 1,
+    });
+  });
+
+  it('restores a revoked subscription on REFUND_REVERSED while enforcing signedDate ordering and idempotency', async () => {
+    seedSubscription({ status: 'active', latestSignedDateMs: (NOW - 300) * 1000 });
+
+    const revokedSec = NOW - 100;
+    const txRefund = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        signedDate: (NOW - 100) * 1000,
+        revocationDate: revokedSec * 1000,
+        revocationReason: 1,
+      },
+    });
+    const refundNotif = await signPayload(chain, {
+      notificationType: 'REFUND',
+      notificationUUID: 'uuid-rr-refund',
+      signedDate: (NOW - 90) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txRefund.jws },
+    });
+    const refundRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: refundNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(await refundRes.json()).toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+
+    // Stale REFUND_REVERSED (older signedDate than the refund) must be ignored_stale.
+    const txStaleReversed = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        signedDate: (NOW - 150) * 1000,
+        expiresDate: (NOW + 30 * 86400) * 1000,
+      },
+    });
+    const staleReversedNotif = await signPayload(chain, {
+      notificationType: 'REFUND_REVERSED',
+      notificationUUID: 'uuid-rr-stale',
+      signedDate: (NOW - 120) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txStaleReversed.jws },
+    });
+    const staleRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: staleReversedNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(await staleRes.json()).toEqual({ received: true, outcome: 'ignored_stale' });
+
+    // Newer REFUND_REVERSED restores the subscription to active and clears revocation fields.
+    const restoredExpiresSec = NOW + 30 * 86400;
+    const reversedSignedMs = (NOW - 20) * 1000;
+    const txReversed = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        signedDate: (NOW - 30) * 1000,
+        expiresDate: restoredExpiresSec * 1000,
+      },
+    });
+    const reversedNotif = await signPayload(chain, {
+      notificationType: 'REFUND_REVERSED',
+      notificationUUID: 'uuid-rr-apply',
+      signedDate: reversedSignedMs,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txReversed.jws },
+    });
+    const reversedRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: reversedNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(reversedRes.status).toBe(200);
+    expect(await reversedRes.json()).toEqual({ received: true, outcome: 'applied', status: 'active' });
+
+    expect(
+      sqlite
+        .prepare('SELECT status, expires_at, revoked_at, revocation_reason, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({
+      status: 'active',
+      expires_at: restoredExpiresSec,
+      revoked_at: null,
+      revocation_reason: null,
+      latest_signed_date_ms: reversedSignedMs,
+    });
+
+    // Duplicate REFUND_REVERSED with the same notificationUUID is idempotent.
+    const dupRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: reversedNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(dupRes.status).toBe(200);
+    expect(await dupRes.json()).toEqual({ received: true, duplicate: true, outcome: 'applied' });
+  });
+
+  it('does not revoke a newer renewed subscription when a REFUND arrives for an older billing-period transaction', async () => {
+    const currentExpiresSec = NOW + 29 * 86400;
+    seedSubscription({
+      originalTransactionId: ORIG_TX_ID,
+      status: 'active',
+      expiresAt: currentExpiresSec,
+      latestTransactionId: '2000000000000002',
+      latestSignedDateMs: (NOW - 86400) * 1000,
+    });
+
+    // Refund for an older period transaction (different transactionId, earlier expiresDate),
+    // even though Apple signed the refund notification today (newer signedDate).
+    const priorExpiresSec = NOW - 86400;
+    const txOldPeriodRefund = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        originalTransactionId: ORIG_TX_ID,
+        transactionId: '2000000000000001',
+        signedDate: (NOW - 10) * 1000,
+        expiresDate: priorExpiresSec * 1000,
+        revocationDate: (NOW - 10) * 1000,
+        revocationReason: 1,
+      },
+    });
+    const oldPeriodRefundNotif = await signPayload(chain, {
+      notificationType: 'REFUND',
+      notificationUUID: 'uuid-old-period-refund',
+      signedDate: (NOW - 5) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txOldPeriodRefund.jws },
+    });
+
+    const response = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: oldPeriodRefundNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true, outcome: 'ignored_stale' });
+
+    expect(
+      sqlite
+        .prepare('SELECT status, expires_at, revoked_at, latest_transaction_id FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({
+      status: 'active',
+      expires_at: currentExpiresSec,
+      revoked_at: null,
+      latest_transaction_id: '2000000000000002',
     });
   });
 
