@@ -49,6 +49,11 @@ interface VerifiedRenewalInfo {
 }
 
 const EXPECTED_BUNDLE_ID = 'jp.kakeimatch.ios';
+const REVOCATION_NOTIFICATION_TYPES = new Set(['REFUND', 'REVOKE']);
+
+function isRevocationNotification(notificationType: string, tx: VerifiedStoreKitTransaction): boolean {
+  return REVOCATION_NOTIFICATION_TYPES.has(notificationType) || tx.revokedAt !== null;
+}
 const MAX_NOTIFICATION_BODY_BYTES = 64 * 1024;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -150,7 +155,7 @@ function resolveNotificationTransition(
       : null;
   const nextAutoRenewStatus = renewal?.autoRenewStatus ?? autoRenewFromSubtype ?? existing?.auto_renew_status ?? null;
 
-  if (notificationType === 'REFUND' || notificationType === 'REVOKE' || tx.revokedAt !== null) {
+  if (isRevocationNotification(notificationType, tx)) {
     return {
       handled: true,
       status: 'revoked',
@@ -512,8 +517,12 @@ export async function handleStoreKitNotificationRequest(
     return json(200, { received: true, outcome: 'ignored_stale' });
   }
 
-  // Invariant: enforce signedDate ordering so older notifications never overwrite newer state.
-  if (existing && eventSignedDateMs < existing.latest_signed_date_ms) {
+  const isRevocation = isRevocationNotification(notificationType, tx);
+
+  // Invariant: enforce signedDate ordering so older notifications never overwrite newer state,
+  // EXCEPT revocation notifications (REFUND, REVOKE, or tx.revokedAt !== null), which always apply
+  // upon arrival even if a client POST previously advanced latest_signed_date_ms.
+  if (existing && !isRevocation && eventSignedDateMs < existing.latest_signed_date_ms) {
     await recordNotification(db, {
       notificationUuid,
       notificationType,
@@ -551,39 +560,71 @@ export async function handleStoreKitNotificationRequest(
   }
 
   if (existing) {
-    const updated = await db
-      .prepare(
-        `UPDATE store_subscriptions
-         SET environment = ?,
-             product_id = ?,
-             status = ?,
-             expires_at = ?,
-             revoked_at = ?,
-             revocation_reason = ?,
-             latest_transaction_id = ?,
-             latest_signed_date_ms = ?,
-             auto_renew_status = ?,
-             updated_at = ?
-         WHERE original_transaction_id = ?
-           AND latest_signed_date_ms <= ?
-           AND revoked_at IS NULL
-           AND status != 'revoked'`,
-      )
-      .bind(
-        tx.environment,
-        tx.productId,
-        transition.status,
-        transition.expiresAt,
-        transition.revokedAt,
-        transition.revocationReason,
-        tx.transactionId,
-        eventSignedDateMs,
-        transition.autoRenewStatus,
-        now,
-        tx.originalTransactionId,
-        existing.latest_signed_date_ms,
-      )
-      .run();
+    const updated = isRevocation
+      ? await db
+          .prepare(
+            `UPDATE store_subscriptions
+             SET environment = ?,
+                 product_id = ?,
+                 status = ?,
+                 expires_at = ?,
+                 revoked_at = ?,
+                 revocation_reason = ?,
+                 latest_transaction_id = ?,
+                 latest_signed_date_ms = MAX(latest_signed_date_ms, ?),
+                 auto_renew_status = ?,
+                 updated_at = ?
+             WHERE original_transaction_id = ?
+               AND revoked_at IS NULL
+               AND status != 'revoked'`,
+          )
+          .bind(
+            tx.environment,
+            tx.productId,
+            transition.status,
+            transition.expiresAt,
+            transition.revokedAt,
+            transition.revocationReason,
+            tx.transactionId,
+            eventSignedDateMs,
+            transition.autoRenewStatus,
+            now,
+            tx.originalTransactionId,
+          )
+          .run()
+      : await db
+          .prepare(
+            `UPDATE store_subscriptions
+             SET environment = ?,
+                 product_id = ?,
+                 status = ?,
+                 expires_at = ?,
+                 revoked_at = ?,
+                 revocation_reason = ?,
+                 latest_transaction_id = ?,
+                 latest_signed_date_ms = ?,
+                 auto_renew_status = ?,
+                 updated_at = ?
+             WHERE original_transaction_id = ?
+               AND latest_signed_date_ms <= ?
+               AND revoked_at IS NULL
+               AND status != 'revoked'`,
+          )
+          .bind(
+            tx.environment,
+            tx.productId,
+            transition.status,
+            transition.expiresAt,
+            transition.revokedAt,
+            transition.revocationReason,
+            tx.transactionId,
+            eventSignedDateMs,
+            transition.autoRenewStatus,
+            now,
+            tx.originalTransactionId,
+            existing.latest_signed_date_ms,
+          )
+          .run();
     if (!updated.success) throw new Error('storekit_write_failed');
     const outcome: NotificationOutcome = (updated.meta?.changes ?? 0) === 1 ? 'applied' : 'ignored_stale';
     await recordNotification(db, {

@@ -512,6 +512,87 @@ describe('POST /api/storekit/notifications', () => {
     });
   });
 
+  it('always applies REFUND and REVOKE even when signedDate is older than latest_signed_date_ms', async () => {
+    const advancedSignedDateMs = (NOW - 10) * 1000;
+    seedSubscription({
+      originalTransactionId: ORIG_TX_ID,
+      status: 'active',
+      latestSignedDateMs: advancedSignedDateMs,
+    });
+    seedSubscription({
+      originalTransactionId: '1000000000000002',
+      status: 'active',
+      latestSignedDateMs: advancedSignedDateMs,
+    });
+
+    // Delayed REFUND older than latest_signed_date_ms (e.g. client POST advanced latest_signed_date_ms)
+    const refundRevokedSec = NOW - 120;
+    const txRefund = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        originalTransactionId: ORIG_TX_ID,
+        signedDate: (NOW - 120) * 1000,
+        revocationDate: refundRevokedSec * 1000,
+        revocationReason: 1,
+      },
+    });
+    const delayedRefund = await signPayload(chain, {
+      notificationType: 'REFUND',
+      notificationUUID: 'uuid-delayed-refund',
+      signedDate: (NOW - 100) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txRefund.jws },
+    });
+    const refundRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: delayedRefund }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(refundRes.status).toBe(200);
+    expect(await refundRes.json()).toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+    expect(
+      sqlite
+        .prepare('SELECT status, revoked_at, revocation_reason, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({
+      status: 'revoked',
+      revoked_at: refundRevokedSec,
+      revocation_reason: 1,
+      latest_signed_date_ms: advancedSignedDateMs,
+    });
+
+    // Delayed REVOKE older than latest_signed_date_ms must also apply immediately
+    const revokeNotifSignedMs = (NOW - 80) * 1000;
+    const txRevoke = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        originalTransactionId: '1000000000000002',
+        signedDate: (NOW - 90) * 1000,
+      },
+    });
+    const delayedRevoke = await signPayload(chain, {
+      notificationType: 'REVOKE',
+      notificationUUID: 'uuid-delayed-revoke',
+      signedDate: revokeNotifSignedMs,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txRevoke.jws },
+    });
+    const revokeRes = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: delayedRevoke }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(revokeRes.status).toBe(200);
+    expect(await revokeRes.json()).toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+    expect(
+      sqlite
+        .prepare('SELECT status, revoked_at, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get('1000000000000002'),
+    ).toEqual({
+      status: 'revoked',
+      revoked_at: Math.floor(revokeNotifSignedMs / 1000),
+      latest_signed_date_ms: advancedSignedDateMs,
+    });
+  });
+
   it('records ignored_env, ignored_non_tx, and ignored_unknown_user outcomes accurately', async () => {
     // 1. Disallowed environment (Production) -> ignored_env
     const prodNotif = await signPayload(chain, {
