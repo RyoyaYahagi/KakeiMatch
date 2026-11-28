@@ -314,7 +314,17 @@ import Foundation
     }
     func receiptDraft(receiptId: String) async throws -> KMReceiptDraft? { try await access { try await $0.receiptDraft(receiptId: receiptId) } }
     func saveReceiptDraft(_ draft: KMReceiptDraft, receiptId: String, at timestamp: Date) async throws {
-        try await access(true) { try await $0.saveReceiptDraft(draft, receiptId: receiptId, at: timestamp) }
+        try await serialized {
+            let profileId = try profile().current
+            let (db, base, revision) = try cachedSnapshot(profileId: profileId)
+            let working = base.operationCopy()
+            try await working.saveReceiptDraft(draft, receiptId: receiptId, at: timestamp)
+            guard let record = working.receiptDraftValues[receiptId] else {
+                throw KMDataError.invalidData("下書きの保存内容を確認できませんでした。")
+            }
+            let next = try db.saveReceiptDraft(record, expectedRevision: revision, ifActive: { try self.profile().current == profileId })
+            cachedProfileId = profileId; cachedDatabase = db; cachedStore = working; cachedRevision = next
+        }
     }
     func deleteReceiptDraft(receiptId: String) async throws { try await access(true) { try await $0.deleteReceiptDraft(receiptId: receiptId) } }
     func deleteReceipt(id: String) async throws { try await access(true) { try await $0.deleteReceipt(id: id) } }
