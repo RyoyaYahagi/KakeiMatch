@@ -9,6 +9,7 @@ struct AppShell: View {
     @State private var budgetRouteMonth: KMYearMonth?
     @State private var settingsAccountsRoute = false
     @State private var settingsAIRoute = false
+    @State private var recordsSearchInitialDraft: KMRecordsSearchDraft?
     @State private var recordsRefreshToken = 0
     @State private var deletionNotice = KMDeletionNoticeModel()
     @State private var moneyForwardRoute = false
@@ -71,8 +72,13 @@ struct AppShell: View {
                                     case .home: HomeView(onNavigate: { tab = $0 }, onOpenBudget: { month in
                                         budgetRouteMonth = month
                                         tab = .settings
+                                    }, onOpenCategorySearch: { month, categoryId in
+                                        recordsSearchInitialDraft = KMRecordsSearchDraft.forCategory(categoryId, in: month)
+                                        tab = .records
                                     })
                                     case .records: RecordsView(refreshToken: recordsRefreshToken,
+                                        initialSearch: recordsSearchInitialDraft,
+                                        onConsumeInitialSearch: { recordsSearchInitialDraft = nil },
                                         onOpenAccounts: { settingsAccountsRoute = true; tab = .settings },
                                         onDeleted: { deletionNotice.show($0) })
                                     case .reconciliation: ReconciliationView(onCreateRecord: { initialValues in
@@ -112,6 +118,7 @@ struct AppShell: View {
                 }
                 KMBottomNavigation(selection: Binding(get: { tab }, set: { destination in
                     if destination != .settings { settingsAccountsRoute = false; settingsAIRoute = false }
+                    if destination != .records { recordsSearchInitialDraft = nil }
                     deletionNotice.clearTransientStatus()
                     tab = destination
                     entry = nil; entryInitialValues = nil // Reselecting the current tab also leaves an entry, like PWA.
@@ -227,6 +234,7 @@ struct AppShell: View {
         // PWA's undo handler returns to the records page after restoring.
         entry = nil
         settingsAccountsRoute = false
+        recordsSearchInitialDraft = nil
         recordsRefreshToken += 1
         tab = .records
     }

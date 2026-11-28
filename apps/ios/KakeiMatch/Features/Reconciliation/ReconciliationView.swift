@@ -230,7 +230,9 @@ struct ReconciliationView: View {
                             ReconciliationReviewBody(row: row, model: model, perform: perform, suspect: {
                                 confirmation = Confirmation(title: "不正利用？", message: "心当たりがない利用としてマークしますか？不正利用と確定する操作ではありません。", action: .suspect(row.id))
                             }, createRecord: { statement in
-                                onCreateRecord(model.entryInitialValues(for: statement))
+                                Task {
+                                    onCreateRecord(await model.entryInitialValues(for: statement, repositories: repositories))
+                                }
                             })
                         }
                     }.id(row.id)
