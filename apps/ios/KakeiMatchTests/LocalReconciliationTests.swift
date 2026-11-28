@@ -264,4 +264,26 @@ struct LocalReconciliationTests {
         #expect(result[0].reasons == ["過去の明細にない加盟店で500円以下の決済", "500円以下の決済の後、2日以内に1万円以上の決済"])
         #expect(result[1].reasons == ["500円以下の決済の後、2日以内に1万円以上の決済"])
     }
+
+    /// Service state written before the auto-match option existed has no key for it, at either level.
+    @Test func storedReconciliationWithoutTheAutoMatchOptionStillDecodes() throws {
+        var state = service()
+        _ = try state.run(id: "one", at: now)
+        let current = try KMJSON.encoder().encode(KMServiceState(reconciliation: state))
+        let legacy = try Self.removingKey("requireSamePaymentSourceForAutoMatch", from: current)
+
+        let decoded = try KMJSON.decoder().decode(KMServiceState.self, from: legacy)
+        #expect(decoded.reconciliation?.requireSamePaymentSourceForAutoMatch == false)
+        #expect(decoded.reconciliation?.latest?.runId == "one")
+        #expect(decoded.reconciliation == state)
+    }
+
+    private static func removingKey(_ key: String, from data: Data) throws -> Data {
+        func strip(_ value: Any) -> Any {
+            if let object = value as? [String: Any] { return object.filter { $0.key != key }.mapValues(strip) }
+            if let array = value as? [Any] { return array.map(strip) }
+            return value
+        }
+        return try JSONSerialization.data(withJSONObject: strip(JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed])), options: [.fragmentsAllowed])
+    }
 }

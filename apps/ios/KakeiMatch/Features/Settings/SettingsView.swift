@@ -9,6 +9,7 @@ private enum KMSettingsPage: Equatable {
     case categoryRules
     case categories
     case accounts
+    case reconciliationAutoMatch
     case backup
     case museExport
     case driveSync
@@ -53,6 +54,7 @@ struct SettingsView: View {
             switch page {
             case .root: settingsRoot
             case .theme: themePage
+            case .reconciliationAutoMatch: reconciliationAutoMatchPage
             case .appInfo: KMAppInformationView(onBack: { page = .root })
             case .budget: KMBudgetView(initialMonth: initialBudgetMonth, onBack: { page = .root; onBudgetBack() })
             case .recurring: KMRecurringView(onBack: { page = .root })
@@ -111,7 +113,9 @@ struct SettingsView: View {
             let sections = KMSettingsPresentation.sections(
                 theme: model.settings.theme,
                 aiUsageValue: auth.settingsRowValue,
-                driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: driveSync?.isEnabled == true)
+                driveSyncValue: KMSettingsPresentation.driveSyncValue(isEnabled: driveSync?.isEnabled == true),
+                reconciliationAutoMatchValue: KMSettingsPresentation.reconciliationAutoMatchValue(
+                    requireSamePaymentSource: model.settings.requireSamePaymentSourceForAutoMatch)
             )
             ForEach(sections) { section in
                 Text(section.title)
@@ -162,6 +166,7 @@ struct SettingsView: View {
         Button {
             switch row.destination {
             case .theme: page = .theme
+            case .reconciliationAutoMatch: page = .reconciliationAutoMatch
             case .budget: page = .budget
             case .recurring: page = .recurring
             case .contact:
@@ -250,6 +255,40 @@ struct SettingsView: View {
                     .foregroundStyle(KMColor.danger)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("theme-status")
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private var reconciliationAutoMatchPage: some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space3) {
+            backButton
+            Text("照合の自動一致")
+                .font(KMTypography.heading)
+                .foregroundStyle(KMColor.text)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("settings-page-reconciliation-title")
+
+            Toggle("支払元が一致した記録だけ自動で一致させる", isOn: Binding(
+                get: { model.settings.requireSamePaymentSourceForAutoMatch },
+                set: { enabled in Task { await model.setRequireSamePaymentSourceForAutoMatch(enabled) } }
+            ))
+            .tint(KMColor.primary)
+            .frame(minHeight: KMLayout.minimumHit)
+            .accessibilityIdentifier("reconciliation-auto-match-toggle")
+
+            Text("オフのときは、金額・日付・店名が合えば自動で一致させます。オンにすると、支払元が一致した記録だけを自動で一致させ、ほかは確認へ回します。候補の表示と手動の照合は変わりません。変更は次に照合したときに反映されます。")
+                .font(KMTypography.note)
+                .foregroundStyle(KMColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("reconciliation-auto-match-description")
+
+            if let error = model.error {
+                Text(error)
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("reconciliation-auto-match-status")
             }
             Spacer(minLength: 0)
         }

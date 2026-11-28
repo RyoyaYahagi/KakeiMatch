@@ -20,6 +20,33 @@ struct ReconciliationEngineTests {
         #expect(amountDifference.candidates.map(\.receiptId) == ["exact", "mapped"])
     }
 
+    @Test func samePaymentSourceOptionLimitsAutomaticMatchesToAgreeingSources() {
+        let otherAccount = KMReconciliationEngine.run(
+            statements: [statement("s")],
+            receipts: [receipt("r", account: "account-1")],
+            preferredAccountIds: ["s": ["account-2"]],
+            requireSamePaymentSourceForAutoMatch: true)
+        #expect(otherAccount.statementResults.first?.status == .needsReview)
+        #expect(otherAccount.receiptResults.first?.status == .needsReview)
+        #expect(otherAccount.candidates.map(\.receiptId) == ["r"])
+
+        let sameAccount = KMReconciliationEngine.run(
+            statements: [statement("s")],
+            receipts: [receipt("r", account: "account-2")],
+            preferredAccountIds: ["s": ["account-2"]],
+            requireSamePaymentSourceForAutoMatch: true)
+        #expect(sameAccount.statementResults.first?.status == .matched)
+        #expect(sameAccount.statementResults.first?.matchedReceiptId == "r")
+        #expect(sameAccount.receiptResults.first?.matchedStatementTransactionId == "s")
+
+        let optionOff = KMReconciliationEngine.run(
+            statements: [statement("s")],
+            receipts: [receipt("r", account: "account-1")],
+            preferredAccountIds: ["s": ["account-2"]])
+        #expect(optionOff.statementResults.first?.status == .matched)
+        #expect(optionOff.statementResults.first?.matchedReceiptId == "r")
+    }
+
     @Test func kanaVariantsStayInTopThreeWithoutAutomaticIdentity() {
         for (merchant, equivalent) in [("アオゾラストア", "あおぞらストア"), ("ｱｵｿﾞﾗｽﾄｱ", "あおぞらストア"), ("あおぞらストア", "アオゾラストア")] {
             let result = KMReconciliationEngine.run(

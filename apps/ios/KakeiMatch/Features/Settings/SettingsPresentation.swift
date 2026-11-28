@@ -10,6 +10,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case categoryRules
         case categories
         case accounts
+        case reconciliationAutoMatch
         case backup
         case museExport
         case driveSync
@@ -60,13 +61,19 @@ enum KMSettingsPresentation {
         KMDriveSyncPresentation.rowValue(isEnabled: isEnabled)
     }
 
+    static func reconciliationAutoMatchValue(requireSamePaymentSource: Bool) -> String {
+        requireSamePaymentSource ? "支払元が一致したもの" : "従来どおり"
+    }
+
     static func sections(theme: KMThemePreference, aiUsageValue: String? = nil,
-                         driveSyncValue: String = "オフ") -> [KMSettingsSection] {
+                         driveSyncValue: String = "オフ", reconciliationAutoMatchValue: String = "従来どおり") -> [KMSettingsSection] {
         [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
                 .init(id: "settings.categories", title: "カテゴリ", destination: .categories),
                 .init(id: "settings.accounts", title: "支払元", destination: .accounts),
+                .init(id: "settings.reconciliationAutoMatch", title: "照合の自動一致",
+                      value: reconciliationAutoMatchValue, destination: .reconciliationAutoMatch),
                 .init(id: "settings.budget", title: "予算設定", destination: .budget),
                 .init(id: "settings.recurring", title: "定期登録", destination: .recurring),
             ]),

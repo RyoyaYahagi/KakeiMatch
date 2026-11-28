@@ -17,6 +17,7 @@ import Foundation
             var value = category; value.hidden = value.hidden || groupValues.contains { $0.id == value.groupId && $0.hidden }; return value
         }; state.receipts = receiptValues
         state.resolutions = resolutionValues; state.suspected = suspectedValues
+        state.requireSamePaymentSourceForAutoMatch = settingsValue.requireSamePaymentSourceForAutoMatch
         return state
     }
     /// The pure decision engine proposes changes; all actual repository writes pass through Ledger.
