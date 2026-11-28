@@ -21,4 +21,17 @@ struct SettingsMigrationTests {
         #expect(settings.theme == .light)
         #expect(settings.lastExportAt == nil)
     }
+
+    @Test func settingsStoredBeforeTheReconciliationOptionKeepAutomaticMatchingUnchanged() throws {
+        let data = Data(#"{"theme":"dark"}"#.utf8)
+        let settings = try KMJSON.decoder().decode(KMAppSettings.self, from: data)
+        #expect(settings.requireSamePaymentSourceForAutoMatch == false)
+
+        var enabled = settings
+        enabled.requireSamePaymentSourceForAutoMatch = true
+        let encoded = try KMJSON.encoder().encode(enabled)
+        let decoded = try KMJSON.decoder().decode(KMAppSettings.self, from: encoded)
+        #expect(decoded.requireSamePaymentSourceForAutoMatch == true)
+        #expect(decoded.theme == .dark)
+    }
 }

@@ -7,12 +7,18 @@ struct SettingsPresentationTests {
         let sections = KMSettingsPresentation.sections(theme: .system)
         #expect(sections.map(\.title) == ["家計簿", "データ", "写真の読み取り", "アプリ"])
         #expect(sections.map { $0.rows.map(\.title) } == [
-            ["分類ルール", "カテゴリ", "支払元", "予算設定", "定期登録"],
+            ["分類ルール", "カテゴリ", "支払元", "照合の自動一致", "予算設定", "定期登録"],
             ["バックアップと復元", "AIアシスタント向けの書き出し", "Google Driveへの自動保存", "原本の整理・全削除"],
             ["ログイン・利用状況"],
             ["外観", "お問い合わせ", "アプリ情報"],
         ])
         #expect(!sections.flatMap(\.rows).contains { $0.title.contains("同期") })
+        #expect(sections[0].rows[3].destination == .reconciliationAutoMatch)
+        #expect(sections[0].rows[3].value == "従来どおり")
+        let sourceOnly = KMSettingsPresentation.sections(
+            theme: .system,
+            reconciliationAutoMatchValue: KMSettingsPresentation.reconciliationAutoMatchValue(requireSamePaymentSource: true))
+        #expect(sourceOnly[0].rows[3].value == "支払元が一致したもの")
         #expect(sections[1].rows[0].value == nil)
         #expect(sections[1].rows[1].destination == .museExport)
         #expect(!sections[1].rows[1].isDestructive)
