@@ -549,9 +549,10 @@ export async function handleStoreKitNotificationRequest(
   }
 
   // Invariant: enforce signedDate ordering so older notifications never overwrite newer state,
-  // EXCEPT revocation notifications (REFUND, REVOKE, or tx.revokedAt !== null) for the current
-  // (or newer) period, which always apply even if a client POST previously advanced latest_signed_date_ms.
-  if (existing && !isRevocation && eventSignedDateMs < existing.latest_signed_date_ms) {
+  // EXCEPT revocation notifications (REFUND, REVOKE, or tx.revokedAt !== null) and REFUND_REVERSED
+  // for the current (or newer) transaction, which always apply even if a client POST previously
+  // advanced latest_signed_date_ms before delivery/retry.
+  if (existing && !isRevocation && !isRefundReversed && eventSignedDateMs < existing.latest_signed_date_ms) {
     await recordNotification(db, {
       notificationUuid,
       notificationType,
@@ -641,11 +642,16 @@ export async function handleStoreKitNotificationRequest(
                    revoked_at = ?,
                    revocation_reason = ?,
                    latest_transaction_id = ?,
-                   latest_signed_date_ms = ?,
+                   latest_signed_date_ms = MAX(latest_signed_date_ms, ?),
                    auto_renew_status = ?,
                    updated_at = ?
                WHERE original_transaction_id = ?
-                 AND latest_signed_date_ms <= ?`,
+                 AND (
+                   latest_transaction_id = ?
+                   OR expires_at IS NULL
+                   OR ? IS NULL
+                   OR expires_at <= ?
+                 )`,
             )
             .bind(
               tx.environment,
@@ -659,7 +665,9 @@ export async function handleStoreKitNotificationRequest(
               transition.autoRenewStatus,
               now,
               tx.originalTransactionId,
-              existing.latest_signed_date_ms,
+              tx.transactionId,
+              tx.expiresAt,
+              tx.expiresAt,
             )
             .run()
         : await db
