@@ -27,6 +27,9 @@ struct KMNativeAuthView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("usage-lead")
                 }
+                if model.showStoreKitSandboxSection {
+                    StoreKitSandboxSection(model: model)
+                }
             }
             .padding(.vertical, KMSpacing.space4)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -38,6 +41,9 @@ struct KMNativeAuthView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("nativeAuth.screen")
+        .task {
+            await model.loadStoreKitSandboxIfNeeded()
+        }
     }
 
     private var backButton: some View {

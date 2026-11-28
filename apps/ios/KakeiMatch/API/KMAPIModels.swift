@@ -5,7 +5,9 @@ enum KMAPIError: Error, Equatable, Sendable {
     case authenticationRequired, quotaExceeded, aiTemporarilyPaused, rateLimited
     case network, invalidResponse, invalidRequest, invalidFlow, forbiddenOrigin
     case providerUnavailable, providerTimeout, notConfigured, botCheckFailed, guestLimitReached
-    case nativeAuthenticationRequired, nativeUnsupported, credentialStorage, server(status: Int, code: String?)
+    case nativeAuthenticationRequired, nativeUnsupported, credentialStorage
+    case storeKitInvalidJWS, storeKitEnvironmentNotAllowed, storeKitUnsupportedOwnershipType, storeKitUnknownProduct
+    case server(status: Int, code: String?)
 
     var pwaCode: String {
         switch self {
@@ -23,6 +25,10 @@ enum KMAPIError: Error, Equatable, Sendable {
         case .nativeAuthenticationRequired: "account_session_required"
         case .nativeUnsupported: "native_authentication_unavailable"
         case .credentialStorage: "storage"
+        case .storeKitInvalidJWS: "invalid_jws"
+        case .storeKitEnvironmentNotAllowed: "environment_not_allowed"
+        case .storeKitUnsupportedOwnershipType: "unsupported_ownership_type"
+        case .storeKitUnknownProduct: "unknown_product"
         case .server: "request_failed"
         }
     }
@@ -58,20 +64,58 @@ enum KMAPIError: Error, Equatable, Sendable {
         case "not_configured": return .notConfigured
         case "bot_check_failed": return .botCheckFailed
         case "guest_limit_reached": return .guestLimitReached
+        case "invalid_jws": return .storeKitInvalidJWS
+        case "environment_not_allowed": return .storeKitEnvironmentNotAllowed
+        case "unsupported_ownership_type": return .storeKitUnsupportedOwnershipType
+        case "unknown_product": return .storeKitUnknownProduct
         default: return status == 401 ? .authenticationRequired : .server(status: status, code: nil)
         }
     }
 }
 
 struct KMAIToken: Codable, Sendable { let token: String; let expiresAt: Int }
-struct KMGuestConfiguration: Codable, Sendable { let guestAvailable: Bool; let turnstileSiteKey: String? }
 struct KMNativeConfiguration: Codable, Sendable {
     let available: Bool
     let rpId: String?
     let appAttestEnvironment: String?
 }
 
-struct KMGuestCreated: Codable, Sendable { let guestSecret: String }
+struct KMStoreKitTransactionResponse: Codable, Equatable, Sendable {
+    enum SubscriptionStatus: String, Codable, Sendable {
+        case active
+        case inGracePeriod = "in_grace_period"
+        case inBillingRetry = "in_billing_retry"
+        case expired
+        case revoked
+    }
+
+    enum SkipReason: String, Codable, Sendable {
+        case staleOwnerTransfer = "stale_owner_transfer"
+        case ownerChangeRateLimited = "owner_change_rate_limited"
+        case staleTransaction = "stale_transaction"
+    }
+
+    let synced: Bool
+    let status: SubscriptionStatus?
+    let expiresAt: Int?
+    let productId: String?
+    let reason: SkipReason?
+
+    init(
+        synced: Bool,
+        status: SubscriptionStatus? = nil,
+        expiresAt: Int? = nil,
+        productId: String? = nil,
+        reason: SkipReason? = nil
+    ) {
+        self.synced = synced
+        self.status = status
+        self.expiresAt = expiresAt
+        self.productId = productId
+        self.reason = reason
+    }
+}
+
 struct KMAIUsage: Codable, Sendable {
     enum Plan: String, Codable, Sendable { case free, pro, family, guest }
     enum Period: String, Codable, Sendable { case month, day }
@@ -96,15 +140,6 @@ struct KMAIUsage: Codable, Sendable {
         self.supportId = supportId
     }
 }
-struct KMAICosts: Codable, Sendable {
-    struct Provider: Codable, Sendable {
-        let requests: Int; let inputTokens: Int; let outputTokens: Int
-        let costUsdMicros: Int; let unknownRequests: Int
-    }
-    struct Providers: Codable, Sendable { let gemini: Provider; let jev: Provider }
-    let month: KMYearMonth; let currency: String; let totalUsdMicros: Int
-    let unknownRequests: Int; let providers: Providers
-}
 struct KMCategoryOption: Codable, Sendable { let id: String; let name: String }
 struct KMCategoryAnswers: Codable, Sendable {
     struct Answer: Codable, Sendable {
@@ -128,30 +163,6 @@ struct KMPayrollResponse: Codable, Sendable {
         let deductions: KMPayrollRecord.Deductions; let allowances: [KMPayrollRecord.Allowance]; let warnings: [KMPayrollRecord.Warning]
     }
     let extraction: Extraction; let model: String; let promptVersion: String
-}
-struct KMContactResult: Codable, Sendable {
-    enum Kind: String, Codable, Sendable { case bug, improvement, question }
-    let feedbackId: String; let kind: Kind; let reply: String; let issueUrl: String?
-}
-struct KMTranscription: Codable, Sendable { let text: String }
-struct KMAccountDeletion: Codable, Sendable { let deleted: Bool; let localHouseholdDataPreserved: Bool }
-struct KMSignOut: Codable, Sendable { let success: Bool }
-struct KMPasskeyDeleted: Codable, Sendable { let status: Bool }
-struct KMCloudSession: Codable, Sendable {
-    struct User: Codable, Sendable {
-        let id: String; let name: String; let email: String; let emailVerified: Bool
-        let image: String?; let createdAt: Date; let updatedAt: Date
-    }
-    struct Session: Codable, Sendable {
-        let id: String; let userId: String; let token: String; let expiresAt: Date
-        let createdAt: Date; let updatedAt: Date; let ipAddress: String?; let userAgent: String?
-    }
-    let user: User; let session: Session
-}
-struct KMCloudPasskey: Codable, Sendable {
-    let id: String; let name: String?; let publicKey: String; let userId: String; let credentialID: String
-    let counter: Int; let deviceType: String; let backedUp: Bool; let transports: String?
-    let createdAt: Date?; let aaguid: String?
 }
 
 struct KMImageRequest: Codable, Sendable {
@@ -179,9 +190,3 @@ struct KMCategoryRequest: Codable, Sendable {
 struct KMCategorySuggestionRequest: Codable, Sendable {
     let flowId: String; let sourceCategoryName: String; let categories: [KMCategoryOption]
 }
-struct KMContactRequest: Codable, Sendable {
-    let flowId: String; let kind: KMContactResult.Kind; let message: String
-    let originalMessage: String?
-    let diagnostic: KMContactDiagnosticContext?
-}
-struct KMAudioRequest: Codable, Sendable { let flowId: String; let audioBase64: String; let contentType: String }

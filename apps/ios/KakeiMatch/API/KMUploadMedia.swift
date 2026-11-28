@@ -68,26 +68,6 @@ struct KMMaskedPayrollImage: Sendable {
     }
 }
 
-struct KMUploadAudio: Sendable {
-    let data: Data
-    let contentType: String
-    init(data: Data, contentType: String) throws {
-        guard !data.isEmpty, data.count <= 2 * 1024 * 1024 else { throw KMAPIError.invalidRequest }
-        let b = Array(data.prefix(12))
-        let valid: Bool
-        switch contentType {
-        case "audio/mp4": valid = b.count >= 8 && String(bytes: b[4..<8], encoding: .ascii) == "ftyp"
-        case "audio/webm": valid = b.starts(with: [0x1a, 0x45, 0xdf, 0xa3])
-        case "audio/ogg": valid = b.starts(with: Array("OggS".utf8))
-        case "audio/wav": valid = b.count >= 12 && b.starts(with: Array("RIFF".utf8)) && String(bytes: b[8..<12], encoding: .ascii) == "WAVE"
-        case "audio/mpeg": valid = b.starts(with: Array("ID3".utf8)) || (b.count >= 2 && b[0] == 0xff && b[1] & 0xe0 == 0xe0)
-        default: valid = false
-        }
-        guard valid else { throw KMAPIError.invalidRequest }
-        self.data = data; self.contentType = contentType
-    }
-}
-
 struct KMRedactedReceiptImage: Sendable {
     let upload: KMUploadImage
 

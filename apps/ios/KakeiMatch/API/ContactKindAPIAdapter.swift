@@ -1,15 +1,5 @@
 import Foundation
 
-extension KMContactKind {
-    var apiKind: KMContactResult.Kind {
-        switch self {
-        case .bug: .bug
-        case .improvement: .improvement
-        case .question: .question
-        }
-    }
-}
-
 extension KMContactPresentation {
     static func failureMessage(for error: Error) -> String {
         guard let error = error as? KMAPIError else {
