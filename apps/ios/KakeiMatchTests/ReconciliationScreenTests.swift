@@ -280,4 +280,42 @@ import Testing
         let savedAccounts = try await repositories.accounts.accounts(includeClosed: true)
         #expect(savedAccounts.first { $0.id == other.id }?.statementProvider == nil)
     }
+
+    @Test func unmatchedEntryInitialValuesShowErrorWhenProviderLinkSaveFails() async throws {
+        let repositories = try KMFixtureLoader.load(named: "empty")
+        let card = KMAccount(id: "paypay-card-standard", name: "PayPayカード", accountType: .creditCard, statementProvider: nil)
+        try await repositories.accounts.createAccount(card, startingBalanceYen: 0, startingDate: KMDate(instant: repositories.referenceDate))
+        let model = KMReconciliationModel(); await model.load(repositories)
+        let csv = Data(("利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日\n"
+            + "2026/10/01,合成店,本人,PayPayクレジット,1回,1000,0,1000,1000,0,0,2026/11/27\n").utf8)
+        await model.importCSV(csv, provider: .paypayCard, repositories: repositories)
+        #expect(model.errorMessage == nil)
+        let row = try #require(model.presentation.pending.first { $0.status == .unmatchedStatement })
+
+        let failing = KMRepositories(transactions: repositories.transactions, accounts: SaveFailingAccounts(base: repositories.accounts),
+            categories: repositories.categories, payees: repositories.payees, receipts: repositories.receipts,
+            statements: repositories.statements, reconciliation: repositories.reconciliation, budgets: repositories.budgets,
+            recurring: repositories.recurring, payroll: repositories.payroll, categoryLearning: repositories.categoryLearning,
+            settings: repositories.settings, referenceDate: repositories.referenceDate)
+        let initial = await model.entryInitialValues(for: row.statement, repositories: failing)
+        #expect(initial.accountId == card.id)
+        #expect(model.errorMessage?.hasPrefix("支払元の紐付けを保存できませんでした。") == true)
+        let saved = try await repositories.accounts.accounts(includeClosed: true)
+        #expect(saved.first { $0.id == card.id }?.statementProvider == nil)
+    }
+}
+
+/// Reads pass through; saving an account always fails, to exercise the provider-link failure path.
+@MainActor private struct SaveFailingAccounts: AccountRepository {
+    struct SaveError: LocalizedError { var errorDescription: String? { "保存に失敗しました" } }
+    let base: any AccountRepository
+    func accounts(includeClosed: Bool) async throws -> [KMAccount] { try await base.accounts(includeClosed: includeClosed) }
+    func accounts(asOf date: KMDate, includeClosed: Bool) async throws -> [KMAccount] {
+        try await base.accounts(asOf: date, includeClosed: includeClosed)
+    }
+    func createAccount(_ account: KMAccount, startingBalanceYen: Int, startingDate: KMDate) async throws {
+        try await base.createAccount(account, startingBalanceYen: startingBalanceYen, startingDate: startingDate)
+    }
+    func saveAccount(_ account: KMAccount) async throws { throw SaveError() }
+    func deleteAccount(id: String) async throws { try await base.deleteAccount(id: id) }
 }

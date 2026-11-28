@@ -94,7 +94,8 @@ import Observation
                                 accounts[index] = candidate
                             }
                         } catch {
-                            // Keep opening manual entry with the resolved account even if saving the link fails.
+                            // Keep opening manual entry with the resolved account, but tell the user the link was not saved.
+                            errorMessage = "支払元の紐付けを保存できませんでした。\(error.localizedDescription)"
                         }
                     }
                     accountId = candidate.id
