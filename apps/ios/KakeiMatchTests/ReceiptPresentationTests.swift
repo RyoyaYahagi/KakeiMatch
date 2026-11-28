@@ -990,4 +990,53 @@ extension ReceiptModelTests {
         )
         #expect(nextLearning.itemCategoryIds == [nil])
     }
+
+    @Test func bulkCategorySettingDoesNotRegisterRulesButKeepsObservation() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        let receipt = try #require(try await repositories.receipts.receipts().first)
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+        let targetItem = try #require(model.items.first)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let daily = try #require(model.categories.first { $0.name == "日用品" })
+
+        // A per-item choice made before the bulk setting is overwritten by it, so it is not a manual choice either.
+        model.setItemCategory(targetItem.id, categoryId: food.id)
+        model.setAllItemCategories(daily.id)
+        await model.save()
+        #expect(model.didSave && model.error == nil)
+        #expect(model.items.allSatisfy { $0.categoryId == daily.id })
+
+        // The bulk-set categories still apply to this receipt but never become instant rules.
+        let rules = try await repositories.categoryLearning.categoryRules()
+        #expect(!rules.contains { $0.targetType == .item })
+
+        // The observation (learning material) is still recorded with the bulk-set categories.
+        let observations = try await repositories.categoryLearning.categoryObservations()
+        let observation = try #require(observations.first { $0.receiptId == receipt.id })
+        #expect(observation.items.allSatisfy { $0.categoryId == daily.id })
+    }
+
+    @Test func perItemChoiceAfterBulkSettingRegistersOnlyThatItem() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        let receipt = try #require(try await repositories.receipts.receipts().first)
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+        let targetItem = try #require(model.items.first)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let daily = try #require(model.categories.first { $0.name == "日用品" })
+        let targetName = KMCategoryLearningService.normalizeName(targetItem.name)
+
+        model.setAllItemCategories(daily.id)
+        model.setItemCategory(targetItem.id, categoryId: food.id)
+        await model.save()
+        #expect(model.didSave && model.error == nil)
+
+        let rules = try await repositories.categoryLearning.categoryRules()
+        let itemRules = rules.filter { $0.targetType == .item }
+        #expect(itemRules.map(\.normalizedName) == [targetName])
+        #expect(itemRules.first?.categoryId == food.id)
+    }
 }

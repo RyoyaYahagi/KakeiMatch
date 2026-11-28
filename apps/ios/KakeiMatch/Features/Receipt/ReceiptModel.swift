@@ -278,9 +278,8 @@ final class KMReceiptModel {
             updated.categoryId = categoryId
             return updated
         }
-        for item in items {
-            recordManualItemCategory(item.id, categoryId: categoryId)
-        }
+        // A bulk setting is not a per-item choice: it applies to this receipt only and never becomes an instant rule.
+        manualCategoryItemOrder = []
         clearUnclassifiedBlockIfResolved()
     }
 
