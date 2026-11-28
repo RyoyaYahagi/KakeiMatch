@@ -153,7 +153,7 @@ enum KMStatementDownload {
         case .smbcCard: URL(string: "https://www.smbc-card.com/mem/info/meisai_inquiry.jsp")
         case .rakutenCard: URL(string: "https://www.rakuten-card.co.jp/security/no-usage-bill/")
         case .paypay, .paypayCard: URL(string: "https://www.paypay-card.co.jp/service/004962.html")
-        case .aeonCard: nil
+        case .aeonCard: URL(string: "https://www.aeon.co.jp/inquiry/oboenashi/")
         }
     }
     static func help(_ provider: KMStatementProvider) -> (url: URL, note: String) {

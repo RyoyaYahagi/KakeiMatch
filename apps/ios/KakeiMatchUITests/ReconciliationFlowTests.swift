@@ -79,9 +79,9 @@ final class ReconciliationFlowTests: XCTestCase {
         XCTAssertTrue(empty.staticTexts["CSVファイルを選択してください。"].waitForExistence(timeout: 5))
         tap("statement-provider", app: empty)
         empty.buttons["イオンカード"].tap()
-        XCTAssertTrue(empty.staticTexts["statement-import-availability"].waitForExistence(timeout: 5))
-        XCTAssertFalse(empty.buttons["statement-file"].isEnabled)
-        XCTAssertFalse(empty.buttons["reconciliation.importButton"].isEnabled)
+        XCTAssertFalse(empty.staticTexts["statement-import-availability"].exists)
+        XCTAssertTrue(empty.buttons["statement-file"].isEnabled)
+        XCTAssertTrue(empty.buttons["reconciliation.importButton"].isEnabled)
         empty.terminate()
     }
     @MainActor func testCountsNavigateToHistoryAndPending() {

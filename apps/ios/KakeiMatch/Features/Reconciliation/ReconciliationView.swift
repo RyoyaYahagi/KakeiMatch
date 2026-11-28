@@ -22,6 +22,7 @@ struct ReconciliationView: View {
     @State private var suspectedExpanded = false
     @State private var expandedRows: Set<String> = []
     @State private var confirmation: Confirmation?
+    @State private var selectedLinkAccountId = ""
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private struct Confirmation: Identifiable {
@@ -94,6 +95,7 @@ struct ReconciliationView: View {
                         .font(KMTypography.note).foregroundStyle(KMColor.muted)
                         .lineSpacing(5).accessibilityIdentifier("reconciliation.runStatus")
                     failures
+                    accountLinkPromptSection
                     tiles(scroll)
                     attention(scroll)
                     if model.presentation.waiting > 0 {
@@ -131,6 +133,9 @@ struct ReconciliationView: View {
             expandedRows = []; matchedExpanded = false; ignoredExpanded = false
             suspectedExpanded = false; importerExpanded = false
         }
+        .onChange(of: model.accountLinkPrompt) { _, _ in
+            selectedLinkAccountId = ""
+        }
         .alert(item: $confirmation) { value in
             Alert(title: Text(value.title), message: Text(value.message),
                   primaryButton: .default(Text(value.title)) { perform(value.action) }, secondaryButton: .cancel(Text("キャンセル")))
@@ -157,6 +162,75 @@ struct ReconciliationView: View {
                 actionTitle: decision.undoRequestedAt != nil ? "取り消しを再試行する" : "反映を再試行する",
                 action: { perform(.retry(decision)) })
         }
+    }
+    @ViewBuilder private var accountLinkPromptSection: some View {
+        if let prompt = model.accountLinkPrompt, !model.linkableAccounts.isEmpty {
+            let providerLabel = KMStatementDownload.label(prompt.provider)
+            let selectedName = model.linkableAccounts.first { $0.id == selectedLinkAccountId }?.name
+            VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                Text("\(providerLabel)の支払元が未設定です")
+                    .font(KMTypography.body(15, weight: .bold))
+                    .foregroundStyle(KMColor.text)
+                Text("支払元を選んで紐付けると、記録の作成時に自動で入力されます。")
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Menu {
+                    Picker("支払元", selection: $selectedLinkAccountId) {
+                        Text("支払元を選択してください").tag("")
+                        ForEach(model.linkableAccounts) { account in
+                            Text(account.name).tag(account.id)
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(selectedName ?? "支払元を選択してください")
+                            .foregroundStyle(selectedName == nil ? KMColor.muted : KMColor.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        KMIcon(name: "chevronDown", size: 18)
+                            .foregroundStyle(KMColor.muted)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .accessibilityLabel("支払元、\(selectedName ?? "未選択")")
+                .accessibilityIdentifier("reconciliation.accountLinkPrompt.account")
+                .padding(.horizontal, 12)
+                .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.borderStrong, lineWidth: 1) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                            linkPromptButtons
+                        }
+                    } else {
+                        HStack(spacing: KMSpacing.space2) {
+                            linkPromptButtons
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(KMSpacing.space3)
+            .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+            .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.border, lineWidth: 1) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("reconciliation.accountLinkPrompt")
+        }
+    }
+    @ViewBuilder private var linkPromptButtons: some View {
+        Button("紐付ける") {
+            let accountId = selectedLinkAccountId
+            Task { await model.linkAccount(id: accountId, repositories: repositories) }
+        }
+        .buttonStyle(KMButtonStyle(role: .primary))
+        .disabled(selectedLinkAccountId.isEmpty || model.isBusy)
+        .accessibilityIdentifier("reconciliation.accountLinkPrompt.save")
+        Button("後で") {
+            model.dismissAccountLinkPrompt()
+        }
+        .buttonStyle(KMButtonStyle(role: .secondary))
+        .accessibilityIdentifier("reconciliation.accountLinkPrompt.dismiss")
     }
     private func tiles(_ scroll: ScrollViewProxy) -> some View {
         let p = model.presentation
@@ -230,7 +304,9 @@ struct ReconciliationView: View {
                             ReconciliationReviewBody(row: row, model: model, perform: perform, suspect: {
                                 confirmation = Confirmation(title: "不正利用？", message: "心当たりがない利用としてマークしますか？不正利用と確定する操作ではありません。", action: .suspect(row.id))
                             }, createRecord: { statement in
-                                onCreateRecord(model.entryInitialValues(for: statement))
+                                Task {
+                                    onCreateRecord(await model.entryInitialValues(for: statement, repositories: repositories))
+                                }
                             })
                         }
                     }.id(row.id)

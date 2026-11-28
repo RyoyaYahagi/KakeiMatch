@@ -348,8 +348,7 @@ struct KMMasterManagementView: View {
                 Picker("明細サービス", selection: $statementProvider) {
                     Text("設定しない").tag(KMStatementProvider?.none)
                     if statementProvider == .paypay { Text("PayPay取引履歴（旧形式・再取込不可）").tag(Optional(KMStatementProvider.paypay)).disabled(true) }
-                    if statementProvider == .aeonCard { Text(KMStatementProvider.aeonCard.label).tag(Optional(KMStatementProvider.aeonCard)).disabled(true) }
-                    ForEach([KMStatementProvider.smbcCard, .rakutenCard, .paypayCard], id: \.self) { Text($0.label).tag(Optional($0)) }
+                    ForEach([KMStatementProvider.smbcCard, .rakutenCard, .aeonCard, .paypayCard], id: \.self) { Text($0.label).tag(Optional($0)) }
                 }
                 .pickerStyle(.menu).accessibilityIdentifier("masters.account.provider")
             }
