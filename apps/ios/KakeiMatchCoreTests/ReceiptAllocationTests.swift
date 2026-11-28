@@ -109,6 +109,31 @@ struct ReceiptAllocationTests {
         mismatched.totalAmountYen = 2332
         #expect(throws: (any Error).self) { try KMReceiptAllocation.allocations(mismatched) }
     }
+    @Test func targetedDiscountLargerThanTaxRateGroupWithoutTaxesStillAllocates() throws {
+        // Two categories. The 8% group (food 1000) is smaller than the targeted discount (-1500),
+        // but food as a whole (2000) is not. Without taxes the rate group is unused, so allocation must succeed.
+        let input = KMConfirmedReceipt(
+            merchant: "Synthetic Store",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 1000,
+            categoryId: "food",
+            accountId: "cash",
+            items: [
+                .init(id: "a", name: "Synthetic bento", amountYen: 1000, categoryId: "food", taxRatePercent: 8),
+                .init(id: "b", name: "Synthetic fruit", amountYen: 1000, categoryId: "food"),
+                .init(id: "c", name: "Synthetic soap", amountYen: 500, categoryId: "household"),
+            ],
+            adjustments: [
+                .init(id: "d", label: "値引き", amountYen: -1500, targetItemId: "a"),
+            ]
+        )
+        try KMReceiptAllocation.validate(input, allowZero: false)
+        #expect(try KMReceiptAllocation.allocations(input) == [
+            .init(categoryId: "food", amountYen: 500),
+            .init(categoryId: "household", amountYen: 500),
+        ])
+    }
     @Test func partialItemTaxRatesFallbackToOverallProportion() throws {
         // Item a has 8% rate (food 1000), item b has no tax rate (household 500).
         // 8% tax (80) goes to 8% group (food); unmatched 10% tax (50) falls back to overall 1000:500 (+33/+17).
