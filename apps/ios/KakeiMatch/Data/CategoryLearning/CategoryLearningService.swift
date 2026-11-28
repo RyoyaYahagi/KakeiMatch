@@ -116,16 +116,47 @@ enum KMCategoryLearningService {
         return (merchants, items)
     }
 
+    /// Builds immediate item rule overrides from manually categorized receipt items.
+    /// When the same normalized item name appears multiple times, the latest entry wins.
+    static func manualItemOverrides(items: [(name: String, categoryId: String?)], availableCategoryIds: Set<String>) -> [KMCategoryRuleOverride] {
+        var order: [String] = []
+        var latestByName: [String: String] = [:]
+        for item in items {
+            let normalized = normalizeName(item.name)
+            guard !normalized.isEmpty, let categoryId = item.categoryId, availableCategoryIds.contains(categoryId) else { continue }
+            if latestByName[normalized] == nil { order.append(normalized) }
+            latestByName[normalized] = categoryId
+        }
+        return order.compactMap { normalized in
+            guard let categoryId = latestByName[normalized] else { return nil }
+            return KMCategoryRuleOverride(targetType: .item, normalizedName: normalized,
+                disabled: false, deleted: false, categoryId: categoryId)
+        }
+    }
+
     static func applyingOverrides(_ stats: [KMCategoryRuleStats], overrides: [KMCategoryRuleOverride], availableCategoryIds: Set<String>) -> [KMCategoryLearningRule] {
         let byKey = Dictionary(overrides.map { (key($0.targetType, $0.normalizedName), $0) }, uniquingKeysWith: { _, last in last })
-        return stats.map { rule in
-            let override = byKey[key(rule.targetType, rule.normalizedName)]
+        var seenKeys = Set<String>()
+        var rules = stats.map { rule -> KMCategoryLearningRule in
+            let ruleKey = key(rule.targetType, rule.normalizedName)
+            seenKeys.insert(ruleKey)
+            let override = byKey[ruleKey]
             let replacement = override?.categoryId.flatMap { availableCategoryIds.contains($0) ? $0 : nil } ?? rule.categoryId
             return KMCategoryLearningRule(targetType: rule.targetType, normalizedName: rule.normalizedName,
                 categoryId: replacement, receipts: rule.receipts, matchingReceipts: rule.matchingReceipts,
                 agreementPercent: rule.agreementPercent, enabled: override?.disabled != true && override?.deleted != true,
                 deleted: override?.deleted == true)
         }
+        for override in overrides {
+            let ruleKey = key(override.targetType, override.normalizedName)
+            guard seenKeys.insert(ruleKey).inserted else { continue }
+            let latest = byKey[ruleKey] ?? override
+            guard !latest.normalizedName.isEmpty, let categoryId = latest.categoryId, availableCategoryIds.contains(categoryId) else { continue }
+            rules.append(KMCategoryLearningRule(targetType: latest.targetType, normalizedName: latest.normalizedName,
+                categoryId: categoryId, receipts: 1, matchingReceipts: 1, agreementPercent: 100,
+                enabled: latest.disabled != true && latest.deleted != true, deleted: latest.deleted == true))
+        }
+        return rules
     }
 
     static func suggest(merchant: String?, itemNames: [String], categories: [KMCategoryLearningCandidate],

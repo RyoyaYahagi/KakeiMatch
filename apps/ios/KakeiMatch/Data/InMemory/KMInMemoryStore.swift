@@ -285,14 +285,20 @@ import Foundation
         let available = Set(categoryValues.filter { !$0.isIncome }.map(\.id))
         let stats = KMCategoryLearningService.deriveStats(observations: serviceState.observations, availableCategoryIds: available)
         let derived = KMCategoryLearningService.applyingOverrides(stats, overrides: ruleOverrides, availableCategoryIds: available)
-        if !serviceState.observations.isEmpty { return derived }
-        return ruleValues.map { value in
+        if !serviceState.observations.isEmpty || ruleValues.isEmpty { return derived }
+        var seen = Set<String>()
+        var rules = ruleValues.map { value -> KMCategoryLearningRule in
+            seen.insert("\(value.targetType.rawValue):\(value.normalizedName)")
             guard let override = ruleOverrides.first(where: { $0.targetType == value.targetType && $0.normalizedName == value.normalizedName }) else { return value }
             var result = value
             result.categoryId = override.categoryId ?? result.categoryId
             result.deleted = override.deleted == true; result.enabled = !result.deleted && override.disabled != true
             return result
         }
+        for rule in derived where seen.insert("\(rule.targetType.rawValue):\(rule.normalizedName)").inserted {
+            rules.append(rule)
+        }
+        return rules
     }
     func setCategoryRuleOverride(_ value: KMCategoryRuleOverride) async throws {
         if let categoryId = value.categoryId { try validCategory(categoryId, income: false) }
