@@ -123,6 +123,36 @@ function postNotification(body: unknown, method = 'POST') {
   });
 }
 
+async function sendNotification(
+  notificationType: string,
+  notificationUuid: string,
+  signedDateSec: number,
+  txOverrides: Record<string, unknown> = {},
+) {
+  const tx = await buildStoreKitJwsFixture({
+    chain,
+    payloadOverrides: { signedDate: signedDateSec * 1000, expiresDate: (NOW + 30 * 86400) * 1000, ...txOverrides },
+  });
+  const notif = await signPayload(chain, {
+    notificationType,
+    notificationUUID: notificationUuid,
+    signedDate: signedDateSec * 1000,
+    data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: tx.jws },
+  });
+  const res = await handleStoreKitNotificationRequest(postNotification({ signedPayload: notif }), env, {
+    nowSeconds: () => NOW,
+    storeKitTestTrustAnchor: chain.rootDER,
+  });
+  expect(res.status).toBe(200);
+  return res.json();
+}
+
+function readRevocation() {
+  return sqlite
+    .prepare('SELECT status, revoked_at, revocation_reason, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+    .get(ORIG_TX_ID);
+}
+
 beforeEach(async () => {
   sqlite = new DatabaseSync(':memory:');
   sqlite.exec('PRAGMA foreign_keys = ON');
@@ -638,27 +668,8 @@ describe('POST /api/storekit/notifications', () => {
   it('does not restore a second refund when an older REFUND_REVERSED is redelivered after it', async () => {
     seedSubscription({ status: 'active', latestSignedDateMs: (NOW - 400) * 1000 });
     const expiresSec = NOW + 30 * 86400;
-    const options = { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER };
-    const send = async (
-      notificationType: string,
-      notificationUuid: string,
-      signedDateSec: number,
-      txOverrides: Record<string, unknown>,
-    ) => {
-      const tx = await buildStoreKitJwsFixture({
-        chain,
-        payloadOverrides: { signedDate: signedDateSec * 1000, expiresDate: expiresSec * 1000, ...txOverrides },
-      });
-      const notif = await signPayload(chain, {
-        notificationType,
-        notificationUUID: notificationUuid,
-        signedDate: signedDateSec * 1000,
-        data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: tx.jws },
-      });
-      const res = await handleStoreKitNotificationRequest(postNotification({ signedPayload: notif }), env, options);
-      expect(res.status).toBe(200);
-      return res.json();
-    };
+    const send = (type: string, uuid: string, signedDateSec: number, txOverrides: Record<string, unknown>) =>
+      sendNotification(type, uuid, signedDateSec, { expiresDate: expiresSec * 1000, ...txOverrides });
 
     // First refund, its reversal (arrives and is applied), then a second refund.
     expect(await send('REFUND', 'uuid-d-refund-1', NOW - 300, { revocationDate: (NOW - 300) * 1000, revocationReason: 1 }))
@@ -686,6 +697,63 @@ describe('POST /api/storekit/notifications', () => {
         .prepare('SELECT status, revoked_at, revocation_reason FROM store_subscriptions WHERE original_transaction_id = ?')
         .get(ORIG_TX_ID),
     ).toEqual({ status: 'active', revoked_at: null, revocation_reason: null });
+  });
+
+  it('advances revoked_at on a later refund to a revoked row, so an older REFUND_REVERSED redelivery cannot restore it', async () => {
+    seedSubscription({ status: 'active', latestSignedDateMs: (NOW - 400) * 1000 });
+    const firstRevokedSec = NOW - 300;
+    const secondRevokedSec = NOW - 100;
+
+    expect(await sendNotification('REFUND', 'uuid-d2-refund-1', NOW - 300, { revocationDate: firstRevokedSec * 1000, revocationReason: 1 }))
+      .toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+    const afterFirst = readRevocation() as { latest_signed_date_ms: number };
+
+    // The first REFUND_REVERSED never gets through; the second refund arrives while the row is still revoked.
+    // It leaves the entitlement state alone (ignored_stale) but moves the revocation forward.
+    expect(await sendNotification('REFUND', 'uuid-d2-refund-2', NOW - 90, { revocationDate: secondRevokedSec * 1000, revocationReason: 0 }))
+      .toEqual({ received: true, outcome: 'ignored_stale' });
+    expect(readRevocation()).toEqual({
+      status: 'revoked',
+      revoked_at: secondRevokedSec,
+      revocation_reason: 0,
+      latest_signed_date_ms: afterFirst.latest_signed_date_ms,
+    });
+
+    // An older refund redelivered later must not rewind revoked_at.
+    expect(await sendNotification('REFUND', 'uuid-d2-refund-1-redelivered', NOW - 280, { revocationDate: firstRevokedSec * 1000, revocationReason: 1 }))
+      .toEqual({ received: true, outcome: 'ignored_stale' });
+    expect(readRevocation()).toMatchObject({ revoked_at: secondRevokedSec, revocation_reason: 0 });
+
+    // The first REFUND_REVERSED is finally redelivered: it predates the second refund, so no restore.
+    expect(await sendNotification('REFUND_REVERSED', 'uuid-d2-reversed-1', NOW - 250))
+      .toEqual({ received: true, outcome: 'ignored_stale' });
+    expect(readRevocation()).toMatchObject({ status: 'revoked', revoked_at: secondRevokedSec, revocation_reason: 0 });
+
+    // A reversal issued after the second refund restores it.
+    expect(await sendNotification('REFUND_REVERSED', 'uuid-d2-reversed-2', NOW - 50))
+      .toEqual({ received: true, outcome: 'applied', status: 'active' });
+    expect(readRevocation()).toMatchObject({ status: 'active', revoked_at: null, revocation_reason: null });
+  });
+
+  it('does not move revoked_at when a refund for an older billing period arrives at a revoked row', async () => {
+    const revokedSec = NOW - 100;
+    seedSubscription({
+      status: 'revoked',
+      expiresAt: NOW + 29 * 86400,
+      revokedAt: revokedSec,
+      revocationReason: 1,
+      latestTransactionId: '2000000000000002',
+    });
+
+    expect(
+      await sendNotification('REFUND', 'uuid-d2-old-period', NOW - 5, {
+        transactionId: '2000000000000001',
+        expiresDate: (NOW - 86400) * 1000,
+        revocationDate: (NOW - 10) * 1000,
+        revocationReason: 0,
+      }),
+    ).toEqual({ received: true, outcome: 'ignored_stale' });
+    expect(readRevocation()).toMatchObject({ status: 'revoked', revoked_at: revokedSec, revocation_reason: 1 });
   });
 
   it('keeps the grace period when an old REFUND_REVERSED is redelivered to a row that is not revoked', async () => {
