@@ -24,7 +24,7 @@ extension KMReceiptModel {
         try await repositories.receipts.saveReceipt(saved)
         try await display(saved)
         if scenario == "initial" || scenario == "loading" {
-            merchant = ""; amount = ""; categoryId = ""; items = []; adjustments = []; tax = ""
+            merchant = ""; amount = ""; categoryId = ""; items = []; adjustments = []; tax = ""; taxes = []; taxAmountTexts = []
         }
         if scenario == "loading" { phase = .reading; startedReading = Date() }
         if scenario == "failure" {

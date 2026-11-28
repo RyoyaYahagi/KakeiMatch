@@ -27,17 +27,25 @@ enum KMAPIShapes {
         "backedUp": .boolean, "transports": .nullable(.text(min: 0, max: 500)), "createdAt": .nullable(instant), "aaguid": .nullable(.text(max: 36))
     ], optional: ["name", "transports", "createdAt", "aaguid"]), max: 100)
     static let yen = KMAPIShape.nullable(.integer())
+    static let receiptTax: KMAPIShape = .object([
+        "ratePercent": .decimal(min: 0, max: 100),
+        "taxableAmountYen": .integer(),
+        "taxAmountYen": .integer()
+    ])
     static let receipt: KMAPIShape = .object([
         "documentKind": .values(["receipt", "not_receipt", "unknown"]), "merchant": .nullable(.text()),
         "purchasedDate": .nullable(.date), "purchasedTime": .nullable(.text(max: 5)),
         "totalAmountYen": yen, "taxAmountYen": yen,
+        "taxes": .array(receiptTax, max: 10),
         "items": .array(.object(["name": .text(), "amountYen": yen,
-                                "quantity": .decimal(min: 0, max: Decimal.greatestFiniteMagnitude), "unitPriceYen": yen], optional: ["quantity", "unitPriceYen"]), max: 100),
+                                "quantity": .decimal(min: 0, max: Decimal.greatestFiniteMagnitude), "unitPriceYen": yen,
+                                "taxRatePercent": .nullable(.decimal(min: 0, max: 100))],
+                                optional: ["quantity", "unitPriceYen", "taxRatePercent"]), max: 100),
         "adjustments": .array(.object(["label": .text(), "amountYen": .integer(min: -9_007_199_254_740_991),
                                        "targetItemIndex": .nullable(.integer())], optional: ["targetItemIndex"]), max: 100),
         "warnings": .array(.object(["field": .nullable(.values(["merchant", "purchasedDate", "purchasedTime", "totalAmountYen", "taxAmountYen", "items", "adjustments"])),
                                     "code": .text(max: 100), "message": .text(), "index": .nullable(.integer())], optional: ["index"]), max: 100)
-    ], optional: ["adjustments"])
+    ], optional: ["adjustments", "taxes"])
 
     static let payroll: KMAPIShape = .object([
         "extraction": .object([
@@ -93,7 +101,9 @@ enum KMAPIShapes {
 
     static func validateReceipt(_ value: KMReceiptExtraction) throws {
         if let time = value.purchasedTime, time.range(of: #"^([01]\d|2[0-3]):[0-5]\d$"#, options: .regularExpression) == nil { throw KMAPIError.invalidResponse }
-        guard value.items.allSatisfy({ $0.quantity == nil || $0.quantity! > 0 }),
+        guard (value.taxes ?? []).allSatisfy({ !$0.ratePercent.isNaN && $0.ratePercent > 0 && $0.ratePercent <= 100 }),
+              value.items.allSatisfy({ $0.quantity == nil || $0.quantity! > 0 }),
+              value.items.allSatisfy({ $0.taxRatePercent == nil || (!$0.taxRatePercent!.isNaN && $0.taxRatePercent! > 0 && $0.taxRatePercent! <= 100) }),
               (value.adjustments ?? []).allSatisfy({ $0.targetItemIndex == nil || (0..<value.items.count).contains($0.targetItemIndex!) }) else { throw KMAPIError.invalidResponse }
         for warning in value.warnings {
             if let index = warning.index {

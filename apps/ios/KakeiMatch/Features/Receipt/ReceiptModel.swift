@@ -1,4 +1,6 @@
+import CoreGraphics
 import Foundation
+import ImageIO
 import Observation
 import UIKit
 
@@ -13,6 +15,8 @@ final class KMReceiptModel {
     var time = ""
     var memo = ""
     var tax = ""
+    var taxes: [KMReceiptTax] = []
+    var taxAmountTexts: [String] = []
     var excluded = false
     var categoryId = ""
     var accountId = ""
@@ -24,6 +28,9 @@ final class KMReceiptModel {
     var categories: [KMCategory] = []
     var accounts: [KMAccount] = []
     var imageData: Data?
+    var previewImage: UIImage?
+    /// True while the preview for the current `imageData` is decoding; the previous image stays until then.
+    var isDecodingPreview = false
     var imageIsSaved = false
     var pane = "overview"
     var loading = true
@@ -36,6 +43,7 @@ final class KMReceiptModel {
 
     var redactionPreview: RedactionPreview?
     var error: String?
+    var blockedByUnclassifiedItems = false
     var status: String?
     var needsGuestStart = false
     var startingGuest = false
@@ -49,17 +57,22 @@ final class KMReceiptModel {
     @ObservationIgnored private var reviewTask: Task<Void, Never>?
     @ObservationIgnored private var operation: Task<Void, Never>?
     @ObservationIgnored private var draftTask: Task<Void, Never>?
+    @ObservationIgnored private var previewTask: Task<CGImage?, Never>?
+    @ObservationIgnored private var previewRevision = UUID()
     /// Snapshot currently on screen from load/extraction; unchanged values are not re-saved.
     @ObservationIgnored private var displayedDraft: KMReceiptDraft?
     /// After the first user edit, even returning to the original values must replace the draft.
     @ObservationIgnored private var draftSavedOnce = false
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var api: KMWorkerAPI?
+    /// Item IDs whose category was manually assigned in this editing session, ordered by most recent edit.
+    @ObservationIgnored private var manualCategoryItemOrder: [String] = []
 
     init(api: KMWorkerAPI? = nil) { self.api = api }
 
     var canSave: Bool { !loading && (!requiresExistingReceipt || receipt != nil) }
     var isReading: Bool { phase == .reading || phase == .categorizing }
+    var hasMultipleTaxRates: Bool { taxes.count > 1 }
     var warnings: [KMReceiptPresentation.Warning] { KMReceiptPresentation.warnings(receipt?.extraction, reviewed: reviewed) }
     var totalResult: Result<KMReceiptPresentation.TotalCheck?, Error> {
         Result { try KMReceiptPresentation.totalCheck(total: Int(amount), items: items, adjustments: adjustments, tax: Int(tax)) }
@@ -70,8 +83,13 @@ final class KMReceiptModel {
     var totalError: String? {
         if case .failure(let error) = totalResult { return error.localizedDescription }; return nil
     }
+    var unclassifiedItemCount: Int { KMReceiptPresentation.unclassifiedItemCount(items: items) }
+    var hasUnclassifiedItems: Bool { unclassifiedItemCount > 0 }
+    var firstUnclassifiedItemId: String? {
+        items.first(where: { KMReceiptPresentation.isUnclassifiedCategory($0.categoryId) })?.id
+    }
     var categorySummary: Result<[KMReceiptPresentation.CategoryTotal], Error> {
-        Result { try KMReceiptPresentation.categoryTotals(items: items, defaultCategoryId: categoryId, categories: categories) }
+        Result { try KMReceiptPresentation.categoryTotals(items: items, categories: categories) }
     }
     var categoryCount: Int {
         if case .success(let totals) = categorySummary { return totals.count }
@@ -81,6 +99,21 @@ final class KMReceiptModel {
         guard case .success(let totals) = categorySummary else { return "カテゴリ別の金額を確認できません" }
         return totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
     }
+    struct CategorySummaryDisplay {
+        let count: Int
+        let text: String
+    }
+    var categorySummaryDisplay: CategorySummaryDisplay {
+        switch categorySummary {
+        case .success(let totals):
+            return .init(
+                count: totals.count,
+                text: totals.map { "\($0.name) \(KMAmountFormatter.yen($0.amountYen))" }.joined(separator: "　")
+            )
+        case .failure:
+            return .init(count: 0, text: "カテゴリ別の金額を確認できません")
+        }
+    }
     var today: KMDate { KMDate(instant: repositories?.referenceDate ?? Date()) }
     var now: Date { repositories?.fixtureName == nil ? Date() : repositories!.referenceDate }
     /// PWA local-ui.ts:read — the unfinished form, raw text included, saved after a short delay.
@@ -88,7 +121,8 @@ final class KMReceiptModel {
         .init(merchant: merchant, purchasedDate: date, purchasedTime: time.isEmpty ? nil : time,
               totalAmountText: amount, categoryId: categoryId, accountId: accountId,
               items: items, adjustments: adjustments, taxAmountText: tax,
-              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded)
+              memo: memo.isEmpty ? nil : memo, excludedFromSpending: excluded,
+              taxes: taxes.isEmpty ? nil : taxes)
     }
 
     func load(_ repositories: KMRepositories?, receiptID: String?, editing: Bool = false) async {
@@ -144,15 +178,25 @@ final class KMReceiptModel {
         if let image = receipt.image {
             imageData = try await repositories?.receipts.receiptImage(blobId: image.blobId)
             imageIsSaved = imageData != nil
+            await updatePreviewImage(for: imageData)
+        } else {
+            imageData = nil
+            imageIsSaved = false
+            await updatePreviewImage(for: nil)
         }
         displayedDraft = draftSnapshot
     }
 
     private func applyValues(_ draft: KMReceiptDraft) {
+        blockedByUnclassifiedItems = false
+        manualCategoryItemOrder = []
         merchant = draft.merchant
         amount = draft.totalAmountText
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
         time = draft.purchasedTime ?? ""
+        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(draft.taxes ?? [])
+        taxes = resolvedTaxes
+        taxAmountTexts = resolvedTaxes.map { String($0.taxAmountYen) }
         tax = draft.taxAmountText
         memo = draft.memo ?? ""
         excluded = draft.excludedFromSpending
@@ -164,21 +208,39 @@ final class KMReceiptModel {
     }
 
     private func applyValues(_ receipt: KMReceipt) {
+        blockedByUnclassifiedItems = false
+        manualCategoryItemOrder = []
         let confirmed = receipt.confirmedValue
         let extraction = receipt.extraction?.documentKind == .receipt ? receipt.extraction : nil
         merchant = confirmed?.merchant ?? extraction?.merchant ?? ""
         amount = (confirmed?.totalAmountYen ?? extraction?.totalAmountYen).map(String.init) ?? ""
         date = (confirmed?.purchasedDate ?? extraction?.purchasedDate ?? today).rawValue
         time = confirmed?.purchasedTime ?? extraction?.purchasedTime ?? ""
-        tax = (confirmed?.taxAmountYen ?? extraction?.taxAmountYen).map(String.init) ?? ""
+        let sourceTaxes = confirmed != nil ? (confirmed?.taxes ?? []) : (extraction?.taxes ?? [])
+        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(sourceTaxes)
+        taxes = resolvedTaxes
+        taxAmountTexts = resolvedTaxes.map { String($0.taxAmountYen) }
+        let resolvedTaxYen: Int?
+        if let confirmed {
+            resolvedTaxYen = confirmed.taxAmountYen ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
+        } else if resolvedTaxes.count > 1 {
+            resolvedTaxYen = try? KMReceiptPresentation.totalTaxYen(resolvedTaxes)
+        } else {
+            resolvedTaxYen = extraction?.taxAmountYen ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
+        }
+        tax = resolvedTaxYen.map(String.init) ?? ""
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
         categoryId = confirmed?.categoryId ?? receipt.aiSuggestion.categoryId ?? ""
         accountId = confirmed?.accountId ?? accountId
-        items = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
+        let rawItems = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
             KMReceiptItem(id: "receipt-item:\(receipt.id):\(i)", name: item.name, amountYen: item.amountYen,
                 quantity: item.quantity, unitPriceYen: item.unitPriceYen,
-                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil })
+                categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil },
+                taxRatePercent: item.taxRatePercent)
         }
+        items = KMReceiptPresentation.resolvedItemsForDisplay(
+            rawItems, status: receipt.registration.status, confirmedCategoryId: confirmed?.categoryId
+        )
         adjustments = confirmed?.adjustments ?? (extraction?.adjustments ?? []).enumerated().map { i, adjustment in
             KMReceiptAdjustment(id: "receipt-adjustment:\(receipt.id):\(i)", label: adjustment.label, amountYen: adjustment.amountYen,
                 targetItemId: adjustment.targetItemIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil })
@@ -196,9 +258,18 @@ final class KMReceiptModel {
         }
     }
 
+    private func recordManualItemCategory(_ itemId: String, categoryId: String?) {
+        manualCategoryItemOrder.removeAll { $0 == itemId }
+        if !KMReceiptPresentation.isUnclassifiedCategory(categoryId) {
+            manualCategoryItemOrder.append(itemId)
+        }
+    }
+
     func setItemCategory(_ itemId: String, categoryId: String?) {
         guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
         items[index].categoryId = categoryId
+        recordManualItemCategory(itemId, categoryId: categoryId)
+        clearUnclassifiedBlockIfResolved()
     }
 
     func setAllItemCategories(_ categoryId: String?) {
@@ -206,6 +277,16 @@ final class KMReceiptModel {
             var updated = item
             updated.categoryId = categoryId
             return updated
+        }
+        // A bulk setting is not a per-item choice: it applies to this receipt only and never becomes an instant rule.
+        manualCategoryItemOrder = []
+        clearUnclassifiedBlockIfResolved()
+    }
+
+    private func clearUnclassifiedBlockIfResolved() {
+        if blockedByUnclassifiedItems && !hasUnclassifiedItems {
+            blockedByUnclassifiedItems = false
+            error = nil
         }
     }
 
@@ -242,12 +323,14 @@ final class KMReceiptModel {
 
     func removeItem(_ itemId: String) {
         items.removeAll { $0.id == itemId }
+        manualCategoryItemOrder.removeAll { $0 == itemId }
         adjustments = adjustments.map { adjustment in
             guard adjustment.targetItemId == itemId else { return adjustment }
             var updated = adjustment
             updated.targetItemId = nil
             return updated
         }
+        clearUnclassifiedBlockIfResolved()
     }
 
     func adjustmentIsAddition(for adjustmentId: String) -> Bool {
@@ -301,6 +384,54 @@ final class KMReceiptModel {
         adjustmentIsAddition.removeValue(forKey: adjustmentId)
     }
 
+    func taxAmountText(at index: Int) -> String {
+        if taxAmountTexts.indices.contains(index) { return taxAmountTexts[index] }
+        guard taxes.indices.contains(index) else { return "" }
+        return String(taxes[index].taxAmountYen)
+    }
+
+    func setTaxAmount(at index: Int, value: String) {
+        guard taxes.indices.contains(index) else { return }
+        if taxAmountTexts.count != taxes.count {
+            taxAmountTexts = taxes.map { String($0.taxAmountYen) }
+        }
+        taxAmountTexts[index] = value
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            taxes[index].taxAmountYen = 0
+        } else if let parsed = try? KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true) {
+            taxes[index].taxAmountYen = parsed
+        }
+        syncCombinedTaxFromRates()
+    }
+
+    func setSingleTax(_ value: String) {
+        tax = value
+        guard taxes.count == 1 else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            taxes[0].taxAmountYen = 0
+            taxAmountTexts = [""]
+        } else if let parsed = try? KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true) {
+            taxes[0].taxAmountYen = parsed
+            taxAmountTexts = [value]
+        } else {
+            taxAmountTexts = [value]
+        }
+    }
+
+    private func syncCombinedTaxFromRates() {
+        guard !taxes.isEmpty else { return }
+        if taxAmountTexts.count == taxes.count,
+           taxAmountTexts.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            tax = ""
+            return
+        }
+        if let sum = try? KMReceiptPresentation.totalTaxYen(taxes) {
+            tax = String(sum)
+        }
+    }
+
     /// PWA local-ui.ts:saveImage — save the original before any AI read, then edit that receipt.
     func selectImage(_ data: Data, contentType: String) async {
         stopWaiting()
@@ -313,15 +444,51 @@ final class KMReceiptModel {
                 replacingReceiptId: receipt?.id, at: now)
             receipt = saved
             imageData = data; imageIsSaved = true
+            await updatePreviewImage(for: data)
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
-            categoryId = ""; items = []; adjustments = []; adjustmentIsAddition = [:]
-            reviewed = []; status = nil; error = nil
+            categoryId = ""; taxes = []; taxAmountTexts = []; items = []; adjustments = []; adjustmentIsAddition = [:]
+            manualCategoryItemOrder = []
+            reviewed = []; status = nil; error = nil; blockedByUnclassifiedItems = false
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
             imageData = nil; imageIsSaved = false
+            previewRevision = UUID()
+            previewTask?.cancel(); previewTask = nil; previewImage = nil; isDecodingPreview = false
             self.error = error.localizedDescription
         }
+    }
+
+    private func updatePreviewImage(for data: Data?) async {
+        previewRevision = UUID()
+        let token = previewRevision
+        previewTask?.cancel()
+        guard let data else {
+            previewTask = nil
+            isDecodingPreview = false
+            previewImage = nil
+            return
+        }
+        isDecodingPreview = true
+        let task = Task.detached(priority: .userInitiated) {
+            Self.decodePreviewCGImage(from: data)
+        }
+        previewTask = task
+        let cgImage = await task.value
+        // A newer call owns the state; otherwise always resolve the flag, even if this caller was cancelled.
+        guard previewRevision == token else { return }
+        isDecodingPreview = false
+        previewImage = cgImage.map { UIImage(cgImage: $0) }
+    }
+
+    nonisolated private static func decodePreviewCGImage(from data: Data, maxPixelSize: Int = 1200) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true
+        ] as CFDictionary)
     }
 
     func review(_ warning: KMReceiptPresentation.Warning) async {
@@ -365,7 +532,9 @@ final class KMReceiptModel {
         do {
             try await repositories.receipts.saveReceiptDraft(draftSnapshot, receiptId: receipt.id, at: now)
             displayedDraft = draftSnapshot; draftSavedOnce = true
-            status = "入力内容を端末に保存しました。"
+            // Same text as main; assigned only when it changes so repeated saves do not re-render the view.
+            let savedMessage = "入力内容を端末に保存しました。"
+            if status != savedMessage { status = savedMessage }
         } catch let failure as KMDataError {
             // PWA local-ui.ts:putIfRecordExists shows this exact message instead of recreating.
             if case .notFound = failure { status = "この確認待ちレシートは削除されています。画面を開き直してください。" }
@@ -395,7 +564,7 @@ final class KMReceiptModel {
             return nil
         }
         revision = UUID(); let token = revision
-        phase = .reading; startedReading = Date(); error = nil; status = nil
+        phase = .reading; startedReading = Date(); error = nil; blockedByUnclassifiedItems = false; status = nil
         redactionPreview = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)
         operation = Task {
@@ -437,7 +606,7 @@ final class KMReceiptModel {
                 )
                 guard revision == token, !Task.isCancelled, var learnedReceipt = self.receipt else { return }
                 learnedReceipt.itemCategories = learning.itemCategoryIds
-                learnedReceipt.aiSuggestion = .init(categoryId: learning.categoryId,
+                learnedReceipt.aiSuggestion = .init(categoryId: extraction.items.isEmpty ? learning.categoryId : nil,
                     source: learning.appliedRules.isEmpty ? .unclassified : .learnedRule,
                     flowId: flow.uuidString, categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
                 learnedReceipt.updatedAt = now
@@ -472,7 +641,7 @@ final class KMReceiptModel {
                             learning.itemCategoryIds[index] ?? answers.answers["item_\(index)"]?.suggestedCategoryID
                         }
                         updated.itemCategories = categoriesByItem
-                        updated.aiSuggestion = .init(categoryId: categoriesByItem.first ?? nil,
+                        updated.aiSuggestion = .init(categoryId: nil,
                             source: .jev, model: answers.model, attemptedAt: now, flowId: flow.uuidString,
                             categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
                     }
@@ -593,7 +762,7 @@ final class KMReceiptModel {
         // Keep the latest edit before validation/registration; failed saves leave this draft for retry.
         await flushDraft()
         draftTask?.cancel(); draftTask = nil
-        saving = true; error = nil
+        saving = true; error = nil; blockedByUnclassifiedItems = false
         KMContactDiagnosticRecorder.shared.recordAction(.receiptSaveStarted, screen: .records)
         defer { saving = false }
         await reviewTask?.value
@@ -608,14 +777,25 @@ final class KMReceiptModel {
             if !time.isEmpty, time.range(of: #"^([01]\d|2[0-3]):[0-5]\d$"#, options: .regularExpression) == nil {
                 throw KMDataError.invalidData("時刻を確認してください。")
             }
-            let taxYen = tax.isEmpty ? nil : try KMEntryPresentation.parseAmountYen(tax, allowsZero: true)
+            let resolvedTax = try KMReceiptPresentation.reconciledTaxesForSave(
+                taxes: taxes, taxAmountTexts: taxAmountTexts, singleTaxText: tax
+            )
+            let taxYen = resolvedTax.taxAmountYen
+            let confirmedTaxes = resolvedTax.taxes
             // The repository owns allocation validation and posting, including mixed-category splits.
+            if !items.isEmpty {
+                let unclassified = unclassifiedItemCount
+                guard unclassified == 0 else {
+                    blockedByUnclassifiedItems = true
+                    throw KMDataError.invalidData("カテゴリが未選択の品目が\(unclassified)件あります。品目一覧でカテゴリを選択してください。")
+                }
+            }
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
             let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
                 purchasedTime: time.isEmpty ? nil : time, totalAmountYen: total, categoryId: fallback,
                 accountId: accountId, excludedFromSpending: excluded, memo: memo.isEmpty ? nil : memo,
-                taxAmountYen: taxYen, items: items, adjustments: adjustments)
+                taxAmountYen: taxYen, items: items, adjustments: adjustments, taxes: confirmedTaxes)
             if editing {
                 guard let current = receipt else { throw KMDataError.invalidData("登録済みのレシートを確認できません。記録一覧を開き直してください。") }
                 try await ensureCurrent(current)
@@ -652,13 +832,36 @@ final class KMReceiptModel {
     }
 
     private func saveLearning(receiptId: String, fallback: String, repositories: KMRepositories, successMessage: String) async {
-        guard let observation = KMCategoryLearningService.observation(
+        let availableCategoryIds = Set(categories.map(\.id))
+        let observation = KMCategoryLearningService.observation(
             receiptId: receiptId, merchant: merchant, defaultCategoryId: fallback,
             items: items.map { (name: $0.name, categoryId: $0.categoryId) },
-            availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
-        ) else { return }
-        do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
-        catch {
+            availableCategoryIds: availableCategoryIds, confirmedAt: now
+        )
+        let itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        let manualItems = manualCategoryItemOrder.compactMap { id -> (name: String, categoryId: String?)? in
+            guard let item = itemsByID[id] else { return nil }
+            return (name: item.name, categoryId: item.categoryId)
+        }
+        guard observation != nil || !manualItems.isEmpty else { return }
+        do {
+            // Rules the user disabled or deleted must not be revived by a manual classification.
+            var manualOverrides: [KMCategoryRuleOverride] = []
+            if !manualItems.isEmpty {
+                let existingRules = try await repositories.categoryLearning.categoryRules()
+                manualOverrides = KMCategoryLearningService.manualItemOverrides(
+                    items: manualItems,
+                    availableCategoryIds: availableCategoryIds,
+                    existingRules: existingRules
+                )
+            }
+            if let observation {
+                try await repositories.categoryLearning.saveCategoryObservation(observation)
+            }
+            for override in manualOverrides {
+                try await repositories.categoryLearning.setCategoryRuleOverride(override)
+            }
+        } catch {
             // PWA local-ui.ts reports the same failure for both edit and register saves.
             KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
             self.error = "\(successMessage)\(error.localizedDescription)"

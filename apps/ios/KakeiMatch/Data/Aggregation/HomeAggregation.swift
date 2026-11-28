@@ -99,6 +99,7 @@ struct KMHomeBudgetScale: Equatable, Sendable {
 }
 
 struct KMHomeCategorySlice: Equatable, Sendable {
+    var categoryId: String? = nil
     var name: String
     var amountYen: Int
     /// nil is PWA tone-rest (other-soft), not the foreground of tone-other.
@@ -121,13 +122,13 @@ enum KMHomeCategoryBreakdown {
             let preferred = KMCategoryTone.visual(name: category.categoryName, id: category.categoryId).tone
             let tone = used.contains(preferred) ? KMCategoryTone.allCases.first { $0 != .other && !used.contains($0) }! : preferred
             used.insert(tone)
-            return .init(name: category.categoryName, amountYen: category.amountYen, tone: tone,
+            return .init(categoryId: category.categoryId, name: category.categoryName, amountYen: category.amountYen, tone: tone,
                          share: Decimal(category.amountYen) / total,
                          percentage: percentage(category.amountYen, total: summary.expenseYen))
         }
         let rest = positive.dropFirst(3).reduce(0) { $0 + $1.amountYen }
         if rest > 0 {
-            slices.append(.init(name: "その他", amountYen: rest, tone: nil, share: Decimal(rest) / total,
+            slices.append(.init(categoryId: nil, name: "その他", amountYen: rest, tone: nil, share: Decimal(rest) / total,
                                 percentage: percentage(rest, total: summary.expenseYen)))
         }
         return slices
@@ -148,6 +149,7 @@ enum KMHomeCategoryBreakdown {
 
 /// One row of the expanded "all categories" list; order follows the monthly summary.
 struct KMHomeCategoryRow: Equatable, Sendable {
+    var categoryId: String? = nil
     var name: String
     var amountYen: Int
     var percentage: String
@@ -171,7 +173,7 @@ enum KMHomeAggregation {
                         attention: KMHomeAttention.make(run: run, resolutions: resolutions, suspected: suspected, statements: statements),
                         categorySlices: KMHomeCategoryBreakdown.make(snapshot.summary),
                         categoryRows: snapshot.summary.categories.map {
-                            KMHomeCategoryRow(name: $0.categoryName, amountYen: $0.amountYen,
+                            KMHomeCategoryRow(categoryId: $0.categoryId, name: $0.categoryName, amountYen: $0.amountYen,
                                               percentage: KMHomeCategoryBreakdown.percentage($0.amountYen, total: snapshot.summary.expenseYen))
                         },
                         budgetScale: KMHomeBudgetScale.make(summary: snapshot.budget, today: today))

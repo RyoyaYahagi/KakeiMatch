@@ -22,6 +22,7 @@ struct ReconciliationView: View {
     @State private var suspectedExpanded = false
     @State private var expandedRows: Set<String> = []
     @State private var confirmation: Confirmation?
+    @State private var selectedLinkAccountId = ""
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private struct Confirmation: Identifiable {
@@ -94,6 +95,8 @@ struct ReconciliationView: View {
                         .font(KMTypography.note).foregroundStyle(KMColor.muted)
                         .lineSpacing(5).accessibilityIdentifier("reconciliation.runStatus")
                     failures
+                    accountLinkPromptSection
+                    importSummarySection
                     tiles(scroll)
                     attention(scroll)
                     if model.presentation.waiting > 0 {
@@ -131,6 +134,9 @@ struct ReconciliationView: View {
             expandedRows = []; matchedExpanded = false; ignoredExpanded = false
             suspectedExpanded = false; importerExpanded = false
         }
+        .onChange(of: model.accountLinkPrompt) { _, _ in
+            selectedLinkAccountId = ""
+        }
         .alert(item: $confirmation) { value in
             Alert(title: Text(value.title), message: Text(value.message),
                   primaryButton: .default(Text(value.title)) { perform(value.action) }, secondaryButton: .cancel(Text("キャンセル")))
@@ -157,6 +163,153 @@ struct ReconciliationView: View {
                 actionTitle: decision.undoRequestedAt != nil ? "取り消しを再試行する" : "反映を再試行する",
                 action: { perform(.retry(decision)) })
         }
+    }
+    @ViewBuilder private var accountLinkPromptSection: some View {
+        if let prompt = model.accountLinkPrompt, !model.linkableAccounts.isEmpty {
+            let providerLabel = KMStatementDownload.label(prompt.provider)
+            let selectedName = model.linkableAccounts.first { $0.id == selectedLinkAccountId }?.name
+            VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                Text("\(providerLabel)の支払元が未設定です")
+                    .font(KMTypography.body(15, weight: .bold))
+                    .foregroundStyle(KMColor.text)
+                Text("支払元を選んで紐付けると、記録の作成時に自動で入力されます。")
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                Menu {
+                    Picker("支払元", selection: $selectedLinkAccountId) {
+                        Text("支払元を選択してください").tag("")
+                        ForEach(model.linkableAccounts) { account in
+                            Text(account.name).tag(account.id)
+                        }
+                    }
+                } label: {
+                    HStack {
+                        Text(selectedName ?? "支払元を選択してください")
+                            .foregroundStyle(selectedName == nil ? KMColor.muted : KMColor.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        KMIcon(name: "chevronDown", size: 18)
+                            .foregroundStyle(KMColor.muted)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                }
+                .accessibilityLabel("支払元、\(selectedName ?? "未選択")")
+                .accessibilityIdentifier("reconciliation.accountLinkPrompt.account")
+                .padding(.horizontal, 12)
+                .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+                .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.borderStrong, lineWidth: 1) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: KMSpacing.space2) {
+                            linkPromptButtons
+                        }
+                    } else {
+                        HStack(spacing: KMSpacing.space2) {
+                            linkPromptButtons
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(KMSpacing.space3)
+            .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+            .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.border, lineWidth: 1) }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("reconciliation.accountLinkPrompt")
+        }
+    }
+    @ViewBuilder private var linkPromptButtons: some View {
+        Button("紐付ける") {
+            let accountId = selectedLinkAccountId
+            Task { await model.linkAccount(id: accountId, repositories: repositories) }
+        }
+        .buttonStyle(KMButtonStyle(role: .primary))
+        .disabled(selectedLinkAccountId.isEmpty || model.isBusy)
+        .accessibilityIdentifier("reconciliation.accountLinkPrompt.save")
+        Button("後で") {
+            model.dismissAccountLinkPrompt()
+        }
+        .buttonStyle(KMButtonStyle(role: .secondary))
+        .accessibilityIdentifier("reconciliation.accountLinkPrompt.dismiss")
+    }
+    @ViewBuilder private var importSummarySection: some View {
+        if !model.presentation.importSummaries.isEmpty {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("取り込みごとの状況")
+                    .font(KMTypography.body(14, weight: .bold))
+                    .foregroundStyle(KMColor.muted)
+                    .padding(.bottom, KMSpacing.space1)
+                ForEach(model.presentation.importSummaries) { summary in
+                    rule
+                    importSummaryRow(summary)
+                }
+                rule
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("reconciliation.importSummaries")
+        }
+    }
+    private func importSummaryRow(_ summary: KMReconciliationPresentation.ImportSummary) -> some View {
+        VStack(alignment: .leading, spacing: KMSpacing.space1) {
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: KMSpacing.space1) {
+                        importSummaryTitle(summary)
+                        importUnprocessedBadge(summary.unprocessed)
+                    }
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: KMSpacing.space2) {
+                        importSummaryTitle(summary)
+                        Spacer(minLength: 4)
+                        importUnprocessedBadge(summary.unprocessed)
+                    }
+                }
+            }
+            Text("全\(summary.total)件 · 処理済み \(summary.processed)件")
+                .font(KMTypography.body(13, weight: .semibold))
+                .foregroundStyle(KMColor.text)
+            Text(summary.breakdownLabel)
+                .font(KMTypography.note)
+                .foregroundStyle(KMColor.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if summary.csvNeedsReviewCount > 0 {
+                Text("CSV取込時の要確認 \(summary.csvNeedsReviewCount)件（明細未作成のため件数外）")
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, KMSpacing.space2)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("reconciliation.importSummary.\(summary.id)")
+    }
+    private func importSummaryTitle(_ summary: KMReconciliationPresentation.ImportSummary) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(KMStatementDownload.label(summary.provider))
+                .font(KMTypography.body(15, weight: .bold))
+                .foregroundStyle(KMColor.text)
+            if let importedAt = summary.importedAt {
+                Text(KMReconciliationPresentation.timestamp(importedAt))
+                    .font(KMTypography.note)
+                    .foregroundStyle(KMColor.muted)
+            }
+        }
+    }
+    private func importUnprocessedBadge(_ count: Int) -> some View {
+        let hasRemaining = count > 0
+        return HStack(spacing: 4) {
+            KMIcon(name: hasRemaining ? "warning" : "check", size: 14)
+            Text("未処理")
+                .font(KMTypography.body(12, weight: .bold))
+            Text("\(count)件")
+                .font(KMTypography.number(15, weight: .bold))
+        }
+        .foregroundStyle(hasRemaining ? KMColor.cUtil : KMColor.cDaily)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .background(hasRemaining ? KMColor.cUtilSoft : KMColor.cDailySoft, in: Capsule())
     }
     private func tiles(_ scroll: ScrollViewProxy) -> some View {
         let p = model.presentation
@@ -230,13 +383,9 @@ struct ReconciliationView: View {
                             ReconciliationReviewBody(row: row, model: model, perform: perform, suspect: {
                                 confirmation = Confirmation(title: "不正利用？", message: "心当たりがない利用としてマークしますか？不正利用と確定する操作ではありません。", action: .suspect(row.id))
                             }, createRecord: { statement in
-                                let sourceAccount = model.accounts.filter { !$0.closed && $0.statementProvider == statement.provider }
-                                let importedAccount = model.imports.first { $0.id == statement.importId }?.value.accountId
-                                let accountId = importedAccount.flatMap { id in
-                                    model.accounts.contains(where: { !$0.closed && $0.id == id }) ? id : nil
-                                } ?? (sourceAccount.count == 1 ? sourceAccount[0].id : nil)
-                                onCreateRecord(.init(amountYen: statement.amountYen, payee: statement.merchant,
-                                    date: statement.usedDate, accountId: accountId))
+                                Task {
+                                    onCreateRecord(await model.entryInitialValues(for: statement, repositories: repositories))
+                                }
                             })
                         }
                     }.id(row.id)

@@ -77,7 +77,8 @@ struct StatementParserTests {
         #expect(KMStatementParser.parse(data: Data(), provider: .paypayCard).fatalErrors.first?.code == "empty_file")
         #expect(KMStatementParser.parse(data: data("\(paypayHeader)"), provider: .paypayCard).fatalErrors.first?.code == "header_only")
         #expect(KMStatementParser.parse(data: data("x,y\n1,2"), provider: .rakutenCard).fatalErrors.first?.code == "header_mismatch")
-        #expect(KMStatementParser.parse(data: data("a,b\n1,2"), provider: .aeonCard).fatalErrors.first?.code == "unsupported_provider")
+        #expect(KMStatementParser.parse(data: data("a,b\n1,2"), provider: .aeonCard).fatalErrors.first?.code == "unsupported_layout")
+        #expect(KMStatementParser.parse(data: data("a,b\n1,2"), provider: .paypay).fatalErrors.first?.code == "unsupported_provider")
         #expect(KMStatementParser.parse(data: data("\"broken"), provider: .rakutenCard).fatalErrors.first?.code == "malformed_csv")
     }
 
@@ -244,5 +245,123 @@ struct StatementParserTests {
         #expect(unsafeAggregate.fatalErrors.first?.code == "unsupported_layout")
         let wrongDetailWidth = KMStatementParser.parse(text: "SYNTHETIC MEMBER,SYNTHETIC CARD,SYNTHETIC STATEMENT\n2026/09/28,人工店舗,1200,１,１,1200\n,,,,,1200,", provider: .smbcCard, encoding: "cp932")
         #expect(wrongDetailWidth.fatalErrors.first?.code == "unsupported_layout")
+    }
+
+    private func aeonSyntheticRows(billed: String = "2000", details: [[String]] = [], splitDetails: [[String]] = []) -> [[String]] {
+        var rows: [[String]] = [
+            ["ご利用カード", "合成イオンカード", "", "", "", "", "", "", ""],
+            ["今回ご請求金額", billed, "", "", "", "", "", "", ""],
+            ["お支払い日", "2026年 2月 2日", "", "", "", "", "", "", ""],
+            ["ご指定口座", "", "", "", "", "", "", "", ""],
+            ["金融機関", "支店", "口座番号", "名義人", "", "", "", "", ""],
+            ["ｼﾝｾﾃｨｯｸ", "ｶｸｳ", "1234567", "ｻﾄｳ ﾀﾛｳ", "", "", "", "", ""],
+            ["ご利用明細", "", "", "", "", "", "", "", ""],
+            ["ご利用日", "利用者区分", "ご利用先", "支払方法", "", "", "ご利用金額", "備考", ""],
+        ]
+        rows.append(contentsOf: details)
+        rows.append(["分割・ボーナス払い明細", "", "", "", "", "", "", "", ""])
+        rows.append(["ご利用日", "ご利用先", "支払回数", "ご利用金額", "実質年率", "お支払い総額", "今回ご請求金額", "内手数料", "今回回数"])
+        rows.append(contentsOf: splitDetails)
+        return rows
+    }
+
+    private func aeonShiftJISData(_ rows: [[String]]) -> Data {
+        let text = rows.map { $0.joined(separator: ",") }.joined(separator: "\r\n") + "\r\n"
+        return text.data(using: .shiftJIS)!
+    }
+
+    @Test func decodesShiftJISAeonStatementSkipsMetadataAndSumsOneTimePurchases() {
+        let details = [
+            ["260110", "本人", "人工スーパー", "１回", "", "", "1200", "ポイント対象", ""],
+            ["260110", "本人", "人工スーパー", "１回", "", "", "1200", "", ""],
+            ["260115", "本人", "架空ドラッグ　北店", "１回", "", "", "800", "ポイント増量対象", ""],
+        ]
+        let parsed = KMStatementParser.parse(data: aeonShiftJISData(aeonSyntheticRows(billed: "3200", details: details)), provider: .aeonCard)
+        #expect(parsed.encoding == "cp932")
+        #expect(parsed.headerSignature == "aeon-card-cp932-v1")
+        #expect(parsed.totalRows == 3)
+        #expect(parsed.fatalErrors.isEmpty)
+        #expect(parsed.excludedRows.isEmpty)
+        #expect(parsed.needsReviewRows.isEmpty)
+        #expect(parsed.transactions.count == 3)
+        #expect(parsed.transactions[0].provider == .aeonCard)
+        #expect(parsed.transactions[0].usedDate == KMDate(rawValue: "2026-01-10"))
+        #expect(parsed.transactions[0].merchant == "人工スーパー")
+        #expect(parsed.transactions[0].amountYen == 1200)
+        #expect(parsed.transactions[0].paymentMethod == "1回払い")
+        #expect(parsed.transactions.map(\.duplicateOrdinal) == [1, 2, 1])
+        #expect(parsed.transactions[2].usedDate == KMDate(rawValue: "2026-01-15"))
+        #expect(parsed.transactions[2].merchant == "架空ドラッグ　北店")
+        #expect(parsed.transactions[2].amountYen == 800)
+        let serialized = String(describing: parsed)
+        #expect(!serialized.contains("合成イオンカード"))
+        #expect(!serialized.contains("ｻﾄｳ ﾀﾛｳ"))
+        #expect(!serialized.contains("1234567"))
+
+        // Verify raw Shift_JIS bytes including half-width katakana and full-width １回.
+        var rawBytes = Data()
+        let prefix = [
+            "ご利用カード,合成カード,,,,,,,",
+            "今回ご請求金額,500,,,,,,,",
+            "お支払い日,2026年 2月 2日,,,,,,,",
+            "ご指定口座,,,,,,,,",
+            "金融機関,支店,口座番号,名義人,,,,,",
+        ].joined(separator: "\r\n").data(using: .shiftJIS)!
+        rawBytes.append(prefix)
+        rawBytes.append(Data("\r\n".utf8))
+        rawBytes.append(contentsOf: [0xb6, 0xb8, 0xb3]) // ｶｸｳ
+        rawBytes.append(Data(",,,,,,,,\r\n".utf8))
+        rawBytes.append("ご利用明細,,,,,,,,\r\nご利用日,利用者区分,ご利用先,支払方法,,,ご利用金額,備考,\r\n260120,本人,".data(using: .shiftJIS)!)
+        rawBytes.append(contentsOf: [0x82, 0xa0]) // あ
+        rawBytes.append(Data(",".utf8))
+        rawBytes.append(contentsOf: [0x82, 0x50, 0x89, 0xf1]) // １回
+        rawBytes.append(Data(",,,500,,\r\n".utf8))
+        rawBytes.append("分割・ボーナス払い明細,,,,,,,,\r\nご利用日,ご利用先,支払回数,ご利用金額,実質年率,お支払い総額,今回ご請求金額,内手数料,今回回数\r\n".data(using: .shiftJIS)!)
+        let rawParsed = KMStatementParser.parse(data: rawBytes, provider: .aeonCard)
+        #expect(rawParsed.fatalErrors.isEmpty)
+        #expect(rawParsed.transactions.first?.merchant == "あ")
+        #expect(rawParsed.transactions.first?.paymentMethod == "1回払い")
+        #expect(rawParsed.transactions.first?.amountYen == 500)
+    }
+
+    @Test func routesAeonSplitSectionAndReviewRowsSafely() {
+        let details = [
+            ["260110", "本人", "人工スーパー", "１回", "", "", "1200", "", ""],
+            ["260230", "本人", "人工不正日付", "１回", "", "", "300", "", ""],
+            ["260111", "本人", "人工二回店", "２回", "", "", "400", "", ""],
+            ["260112", "本人", "年会費", "１回", "", "", "500", "", ""],
+            ["260113", "本人", "人工ペア店舗", "１回", "", "", "600", "", ""],
+            ["260113", "本人", "人工ペア店舗", "１回", "", "", "-600", "", ""],
+        ]
+        let splitDetails = [
+            ["260105", "人工家電量販", "3回", "3000", "0.0", "3000", "1000", "0", "1"],
+        ]
+        let parsed = KMStatementParser.parse(
+            data: aeonShiftJISData(aeonSyntheticRows(billed: "2200", details: details, splitDetails: splitDetails)),
+            provider: .aeonCard
+        )
+        #expect(parsed.fatalErrors.isEmpty)
+        #expect(parsed.totalRows == 7)
+        #expect(parsed.transactions.map(\.merchant) == ["人工スーパー"])
+        #expect(parsed.needsReviewRows == [
+            .init(rowNumber: 10, reason: "利用日を確認できません"),
+            .init(rowNumber: 11, reason: "1回払い以外の可能性があります"),
+            .init(rowNumber: 12, reason: "特殊な利用の可能性があります"),
+            .init(rowNumber: 13, reason: "同じCSVにキャンセル明細があるため確認してください"),
+            .init(rowNumber: 14, reason: "返金・取消の可能性があります"),
+            .init(rowNumber: 17, reason: "分割・ボーナス払い明細のため確認してください"),
+        ])
+    }
+
+    @Test func rejectsInvalidAeonLayoutsHeaderOnlyAndMismatchedTotals() {
+        #expect(KMStatementParser.parse(data: aeonShiftJISData(aeonSyntheticRows(billed: "0")), provider: .aeonCard).fatalErrors.first?.code == "header_only")
+        let wrongTotal = aeonSyntheticRows(billed: "9999", details: [["260110", "本人", "人工スーパー", "１回", "", "", "1200", "", ""]])
+        #expect(KMStatementParser.parse(data: aeonShiftJISData(wrongTotal), provider: .aeonCard).fatalErrors.first?.code == "unsupported_layout")
+        let missingSplit = Array(aeonSyntheticRows(billed: "1200", details: [["260110", "本人", "人工スーパー", "１回", "", "", "1200", "", ""]]).dropLast(2))
+        #expect(KMStatementParser.parse(data: aeonShiftJISData(missingSplit), provider: .aeonCard).fatalErrors.first?.code == "unsupported_layout")
+        var wrongWidth = aeonSyntheticRows(billed: "1200", details: [["260110", "本人", "人工スーパー", "１回", "", "", "1200", "", ""]])
+        wrongWidth[7].removeLast()
+        #expect(KMStatementParser.parse(data: aeonShiftJISData(wrongWidth), provider: .aeonCard).fatalErrors.first?.code == "unsupported_layout")
+        #expect(KMStatementParser.parse(data: Data([0xff, 0xfe, 0x00, 0x00]), provider: .aeonCard).fatalErrors.first?.code == "invalid_file")
     }
 }

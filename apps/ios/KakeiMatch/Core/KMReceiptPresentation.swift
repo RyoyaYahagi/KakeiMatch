@@ -28,6 +28,64 @@ enum KMReceiptPresentation {
         return TotalCheck(difference: difference, taxMatches: difference != 0 && (tax ?? 0) > 0 && difference == tax)
     }
 
+    static func groupedTaxes(_ taxes: [KMReceiptTax]) -> [KMReceiptTax] {
+        var result: [KMReceiptTax] = []
+        for entry in taxes {
+            if let index = result.firstIndex(where: { $0.ratePercent == entry.ratePercent }),
+               let taxable = try? KMYen.add(result[index].taxableAmountYen, entry.taxableAmountYen),
+               let tax = try? KMYen.add(result[index].taxAmountYen, entry.taxAmountYen) {
+                result[index].taxableAmountYen = taxable
+                result[index].taxAmountYen = tax
+            } else {
+                result.append(entry)
+            }
+        }
+        return result
+    }
+
+    static func taxRateLabel(_ ratePercent: Decimal) -> String {
+        "\(NSDecimalNumber(decimal: ratePercent).stringValue)%"
+    }
+
+    static func totalTaxYen(_ taxes: [KMReceiptTax]) throws -> Int? {
+        guard !taxes.isEmpty else { return nil }
+        return try taxes.reduce(0) { try KMYen.add($0, $1.taxAmountYen) }
+    }
+
+    static func reconciledTaxesForSave(
+        taxes: [KMReceiptTax], taxAmountTexts: [String], singleTaxText: String
+    ) throws -> (taxAmountYen: Int?, taxes: [KMReceiptTax]?) {
+        if taxes.count > 1 {
+            let trimmedTexts = taxes.indices.map { index in
+                let raw = taxAmountTexts.indices.contains(index) ? taxAmountTexts[index] : String(taxes[index].taxAmountYen)
+                return raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            if trimmedTexts.allSatisfy(\.isEmpty) {
+                return (nil, nil)
+            }
+            var updated: [KMReceiptTax] = []
+            var total = 0
+            for (index, entry) in taxes.enumerated() {
+                let trimmed = trimmedTexts[index]
+                let amount = trimmed.isEmpty ? 0 : try KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true)
+                var next = entry
+                next.taxAmountYen = amount
+                updated.append(next)
+                total = try KMYen.add(total, amount)
+            }
+            return (total, updated)
+        }
+        let trimmed = singleTaxText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, nil) }
+        let taxYen = try KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true)
+        if taxes.count == 1 {
+            var updated = taxes[0]
+            updated.taxAmountYen = taxYen
+            return (taxYen, [updated])
+        }
+        return (taxYen, nil)
+    }
+
     static func warnings(_ extraction: KMReceiptExtraction?, reviewed: [Int]) -> [Warning] {
         guard let extraction else { return [] }
         let labels: [KMReceiptExtraction.WarningField: String] = [.merchant: "店名", .purchasedDate: "購入日", .purchasedTime: "時刻", .totalAmountYen: "合計金額", .taxAmountYen: "税額", .items: "品目", .adjustments: "値引き・調整"]
@@ -98,16 +156,37 @@ enum KMReceiptPresentation {
         return CategoryLearning(categoryId: categoryId, itemCategoryIds: itemCategoryIds, appliedRules: applied)
     }
 
-    /// Matches the PWA receipt summary: item amounts are grouped by the selected
-    /// category (or the receipt's default) and sorted from largest to smallest.
-    static func categoryTotals(items: [KMReceiptItem], defaultCategoryId: String,
+    static func isUnclassifiedCategory(_ categoryId: String?) -> Bool {
+        categoryId == nil || categoryId?.isEmpty == true
+    }
+
+    static func unclassifiedItemCount(items: [KMReceiptItem]) -> Int {
+        items.reduce(0) { count, item in
+            count + (isUnclassifiedCategory(item.categoryId) ? 1 : 0)
+        }
+    }
+
+    /// Resolves nil/empty item categories to `confirmedCategoryId` only for legacy `.applied` receipts.
+    static func resolvedItemsForDisplay(_ items: [KMReceiptItem], status: KMReceipt.RegistrationStatus?,
+                                        confirmedCategoryId: String?) -> [KMReceiptItem] {
+        guard status == .applied, let fallback = confirmedCategoryId, !fallback.isEmpty else { return items }
+        return items.map { item in
+            guard isUnclassifiedCategory(item.categoryId) else { return item }
+            var resolved = item
+            resolved.categoryId = fallback
+            return resolved
+        }
+    }
+
+    /// Groups item amounts by each item's selected category without folding nil items
+    /// into another category. Unselected items always appear first as the "未選択" bucket;
+    /// selected categories follow from largest to smallest.
+    static func categoryTotals(items: [KMReceiptItem],
                                categories: [KMCategory]) throws -> [CategoryTotal] {
         var order: [String] = []
         var totals: [String: Int] = [:]
         for item in items {
-            let itemCategory = item.categoryId.flatMap { $0.isEmpty ? nil : $0 }
-            let fallback = defaultCategoryId.isEmpty ? nil : defaultCategoryId
-            let key = itemCategory ?? fallback ?? ""
+            let key = item.categoryId.flatMap { $0.isEmpty ? nil : $0 } ?? ""
             if totals[key] == nil { order.append(key) }
             totals[key] = try KMYen.add(totals[key] ?? 0, item.amountYen ?? 0)
         }
@@ -118,7 +197,10 @@ enum KMReceiptPresentation {
             return (index: index, total: total)
         }
         let sorted = indexedTotals.sorted { lhs, rhs in
-            lhs.total.amountYen == rhs.total.amountYen ? lhs.index < rhs.index : lhs.total.amountYen > rhs.total.amountYen
+            let leftUnselected = lhs.total.categoryId == nil
+            let rightUnselected = rhs.total.categoryId == nil
+            if leftUnselected != rightUnselected { return leftUnselected }
+            return lhs.total.amountYen == rhs.total.amountYen ? lhs.index < rhs.index : lhs.total.amountYen > rhs.total.amountYen
         }
         return sorted.map(\.total)
     }

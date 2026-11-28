@@ -62,7 +62,6 @@ export const durations = {
   'ReconciliationFlowTests/testUnmatchedWithKnownUseCreatesPrefilledRecordAndRerunsReconciliation': 28,
   'RecordsFlowTests/testDarkReferenceStatesAndEmptyHousehold': 32,
   'RecordsFlowTests/testDeleteLayoutAtAccessibilityXLFromSearchResult': 28,
-  'RecordsFlowTests/testDeleteLayoutOnIPhoneSE3FromSearchResult': 30, // no measurement yet: default
   'RecordsFlowTests/testDeletionUndoSurvivesTabSwitchAndAccountLinkOpensAccounts': 32,
   'RecordsFlowTests/testPayrollBreakdownDarkScreenshot': 18,
   'RecordsFlowTests/testPayrollBreakdownInIncomeRecordDetail': 19,

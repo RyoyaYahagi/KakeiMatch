@@ -14,7 +14,12 @@ final class KMRecordsModel {
     enum Page { case list, search, detail, pending }
     var page = Page.list
     var filter = KMRecordsFilter.all
-    var search = KMRecordsSearchDraft()
+    var search = KMRecordsSearchDraft() {
+        didSet {
+            guard search != oldValue, page == .search, repositories != nil, !suppressLiveSearch else { return }
+            scheduleLiveSearch()
+        }
+    }
     var appliedSearch = KMRecordsSearchDraft()
     var days: [KMRecordDay] = []
     var searchRows: [KMTransaction] = []
@@ -31,11 +36,24 @@ final class KMRecordsModel {
     var editing: String?
     var searchOrigin = false
     var busy = false
+    var searching = false
     var loaded = false
     var error: String?
     var message: String?
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var revision = 0
+    @ObservationIgnored private var searchRevision = 0
+    @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var suppressLiveSearch = false
+
+    init(initialSearch: KMRecordsSearchDraft? = nil) {
+        if let initialSearch {
+            page = .search
+            searchOrigin = true
+            search = initialSearch
+            appliedSearch = initialSearch
+        }
+    }
 
     var pending: [KMReceipt] { receipts.filter { $0.registration.status != .applied && $0.registration.status != .deleted } }
     var changed: Bool { draft != originalDraft }
@@ -52,6 +70,7 @@ final class KMRecordsModel {
 
     func reload() async {
         guard let repositories else { error = "家計簿を開けませんでした。アプリを開き直してください。"; return }
+        cancelPendingSearch()
         revision += 1
         let request = revision
         busy = true; error = nil
@@ -74,23 +93,70 @@ final class KMRecordsModel {
 
     func showSearch() async {
         guard !busy else { return }
-        page = .search; searchOrigin = true; search = appliedSearch; editing = nil
+        page = .search; searchOrigin = true; editing = nil
+        suppressLiveSearch = true
+        search = appliedSearch
+        suppressLiveSearch = false
+        await performSearch()
+    }
+
+    func applyInitialSearch(_ draft: KMRecordsSearchDraft) async {
+        page = .search; searchOrigin = true; editing = nil
+        suppressLiveSearch = true
+        search = draft
+        appliedSearch = draft
+        suppressLiveSearch = false
         await performSearch()
     }
 
     func performSearch(clear: Bool = false) async {
+        guard repositories != nil, !busy else { return }
+        searchTask?.cancel()
+        searchTask = nil
+        if clear {
+            suppressLiveSearch = true
+            search = KMRecordsSearchDraft()
+            suppressLiveSearch = false
+        }
+        await executeSearch()
+    }
+
+    func waitForPendingSearch() async {
+        await searchTask?.value
+    }
+
+    private func scheduleLiveSearch() {
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            await self?.executeSearch()
+        }
+    }
+
+    private func cancelPendingSearch() {
+        searchTask?.cancel()
+        searchTask = nil
+        searchRevision += 1
+        searching = false
+    }
+
+    private func executeSearch() async {
         guard let repositories, !busy else { return }
-        if clear { search = KMRecordsSearchDraft() }
-        busy = true; error = nil
+        searchRevision += 1
+        let request = searchRevision
+        let draft = search
+        searching = true
+        error = nil
         do {
-            let query = try search.query()
+            let query = try draft.query()
             let rows = try await repositories.transactions.transactions(matching: query)
+            guard request == searchRevision else { return }
             let total = try KMRecordsPresentation.total(rows)
-            appliedSearch = search; searchRows = rows; searchTotal = total
+            appliedSearch = draft; searchRows = rows; searchTotal = total
         } catch {
+            guard request == searchRevision else { return }
             searchRows = []; searchTotal = 0; self.error = error.localizedDescription
         }
-        busy = false
+        if request == searchRevision { searching = false }
     }
 
     private func fetchSearch(_ draft: KMRecordsSearchDraft) async throws {
@@ -101,6 +167,7 @@ final class KMRecordsModel {
 
     func showList() async {
         guard !busy else { return }
+        cancelPendingSearch()
         page = .list; searchOrigin = false; editing = nil; selected = nil; selectedReceipt = nil; selectedPayroll = nil; draft = nil
         await reload()
     }
@@ -119,6 +186,7 @@ final class KMRecordsModel {
             message = "読み込み中です。少し待ってからもう一度お試しください。"
             return .busy
         }
+        cancelPendingSearch()
         busy = true; error = nil; message = nil
         let previousPage = page
         page = .detail

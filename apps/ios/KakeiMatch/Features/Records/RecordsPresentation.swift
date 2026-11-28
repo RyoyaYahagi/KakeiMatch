@@ -9,7 +9,7 @@ enum KMRecordsFilter: String, CaseIterable {
     var kind: KMTransactionKind? { KMTransactionKind(rawValue: rawValue) }
 }
 
-struct KMRecordsSearchDraft: Equatable {
+struct KMRecordsSearchDraft: Equatable, Sendable {
     var keyword = ""
     var startDate = ""
     var endDate = ""
@@ -18,6 +18,30 @@ struct KMRecordsSearchDraft: Equatable {
     var accountId = ""
     var minimum = ""
     var maximum = ""
+
+    static func forCategory(_ categoryId: String, in month: KMYearMonth) -> KMRecordsSearchDraft {
+        KMRecordsSearchDraft(
+            startDate: month.firstDay.rawValue,
+            endDate: month.lastDay.rawValue,
+            categoryId: categoryId
+        )
+    }
+
+    mutating func setStartDate(_ value: String) {
+        startDate = value
+        if !value.isEmpty, !endDate.isEmpty,
+           let start = try? KMDate(value), let end = try? KMDate(endDate), start > end {
+            endDate = value
+        }
+    }
+
+    mutating func setEndDate(_ value: String) {
+        endDate = value
+        if !value.isEmpty, !startDate.isEmpty,
+           let start = try? KMDate(startDate), let end = try? KMDate(value), end < start {
+            startDate = value
+        }
+    }
 
     func query() throws -> KMTransactionQuery {
         func amount(_ value: String) throws -> Int? {

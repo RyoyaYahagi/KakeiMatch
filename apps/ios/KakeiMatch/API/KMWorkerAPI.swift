@@ -484,7 +484,8 @@ actor KMWorkerAPI {
     func readReceipt(image: KMRedactedReceiptImage, flowID: UUID = UUID()) async throws -> KMReceiptExtraction {
         let body = try imageBody(image.upload, flowID: flowID, maskingConfirmed: nil)
         let token = try await accessToken()
-        let result: KMReceiptExtraction = try await send("POST", "/api/ai/gemini", body: body, authorization: "Bearer \(token)", shape: KMAPIShapes.receipt)
+        let result: KMReceiptExtraction = try await send("POST", "/api/ai/gemini", body: body, authorization: "Bearer \(token)",
+                                                         headers: ["X-KakeiMatch-Receipt-Schema": "2"], shape: KMAPIShapes.receipt)
         try KMAPIShapes.validateReceipt(result)
         return result
     }
@@ -614,7 +615,7 @@ actor KMWorkerAPI {
     }
 
     private func send<T: Decodable>(_ method: String, _ path: String, body: Data? = nil, authorization: String? = nil,
-                                    query: [URLQueryItem] = [], shape: KMAPIShape) async throws -> T {
+                                    headers: [String: String] = [:], query: [URLQueryItem] = [], shape: KMAPIShape) async throws -> T {
         try Task.checkCancellation()
         if configuration.originPolicy == .native, !appAttest.isSupported { throw KMAPIError.nativeUnsupported }
         var components = URLComponents(url: configuration.baseURL, resolvingAgainstBaseURL: false)!
@@ -625,6 +626,7 @@ actor KMWorkerAPI {
         request.cachePolicy = .reloadIgnoringLocalCacheData
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        for (field, value) in headers { request.setValue(value, forHTTPHeaderField: field) }
         if configuration.originPolicy == .existingWorkerCompatibility { request.setValue(configuration.origin, forHTTPHeaderField: "Origin") }
         var requestAuthorization = authorization
         if configuration.originPolicy == .native, requestAuthorization == nil {

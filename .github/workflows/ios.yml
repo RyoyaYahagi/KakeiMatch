@@ -2,7 +2,8 @@ name: iOS
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # labeled starts a run when ready-to-merge is added; the ui-tests condition decides what runs.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
     paths:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
@@ -37,7 +38,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.event_name == 'pull_request' && (github.event.pull_request.draft && format('pr-draft-{0}', github.run_id) || format('pr-{0}', github.event.pull_request.number)) || format('{0}-{1}', github.event_name, github.ref) }}
+  # A labeled run gets its own group so adding the label does not cancel a push run in progress.
+  group: ios-${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' && format('pr-{0}-labeled', github.event.pull_request.number) || (github.event.pull_request.draft && format('pr-draft-{0}', github.run_id) || format('pr-{0}', github.event.pull_request.number))) || format('{0}-{1}', github.event_name, github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
 
 env:
@@ -52,14 +54,71 @@ defaults:
 
 jobs:
   build:
-    if: ${{ !github.event.pull_request.draft }}
+    # Labeled runs build only for ready-to-merge, so other label changes do not use a macOS runner.
+    if: ${{ !github.event.pull_request.draft && (github.event.action != 'labeled' || github.event.label.name == 'ready-to-merge') }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          # A pull request checks out its merge commit; the first parent is the base branch.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 1 }}
+          # Full history lets the mtime restoration step recover each file's last
+          # commit timestamp for incremental DerivedData builds, while keeping HEAD^1
+          # for pull-request changed-path checks.
+          fetch-depth: 0
+      # actions/checkout resets all file mtimes to checkout time, which makes Xcode
+      # recompile every file even with a restored DerivedData cache. Restore each
+      # tracked file's mtime to its last commit timestamp (and keep PR-changed files
+      # at current time so they are always newer than any main cache). Failure is
+      # tolerated so a git timestamp hiccup never blocks the build.
+      - name: Restore source file mtimes from git history
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import time
+
+          root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True).strip()
+          tracked = set(
+              subprocess.check_output(["git", "-C", root, "ls-files", "-z"]).split(b"\x00")[:-1]
+          )
+          raw = subprocess.check_output(
+              ["git", "-C", root, "log", "-m", "--first-parent", "--format=%x00COMMIT:%ct%x00", "-z", "--name-only"]
+          )
+          mtimes = {}
+          cur_ts = None
+          for token in raw.split(b"\x00"):
+              token = token.lstrip(b"\n")
+              if not token:
+                  continue
+              if token.startswith(b"COMMIT:"):
+                  cur_ts = int(token[7:])
+              elif cur_ts is not None and token in tracked and token not in mtimes:
+                  mtimes[token] = cur_ts
+                  if len(mtimes) == len(tracked):
+                      break
+
+          restored = 0
+          for rel, ts in mtimes.items():
+              full = os.path.join(root.encode(), rel)
+              if os.path.lexists(full) and not os.path.islink(full):
+                  os.utime(full, (ts, ts))
+                  restored += 1
+
+          touched_pr = 0
+          if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
+              now = time.time()
+              changed = subprocess.check_output(
+                  ["git", "-C", root, "diff", "--name-only", "-z", "HEAD^1", "HEAD"]
+              ).split(b"\x00")[:-1]
+              for rel in changed:
+                  full = os.path.join(root.encode(), rel)
+                  if os.path.lexists(full) and not os.path.islink(full):
+                      os.utime(full, (now, now))
+                      touched_pr += 1
+
+          print(f"Restored mtime for {restored}/{len(tracked)} tracked files; touched {touched_pr} PR-changed files.")
+          PY
       # Spotlight indexing (mds/mdworker) competes with the build and simulator
       # for CPU on the hosted runner. Nothing in this workflow searches with
       # Spotlight. Failure is tolerated but reported as a warning.
@@ -84,6 +143,47 @@ jobs:
       # Booting here competes with the compiler for the runner's CPUs.
       - name: Select Xcode and simulator destination
         run: bash scripts/ci-simulator.sh select
+      - name: Compute DerivedData cache key metadata
+        id: cache-env
+        continue-on-error: true
+        run: |
+          xcode=$(xcodebuild -version | tr '\n' '-' | sed 's/[^A-Za-z0-9._-]/-/g; s/-*$//')
+          macos="$(sw_vers -productVersion)-$(sw_vers -buildVersion)"
+          echo "xcode=$xcode" >> "$GITHUB_OUTPUT"
+          echo "macos=$macos" >> "$GITHUB_OUTPUT"
+          echo "Cache metadata: macos=$macos xcode=$xcode"
+      # Recovery from a poisoned cache: bump the key prefix (e.g. ios-deriveddata-v1 -> v2)
+      # or delete the bad entry with `gh cache list` + `gh cache delete <id>`.
+      # Keep hashFiles inputs strictly to tracked files (no Package.resolved glob, because
+      # xcodebuild creates untracked Package.resolved files during the build).
+      - name: Restore DerivedData cache
+        id: deriveddata-cache
+        if: steps.cache-env.outputs.xcode != '' && steps.cache-env.outputs.macos != ''
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/ios/DerivedData
+          key: ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift') }}-${{ hashFiles('apps/ios/KakeiMatch/**', 'apps/ios/KakeiMatchTests/**', 'apps/ios/KakeiMatchUITests/**', 'test/fixtures/ios-parity/**', 'test/fixtures/muse-snapshot/**') }}
+          restore-keys: |
+            ios-deriveddata-v1-${{ runner.os }}-${{ steps.cache-env.outputs.macos }}-${{ steps.cache-env.outputs.xcode }}-${{ hashFiles('apps/ios/project.yml', 'apps/ios/Package.swift') }}-
+      - name: Discard partial DerivedData after cache restore failure
+        if: steps.deriveddata-cache.outcome == 'failure'
+        continue-on-error: true
+        run: rm -rf DerivedData
+      - name: Report DerivedData cache restore status
+        if: always()
+        continue-on-error: true
+        run: |
+          hit="${{ steps.deriveddata-cache.outputs.cache-hit }}"
+          matched="${{ steps.deriveddata-cache.outputs.cache-matched-key }}"
+          outcome="${{ steps.deriveddata-cache.outcome }}"
+          echo "DerivedData cache outcome=$outcome hit=${hit:-false} matched=${matched:-none}"
+          {
+            echo "### DerivedData cache"
+            echo "- Restore outcome: \`${outcome:-skipped}\`"
+            echo "- Exact cache hit: \`${hit:-false}\`"
+            echo "- Matched key: \`${matched:-none}\`"
+          } >> "$GITHUB_STEP_SUMMARY" || true
       - name: Run macOS core tests without a simulator
         run: swift test --package-path .
       - name: Validate UI shard coverage
@@ -128,9 +228,12 @@ jobs:
           "$RUNNER_TEMP/xcodegen-release/xcodegen/bin/xcodegen" generate
       - name: Build once for all test jobs
         run: |
+          defaults write com.apple.dt.XCBuild IgnoreFileSystemDeviceInodeChanges -bool YES || true
           xcodebuild -project KakeiMatch.xcodeproj -scheme KakeiMatch -configuration Debug \
             -destination "$DESTINATION" -derivedDataPath DerivedData \
-            -resultBundlePath Build.xcresult build-for-testing CODE_SIGNING_ALLOWED=NO
+            -resultBundlePath Build.xcresult build-for-testing \
+            -enableCodeCoverage NO \
+            CODE_SIGNING_ALLOWED=NO IgnoreFileSystemDeviceInodeChanges=YES
       - name: Package test products preserving permissions and symlinks
         run: tar -czf test-products.tar.gz -C DerivedData/Build Products
       - uses: actions/upload-artifact@v4
@@ -154,17 +257,38 @@ jobs:
           path: apps/ios/Build.xcresult
           if-no-files-found: warn
           retention-days: 14
+      # Index.noindex is large and unused by xcodebuild; remove it before saving.
+      # Save only on pushes to main so PR runs reuse main's warm cache without growing
+      # total repository cache usage. Reuse the primary key computed during restore so
+      # untracked build outputs cannot shift the save key away from the restore key.
+      - name: Remove DerivedData Index before caching
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        run: rm -rf DerivedData/Index.noindex
+      - name: Save DerivedData cache
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.deriveddata-cache.outputs.cache-primary-key != '' && steps.deriveddata-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: apps/ios/DerivedData
+          key: ${{ steps.deriveddata-cache.outputs.cache-primary-key }}
 
   # Shard 0 also runs the Swift Testing unit tests on its simulator. A separate job
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
-  # Shards start with build rather than after it, so each simulator boots while build compiles.
+  # Shards start after build completes (needs: build), so they do not hold macOS runners while waiting for build artifacts.
   # The shard list is fixed to UI_SHARD_COUNT; build fails if the matrix, UI_SHARD_COUNT and ui-shards.json disagree.
+  # On pull requests, ui-tests runs only with the ready-to-merge label (a skipped job uses no macOS runner).
+  # Pushes to main and manual runs always run it, so post-merge checks and the UX run keep working.
   ui-tests:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready-to-merge')) }}
+    needs: build
     runs-on: macos-26
-    timeout-minutes: 35
+    # Shards start after build completes (needs: build), so build queue/run time does not count
+    # toward this limit. Kept at 75 minutes for now as headroom around runner setup and the
+    # per-step limits (Swift Testing 10, XCUITest 26).
+    timeout-minutes: 75
     # Job permissions replace the workflow's, so contents: read is repeated.
-    # actions: read is only for listing this run's artifacts while waiting for build.
+    # actions: read is only for listing this run's jobs and artifacts in the build-artifact check step.
     permissions:
       contents: read
       actions: read
@@ -207,18 +331,32 @@ jobs:
       - name: Select Xcode and start simulator in background
         run: bash scripts/ci-simulator.sh start
       # build uploads ios-test-products after its swift test and build-for-testing pass.
-      # Wait while build is queued or running; the job timeout is the outer limit.
-      # Fail at once if build ends without the upload, or if the upload is still missing
-      # 300 seconds after build succeeded.
+      # Because ui-tests has needs: build, the artifact is normally already available; this
+      # step verifies it and waits up to 300 seconds after build succeeded if the upload is
+      # not yet visible in the API. A failed API call is retried, so one transient error
+      # does not end the check.
       - name: Wait for build artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # Each call has a 60-second limit; a failed or timed-out call is retried up to 5 times.
+          api() {
+            local attempt output
+            for attempt in 1 2 3 4 5; do
+              if output=$(perl -e 'alarm 60; exec @ARGV' gh api "$@"); then
+                printf '%s\n' "$output"
+                return 0
+              fi
+              echo "::warning::gh api failed (attempt $attempt of 5): $1" >&2
+              sleep 10
+            done
+            return 1
+          }
           started=$(date +%s)
           build_completed_at=""
           last_build_status=""
           while :; do
-            build=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+            build=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
               --jq '.jobs[] | select(.name == "build") | [.status, (.conclusion // "")] | @tsv')
             build_status=${build%%$'\t'*}
             build_conclusion=${build#*$'\t'}
@@ -226,7 +364,7 @@ jobs:
               echo "build job: ${build_status:-not listed} ${build_conclusion}"
               last_build_status=$build_status
             fi
-            artifacts=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=ios-test-products" \
+            artifacts=$(api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=ios-test-products" \
               --jq '[.artifacts[] | select(.expired | not)] | length')
             if [ "$artifacts" -gt 0 ]; then
               break
@@ -327,6 +465,7 @@ jobs:
           fi
           observe_ios_test swift-testing xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UnitTests.xcresult -parallel-testing-enabled NO \
+            -enableCodeCoverage NO \
             -only-testing:KakeiMatchTests test-without-building
       - name: Generate parity report
         if: always() && matrix.shard == 0
@@ -365,6 +504,7 @@ jobs:
           fi
           observe_ios_test xcuitest xcodebuild -xctestrun "${xctestruns[0]}" -destination "$DESTINATION" \
             -resultBundlePath UITests.xcresult -parallel-testing-enabled NO \
+            -enableCodeCoverage NO \
             "${test_args[@]}" test-without-building
       - name: Export screenshots
         if: always()

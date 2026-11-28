@@ -28,6 +28,55 @@ struct RecordsPresentationTests {
         #expect(throws: (any Error).self) { try draft.query() }
     }
 
+    @Test func dateRangeSettersBuildStartAndEndWithoutReversing() throws {
+        var draft = KMRecordsSearchDraft()
+        draft.setStartDate("2026-10-05")
+        draft.setEndDate("2026-10-20")
+        let range = try draft.query()
+        #expect(range.startDate == KMDate(rawValue: "2026-10-05"))
+        #expect(range.endDate == KMDate(rawValue: "2026-10-20"))
+
+        draft.setEndDate("2026-10-01")
+        #expect(draft.startDate == "2026-10-01" && draft.endDate == "2026-10-01")
+        let adjustedStart = try draft.query()
+        #expect(adjustedStart.startDate == KMDate(rawValue: "2026-10-01"))
+        #expect(adjustedStart.endDate == KMDate(rawValue: "2026-10-01"))
+
+        draft.setStartDate("2026-10-25")
+        #expect(draft.startDate == "2026-10-25" && draft.endDate == "2026-10-25")
+        let adjustedEnd = try draft.query()
+        #expect(adjustedEnd.startDate == KMDate(rawValue: "2026-10-25"))
+        #expect(adjustedEnd.endDate == KMDate(rawValue: "2026-10-25"))
+
+        draft.setStartDate("")
+        #expect(draft.startDate.isEmpty && draft.endDate == "2026-10-25")
+        #expect(try draft.query().startDate == nil)
+        #expect(try draft.query().endDate == KMDate(rawValue: "2026-10-25"))
+
+        draft.setEndDate("")
+        #expect(draft.startDate.isEmpty && draft.endDate.isEmpty)
+        #expect(try draft.query().endDate == nil)
+    }
+
+    @Test func categorySearchDraftBuildsMonthRangeAndCategoryId() throws {
+        let oct = KMRecordsSearchDraft.forCategory("cat-food", in: KMYearMonth(rawValue: "2026-10"))
+        #expect(oct == KMRecordsSearchDraft(startDate: "2026-10-01", endDate: "2026-10-31", categoryId: "cat-food"))
+        let octQuery = try oct.query()
+        #expect(octQuery.startDate == KMDate(rawValue: "2026-10-01"))
+        #expect(octQuery.endDate == KMDate(rawValue: "2026-10-31"))
+        #expect(octQuery.categoryId == "cat-food")
+        #expect(octQuery.kind == nil && octQuery.keyword.isEmpty && octQuery.limit == nil)
+
+        let apr = KMRecordsSearchDraft.forCategory("cat-daily", in: KMYearMonth(rawValue: "2026-04"))
+        #expect(apr.startDate == "2026-04-01" && apr.endDate == "2026-04-30" && apr.categoryId == "cat-daily")
+
+        let leapFeb = KMRecordsSearchDraft.forCategory("cat-comm", in: KMYearMonth(rawValue: "2024-02"))
+        #expect(leapFeb.startDate == "2024-02-01" && leapFeb.endDate == "2024-02-29" && leapFeb.categoryId == "cat-comm")
+
+        let nonLeapFeb = KMRecordsSearchDraft.forCategory("cat-comm", in: KMYearMonth(rawValue: "2026-02"))
+        #expect(nonLeapFeb.startDate == "2026-02-01" && nonLeapFeb.endDate == "2026-02-28" && nonLeapFeb.categoryId == "cat-comm")
+    }
+
     @Test func expenseMemoTitleAndAccessibleDateFollowPWA() {
         let row = KMTransaction(id: "record", date: KMDate(rawValue: "2026-10-07"), amountYen: -3284, kind: .expense,
             payeeName: "スーパーみどり", categoryName: "食費", accountId: "card", categoryId: "food", memo: "  牛乳とパン  ")
@@ -169,5 +218,97 @@ struct RecordsPresentationTests {
         let notice = KMDeletionNoticeModel(); await notice.configure(repo)
         #expect(await notice.undo()); #expect(model.error == nil)
         #expect(try await repo.transactions.transaction(id: transfer.id)?.amountYen == -2000)
+    }
+
+    @Test func initialSearchOpensSearchPageWithMonthAndCategoryFilter() async throws {
+        let store = KMInMemoryStore(transactions: [
+            KMTransaction(id: "oct-food-1", date: KMDate(rawValue: "2026-10-01"), amountYen: -800, kind: .expense,
+                          payeeName: "合成スーパー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "oct-food-2", date: KMDate(rawValue: "2026-10-31"), amountYen: -1_200, kind: .expense,
+                          payeeName: "合成ベーカリー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "oct-daily", date: KMDate(rawValue: "2026-10-15"), amountYen: -500, kind: .expense,
+                          payeeName: "合成ドラッグ", categoryName: "日用品", accountId: "cash", categoryId: "daily"),
+            KMTransaction(id: "sep-food", date: KMDate(rawValue: "2026-09-30"), amountYen: -900, kind: .expense,
+                          payeeName: "先月スーパー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "nov-food", date: KMDate(rawValue: "2026-11-01"), amountYen: -700, kind: .expense,
+                          payeeName: "翌月スーパー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+        ], accounts: [.init(id: "cash", name: "合成現金")],
+           categories: [.init(id: "food", name: "食費"), .init(id: "daily", name: "日用品")])
+        let repo = KMRepositories(inMemory: store, referenceDate: Date(timeIntervalSince1970: 1_790_000_000))
+
+        let initial = KMRecordsSearchDraft.forCategory("food", in: KMYearMonth(rawValue: "2026-10"))
+        let model = KMRecordsModel(initialSearch: initial)
+        await model.configure(repo)
+
+        #expect(model.page == .search)
+        #expect(model.searchOrigin)
+        #expect(model.appliedSearch == initial)
+        #expect(model.search == initial)
+        #expect(model.searchRows.map(\.id) == ["oct-food-2", "oct-food-1"])
+        #expect(model.searchTotal == -2_000)
+
+        let defaultModel = KMRecordsModel()
+        await defaultModel.configure(repo)
+        #expect(defaultModel.page == .list)
+        #expect(!defaultModel.searchOrigin)
+        #expect(defaultModel.appliedSearch == KMRecordsSearchDraft())
+    }
+
+    @Test func searchConditionChangesApplyImmediatelyWithoutExplicitSubmit() async throws {
+        let store = KMInMemoryStore(transactions: [
+            KMTransaction(id: "sep-food", date: KMDate(rawValue: "2026-09-30"), amountYen: -900, kind: .expense,
+                          payeeName: "先月スーパー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "oct-food-1", date: KMDate(rawValue: "2026-10-05"), amountYen: -800, kind: .expense,
+                          payeeName: "合成スーパー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "oct-food-2", date: KMDate(rawValue: "2026-10-25"), amountYen: -1_200, kind: .expense,
+                          payeeName: "合成ベーカリー", categoryName: "食費", accountId: "cash", categoryId: "food"),
+            KMTransaction(id: "oct-daily", date: KMDate(rawValue: "2026-10-10"), amountYen: -500, kind: .expense,
+                          payeeName: "合成ドラッグ", categoryName: "日用品", accountId: "cash", categoryId: "daily"),
+            KMTransaction(id: "oct-salary", date: KMDate(rawValue: "2026-10-20"), amountYen: 200_000, kind: .income,
+                          payeeName: "合成給与", categoryName: "給与", accountId: "bank", categoryId: "salary"),
+        ], accounts: [.init(id: "cash", name: "合成現金"), .init(id: "bank", name: "合成銀行")],
+           categories: [.init(id: "food", name: "食費"), .init(id: "daily", name: "日用品"), .init(id: "salary", name: "給与")])
+        let repo = KMRepositories(inMemory: store, referenceDate: Date(timeIntervalSince1970: 1_790_000_000))
+
+        let model = KMRecordsModel()
+        await model.configure(repo)
+        await model.showSearch()
+        #expect(model.searchRows.count == 5)
+
+        // Category change updates results without calling performSearch().
+        model.search.categoryId = "food"
+        await model.waitForPendingSearch()
+        #expect(model.error == nil)
+        #expect(model.appliedSearch.categoryId == "food")
+        #expect(model.searchRows.map(\.id) == ["oct-food-2", "oct-food-1", "sep-food"])
+        #expect(model.searchTotal == -2_900)
+
+        // Period with both startDate and endDate updates results live.
+        var ranged = model.search
+        ranged.setStartDate("2026-10-01")
+        ranged.setEndDate("2026-10-15")
+        model.search = ranged
+        await model.waitForPendingSearch()
+        #expect(model.error == nil)
+        #expect(model.appliedSearch.startDate == "2026-10-01")
+        #expect(model.appliedSearch.endDate == "2026-10-15")
+        #expect(model.searchRows.map(\.id) == ["oct-food-1"])
+        #expect(model.searchTotal == -800)
+
+        // Setting endDate before startDate aligns startDate instead of producing an invalid/empty search.
+        model.search.setEndDate("2026-09-30")
+        await model.waitForPendingSearch()
+        #expect(model.error == nil)
+        #expect(model.search.startDate == "2026-09-30" && model.search.endDate == "2026-09-30")
+        #expect(model.searchRows.map(\.id) == ["sep-food"])
+
+        // Kind change updates results live as well.
+        var incomeDraft = KMRecordsSearchDraft()
+        incomeDraft.kind = "income"
+        model.search = incomeDraft
+        await model.waitForPendingSearch()
+        #expect(model.error == nil)
+        #expect(model.searchRows.map(\.id) == ["oct-salary"])
+        #expect(model.searchTotal == 200_000)
     }
 }

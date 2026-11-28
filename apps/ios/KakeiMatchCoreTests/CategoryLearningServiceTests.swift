@@ -132,4 +132,112 @@ struct CategoryLearningServiceTests {
         #expect(suggestion.itemCategories == ["food-custom", nil])
         #expect(suggestion.hasMerchantHistory)
     }
+
+    @Test func manualItemOverridesRegisterImmediatelyUpdateAndPreserveLearnedPath() throws {
+        let categories: [KMCategoryLearningCandidate] = [
+            .init(id: "food-custom", name: "食費"),
+            .init(id: "home-custom", name: "日用品")
+        ]
+        let available: Set<String> = ["food-custom", "home-custom"]
+
+        // Manual setting builds normalized overrides, skips blank/unavailable, and latest wins for duplicates.
+        let initialOverrides = KMCategoryLearningService.manualItemOverrides(
+            items: [
+                (name: "  Synthetic ＭＩＬＫ ", categoryId: "food-custom"),
+                (name: "   ", categoryId: "food-custom"),
+                (name: "Synthetic Unknown", categoryId: "removed"),
+                (name: "synthetic milk", categoryId: "home-custom")
+            ],
+            availableCategoryIds: available
+        )
+        #expect(initialOverrides.count == 1)
+        #expect(initialOverrides.first == KMCategoryRuleOverride(
+            targetType: .item, normalizedName: "synthetic milk",
+            disabled: false, deleted: false, categoryId: "home-custom"
+        ))
+
+        // Immediately applies on the next receipt without waiting for 3 receipts.
+        let firstRules = KMCategoryLearningService.applyingOverrides([], overrides: initialOverrides, availableCategoryIds: available)
+        let firstRule = try #require(firstRules.first)
+        #expect(firstRule.targetType == .item)
+        #expect(firstRule.normalizedName == "synthetic milk")
+        #expect(firstRule.categoryId == "home-custom")
+        #expect(firstRule.receipts == 1 && firstRule.matchingReceipts == 1 && firstRule.agreementPercent == 100)
+        #expect(firstRule.enabled && !firstRule.deleted)
+
+        let firstSuggestion = KMCategoryLearningService.suggest(
+            merchant: "Other Market", itemNames: ["Synthetic Milk"],
+            categories: categories, observations: [], overrides: initialOverrides
+        )
+        #expect(firstSuggestion.itemCategories == ["home-custom"])
+
+        // Re-assigning the same item name updates the rule to the new category.
+        let updatedOverrides = KMCategoryLearningService.manualItemOverrides(
+            items: [(name: "Synthetic Milk", categoryId: "food-custom")],
+            availableCategoryIds: available
+        )
+        let updatedSuggestion = KMCategoryLearningService.suggest(
+            merchant: "Other Market", itemNames: ["Synthetic Milk"],
+            categories: categories, observations: [], overrides: updatedOverrides
+        )
+        #expect(updatedSuggestion.itemCategories == ["food-custom"])
+
+        // Existing 3-receipt + 80% learning path still works, and manual item rule coexists with merchant rule.
+        let merchantHistory = [
+            observation("m1", category: "food-custom", merchantCategory: "food-custom",
+                items: [.init(normalizedName: "synthetic bread", categoryId: "food-custom")]),
+            observation("m2", category: "food-custom", merchantCategory: "food-custom",
+                items: [.init(normalizedName: "synthetic bread", categoryId: "food-custom")]),
+            observation("m3", category: "food-custom", merchantCategory: "food-custom",
+                items: [.init(normalizedName: "synthetic bread", categoryId: "food-custom")])
+        ]
+        let combined = KMCategoryLearningService.suggest(
+            merchant: "Synthetic Market", itemNames: ["Synthetic Bread", "Synthetic Milk"],
+            categories: categories, observations: merchantHistory, overrides: initialOverrides
+        )
+        #expect(combined.merchantCategoryId == "food-custom")
+        #expect(combined.itemCategories == ["food-custom", "home-custom"])
+
+        // Disabled/deleted-only overrides without a categoryId do not synthesize phantom rules.
+        let disabledOnly = KMCategoryLearningService.applyingOverrides(
+            [], overrides: [.init(targetType: .item, normalizedName: "phantom", disabled: true, deleted: nil, categoryId: nil)],
+            availableCategoryIds: available
+        )
+        #expect(disabledOnly.isEmpty)
+    }
+
+    @Test func manualItemOverridesKeepDisabledAndDeletedRulesOff() {
+        let available: Set<String> = ["food-custom", "home-custom"]
+        func rule(_ type: KMCategoryRuleStats.TargetType, _ name: String, enabled: Bool, deleted: Bool) -> KMCategoryLearningRule {
+            .init(targetType: type, normalizedName: name, categoryId: "food-custom", receipts: 3, matchingReceipts: 3,
+                  agreementPercent: 100, enabled: enabled, deleted: deleted)
+        }
+        let existing = [
+            rule(.item, "synthetic disabled", enabled: false, deleted: false),
+            rule(.item, "synthetic deleted", enabled: false, deleted: true),
+            rule(.item, "synthetic active", enabled: true, deleted: false),
+            // A switched-off merchant rule must not block an item rule with the same name.
+            rule(.merchant, "synthetic shared", enabled: false, deleted: true)
+        ]
+
+        let overrides = KMCategoryLearningService.manualItemOverrides(
+            items: [
+                (name: "Synthetic Disabled", categoryId: "home-custom"),
+                (name: "Synthetic Deleted", categoryId: "home-custom"),
+                (name: "Synthetic Active", categoryId: "home-custom"),
+                (name: "Synthetic New", categoryId: "home-custom"),
+                (name: "Synthetic Shared", categoryId: "home-custom")
+            ],
+            availableCategoryIds: available,
+            existingRules: existing
+        )
+        #expect(overrides.map(\.normalizedName) == ["synthetic active", "synthetic new", "synthetic shared"])
+        #expect(overrides.allSatisfy { $0.targetType == .item && $0.categoryId == "home-custom" && $0.disabled == false && $0.deleted == false })
+
+        // Without existing rules the behavior is unchanged.
+        let fresh = KMCategoryLearningService.manualItemOverrides(
+            items: [(name: "Synthetic Disabled", categoryId: "home-custom")], availableCategoryIds: available
+        )
+        #expect(fresh.map(\.normalizedName) == ["synthetic disabled"])
+    }
 }

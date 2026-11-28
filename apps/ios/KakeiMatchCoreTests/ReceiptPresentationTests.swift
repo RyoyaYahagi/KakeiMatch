@@ -32,22 +32,51 @@ struct ReceiptPresentationTests {
         }
     }
 
-    @Test func categoryTotalsUseItemOverridesFallbackAndDescendingAmounts() throws {
+    @Test func categoryTotalsPlacesUnselectedBucketFirstWithoutFolding() throws {
         let categories = [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")]
         let items = [
             KMReceiptItem(id: "a", name: "合成食品", amountYen: 200, categoryId: "food"),
-            KMReceiptItem(id: "b", name: "合成日用品", amountYen: 100, categoryId: nil),
+            KMReceiptItem(id: "b", name: "合成未分類", amountYen: 100, categoryId: nil),
             KMReceiptItem(id: "c", name: "合成小物", amountYen: 50, categoryId: "daily"),
         ]
-        let totals = try KMReceiptPresentation.categoryTotals(items: items, defaultCategoryId: "daily", categories: categories)
-        #expect(totals.map(\.categoryId) == ["food", "daily"])
-        #expect(totals.map(\.amountYen) == [200, 150])
-        #expect(totals.map(\.name) == ["食費", "日用品"])
+        let totals = try KMReceiptPresentation.categoryTotals(items: items, categories: categories)
+        #expect(totals.map(\.categoryId) == [nil, "food", "daily"])
+        #expect(totals.map(\.amountYen) == [100, 200, 50])
+        #expect(totals.map(\.name) == ["未選択", "食費", "日用品"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: items) == 1)
+
+        let classifiedOnly = items.filter { $0.categoryId != nil }
+        let classifiedTotals = try KMReceiptPresentation.categoryTotals(items: classifiedOnly, categories: categories)
+        #expect(classifiedTotals.map(\.categoryId) == ["food", "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: classifiedOnly) == 0)
+
         #expect(throws: KMDataError.amountOverflow) {
             try KMReceiptPresentation.categoryTotals(
-                items: [item(KMYen.maxSafe), item(1)], defaultCategoryId: "food", categories: categories
+                items: [item(KMYen.maxSafe), item(1)], categories: categories
             )
         }
+    }
+
+    @Test func legacyAppliedReceiptResolvesNilItemCategoryWithoutAffectingPending() throws {
+        let categories = [KMCategory(id: "food", name: "食費"), KMCategory(id: "daily", name: "日用品")]
+        let items = [
+            KMReceiptItem(id: "a", name: "合成食品", amountYen: 200, categoryId: nil),
+            KMReceiptItem(id: "b", name: "合成日用品", amountYen: 100, categoryId: "daily"),
+        ]
+        let appliedItems = KMReceiptPresentation.resolvedItemsForDisplay(
+            items, status: .applied, confirmedCategoryId: "food"
+        )
+        #expect(appliedItems.map(\.categoryId) == ["food", "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: appliedItems) == 0)
+        let appliedTotals = try KMReceiptPresentation.categoryTotals(items: appliedItems, categories: categories)
+        #expect(appliedTotals.map(\.categoryId) == ["food", "daily"])
+        #expect(appliedTotals.map(\.amountYen) == [200, 100])
+
+        let pendingItems = KMReceiptPresentation.resolvedItemsForDisplay(
+            items, status: .pending, confirmedCategoryId: "food"
+        )
+        #expect(pendingItems.map(\.categoryId) == [nil, "daily"])
+        #expect(KMReceiptPresentation.unclassifiedItemCount(items: pendingItems) == 1)
     }
     @Test func categoryChoicesCountEachCategoryOnceAndIgnoreTransfers() {
         let categories = [KMCategory(id: "daily", name: "日用品"), KMCategory(id: "food", name: "食費")]
@@ -167,5 +196,100 @@ struct ReceiptPresentationTests {
         let view = KMReceiptPresentation.readingFailure(code: "unexpected", message: "Something went wrong")
         #expect(view.title == "! 読み取れませんでした")
         #expect(view.message == "処理できませんでした。通信状態を確認して、もう一度お試しください。")
+    }
+
+    @Test func groupedTaxesMergesDuplicateRatesAndFormatsLabels() throws {
+        let merged = KMReceiptPresentation.groupedTaxes([
+            .init(ratePercent: 8, taxableAmountYen: 1000, taxAmountYen: 80),
+            .init(ratePercent: 10, taxableAmountYen: 500, taxAmountYen: 50),
+            .init(ratePercent: 8, taxableAmountYen: 550, taxAmountYen: 44),
+        ])
+        #expect(merged == [
+            .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+            .init(ratePercent: 10, taxableAmountYen: 500, taxAmountYen: 50),
+        ])
+        #expect(try KMReceiptPresentation.totalTaxYen(merged) == 174)
+        #expect(try KMReceiptPresentation.totalTaxYen([]) == nil)
+        #expect(KMReceiptPresentation.taxRateLabel(8) == "8%")
+        #expect(KMReceiptPresentation.taxRateLabel(10) == "10%")
+        #expect(KMReceiptPresentation.taxRateLabel(Decimal(string: "8.5")!) == "8.5%")
+    }
+
+    @Test func reconciledTaxesForSaveKeepsMultiRateTaxesAndTotalConsistentForAllocation() throws {
+        let initialTaxes: [KMReceiptTax] = [
+            .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 120),
+            .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+        ]
+        let reconciled = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: initialTaxes,
+            taxAmountTexts: ["124", "59"],
+            singleTaxText: "183"
+        )
+        #expect(reconciled.taxAmountYen == 183)
+        #expect(reconciled.taxes == [
+            .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+            .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+        ])
+        let confirmed = KMConfirmedReceipt(
+            merchant: "合成ストア",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 2331,
+            categoryId: "food",
+            accountId: "cash",
+            taxAmountYen: reconciled.taxAmountYen,
+            items: [
+                .init(id: "a", name: "合成弁当", amountYen: 1000, categoryId: "food", taxRatePercent: 8),
+                .init(id: "b", name: "合成果物", amountYen: 620, categoryId: "food", taxRatePercent: 8),
+                .init(id: "c", name: "合成洗剤", amountYen: 598, categoryId: "household", taxRatePercent: 10),
+            ],
+            adjustments: [
+                .init(id: "d", label: "値引き", amountYen: -70, targetItemId: "a"),
+            ],
+            taxes: reconciled.taxes
+        )
+        try KMReceiptAllocation.validate(confirmed, allowZero: false)
+        #expect(try KMReceiptAllocation.allocations(confirmed) == [
+            .init(categoryId: "food", amountYen: 1674),
+            .init(categoryId: "household", amountYen: 657),
+        ])
+
+        let clearedAll = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: initialTaxes, taxAmountTexts: ["", ""], singleTaxText: ""
+        )
+        #expect(clearedAll.taxAmountYen == nil && clearedAll.taxes == nil)
+
+        let partialEmpty = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: initialTaxes, taxAmountTexts: ["", "59"], singleTaxText: "59"
+        )
+        #expect(partialEmpty.taxAmountYen == 59)
+        #expect(partialEmpty.taxes?.map(\.taxAmountYen) == [0, 59])
+
+        #expect(throws: (any Error).self) {
+            try KMReceiptPresentation.reconciledTaxesForSave(
+                taxes: initialTaxes, taxAmountTexts: ["12x", "59"], singleTaxText: "179"
+            )
+        }
+    }
+
+    @Test func reconciledTaxesForSavePreservesSingleRateAndLegacyBehavior() throws {
+        let singleTaxes: [KMReceiptTax] = [
+            .init(ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 90),
+        ]
+        let updated = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: singleTaxes, taxAmountTexts: ["90"], singleTaxText: "100"
+        )
+        #expect(updated.taxAmountYen == 100)
+        #expect(updated.taxes == [.init(ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 100)])
+
+        let cleared = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: singleTaxes, taxAmountTexts: [""], singleTaxText: ""
+        )
+        #expect(cleared.taxAmountYen == nil && cleared.taxes == nil)
+
+        let legacy = try KMReceiptPresentation.reconciledTaxesForSave(
+            taxes: [], taxAmountTexts: [], singleTaxText: "100"
+        )
+        #expect(legacy.taxAmountYen == 100 && legacy.taxes == nil)
     }
 }

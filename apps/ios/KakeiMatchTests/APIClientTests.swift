@@ -1047,6 +1047,43 @@ struct APIClientTests {
 
     @Test
     @MainActor
+    func readReceiptSendsSchemaV2HeaderAndAcceptsV2OrLegacyResponses() async throws {
+        let v2Body = #"{"documentKind":"receipt","merchant":"合成店","purchasedDate":"2026-11-28","purchasedTime":null,"totalAmountYen":2331,"taxAmountYen":183,"taxes":[{"ratePercent":8,"taxableAmountYen":1550,"taxAmountYen":124},{"ratePercent":10,"taxableAmountYen":598,"taxAmountYen":59}],"items":[{"name":"合成食品","amountYen":1620,"taxRatePercent":8},{"name":"合成日用品","amountYen":598,"taxRatePercent":10}],"adjustments":[{"label":"値引き","amountYen":-70,"targetItemIndex":0}],"warnings":[]}"#
+        APIStub.reset { request in
+            if request.url?.path == "/api/ai/gemini" {
+                #expect(request.value(forHTTPHeaderField: "X-KakeiMatch-Receipt-Schema") == "2")
+                return .init(body: v2Body)
+            }
+            return .init(body: Self.token)
+        }
+        let v2 = try await client().readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
+        #expect(v2.taxes == [.init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+                             .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59)])
+        #expect(v2.items.count == 2)
+        #expect(v2.items[0].taxRatePercent == 8)
+        #expect(v2.items[1].taxRatePercent == 10)
+
+        APIStub.reset { request in
+            if request.url?.path == "/api/ai/gemini" {
+                #expect(request.value(forHTTPHeaderField: "X-KakeiMatch-Receipt-Schema") == "2")
+                return .init(body: Self.receipt)
+            }
+            return .init(body: Self.token)
+        }
+        let legacy = try await client().readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
+        #expect(legacy.taxes == nil)
+
+        for invalidBody in [
+            v2Body.replacingOccurrences(of: #""ratePercent":8"#, with: #""ratePercent":0"#),
+            v2Body.replacingOccurrences(of: #""taxRatePercent":8"#, with: #""taxRatePercent":0"#),
+        ] {
+            APIStub.reset { request in .init(body: request.url?.path == "/api/ai/gemini" ? invalidBody : Self.token) }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(.receipt, client: client()) }
+        }
+    }
+
+    @Test
+    @MainActor
     func jevChoiceMustBeTheHighestProbabilityForEveryRequestedCategory() async throws {
         let options = [KMCategoryOption(id: "food", name: "合成食費"), KMCategoryOption(id: "other", name: "合成その他")]
         let extraction = try KMAPIValidation.decode(KMReceiptExtraction.self,

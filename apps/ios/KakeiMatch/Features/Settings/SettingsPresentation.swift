@@ -9,6 +9,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case categoryRules
         case categories
         case accounts
+        case reconciliationAutoMatch
         case backup
         case museExport
         case driveSync
@@ -60,6 +61,10 @@ enum KMSettingsPresentation {
         KMDriveSyncPresentation.rowValue(isEnabled: isEnabled)
     }
 
+    static func reconciliationAutoMatchValue(requireSamePaymentSource: Bool) -> String {
+        requireSamePaymentSource ? "支払元が一致したもの" : "従来どおり"
+    }
+
     static func normalizedSupportId(_ value: String?) -> String? {
         guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
             return nil
@@ -68,7 +73,8 @@ enum KMSettingsPresentation {
     }
 
     static func sections(theme: KMThemePreference, aiUsageValue: String? = nil,
-                         driveSyncValue: String = "オフ", supportId: String? = nil) -> [KMSettingsSection] {
+                         driveSyncValue: String = "オフ", reconciliationAutoMatchValue: String = "従来どおり",
+                         supportId: String? = nil) -> [KMSettingsSection] {
         var appRows: [KMSettingsRow] = [
             .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),
             .init(id: "settings.appInfo", title: "アプリ情報", value: "診断・ライセンス", destination: .appInfo),
@@ -81,6 +87,8 @@ enum KMSettingsPresentation {
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
                 .init(id: "settings.categories", title: "カテゴリ", destination: .categories),
                 .init(id: "settings.accounts", title: "支払元", destination: .accounts),
+                .init(id: "settings.reconciliationAutoMatch", title: "照合の自動一致",
+                      value: reconciliationAutoMatchValue, destination: .reconciliationAutoMatch),
                 .init(id: "settings.budget", title: "予算設定", destination: .budget),
                 .init(id: "settings.recurring", title: "定期登録", destination: .recurring),
             ]),

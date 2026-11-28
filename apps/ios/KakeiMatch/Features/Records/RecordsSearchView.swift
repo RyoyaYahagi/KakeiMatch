@@ -2,9 +2,14 @@ import SwiftUI
 
 struct KMRecordsSearchView: View {
     @Bindable var model: KMRecordsModel
+    var initialSearch: KMRecordsSearchDraft? = nil
+    @State private var appliedInitialSearch = false
     @State private var advanced = false
     @FocusState private var focused: String?
-    @State private var dateField: SearchDateField?
+    @State private var isDateSheetPresented = false
+    @State private var activeDateField: SearchDateField = .start
+    @State private var pendingStartDate = ""
+    @State private var pendingEndDate = ""
     @State private var selectedDate = Date()
 
     private enum SearchDateField: String, Identifiable {
@@ -28,7 +33,7 @@ struct KMRecordsSearchView: View {
                     .accessibilityLabel("キーワード").accessibilityIdentifier("transaction-search-keyword")
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .focused($focused, equals: "keyword")
-                    .submitLabel(.search).onSubmit { submit() }
+                    .submitLabel(.search).onSubmit { focused = nil; advanced = false }
             }
             .padding(.horizontal, KMSpacing.space3).frame(minHeight: 48)
             .background(KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.lg))
@@ -53,14 +58,11 @@ struct KMRecordsSearchView: View {
             .buttonStyle(.plain).foregroundStyle(KMColor.text).accessibilityIdentifier("records.advanced")
             .accessibilityValue(advanced ? "展開" : "折りたたみ").padding(.top, KMSpacing.space2)
             if advanced { fields }
-            Button(model.busy ? "検索しています。" : "検索する") { submit() }
-                .buttonStyle(KMButtonStyle(role: .secondary)).frame(maxWidth: .infinity, minHeight: 48)
-                .accessibilityIdentifier("records.searchSubmit").padding(.top, KMSpacing.space5)
             Button { focused = nil; advanced = false; Task { await model.performSearch(clear: true) } } label: {
                 HStack(spacing: KMSpacing.space1) { KMIcon(name: "close", size: 20); Text("条件をすべて解除") }
             }
             .buttonStyle(KMButtonStyle(role: .text)).accessibilityIdentifier("records.searchClear")
-            .padding(.top, KMSpacing.space5)
+            .padding(.top, KMSpacing.space3)
             HStack {
                 Text("\(model.searchRows.count)件").font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                     .accessibilityIdentifier("transaction-search-count")
@@ -71,7 +73,7 @@ struct KMRecordsSearchView: View {
                 }
             }.padding(.horizontal, KMSpacing.space1).padding(.top, KMSpacing.space4).padding(.bottom, KMSpacing.space2)
             VStack(spacing: 0) {
-                if model.searchRows.isEmpty && !model.busy && model.error == nil {
+                if model.searchRows.isEmpty && !model.busy && !model.searching && model.error == nil {
                     Text("条件に一致する記録はありません。").font(KMTypography.body(14)).foregroundStyle(KMColor.muted)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, KMSpacing.space3)
                 }
@@ -86,28 +88,45 @@ struct KMRecordsSearchView: View {
         .foregroundStyle(KMColor.text)
         .disabled(model.busy)
         .accessibilityElement(children: .contain).accessibilityIdentifier("records.searchScreen")
-        .sheet(item: $dateField) { field in
+        .task {
+            guard let initialSearch, !appliedInitialSearch else { return }
+            appliedInitialSearch = true
+            await model.applyInitialSearch(initialSearch)
+        }
+        .sheet(isPresented: $isDateSheetPresented) {
             VStack(spacing: KMSpacing.space3) {
-                Text(field.title).font(KMTypography.body(17, weight: .bold))
-                DatePicker(field.title, selection: $selectedDate, displayedComponents: .date)
+                Text("期間").font(KMTypography.body(17, weight: .bold))
+                HStack(spacing: KMSpacing.space2) {
+                    dateTab(.start, value: pendingStartDate)
+                    dateTab(.end, value: pendingEndDate)
+                }
+                DatePicker(activeDateField.title, selection: datePickerBinding, displayedComponents: .date)
                     .datePickerStyle(.graphical)
                     .environment(\.calendar, KMDate.calendar)
                     .environment(\.timeZone, KMDate.calendar.timeZone)
                     .environment(\.locale, Locale(identifier: "ja_JP"))
                     .accessibilityIdentifier("records.search.calendar")
                 HStack {
-                    Button("指定を解除") { setDate("", field: field); dateField = nil }
-                        .accessibilityIdentifier("records.search.dateClear")
+                    Button("指定を解除") {
+                        applyPendingDate("", to: activeDateField)
+                        commitPendingDates()
+                        isDateSheetPresented = false
+                    }
+                    .accessibilityIdentifier("records.search.dateClear")
                     Spacer()
-                    Button("キャンセル") { dateField = nil }
+                    Button("キャンセル") { isDateSheetPresented = false }
                     Button("設定する") {
-                        setDate(KMDate(instant: selectedDate).rawValue, field: field)
-                        dateField = nil
+                        let current = activeDateField == .start ? pendingStartDate : pendingEndDate
+                        if current.isEmpty {
+                            applyPendingDate(KMDate(instant: selectedDate).rawValue, to: activeDateField)
+                        }
+                        commitPendingDates()
+                        isDateSheetPresented = false
                     }.accessibilityIdentifier("records.search.dateApply")
                 }.buttonStyle(KMButtonStyle(role: .text))
             }
             .padding(KMSpacing.space4)
-            .presentationDetents([.height(540), .large])
+            .presentationDetents([.height(600), .large])
         }
     }
 
@@ -192,16 +211,80 @@ struct KMRecordsSearchView: View {
         }
     }
 
-    private func openDate(_ field: SearchDateField) {
-        focused = nil
-        let value = field == .start ? model.search.startDate : model.search.endDate
-        selectedDate = (try? KMDate(value)).map(KMEntryPresentation.dateValue) ?? model.now
-        dateField = field
+    private var datePickerBinding: Binding<Date> {
+        Binding(
+            get: { selectedDate },
+            set: { newValue in
+                selectedDate = newValue
+                applyPendingDate(KMDate(instant: newValue).rawValue, to: activeDateField)
+            }
+        )
     }
 
-    private func setDate(_ value: String, field: SearchDateField) {
-        if field == .start { model.search.startDate = value }
-        else { model.search.endDate = value }
+    private func openDate(_ field: SearchDateField) {
+        focused = nil
+        pendingStartDate = model.search.startDate
+        pendingEndDate = model.search.endDate
+        activeDateField = field
+        selectedDate = initialPickerDate(for: field)
+        isDateSheetPresented = true
+    }
+
+    private func initialPickerDate(for field: SearchDateField) -> Date {
+        let primary = field == .start ? pendingStartDate : pendingEndDate
+        let fallback = field == .start ? pendingEndDate : pendingStartDate
+        return (try? KMDate(primary)).map(KMEntryPresentation.dateValue)
+            ?? (try? KMDate(fallback)).map(KMEntryPresentation.dateValue)
+            ?? model.now
+    }
+
+    private func switchDateField(_ field: SearchDateField) {
+        activeDateField = field
+        selectedDate = initialPickerDate(for: field)
+    }
+
+    private func applyPendingDate(_ value: String, to field: SearchDateField) {
+        var draft = KMRecordsSearchDraft(startDate: pendingStartDate, endDate: pendingEndDate)
+        if field == .start { draft.setStartDate(value) }
+        else { draft.setEndDate(value) }
+        pendingStartDate = draft.startDate
+        pendingEndDate = draft.endDate
+    }
+
+    private func commitPendingDates() {
+        var next = model.search
+        next.startDate = pendingStartDate
+        next.endDate = pendingEndDate
+        model.search = next
+    }
+
+    private func dateTab(_ field: SearchDateField, value: String) -> some View {
+        let selected = activeDateField == field
+        return Button { switchDateField(field) } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(field.title)
+                    .font(KMTypography.body(12, weight: selected ? .bold : .medium))
+                    .foregroundStyle(selected ? KMColor.primary : KMColor.muted)
+                Text(value.isEmpty ? "指定なし" : value)
+                    .font(KMTypography.body(14, weight: .semibold))
+                    .foregroundStyle(KMColor.text)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, KMSpacing.space3)
+            .padding(.vertical, KMSpacing.space2)
+            .frame(minHeight: 48)
+            .background(selected ? KMColor.primarySoft : KMColor.surface, in: RoundedRectangle(cornerRadius: KMRadius.md))
+            .overlay {
+                RoundedRectangle(cornerRadius: KMRadius.md)
+                    .stroke(selected ? KMColor.primary : KMColor.borderStrong, lineWidth: selected ? 2 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(field.title)
+        .accessibilityValue(value.isEmpty ? "指定なし" : value)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier("records.search.dateTab.\(field.rawValue)")
     }
 
     private func dateInput(_ field: SearchDateField, value: String) -> some View {
@@ -243,10 +326,5 @@ struct KMRecordsSearchView: View {
                 .overlay { RoundedRectangle(cornerRadius: KMRadius.md).stroke(KMColor.borderStrong) }
                 .accessibilityIdentifier("records.search.\(id)")
         }.padding(.top, KMSpacing.space2)
-    }
-
-    private func submit() {
-        focused = nil; advanced = false
-        Task { await model.performSearch() }
     }
 }

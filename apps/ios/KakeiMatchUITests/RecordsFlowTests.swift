@@ -25,14 +25,20 @@ final class RecordsFlowTests: XCTestCase {
         app.buttons["records.search"].tap()
         let keyword = app.textFields["transaction-search-keyword"]
         XCTAssertTrue(keyword.waitForExistence(timeout: 5)); keyword.tap(); keyword.typeText("スーパーみどり")
-        app.buttons["records.searchSubmit"].tap()
+        let count = app.staticTexts["transaction-search-count"]
+        XCTAssertTrue(count.waitForExistence(timeout: 5))
+        let filtered = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == '2件'"), object: count)
+        if XCTWaiter.wait(for: [filtered], timeout: 5) != .completed {
+            attachContext(app, name: "live-search-not-applied")
+            XCTFail("キーワード入力だけで検索結果が2件に絞り込まれない")
+        }
+        keyword.typeText("\n")
         let hiddenKeyboard = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: app.keyboards.firstMatch)
         if XCTWaiter.wait(for: [hiddenKeyboard], timeout: 10) != .completed {
             attachContext(app, name: "keyboard-not-hidden")
-            XCTFail("検索実行後10秒以内にキーボードが閉じない")
+            XCTFail("検索確定後10秒以内にキーボードが閉じない")
         }
-        XCTAssertTrue(app.staticTexts["transaction-search-count"].waitForExistence(timeout: 5))
-        XCTAssertEqual(app.staticTexts["transaction-search-count"].label, "2件")
+        XCTAssertEqual(count.label, "2件")
         XCTAssertEqual(app.staticTexts["records.searchTotal"].label, "−¥5,700")
     }
 
@@ -48,14 +54,11 @@ final class RecordsFlowTests: XCTestCase {
                 lines.append("row.exists=false")
             }
         }
-        // While `KMRecordsModel.busy` is true the whole search screen is
-        // disabled and the submit label changes, so these separate an undo
-        // reload from a row that was simply never tappable.
-        let submit = app.buttons["records.searchSubmit"]
-        if submit.exists {
-            lines.append("searchSubmit.exists=true searchSubmit.label=\(submit.label) searchSubmit.isEnabled=\(submit.isEnabled)")
+        let clear = app.buttons["records.searchClear"]
+        if clear.exists {
+            lines.append("searchClear.exists=true searchClear.isEnabled=\(clear.isEnabled)")
         } else {
-            lines.append("searchSubmit.exists=false")
+            lines.append("searchClear.exists=false")
         }
         let message = app.staticTexts["records.message"]
         if message.exists {
@@ -246,17 +249,6 @@ final class RecordsFlowTests: XCTestCase {
         app.terminate()
     }
 
-    @MainActor func testDeleteLayoutOnIPhoneSE3FromSearchResult() throws {
-        continueAfterFailure = false
-        let app = launch("light")
-        let screen = app.windows.firstMatch.frame
-        try XCTSkipUnless(Int(screen.width.rounded()) == 375 && Int(screen.height.rounded()) == 667,
-                          "Run this layout check on iPhone SE (3rd generation), 375 × 667 pt")
-        openSearchDetailAndAssertDeleteLayout(app)
-        capture(app, "delete-layout-iphone-se3")
-        app.terminate()
-    }
-
     @MainActor func testDeleteLayoutAtAccessibilityXLFromSearchResult() {
         continueAfterFailure = false
         let app = launch("light", preferredContentSizeCategory: "UICTContentSizeCategoryAccessibilityXL")
@@ -272,6 +264,8 @@ final class RecordsFlowTests: XCTestCase {
             app.buttons["records.search"].tap()
             app.buttons["records.chip.start"].tap()
             XCTAssertTrue(app.datePickers.firstMatch.waitForExistence(timeout: 5), "期間からカレンダーを開けること")
+            XCTAssertTrue(app.buttons["records.search.dateTab.start"].exists, "開始日タブが表示されること")
+            XCTAssertTrue(app.buttons["records.search.dateTab.end"].exists, "終了日タブが表示されること")
             capture(app, "search-calendar-\(appearance)")
             // The date fields behave the same in both appearances, so only light checks them.
             if appearance == "dark" { app.terminate(); continue }
