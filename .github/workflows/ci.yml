@@ -6,6 +6,9 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Merge queue runs the required ci check on the queued merge group.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
