@@ -26,6 +26,18 @@ import Observation
         repositories.fixtureName == nil ? Date() : repositories.referenceDate.addingTimeInterval(ProcessInfo.processInfo.systemUptime - started)
     }
 
+    func entryInitialValues(for statement: KMStatementTransaction) -> KMEntryInitialValues {
+        let sourceAccount = accounts.filter { !$0.closed && $0.statementProvider == statement.provider }
+        let importedAccount = imports.first { $0.id == statement.importId }?.value.accountId
+        let accountId = importedAccount.flatMap { id in
+            accounts.contains(where: { !$0.closed && $0.id == id }) ? id : nil
+        } ?? (sourceAccount.count == 1 ? sourceAccount[0].id : nil)
+        let categoryId = KMReconciliationPresentation.suggestedCategory(
+            merchant: statement.merchant, rules: categoryRules, categories: categories)
+        return KMEntryInitialValues(amountYen: statement.amountYen, payee: statement.merchant,
+            date: statement.usedDate, accountId: accountId, categoryId: categoryId)
+    }
+
     enum Action {
         case confirm(statement: String, receipt: String)
         case reject(statement: String, receipt: String)

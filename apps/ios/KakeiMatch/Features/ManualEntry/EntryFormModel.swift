@@ -6,6 +6,7 @@ struct KMEntryInitialValues: Equatable, Sendable {
     var payee: String
     var date: KMDate
     var accountId: String?
+    var categoryId: String? = nil
 }
 
 @MainActor @Observable
@@ -80,7 +81,15 @@ final class KMEntryFormModel {
             self.payee = initialValues?.payee ?? ""
             self.lastUsedCategoryId = KMEntryPresentation.lastUsedCategory(kind: kind, recent: recent,
                 availableIds: Set(self.categories.map(\.id)))
-            self.categoryId = initialValues == nil ? (self.lastUsedCategoryId ?? "") : ""
+            if let initialValues {
+                if let categoryId = initialValues.categoryId, self.categories.contains(where: { $0.id == categoryId }) {
+                    self.categoryId = categoryId
+                } else {
+                    self.categoryId = ""
+                }
+            } else {
+                self.categoryId = self.lastUsedCategoryId ?? ""
+            }
             if let accountId = initialValues?.accountId, self.accounts.contains(where: { $0.id == accountId }) {
                 self.accountId = accountId
             } else if initialValues == nil, self.accounts.count == 1 {
