@@ -488,10 +488,7 @@ struct ReceiptView: View {
             .frame(minHeight: 44, alignment: .leading).accessibilityIdentifier("receipt.addAdjustment")
             .disabled(model.isReading || model.saving || model.didSave)
 
-            row("税額（任意）", field: .taxAmountYen, id: "receipt-tax") {
-                TextField("", text: field($model.tax, review: .taxAmountYen)).keyboardType(.numberPad)
-                    .accessibilityLabel("税額（円・任意）").accessibilityIdentifier("receipt-tax").focused($focusedField, equals: "receipt-tax")
-            }.disabled(model.isReading || model.saving || model.didSave)
+            taxSection
             if let check = totalCheck, !check.matches {
                 Text("購入内容との差額は\(check.difference < 0 ? "−" : "+")\(KMAmountFormatter.yen(check.difference))です。入力した合計金額を保ちます。値引きや税額を確認してください。")
                     .font(KMTypography.note).foregroundStyle(KMColor.warning).accessibilityIdentifier("receipt-difference")
@@ -499,6 +496,30 @@ struct ReceiptView: View {
             if !model.isReading && !model.didSave {
                 saveButton.padding(.top, KMSpacing.space2)
             }
+        }
+    }
+
+    @ViewBuilder private var taxSection: some View {
+        if model.hasMultipleTaxRates {
+            VStack(spacing: 0) {
+                ForEach(Array(model.taxes.enumerated()), id: \.offset) { index, entry in
+                    let rateLabel = KMReceiptPresentation.taxRateLabel(entry.ratePercent)
+                    let fieldID = "receipt-tax-\(index)"
+                    row("税額（\(rateLabel)）", field: index == 0 ? .taxAmountYen : nil, id: fieldID) {
+                        TextField("", text: taxRateAmountBinding(at: index))
+                            .keyboardType(.numberPad)
+                            .accessibilityLabel("税額 \(rateLabel)（円）")
+                            .accessibilityIdentifier(fieldID)
+                            .focused($focusedField, equals: fieldID)
+                    }
+                }
+            }
+            .disabled(model.isReading || model.saving || model.didSave)
+        } else {
+            row("税額（任意）", field: .taxAmountYen, id: "receipt-tax") {
+                TextField("", text: singleTaxBinding).keyboardType(.numberPad)
+                    .accessibilityLabel("税額（円・任意）").accessibilityIdentifier("receipt-tax").focused($focusedField, equals: "receipt-tax")
+            }.disabled(model.isReading || model.saving || model.didSave)
         }
     }
 
@@ -769,6 +790,24 @@ struct ReceiptView: View {
     private func adjustmentTargetBinding(_ id: String) -> Binding<String> {
         Binding(get: { model.adjustments.first(where: { $0.id == id })?.targetItemId ?? "" }, set: { model.setAdjustmentTarget(id, itemId: $0.isEmpty ? nil : $0) })
     }
+    private var singleTaxBinding: Binding<String> {
+        Binding(
+            get: { model.tax },
+            set: { value in
+                model.setSingleTax(value)
+                Task { await model.reviewField(.taxAmountYen) }
+            }
+        )
+    }
+    private func taxRateAmountBinding(at index: Int) -> Binding<String> {
+        Binding(
+            get: { model.taxAmountText(at: index) },
+            set: { value in
+                model.setTaxAmount(at: index, value: value)
+                Task { await model.reviewField(.taxAmountYen) }
+            }
+        )
+    }
 
     private func row<Content: View>(_ title: String, field: KMReceiptExtraction.WarningField? = nil, id: String, @ViewBuilder content: () -> Content) -> some View {
         Group {
@@ -834,7 +873,9 @@ struct ReceiptView: View {
     private func showWarning(_ warning: KMReceiptPresentation.Warning) {
         switch warning.field {
         case .items, .adjustments: model.pane = "items"
-        case .taxAmountYen: model.pane = "items"; focusedField = "receipt-tax"
+        case .taxAmountYen:
+            model.pane = "items"
+            focusedField = model.hasMultipleTaxRates ? "receipt-tax-0" : "receipt-tax"
         case .merchant: focusedField = "receipt-merchant"
         case .totalAmountYen: focusedField = "receipt-amount"
         case .purchasedDate: focusedField = "receipt-date"

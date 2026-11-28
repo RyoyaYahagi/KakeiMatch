@@ -595,4 +595,123 @@ extension ReceiptModelTests {
         #expect(!model.didSave)
         #expect(try await repositories.receipts.receipts().count == before)
     }
+
+    @Test func multiRateReceiptTaxEditReconcilesTaxesAndRegistersSuccessfully() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        let categories = try await repositories.categories.categories(includeHidden: false).filter { !$0.isIncome }
+        let food = try #require(categories.first { $0.name == "食費" })
+        let household = try #require(categories.first { $0.name == "日用品" })
+
+        receipt.extraction = KMReceiptExtraction(
+            documentKind: .receipt,
+            merchant: "合成マルチ税率スーパー",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 2331,
+            taxAmountYen: 120,
+            items: [
+                .init(name: "合成弁当", amountYen: 1000, taxRatePercent: 8),
+                .init(name: "合成果物", amountYen: 620, taxRatePercent: 8),
+                .init(name: "合成洗剤", amountYen: 598, taxRatePercent: 10),
+            ],
+            adjustments: [
+                .init(label: "値引き", amountYen: -70, targetItemIndex: 0),
+            ],
+            warnings: [],
+            taxes: [
+                .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 120),
+                .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+            ]
+        )
+        receipt.itemCategories = [food.id, food.id, household.id]
+        receipt.confirmedValue = nil
+        try await repositories.receipts.saveReceipt(receipt)
+
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+
+        #expect(model.hasMultipleTaxRates)
+        #expect(model.tax == "179")
+        #expect(model.taxAmountText(at: 0) == "120")
+        #expect(model.taxAmountText(at: 1) == "59")
+        #expect(model.totalCheck?.matches == false)
+
+        await model.save()
+        #expect(!model.didSave && model.error != nil)
+
+        model.setTaxAmount(at: 0, value: "124")
+        #expect(model.taxes == [
+            .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+            .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+        ])
+        #expect(model.tax == "183")
+        #expect(model.totalCheck?.matches == true)
+
+        await model.save()
+        #expect(model.error == nil && model.didSave)
+
+        let saved = try #require(try await repositories.receipts.receipt(id: receipt.id))
+        #expect(saved.registration.status == .applied)
+        #expect(saved.confirmedValue?.taxAmountYen == 183)
+        #expect(saved.confirmedValue?.taxes == [
+            .init(ratePercent: 8, taxableAmountYen: 1550, taxAmountYen: 124),
+            .init(ratePercent: 10, taxableAmountYen: 598, taxAmountYen: 59),
+        ])
+        let transactionId = try #require(saved.registration.actualTransactionId)
+        let transaction = try #require(try await repositories.transactions.transaction(id: transactionId))
+        let splits = try #require(transaction.splits)
+        #expect(splits.first { $0.categoryId == food.id }?.amountYen == -1674)
+        #expect(splits.first { $0.categoryId == household.id }?.amountYen == -657)
+    }
+
+    @Test func singleRateReceiptKeepsSingleTaxBehaviorAndReconcilesTaxes() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        let categories = try await repositories.categories.categories(includeHidden: false).filter { !$0.isIncome }
+        let food = try #require(categories.first { $0.name == "食費" })
+        let household = try #require(categories.first { $0.name == "日用品" })
+
+        receipt.extraction = KMReceiptExtraction(
+            documentKind: .receipt,
+            merchant: "合成単一税率ストア",
+            purchasedDate: try KMDate("2026-11-28"),
+            purchasedTime: nil,
+            totalAmountYen: 1100,
+            taxAmountYen: 90,
+            items: [
+                .init(name: "合成日用品", amountYen: 600, taxRatePercent: 10),
+                .init(name: "合成食品", amountYen: 400, taxRatePercent: 10),
+            ],
+            adjustments: [],
+            warnings: [],
+            taxes: [
+                .init(ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 90),
+            ]
+        )
+        receipt.itemCategories = [household.id, food.id]
+        receipt.confirmedValue = nil
+        try await repositories.receipts.saveReceipt(receipt)
+
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+
+        #expect(!model.hasMultipleTaxRates)
+        #expect(model.tax == "90")
+
+        model.setSingleTax("100")
+        #expect(model.tax == "100")
+        #expect(model.taxes == [.init(ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 100)])
+        #expect(model.totalCheck?.matches == true)
+
+        await model.save()
+        #expect(model.error == nil && model.didSave)
+
+        let saved = try #require(try await repositories.receipts.receipt(id: receipt.id))
+        #expect(saved.registration.status == .applied)
+        #expect(saved.confirmedValue?.taxAmountYen == 100)
+        #expect(saved.confirmedValue?.taxes == [.init(ratePercent: 10, taxableAmountYen: 1000, taxAmountYen: 100)])
+    }
 }

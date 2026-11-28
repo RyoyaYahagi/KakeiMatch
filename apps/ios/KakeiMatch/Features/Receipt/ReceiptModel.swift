@@ -16,6 +16,7 @@ final class KMReceiptModel {
     var memo = ""
     var tax = ""
     var taxes: [KMReceiptTax] = []
+    var taxAmountTexts: [String] = []
     var excluded = false
     var categoryId = ""
     var accountId = ""
@@ -68,6 +69,7 @@ final class KMReceiptModel {
 
     var canSave: Bool { !loading && (!requiresExistingReceipt || receipt != nil) }
     var isReading: Bool { phase == .reading || phase == .categorizing }
+    var hasMultipleTaxRates: Bool { taxes.count > 1 }
     var warnings: [KMReceiptPresentation.Warning] { KMReceiptPresentation.warnings(receipt?.extraction, reviewed: reviewed) }
     var totalResult: Result<KMReceiptPresentation.TotalCheck?, Error> {
         Result { try KMReceiptPresentation.totalCheck(total: Int(amount), items: items, adjustments: adjustments, tax: Int(tax)) }
@@ -182,8 +184,10 @@ final class KMReceiptModel {
         amount = draft.totalAmountText
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
         time = draft.purchasedTime ?? ""
+        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(draft.taxes ?? [])
+        taxes = resolvedTaxes
+        taxAmountTexts = resolvedTaxes.map { String($0.taxAmountYen) }
         tax = draft.taxAmountText
-        taxes = draft.taxes ?? []
         memo = draft.memo ?? ""
         excluded = draft.excludedFromSpending
         categoryId = draft.categoryId
@@ -200,10 +204,16 @@ final class KMReceiptModel {
         amount = (confirmed?.totalAmountYen ?? extraction?.totalAmountYen).map(String.init) ?? ""
         date = (confirmed?.purchasedDate ?? extraction?.purchasedDate ?? today).rawValue
         time = confirmed?.purchasedTime ?? extraction?.purchasedTime ?? ""
-        let resolvedTaxes = confirmed?.taxes ?? extraction?.taxes ?? []
+        let resolvedTaxes = KMReceiptPresentation.groupedTaxes(confirmed?.taxes ?? extraction?.taxes ?? [])
         taxes = resolvedTaxes
-        let resolvedTaxYen = confirmed?.taxAmountYen ?? extraction?.taxAmountYen
-            ?? (resolvedTaxes.isEmpty ? nil : resolvedTaxes.reduce(0) { $0 + $1.taxAmountYen })
+        taxAmountTexts = resolvedTaxes.map { String($0.taxAmountYen) }
+        let resolvedTaxYen: Int?
+        if resolvedTaxes.count > 1 {
+            resolvedTaxYen = try? KMReceiptPresentation.totalTaxYen(resolvedTaxes)
+        } else {
+            resolvedTaxYen = confirmed?.taxAmountYen ?? extraction?.taxAmountYen
+                ?? (try? KMReceiptPresentation.totalTaxYen(resolvedTaxes))
+        }
         tax = resolvedTaxYen.map(String.init) ?? ""
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
         categoryId = confirmed?.categoryId ?? receipt.aiSuggestion.categoryId ?? ""
@@ -336,6 +346,54 @@ final class KMReceiptModel {
         adjustmentIsAddition.removeValue(forKey: adjustmentId)
     }
 
+    func taxAmountText(at index: Int) -> String {
+        if taxAmountTexts.indices.contains(index) { return taxAmountTexts[index] }
+        guard taxes.indices.contains(index) else { return "" }
+        return String(taxes[index].taxAmountYen)
+    }
+
+    func setTaxAmount(at index: Int, value: String) {
+        guard taxes.indices.contains(index) else { return }
+        if taxAmountTexts.count != taxes.count {
+            taxAmountTexts = taxes.map { String($0.taxAmountYen) }
+        }
+        taxAmountTexts[index] = value
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            taxes[index].taxAmountYen = 0
+        } else if let parsed = try? KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true) {
+            taxes[index].taxAmountYen = parsed
+        }
+        syncCombinedTaxFromRates()
+    }
+
+    func setSingleTax(_ value: String) {
+        tax = value
+        guard taxes.count == 1 else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            taxes[0].taxAmountYen = 0
+            taxAmountTexts = [""]
+        } else if let parsed = try? KMEntryPresentation.parseAmountYen(trimmed, allowsZero: true) {
+            taxes[0].taxAmountYen = parsed
+            taxAmountTexts = [value]
+        } else {
+            taxAmountTexts = [value]
+        }
+    }
+
+    private func syncCombinedTaxFromRates() {
+        guard !taxes.isEmpty else { return }
+        if taxAmountTexts.count == taxes.count,
+           taxAmountTexts.allSatisfy({ $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            tax = ""
+            return
+        }
+        if let sum = try? KMReceiptPresentation.totalTaxYen(taxes) {
+            tax = String(sum)
+        }
+    }
+
     /// PWA local-ui.ts:saveImage — save the original before any AI read, then edit that receipt.
     func selectImage(_ data: Data, contentType: String) async {
         stopWaiting()
@@ -351,7 +409,7 @@ final class KMReceiptModel {
             await updatePreviewImage(for: data)
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
-            categoryId = ""; taxes = []; items = []; adjustments = []; adjustmentIsAddition = [:]
+            categoryId = ""; taxes = []; taxAmountTexts = []; items = []; adjustments = []; adjustmentIsAddition = [:]
             reviewed = []; status = nil; error = nil
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
@@ -680,13 +738,11 @@ final class KMReceiptModel {
             if !time.isEmpty, time.range(of: #"^([01]\d|2[0-3]):[0-5]\d$"#, options: .regularExpression) == nil {
                 throw KMDataError.invalidData("時刻を確認してください。")
             }
-            let taxYen = tax.isEmpty ? nil : try KMEntryPresentation.parseAmountYen(tax, allowsZero: true)
-            let confirmedTaxes: [KMReceiptTax]?
-            if !taxes.isEmpty, let taxYen, try taxes.reduce(0, { try KMYen.add($0, $1.taxAmountYen) }) == taxYen {
-                confirmedTaxes = taxes
-            } else {
-                confirmedTaxes = nil
-            }
+            let resolvedTax = try KMReceiptPresentation.reconciledTaxesForSave(
+                taxes: taxes, taxAmountTexts: taxAmountTexts, singleTaxText: tax
+            )
+            let taxYen = resolvedTax.taxAmountYen
+            let confirmedTaxes = resolvedTax.taxes
             // The repository owns allocation validation and posting, including mixed-category splits.
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
