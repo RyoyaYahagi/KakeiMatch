@@ -149,8 +149,17 @@ import Observation
                 ?? (candidate.receiptId.hasPrefix("actual:") ? String(candidate.receiptId.dropFirst(7)) : nil)
             if let id, let value = try await repositories.transactions.transaction(id: id) { transactions[id] = value }
         }
+        let importMetadata = imports.map {
+            KMReconciliationPresentation.ImportMetadata(
+                id: $0.id,
+                provider: $0.value.provider,
+                createdAt: $0.value.createdAt,
+                csvNeedsReviewCount: $0.value.needsReviewRows?.count ?? 0
+            )
+        }
         let projection = KMReconciliationPresentation.make(run: run, resolutions: resolutions, suspected: suspected,
-                                                          statements: statements, receipts: receipts, transactions: transactions)
+                                                          statements: statements, receipts: receipts, transactions: transactions,
+                                                          imports: importMetadata)
         let attention = try KMReconciliationReview.attention(statements: statements,
             unresolvedIds: Set(projection.pending.map(\.id) + suspected.map(\.statementId)))
         self.run = run; self.statements = statements; self.imports = imports; self.receipts = receipts

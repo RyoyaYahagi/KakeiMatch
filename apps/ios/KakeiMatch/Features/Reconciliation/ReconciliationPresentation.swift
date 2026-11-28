@@ -19,12 +19,36 @@ struct KMReconciliationPresentation {
         var hasCandidates: Bool
         var reason: String
     }
+    struct ImportMetadata: Equatable, Sendable {
+        var id: String
+        var provider: KMStatementProvider
+        var createdAt: Date?
+        var csvNeedsReviewCount: Int = 0
+    }
+    struct ImportSummary: Identifiable, Equatable, Sendable {
+        var id: String
+        var provider: KMStatementProvider
+        var importedAt: Date?
+        var total: Int
+        var sameExpense: Int
+        var noReceipt: Int
+        var transfer: Int
+        var ignored: Int
+        var unprocessed: Int
+        var csvNeedsReviewCount: Int = 0
+
+        var processed: Int { sameExpense + noReceipt + transfer + ignored }
+        var breakdownLabel: String {
+            "一致 \(sameExpense)件 · 記録として登録 \(noReceipt)件 · 振替 \(transfer)件 · 登録しないと判断 \(ignored)件 · 未処理 \(unprocessed)件"
+        }
+    }
     var pending: [Pending] = []
     var matched: [KMReconciliationResolution] = []
     var ignored: [KMReconciliationResolution] = []
     var failures: [KMReconciliationResolution] = []
     var suspected: [KMSuspectedStatement] = []
     var waiting = 0
+    var importSummaries: [ImportSummary] = []
     var needsReview: Int { pending.filter { $0.status == .needsReview }.count }
     var unmatched: Int { pending.filter { $0.status == .unmatchedStatement }.count }
     var isClear: Bool { pending.isEmpty && suspected.isEmpty && failures.isEmpty }
@@ -34,7 +58,8 @@ struct KMReconciliationPresentation {
 
     static func make(run: KMReconciliationRun?, resolutions: [KMReconciliationResolution],
                      suspected: [KMSuspectedStatement], statements: [KMStatementTransaction],
-                     receipts: [KMReceipt], transactions: [String: KMTransaction]) -> Self {
+                     receipts: [KMReceipt], transactions: [String: KMTransaction],
+                     imports: [ImportMetadata] = []) -> Self {
         guard let run else { return Self() }
         let decided = Set(resolutions.map(\.statementId)), flagged = Set(suspected.map(\.statementId))
         let statementsById = Dictionary(uniqueKeysWithValues: statements.map { ($0.id, $0) })
@@ -70,11 +95,54 @@ struct KMReconciliationPresentation {
                 let b = statementsById[$1.element.statementId]?.usedDate.rawValue ?? isoDay($1.element.createdAt)
                 return a == b ? $0.offset < $1.offset : a > b
             }.map(\.element)
+        let importSummaries = makeImportSummaries(imports: imports, statements: statements, resolutions: resolutions)
         return Self(pending: pending, matched: matched,
                     ignored: resolutions.filter { $0.resolution == .ignored && $0.status == .applied },
                     failures: resolutions.filter { $0.status != .applied },
                     suspected: suspected.sorted { $0.markedAt > $1.markedAt },
-                    waiting: run.receiptResults.filter { $0.status == .unmatchedReceipt }.count)
+                    waiting: run.receiptResults.filter { $0.status == .unmatchedReceipt }.count,
+                    importSummaries: importSummaries)
+    }
+
+    static func makeImportSummaries(imports: [ImportMetadata], statements: [KMStatementTransaction],
+                                    resolutions: [KMReconciliationResolution]) -> [ImportSummary] {
+        let resolutionsByStatement = Dictionary(resolutions.map { ($0.statementId, $0) }, uniquingKeysWith: { _, latest in latest })
+        let statementsByImport = Dictionary(grouping: statements, by: \.importId)
+        var metadataByImport: [String: ImportMetadata] = [:]
+        for item in imports { metadataByImport[item.id] = item }
+        for (importId, rows) in statementsByImport where metadataByImport[importId] == nil {
+            if let first = rows.first {
+                metadataByImport[importId] = ImportMetadata(id: importId, provider: first.provider, createdAt: nil, csvNeedsReviewCount: 0)
+            }
+        }
+        return metadataByImport.values.compactMap { meta -> ImportSummary? in
+            let rows = statementsByImport[meta.id] ?? []
+            if rows.isEmpty && meta.csvNeedsReviewCount == 0 { return nil }
+            var sameExpense = 0, noReceipt = 0, transfer = 0, ignored = 0, unprocessed = 0
+            for statement in rows {
+                if let decision = resolutionsByStatement[statement.id], decision.status == .applied, decision.undoRequestedAt == nil {
+                    switch decision.resolution {
+                    case .sameExpense: sameExpense += 1
+                    case .noReceipt: noReceipt += 1
+                    case .transfer: transfer += 1
+                    case .ignored: ignored += 1
+                    }
+                } else {
+                    unprocessed += 1
+                }
+            }
+            return ImportSummary(id: meta.id, provider: meta.provider, importedAt: meta.createdAt, total: rows.count,
+                                 sameExpense: sameExpense, noReceipt: noReceipt, transfer: transfer, ignored: ignored,
+                                 unprocessed: unprocessed, csvNeedsReviewCount: meta.csvNeedsReviewCount)
+        }.sorted { lhs, rhs in
+            let lhsHasUnprocessed = lhs.unprocessed > 0
+            let rhsHasUnprocessed = rhs.unprocessed > 0
+            if lhsHasUnprocessed != rhsHasUnprocessed { return lhsHasUnprocessed }
+            let lhsDate = lhs.importedAt ?? .distantPast
+            let rhsDate = rhs.importedAt ?? .distantPast
+            if lhsDate != rhsDate { return lhsDate > rhsDate }
+            return lhs.id < rhs.id
+        }
     }
 
     static func candidateReason(statement: KMStatementTransaction, transaction: KMTransaction) -> String {
