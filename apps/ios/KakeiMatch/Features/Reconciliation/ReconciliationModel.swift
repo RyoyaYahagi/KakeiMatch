@@ -26,6 +26,45 @@ import Observation
         repositories.fixtureName == nil ? Date() : repositories.referenceDate.addingTimeInterval(ProcessInfo.processInfo.systemUptime - started)
     }
 
+    func entryInitialValues(for statement: KMStatementTransaction, repositories: KMRepositories?) async -> KMEntryInitialValues {
+        let importedAccount = imports.first { $0.id == statement.importId }?.value.accountId
+        let accountId: String?
+        if let importedId = importedAccount, accounts.contains(where: { !$0.closed && $0.id == importedId }) {
+            accountId = importedId
+        } else {
+            let open = accounts.filter { !$0.closed && $0.accountType != .cash }
+            let mapped = open.filter { $0.statementProvider == statement.provider }
+            if mapped.count == 1 {
+                accountId = mapped[0].id
+            } else if mapped.isEmpty {
+                let standardName = KMStatementDownload.label(statement.provider)
+                let named = open.filter { $0.name == standardName }
+                if named.count == 1, var candidate = named.first, candidate.statementProvider == nil {
+                    candidate.statementProvider = statement.provider
+                    if let repositories {
+                        do {
+                            try await repositories.accounts.saveAccount(candidate)
+                            if let index = accounts.firstIndex(where: { $0.id == candidate.id }) {
+                                accounts[index] = candidate
+                            }
+                        } catch {
+                            // Keep opening manual entry with the resolved account even if saving the link fails.
+                        }
+                    }
+                    accountId = candidate.id
+                } else {
+                    accountId = nil
+                }
+            } else {
+                accountId = nil
+            }
+        }
+        let categoryId = KMReconciliationPresentation.suggestedCategory(
+            merchant: statement.merchant, rules: categoryRules, categories: categories)
+        return KMEntryInitialValues(amountYen: statement.amountYen, payee: statement.merchant,
+            date: statement.usedDate, accountId: accountId, categoryId: categoryId)
+    }
+
     enum Action {
         case confirm(statement: String, receipt: String)
         case reject(statement: String, receipt: String)

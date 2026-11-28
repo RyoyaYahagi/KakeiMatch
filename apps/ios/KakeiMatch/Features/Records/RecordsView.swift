@@ -2,12 +2,27 @@ import SwiftUI
 
 struct RecordsView: View {
     var refreshToken = 0
+    var initialSearch: KMRecordsSearchDraft? = nil
+    var onConsumeInitialSearch: () -> Void = {}
     var onOpenAccounts: () -> Void = {}
     var onDeleted: (KMTransactionDeletion) -> Void = { _ in }
     @Environment(\.repositories) private var repositories
-    @State private var model = KMRecordsModel()
+    @State private var model: KMRecordsModel
     @State private var pendingToDelete: KMReceipt?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    init(refreshToken: Int = 0,
+         initialSearch: KMRecordsSearchDraft? = nil,
+         onConsumeInitialSearch: @escaping () -> Void = {},
+         onOpenAccounts: @escaping () -> Void = {},
+         onDeleted: @escaping (KMTransactionDeletion) -> Void = { _ in }) {
+        self.refreshToken = refreshToken
+        self.initialSearch = initialSearch
+        self.onConsumeInitialSearch = onConsumeInitialSearch
+        self.onOpenAccounts = onOpenAccounts
+        self.onDeleted = onDeleted
+        _model = State(initialValue: KMRecordsModel(initialSearch: initialSearch))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -31,7 +46,10 @@ struct RecordsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("records.screen")
-        .task { await model.configure(repositories) }
+        .task {
+            await model.configure(repositories)
+            if initialSearch != nil { onConsumeInitialSearch() }
+        }
         .onChange(of: refreshToken) { _, _ in Task { await model.reload() } }
         .fullScreenCover(isPresented: Binding(get: { model.page == .pending }, set: { if !$0 { Task { await model.showList() } } })) {
             pendingDetail.background(KMColor.bg)

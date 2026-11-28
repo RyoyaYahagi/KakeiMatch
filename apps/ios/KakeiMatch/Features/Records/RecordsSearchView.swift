@@ -2,6 +2,8 @@ import SwiftUI
 
 struct KMRecordsSearchView: View {
     @Bindable var model: KMRecordsModel
+    var initialSearch: KMRecordsSearchDraft? = nil
+    @State private var appliedInitialSearch = false
     @State private var advanced = false
     @FocusState private var focused: String?
     @State private var dateField: SearchDateField?
@@ -86,6 +88,11 @@ struct KMRecordsSearchView: View {
         .foregroundStyle(KMColor.text)
         .disabled(model.busy)
         .accessibilityElement(children: .contain).accessibilityIdentifier("records.searchScreen")
+        .task {
+            guard let initialSearch, !appliedInitialSearch else { return }
+            appliedInitialSearch = true
+            await model.applyInitialSearch(initialSearch)
+        }
         .sheet(item: $dateField) { field in
             VStack(spacing: KMSpacing.space3) {
                 Text(field.title).font(KMTypography.body(17, weight: .bold))
