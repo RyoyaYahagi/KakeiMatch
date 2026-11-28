@@ -2,7 +2,8 @@ name: iOS
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # labeled starts a run when ready-to-merge is added; the ui-tests condition decides what runs.
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
     paths:
       - 'apps/ios/**'
       - 'test/fixtures/ios-parity/**'
@@ -37,7 +38,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-${{ github.event_name == 'pull_request' && (github.event.pull_request.draft && format('pr-draft-{0}', github.run_id) || format('pr-{0}', github.event.pull_request.number)) || format('{0}-{1}', github.event_name, github.ref) }}
+  # A labeled run gets its own group so adding the label does not cancel a push run in progress.
+  group: ios-${{ github.event_name == 'pull_request' && (github.event.action == 'labeled' && format('pr-{0}-labeled', github.event.pull_request.number) || (github.event.pull_request.draft && format('pr-draft-{0}', github.run_id) || format('pr-{0}', github.event.pull_request.number))) || format('{0}-{1}', github.event_name, github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
 
 env:
@@ -52,7 +54,8 @@ defaults:
 
 jobs:
   build:
-    if: ${{ !github.event.pull_request.draft }}
+    # Labeled runs build only for ready-to-merge, so other label changes do not use a macOS runner.
+    if: ${{ !github.event.pull_request.draft && (github.event.action != 'labeled' || github.event.label.name == 'ready-to-merge') }}
     runs-on: macos-26
     timeout-minutes: 15
     steps:
@@ -274,8 +277,10 @@ jobs:
   # waited for another macOS runner and booted another simulator for about two minutes of tests.
   # Shards start after build completes (needs: build), so they do not hold macOS runners while waiting for build artifacts.
   # The shard list is fixed to UI_SHARD_COUNT; build fails if the matrix, UI_SHARD_COUNT and ui-shards.json disagree.
+  # On pull requests, ui-tests runs only with the ready-to-merge label (a skipped job uses no macOS runner).
+  # Pushes to main and manual runs always run it, so post-merge checks and the UX run keep working.
   ui-tests:
-    if: ${{ !github.event.pull_request.draft }}
+    if: ${{ !github.event.pull_request.draft && (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready-to-merge')) }}
     needs: build
     runs-on: macos-26
     # Shards start after build completes (needs: build), so build queue/run time does not count
