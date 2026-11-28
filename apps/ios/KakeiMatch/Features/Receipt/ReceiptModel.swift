@@ -716,7 +716,7 @@ final class KMReceiptModel {
                     throw KMDataError.invalidData("カテゴリが未選択の品目が\(unclassified)件あります。品目一覧でカテゴリを選択してください。")
                 }
             }
-            let fallback = items.isEmpty ? categoryId : (items.first?.categoryId ?? "")
+            let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
             let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
                 purchasedTime: time.isEmpty ? nil : time, totalAmountYen: total, categoryId: fallback,
