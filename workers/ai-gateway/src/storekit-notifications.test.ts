@@ -635,6 +635,105 @@ describe('POST /api/storekit/notifications', () => {
     });
   });
 
+  it('does not restore a second refund when an older REFUND_REVERSED is redelivered after it', async () => {
+    seedSubscription({ status: 'active', latestSignedDateMs: (NOW - 400) * 1000 });
+    const expiresSec = NOW + 30 * 86400;
+    const options = { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER };
+    const send = async (
+      notificationType: string,
+      notificationUuid: string,
+      signedDateSec: number,
+      txOverrides: Record<string, unknown>,
+    ) => {
+      const tx = await buildStoreKitJwsFixture({
+        chain,
+        payloadOverrides: { signedDate: signedDateSec * 1000, expiresDate: expiresSec * 1000, ...txOverrides },
+      });
+      const notif = await signPayload(chain, {
+        notificationType,
+        notificationUUID: notificationUuid,
+        signedDate: signedDateSec * 1000,
+        data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: tx.jws },
+      });
+      const res = await handleStoreKitNotificationRequest(postNotification({ signedPayload: notif }), env, options);
+      expect(res.status).toBe(200);
+      return res.json();
+    };
+
+    // First refund, its reversal (arrives and is applied), then a second refund.
+    expect(await send('REFUND', 'uuid-d-refund-1', NOW - 300, { revocationDate: (NOW - 300) * 1000, revocationReason: 1 }))
+      .toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+    expect(await send('REFUND_REVERSED', 'uuid-d-reversed-1', NOW - 250, {}))
+      .toEqual({ received: true, outcome: 'applied', status: 'active' });
+    const secondRevokedSec = NOW - 100;
+    expect(await send('REFUND', 'uuid-d-refund-2', NOW - 90, { revocationDate: secondRevokedSec * 1000, revocationReason: 0 }))
+      .toEqual({ received: true, outcome: 'applied', status: 'revoked' });
+
+    // The first reversal is redelivered (its first delivery was never recorded): it belongs to the first refund.
+    expect(await send('REFUND_REVERSED', 'uuid-d-reversed-1-redelivered', NOW - 250, {}))
+      .toEqual({ received: true, outcome: 'ignored_stale' });
+    expect(
+      sqlite
+        .prepare('SELECT status, revoked_at, revocation_reason FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({ status: 'revoked', revoked_at: secondRevokedSec, revocation_reason: 0 });
+
+    // A reversal issued after the second refund does restore it.
+    expect(await send('REFUND_REVERSED', 'uuid-d-reversed-2', NOW - 50, {}))
+      .toEqual({ received: true, outcome: 'applied', status: 'active' });
+    expect(
+      sqlite
+        .prepare('SELECT status, revoked_at, revocation_reason FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({ status: 'active', revoked_at: null, revocation_reason: null });
+  });
+
+  it('keeps the grace period when an old REFUND_REVERSED is redelivered to a row that is not revoked', async () => {
+    const graceExpiresSec = NOW + 3 * 86400;
+    const advancedSignedDateMs = (NOW - 10) * 1000;
+    seedSubscription({
+      status: 'in_grace_period',
+      expiresAt: graceExpiresSec,
+      latestTransactionId: '2000000000000001',
+      latestSignedDateMs: advancedSignedDateMs,
+    });
+
+    // The reversal's transaction period already ended, so a blind restore would flip the row to expired.
+    const txReversed = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        originalTransactionId: ORIG_TX_ID,
+        transactionId: '2000000000000001',
+        signedDate: (NOW - 120) * 1000,
+        expiresDate: (NOW - 86400) * 1000,
+      },
+    });
+    const reversedNotif = await signPayload(chain, {
+      notificationType: 'REFUND_REVERSED',
+      notificationUUID: 'uuid-e-grace-reversed',
+      signedDate: (NOW - 100) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txReversed.jws },
+    });
+    const response = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: reversedNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true, outcome: 'ignored_stale' });
+
+    expect(
+      sqlite
+        .prepare('SELECT status, expires_at, revoked_at, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({
+      status: 'in_grace_period',
+      expires_at: graceExpiresSec,
+      revoked_at: null,
+      latest_signed_date_ms: advancedSignedDateMs,
+    });
+  });
+
   it('does not revoke a newer renewed subscription when a REFUND arrives for an older billing-period transaction', async () => {
     const currentExpiresSec = NOW + 29 * 86400;
     seedSubscription({

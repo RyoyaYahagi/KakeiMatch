@@ -63,6 +63,17 @@ function isPriorPeriodTransaction(existing: ExistingSubscriptionRow, tx: Verifie
     tx.expiresAt < existing.expires_at
   );
 }
+
+/**
+ * A REFUND_REVERSED restores only the revocation that was in effect when Apple issued it:
+ * the row must be revoked, and the reversal must not predate that revocation. Otherwise it is a
+ * redelivery for an earlier refund (already reversed, then refunded again) or for a row that is
+ * not revoked at all (e.g. in_grace_period), and applying it would resurrect or downgrade the row.
+ */
+function isReversalOfCurrentRevocation(existing: ExistingSubscriptionRow, reversalSignedDateMs: number): boolean {
+  if (existing.status !== 'revoked' && existing.revoked_at === null) return false;
+  return existing.revoked_at === null || reversalSignedDateMs >= existing.revoked_at * 1000;
+}
 const MAX_NOTIFICATION_BODY_BYTES = 64 * 1024;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -515,7 +526,7 @@ export async function handleStoreKitNotificationRequest(
 
   // Invariant: once revoked, notifications never revert or mutate the subscription,
   // EXCEPT REFUND_REVERSED (Apple reversed the refund), which restores the subscription
-  // according to the verified signedTransactionInfo (subject to signedDate ordering).
+  // according to the verified signedTransactionInfo, but only for the revocation currently in effect.
   if (existing && !isRefundReversed && (existing.status === 'revoked' || existing.revoked_at !== null)) {
     await recordNotification(db, {
       notificationUuid,
@@ -535,6 +546,22 @@ export async function handleStoreKitNotificationRequest(
   // Guard: a revocation (or refund reversal) for an older billing-period transaction must not
   // overwrite or revoke a newer active renewal on the same originalTransactionId.
   if (existing && (isRevocation || isRefundReversed) && isPriorPeriodTransaction(existing, tx)) {
+    await recordNotification(db, {
+      notificationUuid,
+      notificationType,
+      subtype,
+      environment,
+      originalTransactionId: tx.originalTransactionId,
+      signedDateMs,
+      outcome: 'ignored_stale',
+      receivedAt: now,
+    });
+    return json(200, { received: true, outcome: 'ignored_stale' });
+  }
+
+  // Guard: a refund reversal applies only to the revocation currently in effect (see
+  // isReversalOfCurrentRevocation). The SQL WHERE below repeats this so a concurrent write cannot slip past.
+  if (existing && isRefundReversed && !isReversalOfCurrentRevocation(existing, signedDateMs)) {
     await recordNotification(db, {
       notificationUuid,
       notificationType,
@@ -651,7 +678,9 @@ export async function handleStoreKitNotificationRequest(
                    OR expires_at IS NULL
                    OR ? IS NULL
                    OR expires_at <= ?
-                 )`,
+                 )
+                 AND (revoked_at IS NOT NULL OR status = 'revoked')
+                 AND (revoked_at IS NULL OR revoked_at * 1000 <= ?)`,
             )
             .bind(
               tx.environment,
@@ -668,6 +697,7 @@ export async function handleStoreKitNotificationRequest(
               tx.transactionId,
               tx.expiresAt,
               tx.expiresAt,
+              signedDateMs,
             )
             .run()
         : await db
