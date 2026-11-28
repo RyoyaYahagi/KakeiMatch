@@ -778,3 +778,85 @@ extension ReceiptModelTests {
         #expect(saved.confirmedValue?.memo == "再保存確認")
     }
 }
+
+
+extension ReceiptModelTests {
+    @Test func unclassifiedItemCreatesLeadingUnselectedBucketAndIsNotFoldedIntoFirstCategory() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        let food = try #require(try await repositories.categories.categories(includeHidden: false).first { $0.name == "食費" })
+        receipt.aiSuggestion = .init(categoryId: food.id, source: .jev)
+        var categoriesByItem = Array(repeating: Optional(food.id), count: receipt.extraction?.items.count ?? 0)
+        categoriesByItem[1] = nil
+        receipt.itemCategories = categoriesByItem
+        try await repositories.receipts.saveReceipt(receipt)
+
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        #expect(model.unclassifiedItemCount == 1)
+        #expect(model.hasUnclassifiedItems)
+        let totals = try model.categorySummary.get()
+        #expect(totals.first?.categoryId == nil)
+        #expect(totals.first?.name == "未選択")
+        #expect(totals.first?.amountYen == model.items[1].amountYen)
+        #expect(totals.dropFirst().first?.categoryId == food.id)
+    }
+
+    @Test func unclassifiedItemBlocksRegistrationUntilAllItemsAreCategorized() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        let categories = try await repositories.categories.categories(includeHidden: false)
+        let food = try #require(categories.first { $0.name == "食費" })
+        let daily = try #require(categories.first { $0.name == "日用品" })
+        receipt.aiSuggestion = .init(categoryId: food.id, source: .jev)
+        var categoriesByItem = Array(repeating: Optional(food.id), count: receipt.extraction?.items.count ?? 0)
+        categoriesByItem[1] = nil
+        receipt.itemCategories = categoriesByItem
+        try await repositories.receipts.saveReceipt(receipt)
+
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+        let beforeCount = try await repositories.transactions.transactions(matching: .init()).count
+
+        await model.save()
+        #expect(!model.didSave)
+        #expect(model.blockedByUnclassifiedItems)
+        #expect(model.error?.contains("未選択") == true)
+        #expect(try await repositories.transactions.transactions(matching: .init()).count == beforeCount)
+
+        model.setItemCategory(model.items[1].id, categoryId: daily.id)
+        #expect(!model.hasUnclassifiedItems)
+        #expect(!model.blockedByUnclassifiedItems)
+        #expect(model.error == nil)
+
+        await model.save()
+        #expect(model.didSave)
+        #expect(model.error == nil)
+        #expect(try await repositories.transactions.transactions(matching: .init()).count == beforeCount + 1)
+    }
+
+    @Test func legacyAppliedReceiptWithNilItemCategoryDisplaysAndSavesWithoutUnselectedError() async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt-applied")
+        var receipt = try #require(try await repositories.receipts.receipts().first)
+        var confirmed = try #require(receipt.confirmedValue)
+        let fallbackCategoryId = confirmed.categoryId
+        var legacyItems = try #require(confirmed.items)
+        legacyItems[0].categoryId = nil
+        confirmed.items = legacyItems
+        receipt.confirmedValue = confirmed
+        try await repositories.receipts.saveReceipt(receipt)
+
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id, editing: true)
+        #expect(model.editing && model.error == nil)
+        #expect(model.unclassifiedItemCount == 0)
+        #expect(model.items[0].categoryId == fallbackCategoryId)
+        let totals = try model.categorySummary.get()
+        #expect(!totals.contains { $0.categoryId == nil })
+
+        model.memo = "旧レシート互換確認"
+        await model.save()
+        #expect(model.didSave && model.error == nil)
+    }
+}

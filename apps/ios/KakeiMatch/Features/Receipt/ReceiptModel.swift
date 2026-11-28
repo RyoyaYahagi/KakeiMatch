@@ -43,6 +43,7 @@ final class KMReceiptModel {
 
     var redactionPreview: RedactionPreview?
     var error: String?
+    var blockedByUnclassifiedItems = false
     var status: String?
     var needsGuestStart = false
     var startingGuest = false
@@ -80,8 +81,13 @@ final class KMReceiptModel {
     var totalError: String? {
         if case .failure(let error) = totalResult { return error.localizedDescription }; return nil
     }
+    var unclassifiedItemCount: Int { KMReceiptPresentation.unclassifiedItemCount(items: items) }
+    var hasUnclassifiedItems: Bool { unclassifiedItemCount > 0 }
+    var firstUnclassifiedItemId: String? {
+        items.first(where: { KMReceiptPresentation.isUnclassifiedCategory($0.categoryId) })?.id
+    }
     var categorySummary: Result<[KMReceiptPresentation.CategoryTotal], Error> {
-        Result { try KMReceiptPresentation.categoryTotals(items: items, defaultCategoryId: categoryId, categories: categories) }
+        Result { try KMReceiptPresentation.categoryTotals(items: items, categories: categories) }
     }
     var categoryCount: Int {
         if case .success(let totals) = categorySummary { return totals.count }
@@ -180,6 +186,7 @@ final class KMReceiptModel {
     }
 
     private func applyValues(_ draft: KMReceiptDraft) {
+        blockedByUnclassifiedItems = false
         merchant = draft.merchant
         amount = draft.totalAmountText
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
@@ -198,6 +205,7 @@ final class KMReceiptModel {
     }
 
     private func applyValues(_ receipt: KMReceipt) {
+        blockedByUnclassifiedItems = false
         let confirmed = receipt.confirmedValue
         let extraction = receipt.extraction?.documentKind == .receipt ? receipt.extraction : nil
         merchant = confirmed?.merchant ?? extraction?.merchant ?? ""
@@ -220,12 +228,15 @@ final class KMReceiptModel {
         memo = confirmed?.memo ?? ""; excluded = confirmed?.excludedFromSpending ?? false
         categoryId = confirmed?.categoryId ?? receipt.aiSuggestion.categoryId ?? ""
         accountId = confirmed?.accountId ?? accountId
-        items = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
+        let rawItems = confirmed?.items ?? (extraction?.items ?? []).enumerated().map { i, item in
             KMReceiptItem(id: "receipt-item:\(receipt.id):\(i)", name: item.name, amountYen: item.amountYen,
                 quantity: item.quantity, unitPriceYen: item.unitPriceYen,
                 categoryId: receipt.itemCategories.flatMap { $0.indices.contains(i) ? $0[i] : nil },
                 taxRatePercent: item.taxRatePercent)
         }
+        items = KMReceiptPresentation.resolvedItemsForDisplay(
+            rawItems, status: receipt.registration.status, confirmedCategoryId: confirmed?.categoryId
+        )
         adjustments = confirmed?.adjustments ?? (extraction?.adjustments ?? []).enumerated().map { i, adjustment in
             KMReceiptAdjustment(id: "receipt-adjustment:\(receipt.id):\(i)", label: adjustment.label, amountYen: adjustment.amountYen,
                 targetItemId: adjustment.targetItemIndex.flatMap { items.indices.contains($0) ? items[$0].id : nil })
@@ -246,6 +257,7 @@ final class KMReceiptModel {
     func setItemCategory(_ itemId: String, categoryId: String?) {
         guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
         items[index].categoryId = categoryId
+        clearUnclassifiedBlockIfResolved()
     }
 
     func setAllItemCategories(_ categoryId: String?) {
@@ -253,6 +265,14 @@ final class KMReceiptModel {
             var updated = item
             updated.categoryId = categoryId
             return updated
+        }
+        clearUnclassifiedBlockIfResolved()
+    }
+
+    private func clearUnclassifiedBlockIfResolved() {
+        if blockedByUnclassifiedItems && !hasUnclassifiedItems {
+            blockedByUnclassifiedItems = false
+            error = nil
         }
     }
 
@@ -295,6 +315,7 @@ final class KMReceiptModel {
             updated.targetItemId = nil
             return updated
         }
+        clearUnclassifiedBlockIfResolved()
     }
 
     func adjustmentIsAddition(for adjustmentId: String) -> Bool {
@@ -412,7 +433,7 @@ final class KMReceiptModel {
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
             categoryId = ""; taxes = []; taxAmountTexts = []; items = []; adjustments = []; adjustmentIsAddition = [:]
-            reviewed = []; status = nil; error = nil
+            reviewed = []; status = nil; error = nil; blockedByUnclassifiedItems = false
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
             imageData = nil; imageIsSaved = false
@@ -527,7 +548,7 @@ final class KMReceiptModel {
             return nil
         }
         revision = UUID(); let token = revision
-        phase = .reading; startedReading = Date(); error = nil; status = nil
+        phase = .reading; startedReading = Date(); error = nil; blockedByUnclassifiedItems = false; status = nil
         redactionPreview = nil
         KMContactDiagnosticRecorder.shared.recordAction(.receiptAIStarted, screen: .records)
         operation = Task {
@@ -569,7 +590,7 @@ final class KMReceiptModel {
                 )
                 guard revision == token, !Task.isCancelled, var learnedReceipt = self.receipt else { return }
                 learnedReceipt.itemCategories = learning.itemCategoryIds
-                learnedReceipt.aiSuggestion = .init(categoryId: learning.categoryId,
+                learnedReceipt.aiSuggestion = .init(categoryId: extraction.items.isEmpty ? learning.categoryId : nil,
                     source: learning.appliedRules.isEmpty ? .unclassified : .learnedRule,
                     flowId: flow.uuidString, categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
                 learnedReceipt.updatedAt = now
@@ -604,7 +625,7 @@ final class KMReceiptModel {
                             learning.itemCategoryIds[index] ?? answers.answers["item_\(index)"]?.suggestedCategoryID
                         }
                         updated.itemCategories = categoriesByItem
-                        updated.aiSuggestion = .init(categoryId: categoriesByItem.first ?? nil,
+                        updated.aiSuggestion = .init(categoryId: nil,
                             source: .jev, model: answers.model, attemptedAt: now, flowId: flow.uuidString,
                             categoryRules: learning.appliedRules.isEmpty ? nil : learning.appliedRules)
                     }
@@ -725,7 +746,7 @@ final class KMReceiptModel {
         // Keep the latest edit before validation/registration; failed saves leave this draft for retry.
         await flushDraft()
         draftTask?.cancel(); draftTask = nil
-        saving = true; error = nil
+        saving = true; error = nil; blockedByUnclassifiedItems = false
         KMContactDiagnosticRecorder.shared.recordAction(.receiptSaveStarted, screen: .records)
         defer { saving = false }
         await reviewTask?.value
@@ -746,6 +767,13 @@ final class KMReceiptModel {
             let taxYen = resolvedTax.taxAmountYen
             let confirmedTaxes = resolvedTax.taxes
             // The repository owns allocation validation and posting, including mixed-category splits.
+            if !items.isEmpty {
+                let unclassified = unclassifiedItemCount
+                guard unclassified == 0 else {
+                    blockedByUnclassifiedItems = true
+                    throw KMDataError.invalidData("カテゴリが未選択の品目が\(unclassified)件あります。品目一覧でカテゴリを選択してください。")
+                }
+            }
             let fallback = categoryId.isEmpty ? items.compactMap(\.categoryId).first ?? "" : categoryId
             guard categories.contains(where: { $0.id == fallback }) else { throw KMDataError.invalidData("カテゴリを選択してください。") }
             let confirmed = KMConfirmedReceipt(merchant: merchant, purchasedDate: purchasedDate,
