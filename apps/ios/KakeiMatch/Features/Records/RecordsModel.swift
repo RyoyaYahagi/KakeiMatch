@@ -37,6 +37,15 @@ final class KMRecordsModel {
     @ObservationIgnored private var repositories: KMRepositories?
     @ObservationIgnored private var revision = 0
 
+    init(initialSearch: KMRecordsSearchDraft? = nil) {
+        if let initialSearch {
+            page = .search
+            searchOrigin = true
+            search = initialSearch
+            appliedSearch = initialSearch
+        }
+    }
+
     var pending: [KMReceipt] { receipts.filter { $0.registration.status != .applied && $0.registration.status != .deleted } }
     var changed: Bool { draft != originalDraft }
     var canEdit: Bool { selectedReceipt != nil || selected?.isSplit != true }
@@ -75,6 +84,11 @@ final class KMRecordsModel {
     func showSearch() async {
         guard !busy else { return }
         page = .search; searchOrigin = true; search = appliedSearch; editing = nil
+        await performSearch()
+    }
+
+    func applyInitialSearch(_ draft: KMRecordsSearchDraft) async {
+        page = .search; searchOrigin = true; search = draft; appliedSearch = draft; editing = nil
         await performSearch()
     }
 
