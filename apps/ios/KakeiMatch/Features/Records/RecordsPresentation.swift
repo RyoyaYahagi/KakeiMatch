@@ -27,6 +27,22 @@ struct KMRecordsSearchDraft: Equatable, Sendable {
         )
     }
 
+    mutating func setStartDate(_ value: String) {
+        startDate = value
+        if !value.isEmpty, !endDate.isEmpty,
+           let start = try? KMDate(value), let end = try? KMDate(endDate), start > end {
+            endDate = value
+        }
+    }
+
+    mutating func setEndDate(_ value: String) {
+        endDate = value
+        if !value.isEmpty, !startDate.isEmpty,
+           let start = try? KMDate(startDate), let end = try? KMDate(value), end < start {
+            startDate = value
+        }
+    }
+
     func query() throws -> KMTransactionQuery {
         func amount(_ value: String) throws -> Int? {
             let value = value.trimmingCharacters(in: .whitespacesAndNewlines)

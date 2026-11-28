@@ -4,8 +4,9 @@ import Testing
 
 struct ReconciliationPresentationTests {
     private let day = KMDate(rawValue: "2026-10-01")
-    private func statement(_ id: String = "s", kind: KMStatementTransaction.Kind = .purchase) -> KMStatementTransaction {
-        .init(id: id, importId: "import", provider: .paypayCard, kind: kind, usedDate: day,
+    private func statement(_ id: String = "s", kind: KMStatementTransaction.Kind = .purchase,
+                           importId: String = "import", provider: KMStatementProvider = .paypayCard) -> KMStatementTransaction {
+        .init(id: id, importId: importId, provider: provider, kind: kind, usedDate: day,
               merchant: "合成食堂", amountYen: 880, sourceFingerprint: id, duplicateOrdinal: 1)
     }
     private func run(_ ids: [(String, KMReconciliationStatementResult.Status)]) -> KMReconciliationRun {
@@ -13,9 +14,11 @@ struct ReconciliationPresentationTests {
               candidates: [], statementResults: ids.map { .init(statementTransactionId: $0.0, status: $0.1, reasonCodes: []) }, receiptResults: [])
     }
     private func decision(_ id: String, kind: KMReconciliationResolution.Resolution = .sameExpense,
-                          status: KMReconciliationResolution.Status = .applied) -> KMReconciliationResolution {
+                          status: KMReconciliationResolution.Status = .applied,
+                          undoRequestedAt: Date? = nil) -> KMReconciliationResolution {
         .init(id: "decision-" + id, runId: "run", statementId: id, resolution: kind, source: .user,
-              statementAmountYen: 880, status: status, createdAt: .distantPast, updatedAt: .distantPast)
+              statementAmountYen: 880, status: status, undoRequestedAt: undoRequestedAt,
+              createdAt: .distantPast, updatedAt: .distantPast)
     }
     @Test func emptyHasNoInventedResults() {
         let value = KMReconciliationPresentation.make(run: nil, resolutions: [], suspected: [], statements: [], receipts: [], transactions: [:])
@@ -85,5 +88,106 @@ struct ReconciliationPresentationTests {
         let rows = [KMCategory(id: "custom", name: "合成", usageCount: 3), .init(id: "fun", name: "趣味・娯楽"),
                     .init(id: "food", name: "食費"), .init(id: "hidden", name: "非表示", groupId: "hidden")]
         #expect(KMReconciliationPresentation.categoryChoices(rows, groups: [.init(id: "hidden", name: "非表示", hidden: true)]).map(\.id) == ["custom", "food", "fun"])
+    }
+    @Test func importSummariesCountBreakdownAndTotalPerImport() throws {
+        let earlier = Date(timeIntervalSince1970: 1_792_000_000)
+        let later = Date(timeIntervalSince1970: 1_792_100_000)
+        let imports: [KMReconciliationPresentation.ImportMetadata] = [
+            .init(id: "imp-paypay", provider: .paypayCard, createdAt: earlier, csvNeedsReviewCount: 2),
+            .init(id: "imp-rakuten", provider: .rakutenCard, createdAt: later, csvNeedsReviewCount: 0),
+        ]
+        let statements = [
+            // PayPay import: 2 sameExpense, 1 noReceipt, 1 transfer, 1 ignored, 1 needsReview, 2 unmatchedStatement -> total 8
+            statement("pp-match-1", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-match-2", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-norec", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-xfer", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-ign", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-rev", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-unm-1", importId: "imp-paypay", provider: .paypayCard),
+            statement("pp-unm-2", importId: "imp-paypay", provider: .paypayCard),
+            // Rakuten import: 1 sameExpense, 1 noReceipt, 0 unprocessed -> total 2
+            statement("rk-match", importId: "imp-rakuten", provider: .rakutenCard),
+            statement("rk-norec", importId: "imp-rakuten", provider: .rakutenCard),
+        ]
+        let decisions = [
+            decision("pp-match-1", kind: .sameExpense),
+            decision("pp-match-2", kind: .sameExpense),
+            decision("pp-norec", kind: .noReceipt),
+            decision("pp-xfer", kind: .transfer),
+            decision("pp-ign", kind: .ignored),
+            decision("rk-match", kind: .sameExpense),
+            decision("rk-norec", kind: .noReceipt),
+        ]
+        let r = run([
+            ("pp-rev", .needsReview),
+            ("pp-unm-1", .unmatchedStatement),
+            ("pp-unm-2", .unmatchedStatement),
+        ])
+        let presentation = KMReconciliationPresentation.make(
+            run: r, resolutions: decisions, suspected: [], statements: statements,
+            receipts: [], transactions: [:], imports: imports
+        )
+
+        // Unprocessed imports are ordered before fully processed imports.
+        #expect(presentation.importSummaries.map(\.id) == ["imp-paypay", "imp-rakuten"])
+
+        let paypay = try #require(presentation.importSummaries.first)
+        #expect(paypay.provider == .paypayCard)
+        #expect(paypay.total == 8)
+        #expect(paypay.sameExpense == 2)
+        #expect(paypay.noReceipt == 1)
+        #expect(paypay.transfer == 1)
+        #expect(paypay.ignored == 1)
+        #expect(paypay.unprocessed == 3)
+        #expect(paypay.processed == 5)
+        #expect(paypay.sameExpense + paypay.noReceipt + paypay.transfer + paypay.ignored + paypay.unprocessed == paypay.total)
+        #expect(paypay.processed + paypay.unprocessed == paypay.total)
+        // CSV parse-time needsReviewRows are tracked separately without inflating unprocessed or total.
+        #expect(paypay.csvNeedsReviewCount == 2)
+
+        let rakuten = try #require(presentation.importSummaries.last)
+        #expect(rakuten.provider == .rakutenCard)
+        #expect(rakuten.total == 2)
+        #expect(rakuten.sameExpense == 1)
+        #expect(rakuten.noReceipt == 1)
+        #expect(rakuten.transfer == 0)
+        #expect(rakuten.ignored == 0)
+        #expect(rakuten.unprocessed == 0)
+        #expect(rakuten.processed == 2)
+        #expect(rakuten.sameExpense + rakuten.noReceipt + rakuten.transfer + rakuten.ignored + rakuten.unprocessed == rakuten.total)
+    }
+    @Test func importSummariesTreatSuspectedFailedAndUndoPendingAsUnprocessedWithoutDoubleCounting() throws {
+        let imports: [KMReconciliationPresentation.ImportMetadata] = [
+            .init(id: "imp-smbc", provider: .smbcCard, createdAt: .distantPast, csvNeedsReviewCount: 1),
+        ]
+        let statements = [
+            statement("s-applied", importId: "imp-smbc", provider: .smbcCard),
+            statement("s-failed", importId: "imp-smbc", provider: .smbcCard),
+            statement("s-undo", importId: "imp-smbc", provider: .smbcCard),
+            statement("s-suspected", importId: "imp-smbc", provider: .smbcCard),
+            statement("s-pending", importId: "imp-smbc", provider: .smbcCard),
+        ]
+        let decisions = [
+            decision("s-applied", kind: .sameExpense, status: .applied),
+            decision("s-failed", kind: .noReceipt, status: .failed),
+            decision("s-undo", kind: .sameExpense, status: .applied, undoRequestedAt: Date(timeIntervalSince1970: 1_792_000_000)),
+        ]
+        let presentation = KMReconciliationPresentation.make(
+            run: run([("s-pending", .unmatchedStatement)]),
+            resolutions: decisions,
+            suspected: [.init(statementId: "s-suspected", markedAt: .distantPast)],
+            statements: statements, receipts: [], transactions: [:], imports: imports
+        )
+        let summary = try #require(presentation.importSummaries.first)
+        #expect(summary.total == 5)
+        #expect(summary.sameExpense == 1)
+        #expect(summary.noReceipt == 0)
+        #expect(summary.transfer == 0)
+        #expect(summary.ignored == 0)
+        #expect(summary.unprocessed == 4)
+        #expect(summary.processed == 1)
+        #expect(summary.sameExpense + summary.noReceipt + summary.transfer + summary.ignored + summary.unprocessed == summary.total)
+        #expect(summary.csvNeedsReviewCount == 1)
     }
 }
