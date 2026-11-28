@@ -30,6 +30,10 @@ export default defineConfig(({ mode, isPreview }) => {
         NATIVE_APP_ORIGIN: nativeVariable('NATIVE_APP_ORIGIN'),
         NATIVE_APP_RP_ID: nativeVariable('NATIVE_APP_RP_ID'),
         NATIVE_APP_ATTEST_ENVIRONMENT: nativeVariable('NATIVE_APP_ATTEST_ENVIRONMENT'),
+        // S9 allows Sandbox only. Adding Production requires an S10 decision on CRL / OCSP.
+        STOREKIT_ALLOWED_ENVIRONMENTS: bindings.text('Sandbox'),
+        // Product IDs are configured outside code; empty/unset fails closed.
+        STOREKIT_PRODUCT_PLANS_JSON: bindings.secret(),
         AI_EMERGENCY_STOP: bindings.secret(),
         AI_GUARDRAILS_JSON: bindings.secret(),
         AI_GUEST_DAILY_LIMIT: bindings.text('5'),
