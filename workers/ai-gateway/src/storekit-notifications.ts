@@ -524,10 +524,45 @@ export async function handleStoreKitNotificationRequest(
 
   const isRefundReversed = notificationType === 'REFUND_REVERSED';
 
+  const isRevocation = isRevocationNotification(notificationType, tx);
+
   // Invariant: once revoked, notifications never revert or mutate the subscription,
   // EXCEPT REFUND_REVERSED (Apple reversed the refund), which restores the subscription
   // according to the verified signedTransactionInfo, but only for the revocation currently in effect.
+  // A newer revocation of the current period only moves revoked_at / revocation_reason forward (never
+  // back, never touching status), so an older REFUND_REVERSED redelivery cannot be mistaken for its reversal.
   if (existing && !isRefundReversed && (existing.status === 'revoked' || existing.revoked_at !== null)) {
+    if (isRevocation && !isPriorPeriodTransaction(existing, tx)) {
+      const nextRevokedAt = tx.revokedAt ?? Math.floor(signedDateMs / 1000);
+      if (existing.revoked_at === null || nextRevokedAt > existing.revoked_at) {
+        const advanced = await db
+          .prepare(
+            `UPDATE store_subscriptions
+             SET revoked_at = ?,
+                 revocation_reason = ?
+             WHERE original_transaction_id = ?
+               AND (revoked_at IS NOT NULL OR status = 'revoked')
+               AND (revoked_at IS NULL OR revoked_at < ?)
+               AND (
+                 latest_transaction_id = ?
+                 OR expires_at IS NULL
+                 OR ? IS NULL
+                 OR expires_at <= ?
+               )`,
+          )
+          .bind(
+            nextRevokedAt,
+            tx.revocationReason,
+            tx.originalTransactionId,
+            nextRevokedAt,
+            tx.transactionId,
+            tx.expiresAt,
+            tx.expiresAt,
+          )
+          .run();
+        if (!advanced.success) throw new Error('storekit_write_failed');
+      }
+    }
     await recordNotification(db, {
       notificationUuid,
       notificationType,
@@ -540,8 +575,6 @@ export async function handleStoreKitNotificationRequest(
     });
     return json(200, { received: true, outcome: 'ignored_stale' });
   }
-
-  const isRevocation = isRevocationNotification(notificationType, tx);
 
   // Guard: a revocation (or refund reversal) for an older billing-period transaction must not
   // overwrite or revoke a newer active renewal on the same originalTransactionId.
