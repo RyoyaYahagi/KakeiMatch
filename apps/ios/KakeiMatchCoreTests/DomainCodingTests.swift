@@ -27,6 +27,31 @@ struct DomainCodingTests {
         #expect(receipt.registration.status.rawValue == "pending")
         let expectedCreatedAt = try KMJSON.decoder().decode(Date.self, from: Data("\"2026-10-03T01:02:03.125Z\"".utf8))
         #expect(receipt.createdAt == expectedCreatedAt)
+        #expect(receipt.extraction?.taxes == nil)
+        #expect(receipt.confirmedValue?.taxes == nil)
+        #expect(receipt.confirmedValue?.items?.first?.taxRatePercent == nil)
+    }
+
+    @Test func receiptAndDraftRoundTripTaxBreakdownAndLegacyCompatibility() throws {
+        let receipt = try roundTrip(KMReceipt.self, from: #"""
+        {
+          "id":"receipt:tax-v2","createdAt":"2026-11-28T01:02:03.125Z","updatedAt":"2026-11-28T01:02:04.000Z",
+          "image":null,
+          "extraction":{"documentKind":"receipt","merchant":"合成店舗","purchasedDate":"2026-11-28","purchasedTime":null,"totalAmountYen":2331,"taxAmountYen":183,"taxes":[{"ratePercent":8,"taxableAmountYen":1550,"taxAmountYen":124},{"ratePercent":10,"taxableAmountYen":598,"taxAmountYen":59}],"items":[{"name":"食品","amountYen":1620,"taxRatePercent":8},{"name":"日用品","amountYen":598,"taxRatePercent":10}],"adjustments":[{"label":"値引き","amountYen":-70,"targetItemIndex":0}],"warnings":[]},
+          "aiSuggestion":{"categoryId":"food","source":"learned_rule","probabilities":null,"model":null,"attemptedAt":null},
+          "confirmedValue":{"merchant":"合成店舗","purchasedDate":"2026-11-28","purchasedTime":null,"totalAmountYen":2331,"categoryId":"food","accountId":"cash","excludedFromSpending":false,"memo":null,"taxAmountYen":183,"taxes":[{"ratePercent":8,"taxableAmountYen":1550,"taxAmountYen":124},{"ratePercent":10,"taxableAmountYen":598,"taxAmountYen":59}],"items":[{"id":"item-1","name":"食品","amountYen":1620,"categoryId":"food","taxRatePercent":8},{"id":"item-2","name":"日用品","amountYen":598,"categoryId":"household","taxRatePercent":10}],"adjustments":[{"id":"adj-1","label":"値引き","amountYen":-70,"targetItemId":"item-1"}]},
+          "registration":{"status":"pending","actualTransactionId":null,"lastError":null}
+        }
+        """#)
+        #expect(receipt.extraction?.taxes?.count == 2)
+        #expect(receipt.extraction?.items.first?.taxRatePercent == 8)
+        #expect(receipt.confirmedValue?.taxes?.last?.taxAmountYen == 59)
+        #expect(receipt.confirmedValue?.items?.last?.taxRatePercent == 10)
+
+        let legacyDraft = try roundTrip(KMReceiptDraft.self, from: #"""
+        {"merchant":"合成店舗","purchasedDate":"2026-11-28","purchasedTime":null,"totalAmountText":"1000","categoryId":"food","accountId":"cash","items":[],"adjustments":[],"taxAmountText":"80","memo":null,"excludedFromSpending":false}
+        """#)
+        #expect(legacyDraft.taxes == nil)
     }
 
     @Test func statementAndReconciliationRoundTripRawValuesAndTimestamps() throws {
