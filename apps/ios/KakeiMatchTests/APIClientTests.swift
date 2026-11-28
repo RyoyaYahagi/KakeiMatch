@@ -191,76 +191,80 @@ private final class DelayedPasskeyAuthorizer: KMPasskeyAuthorizing {
 @Suite(.serialized)
 struct APIClientTests {
     private static let now = Date(timeIntervalSince1970: 1_800_000_000)
-    private static let token = #"{"token":"header.payload.signature","expiresAt":1800000600}"#
+    private static let token = #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000600}"#
+    private static let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
+    /// Account credentials with App Attest already registered, so one native AI token is a single challenge away.
+    private static func nativeCredentials() -> APITestCredentials {
+        let store = APITestCredentials()
+        store.write(Data(accountSession.utf8), key: "session")
+        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        store.write(Data([1]), key: "app-attest-registered")
+        return store
+    }
+    /// Answers the native token exchange only. Any other path returns nil.
+    private static func nativeTokenReply(_ path: String?) -> APIStub.Reply? {
+        switch path {
+        case "/api/native/config":
+            return APIStub.Reply(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
+        case "/api/native/challenge":
+            return APIStub.Reply(body: #"{"challengeId":"00000000-0000-4000-8000-000000000007","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 5, count: 32)) + #"","expiresAt":1800000060}"#)
+        case "/api/native/ai/token":
+            return APIStub.Reply(body: token)
+        default:
+            return nil
+        }
+    }
+    /// Every AI request in these tests first exchanges a token; any other request answers `body`.
+    private static func aiReply(_ request: URLRequest, body: String) -> APIStub.Reply {
+        nativeTokenReply(request.url?.path) ?? .init(body: body)
+    }
     private static let receipt = #"{"documentKind":"receipt","merchant":null,"purchasedDate":null,"purchasedTime":null,"totalAmountYen":100,"taxAmountYen":null,"items":[],"warnings":[]}"#
     private static let payroll = #"{"extraction":{"documentKind":"pay_slip","employerName":null,"paymentDate":null,"payPeriod":null,"payType":"salary","grossPayYen":null,"netPayYen":null,"deductions":{"incomeTaxYen":null,"residentTaxYen":null,"healthInsuranceYen":null,"pensionYen":null,"employmentInsuranceYen":null,"otherYen":null,"totalYen":null},"allowances":[],"warnings":[]},"model":"synthetic-model","promptVersion":"payroll-v1"}"#
     private static let flow = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
     private static let options = [KMCategoryOption(id: "food", name: "合成カテゴリ")]
 
     enum Endpoint: String, CaseIterable, Sendable {
-        case guestConfig, guestCreate, token, usage, costs, receipt, payroll, jev, suggestion, contact, transcribe, accountSession, passkeys, deletePasskey, signOut, delete
+        case token, usage, receipt, payroll, jev, suggestion
         var path: String {
             switch self {
-            case .guestConfig, .guestCreate: "/api/ai/guest"
-            case .token: "/api/ai/token"
-            case .usage: "/api/ai/usage"
-            case .costs: "/api/ai/costs"
-            case .receipt: "/api/ai/gemini"
-            case .payroll: "/api/ai/payroll"
-            case .jev: "/api/ai/jev"
-            case .suggestion: "/api/ai/category-suggestion"
-            case .contact: "/api/contact"
-            case .transcribe: "/api/contact/transcribe"
-            case .accountSession: "/api/auth/get-session"
-            case .passkeys: "/api/auth/passkey/list-user-passkeys"
-            case .deletePasskey: "/api/auth/passkey/delete-passkey"
-            case .signOut: "/api/auth/sign-out"
-            case .delete: "/api/account/delete"
+            case .token: "/api/native/ai/token"
+            case .usage: "/api/native/ai/usage"
+            case .receipt: "/api/native/ai/gemini"
+            case .payroll: "/api/native/ai/payroll"
+            case .jev: "/api/native/ai/jev"
+            case .suggestion: "/api/native/ai/category-suggestion"
             }
         }
         var method: String {
-            switch self { case .guestConfig, .usage, .costs, .accountSession, .passkeys: "GET"; case .delete: "DELETE"; default: "POST" }
+            switch self { case .usage: "GET"; default: "POST" }
         }
         var body: String {
             switch self {
-            case .guestConfig: #"{"guestAvailable":true,"turnstileSiteKey":"public-site-key"}"#
-            case .guestCreate: #"{"guestSecret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}"#
             case .token: APIClientTests.token
             case .usage: #"{"plan":"free","period":"month","month":"2027-01","used":1,"limit":30,"remaining":29}"#
-            case .costs: #"{"month":"2027-01","currency":"USD","totalUsdMicros":0,"unknownRequests":0,"providers":{"gemini":{"requests":0,"inputTokens":0,"outputTokens":0,"costUsdMicros":0,"unknownRequests":0},"jev":{"requests":0,"inputTokens":0,"outputTokens":0,"costUsdMicros":0,"unknownRequests":0}}}"#
             case .receipt: APIClientTests.receipt
             case .payroll: APIClientTests.payroll
             case .jev: #"{"model":"synthetic-model","answers":{"category":{"type":"choice","choice":"food","confidence":1,"probabilities":{"food":1}}}}"#
             case .suggestion: #"{"categoryId":"food"}"#
-            case .contact: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#
-            case .transcribe: #"{"text":"合成の問い合わせです。"}"#
-            case .accountSession: #"{"user":{"id":"synthetic-user","name":"合成利用者","email":"synthetic@example.test","emailVerified":false,"image":null,"createdAt":"2027-01-01T00:00:00Z","updatedAt":"2027-01-01T00:00:00Z"},"session":{"id":"synthetic-session","userId":"synthetic-user","token":"synthetic-token","expiresAt":"2027-01-25T00:00:00Z","createdAt":"2027-01-01T00:00:00Z","updatedAt":"2027-01-01T00:00:00Z","ipAddress":null,"userAgent":null}}"#
-            case .passkeys: #"[{"id":"synthetic-key","name":"合成端末","publicKey":"synthetic-public-key","userId":"synthetic-user","credentialID":"synthetic-credential","counter":0,"deviceType":"multiDevice","backedUp":true,"transports":"internal","createdAt":"2027-01-01T00:00:00Z","aaguid":null}]"#
-            case .deletePasskey: #"{"status":true}"#
-            case .signOut: #"{"success":true}"#
-            case .delete: #"{"deleted":true,"localHouseholdDataPreserved":true}"#
             }
         }
     }
 
-    private func client(credentials: APITestCredentials = APITestCredentials(), native: Bool = false,
-                        appAttest: (any KMAppAttesting)? = nil,
+    private func client(credentials: APITestCredentials = APITestCredentials(),
+                        appAttest: (any KMAppAttesting)? = FakeAppAttest(isSupported: true),
                         passkeyAuthorizer: (any KMPasskeyAuthorizing)? = nil,
                         clock: @escaping @Sendable () -> Date = { APIClientTests.now }) throws -> KMWorkerAPI {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [APIStub.self]; config.httpCookieStorage = nil; config.urlCache = nil
-        return KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!, originPolicy: native ? .native : .existingWorkerCompatibility),
+        return KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!),
                            session: URLSession(configuration: config), credentials: credentials, appAttest: appAttest, passkeyAuthorizer: passkeyAuthorizer, now: clock)
     }
 
     @MainActor
     private func perform(_ endpoint: Endpoint, client: KMWorkerAPI) async throws {
         switch endpoint {
-        case .guestConfig: _ = try await client.guestConfiguration()
-        case .guestCreate: try await client.createGuest(turnstileToken: "synthetic-single-use-check")
         case .token: _ = try await client.accessToken(allowGuest: false)
         case .usage: _ = try await client.usage()
-        case .costs: _ = try await client.costs(month: KMYearMonth("2027-01"))
         case .receipt: _ = try await client.readReceipt(image: makeRedactedAPIReceipt(), flowID: Self.flow)
         case .payroll:
             let format = UIGraphicsImageRendererFormat(); format.scale = 1
@@ -273,13 +277,6 @@ struct APIClientTests {
             let extraction = try KMAPIValidation.decode(KMReceiptExtraction.self, data: Data(Self.receipt.replacingOccurrences(of: "\"merchant\":null", with: "\"merchant\":\"合成店\"").utf8), shape: KMAPIShapes.receipt)
             _ = try await client.classify(extraction: extraction, flowID: Self.flow, categories: Self.options)
         case .suggestion: _ = try await client.suggestCategory(sourceCategoryName: "合成分類", categories: Self.options, flowID: Self.flow)
-        case .contact: _ = try await client.submitContact(kind: .bug, message: "合成の問い合わせです。", flowID: Self.flow)
-        case .transcribe: _ = try await client.transcribe(audio: KMUploadAudio(data: Data([0, 0, 0, 0] + Array("ftyp".utf8)), contentType: "audio/mp4"), flowID: Self.flow)
-        case .accountSession: _ = try await client.accountSession()
-        case .passkeys: _ = try await client.listPasskeys()
-        case .deletePasskey: try await client.deletePasskey(id: "synthetic-key")
-        case .signOut: try await client.signOut()
-        case .delete: _ = try await client.deleteAccount()
         }
     }
 
@@ -289,25 +286,24 @@ struct APIClientTests {
         APIStub.reset { request in
             if request.url?.path == endpoint.path {
                 #expect(request.httpMethod == endpoint.method)
-                #expect(request.value(forHTTPHeaderField: "Origin") == "https://synthetic.example.test")
+                #expect(request.value(forHTTPHeaderField: "Origin") == nil)
                 #expect(request.httpShouldHandleCookies == false)
-                return .init(status: endpoint == .guestCreate ? 201 : 200, body: endpoint.body)
+                return .init(body: endpoint.body)
             }
-            #expect(request.url?.path == "/api/ai/token")
-            return .init(body: Self.token)
+            return Self.aiReply(request, body: Self.token)
         }
-        try await perform(endpoint, client: client())
+        try await perform(endpoint, client: client(credentials: Self.nativeCredentials()))
     }
 
     @Test(arguments: Endpoint.allCases)
     @MainActor
     func allEndpointsRejectMalformedResponses(endpoint: Endpoint) async throws {
-        var invalidBodies = ["{}", "null", "[]", "not-json", String(endpoint.body.dropLast()) + ",\"unknown\":true}"]
-        if endpoint == .accountSession { invalidBodies.removeAll { $0 == "null" } }
-        if endpoint == .passkeys { invalidBodies.removeAll { $0 == "[]" } }
+        let invalidBodies = ["{}", "null", "[]", "not-json", String(endpoint.body.dropLast()) + ",\"unknown\":true}"]
         for invalid in invalidBodies {
-            APIStub.reset { request in .init(body: request.url?.path == endpoint.path ? String(invalid) : Self.token) }
-            await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client()) }
+            APIStub.reset { request in
+                request.url?.path == endpoint.path ? .init(body: String(invalid)) : Self.aiReply(request, body: Self.token)
+            }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client(credentials: Self.nativeCredentials())) }
         }
     }
 
@@ -323,21 +319,21 @@ struct APIClientTests {
         ]
         for (status, code, expected) in failures {
             APIStub.reset { request in
-                request.url?.path == endpoint.path ? .init(status: status, body: "{\"error\":\"\(code)\"}") : .init(body: Self.token)
+                request.url?.path == endpoint.path ? .init(status: status, body: "{\"error\":\"\(code)\"}") : Self.aiReply(request, body: Self.token)
             }
-            await #expect(throws: expected) { try await perform(endpoint, client: client()) }
+            // A rejected token exchange falls back to the saved guest; with none, the account-only request fails as nativeAuthenticationRequired.
+            let expectedError = endpoint == .token && status == 401 ? KMAPIError.nativeAuthenticationRequired : expected
+            await #expect(throws: expectedError) { try await perform(endpoint, client: client(credentials: Self.nativeCredentials())) }
         }
     }
 
     @Test
-    func betterAuthFailuresAndUnknownErrorsDoNotExposeMessages() async throws {
-        let api = try client()
-        APIStub.reset { _ in .init(status: 401, body: #"{"code":"UNAUTHORIZED","message":"synthetic private detail"}"#) }
-        await #expect(throws: KMAPIError.authenticationRequired) { _ = try await api.accountSession() }
+    func failuresAndUnknownErrorsDoNotExposeMessages() async throws {
+        let api = try client(credentials: Self.nativeCredentials())
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"synthetic_private_detail"}"#) }
-        await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.guestConfiguration() }
+        await #expect(throws: KMAPIError.server(status: 503, code: nil)) { _ = try await api.usage() }
         APIStub.reset { _ in .init(status: 503, body: #"{"error":"not_configured","unknown":true}"#) }
-        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.guestConfiguration() }
+        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.usage() }
     }
 
     @Test
@@ -361,130 +357,10 @@ struct APIClientTests {
             #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
             return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         }
-        let api = try client(native: true)
+        let api = try client()
         let configuration = try await api.nativeConfiguration()
         #expect(configuration.available)
         #expect(configuration.rpId == "synthetic.example.test")
-    }
-
-    @Test
-    func nativeNeverFallsBackToTurnstileOrFakeCredentials() async throws {
-        APIStub.reset { _ in throw URLError(.badServerResponse) }
-        let api = try client(native: true)
-        await #expect(throws: KMAPIError.nativeUnsupported) { _ = try await api.guestConfiguration() }
-        await #expect(throws: KMAPIError.nativeUnsupported) { try await api.createGuest(turnstileToken: "fake") }
-        #expect(APIStub.state.withLock { $0.requests.isEmpty })
-    }
-
-    @Test
-    func nativeSignOutAndAccountDeletionClearAccountButPreserveGuestCredential() async throws {
-        let store = APITestCredentials()
-        let session = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        let guest = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(session.utf8), key: "session")
-        store.write(Data(guest.utf8), key: "guest")
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
-            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
-            if request.url?.path == "/api/native/auth/sign-out" { return .init(body: #"{"success":true}"#) }
-            if request.url?.path == "/api/native/account/delete" { return .init(body: #"{"deleted":true,"localHouseholdDataPreserved":true}"#) }
-            throw URLError(.badServerResponse)
-        }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        try await api.signOut()
-        #expect(store.read("session") == nil)
-        #expect(store.read("guest") == Data(guest.utf8))
-        store.write(Data(session.utf8), key: "session")
-        let deletion = try await api.deleteAccount()
-        #expect(deletion.localHouseholdDataPreserved)
-        #expect(store.read("session") == nil)
-        #expect(store.read("guest") == Data(guest.utf8))
-    }
-
-    @Test
-    func nativeContactRequiresAccountSessionAndKeepsOpaqueTokenBearer() async throws {
-        let store = APITestCredentials()
-        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(accountSession.utf8), key: "session")
-        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
-        store.write(Data([1]), key: "app-attest-registered")
-        let challenge = KMNativeCrypto.base64URL(Data(repeating: 3, count: 32))
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Origin") == nil)
-            #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
-            switch request.url?.path {
-            case "/api/native/config":
-                return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
-            case "/api/native/challenge":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-                #expect(try JSONSerialization.jsonObject(with: request.httpBody!) as? [String: Any] != nil)
-                return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000005","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
-            case "/api/native/ai/token":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Native " + String(repeating: "A", count: 43))
-                return .init(body: #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000500}"#)
-            case "/api/native/contact":
-                #expect(request.value(forHTTPHeaderField: "Authorization") == "Bearer " + String(repeating: "T", count: 43))
-                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
-                #expect(body["message"] as? String == "synthetic contact")
-                let diagnostic = body["diagnostic"] as? [String: Any]
-                #expect(diagnostic?["version"] as? Int == 1)
-                #expect(diagnostic?["currentScreen"] as? String == "settings")
-                #expect(diagnostic?["network"] as? String == "online")
-                let events = diagnostic?["events"] as? [[String: Any]]
-                #expect(events?.count == 4)
-                #expect(events?[0]["type"] as? String == "screen_open")
-                #expect(events?[1]["action"] as? String == "receipt_ai_started")
-                #expect(events?[2]["errorCode"] as? String == "storage")
-                #expect(events?[3]["online"] as? Bool == true)
-                #expect(events?.allSatisfy { $0["secondsAgo"] as? Int != nil } == true)
-                return .init(body: #"{"feedbackId":"synthetic-feedback","kind":"bug","reply":"受け付けました。","issueUrl":null}"#)
-            default: throw URLError(.badServerResponse)
-            }
-        }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "settings", network: "online", events: [
-            .init(type: "screen_open", secondsAgo: 5, screen: "home"),
-            .init(type: "action", secondsAgo: 3, screen: "records", action: "receipt_ai_started"),
-            .init(type: "error", secondsAgo: 2, screen: "records", errorCode: "storage"),
-            .init(type: "network", secondsAgo: 1, online: true),
-        ])
-        let result = try await api.submitContact(kind: .bug, message: "synthetic contact", diagnostic: diagnostic, flowID: Self.flow)
-        #expect(result.kind == .bug)
-        #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == [
-            "/api/native/config", "/api/native/challenge", "/api/native/ai/token", "/api/native/contact"
-        ])
-    }
-
-    @Test
-    func contactRejectsAnInvalidDiagnosticBeforeSending() async throws {
-        let store = APITestCredentials()
-        let accountSession = #"{"sessionToken":""# + String(repeating: "A", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(accountSession.utf8), key: "session")
-        store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
-        store.write(Data([1]), key: "app-attest-registered")
-        APIStub.reset { _ in throw URLError(.badServerResponse) }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        let diagnostic = KMContactDiagnosticContext(version: 1, currentScreen: "home", network: "online", events: [
-            .init(type: "screen_open", secondsAgo: 1),
-        ])
-        await #expect(throws: KMAPIError.invalidRequest) {
-            _ = try await api.submitContact(kind: .question, message: "synthetic", diagnostic: diagnostic, flowID: Self.flow)
-        }
-        #expect(APIStub.state.withLock { $0.requests.isEmpty })
-    }
-
-    @Test
-    func guestSessionCannotUseAccountOnlyContactAPI() async throws {
-        let store = APITestCredentials()
-        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
-        store.write(Data(guestSession.utf8), key: "guest")
-        APIStub.reset { _ in throw URLError(.badServerResponse) }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
-        await #expect(throws: KMAPIError.nativeAuthenticationRequired) {
-            _ = try await api.submitContact(kind: .question, message: "synthetic", flowID: Self.flow)
-        }
-        #expect(APIStub.state.withLock { $0.requests.isEmpty })
     }
 
     @Test
@@ -515,7 +391,7 @@ struct APIClientTests {
                 default: throw URLError(.badServerResponse)
                 }
             }
-            let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+            let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
             if allowGuest {
                 #expect(try await api.accessToken(allowGuest: true) == String(repeating: "T", count: 43))
                 #expect(store.read("guest") == Data(guestSession.utf8))
@@ -542,7 +418,7 @@ struct APIClientTests {
             #expect(request.value(forHTTPHeaderField: "Cookie") == nil)
             return .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":1,"limit":5,"remaining":4}"#)
         }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
         #expect(try await api.usage(as: .guest).remaining == 4)
 
         store.write(Data(String(repeating: "R", count: 43).utf8), key: "guest")
@@ -552,8 +428,40 @@ struct APIClientTests {
     }
 
     @Test
+    func nativeGuestUsageAcceptsSupportIdAndAccountLinkedEntitlementResponses() async throws {
+        let store = APITestCredentials()
+        let guestSession = #"{"sessionToken":""# + String(repeating: "G", count: 43) + #"","expiresAt":1800001000}"#
+        store.write(Data(guestSession.utf8), key: "guest")
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":1,"limit":5,"remaining":4,"supportId":"km-sup-guest"}"#)
+        }
+        let guestUsage = try await api.usage(as: .guest)
+        #expect(guestUsage.supportId == "km-sup-guest")
+        #expect(guestUsage.remaining == 4)
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"free","period":"day","day":"2026-11-26","used":2,"limit":5,"remaining":3,"supportId":"km-sup-bound"}"#)
+        }
+        let boundDaily = try await api.usage(as: .guest)
+        #expect(boundDaily.plan == .free)
+        #expect(boundDaily.period == .day)
+        #expect(boundDaily.supportId == "km-sup-bound")
+
+        APIStub.reset { _ in
+            .init(body: #"{"plan":"family","period":"month","month":"2026-11","used":0,"limit":null,"remaining":null,"supportId":"km-sup-family"}"#)
+        }
+        let boundFamily = try await api.usage(as: .guest)
+        #expect(boundFamily.plan == .family)
+        #expect(boundFamily.period == .month)
+        #expect(boundFamily.limit == nil)
+        #expect(boundFamily.supportId == "km-sup-family")
+    }
+
+    @Test
     func nativeConfigurationRejectsUnknownFieldsAndInconsistentUnavailableState() async throws {
-        let api = try client(native: true)
+        let api = try client()
         for response in [
             #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development","unexpected":true}"#,
             #"{"available":false,"rpId":"synthetic.example.test","appAttestEnvironment":null}"#
@@ -572,7 +480,7 @@ struct APIClientTests {
             }
             return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000004","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 1, count: 32)) + #"","expiresAt":1799999999}"#)
         }
-        let api = try client(native: true, appAttest: appAttest)
+        let api = try client(appAttest: appAttest)
         await #expect(throws: KMAPIError.invalidResponse) { try await api.createNativeGuest() }
         #expect(appAttest.hashes.withLock { $0.isEmpty })
         #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config", "/api/native/challenge"])
@@ -585,7 +493,7 @@ struct APIClientTests {
             return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         }
         let store = APITestCredentials()
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: false))
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: false))
         await #expect(throws: KMAPIError.nativeUnsupported) { try await api.createNativeGuest() }
         #expect(APIStub.state.withLock { $0.requests.count } == 1)
         #expect(store.read("guest") == nil)
@@ -601,7 +509,7 @@ struct APIClientTests {
             #expect(request.url?.path == "/api/native/config")
             return .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true))
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true))
         await #expect(throws: KMAPIError.credentialStorage) { _ = try await api.ensureNativeAttested() }
         #expect(APIStub.state.withLock { $0.requests.map { $0.url!.path } } == ["/api/native/config"])
     }
@@ -622,7 +530,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(native: true, appAttest: appAttest)
+        let api = try client(appAttest: appAttest)
         let first = Task { try await api.ensureNativeAttested() }
         await gate.waitForEntry()
         let second = Task { try await api.ensureNativeAttested() }
@@ -643,7 +551,7 @@ struct APIClientTests {
             .init(body: #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#)
         }
         let store = APITestCredentials()
-        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        let api = try client(credentials: store, appAttest: appAttest)
         let enrollment = Task { try await api.ensureNativeAttested() }
         await gate.waitForEntry()
         try await api.clearAccessToken()
@@ -669,7 +577,7 @@ struct APIClientTests {
             #expect(request.url?.path == "/api/native/challenge")
             return .init(body: #"{"challengeId":"00000000-0000-4000-8000-000000000009","challenge":""# + challenge + #"","expiresAt":1800000060}"#)
         }
-        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        let api = try client(credentials: store, appAttest: appAttest)
         let creation = Task { try await api.createNativeGuest() }
         await gate.waitForEntry()
         try await api.clearAccessToken()
@@ -697,7 +605,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
         let authentication = Task { try await api.performNativePasskey(kind: .authenticate) }
         await gate.waitForEntry()
         try await api.clearAccessToken()
@@ -735,7 +643,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(credentials: store, native: true, appAttest: attest, passkeyAuthorizer: passkey)
+        let api = try client(credentials: store, appAttest: attest, passkeyAuthorizer: passkey)
         try await api.performNativePasskey(kind: .authenticate)
         let captured = try #require(passkey.received.withLock { $0 })
         #expect(captured.0 == .authenticate)
@@ -768,7 +676,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
         try await api.performNativePasskey(kind: .authenticate)
         let captured = try #require(passkey.received.withLock { $0 })
         #expect(captured.5 == [])
@@ -790,7 +698,7 @@ struct APIClientTests {
         store.write(Data(FakeAppAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
         store.write(Data([1]), key: "app-attest-registered")
         let passkey = StubPasskeyAuthorizer()
-        let api = try client(credentials: store, native: true, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
+        let api = try client(credentials: store, appAttest: FakeAppAttest(isSupported: true), passkeyAuthorizer: passkey)
         for options in invalidOptions {
             let response = #"{"ceremonyId":"00000000-0000-4000-8000-000000000007","options":"# + options + "}"
             APIStub.reset { request in
@@ -832,7 +740,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(credentials: store, native: true, appAttest: attest, passkeyAuthorizer: passkey)
+        let api = try client(credentials: store, appAttest: attest, passkeyAuthorizer: passkey)
         try await api.performNativePasskey(kind: .register, context: "synthetic-invite", name: "合成Passkey")
         let captured = try #require(passkey.received.withLock { $0 })
         #expect(captured.0 == .register)
@@ -878,7 +786,7 @@ struct APIClientTests {
             default: throw URLError(.badServerResponse)
             }
         }
-        let api = try client(credentials: store, native: true, appAttest: appAttest)
+        let api = try client(credentials: store, appAttest: appAttest)
         try await api.createNativeGuest()
         #expect(try await api.accessToken() == String(repeating: "T", count: 43))
         #expect(store.read("ai-token") == nil)
@@ -894,59 +802,40 @@ struct APIClientTests {
     @Test
     func networkAndInvalidContentTypesStayDistinct() async throws {
         APIStub.reset { _ in throw URLError(.notConnectedToInternet) }
-        let api = try client()
-        await #expect(throws: KMAPIError.network) { _ = try await api.guestConfiguration() }
-        APIStub.reset { _ in .init(body: Endpoint.guestConfig.body, contentType: "text/html") }
-        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.guestConfiguration() }
+        let api = try client(credentials: Self.nativeCredentials())
+        await #expect(throws: KMAPIError.network) { _ = try await api.usage() }
+        APIStub.reset { _ in .init(body: Endpoint.usage.body, contentType: "text/html") }
+        await #expect(throws: KMAPIError.invalidResponse) { _ = try await api.usage() }
     }
 
     @Test
     func tokenRefreshesAtThirtySecondsAndNeverRestoresFromDisk() async throws {
         let clock = Mutex(Self.now)
-        let store = APITestCredentials()
-        APIStub.reset { _ in .init(body: Self.token) }
+        let store = Self.nativeCredentials()
+        APIStub.reset { request in
+            // The challenge expires 60 seconds after the test clock, so it must move with the clock.
+            guard request.url?.path == "/api/native/challenge" else { return Self.aiReply(request, body: "{}") }
+            let expiresAt = Int(clock.withLock { $0 }.timeIntervalSince1970) + 60
+            return APIStub.Reply(body: #"{"challengeId":"00000000-0000-4000-8000-000000000007","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 5, count: 32)) + #"","expiresAt":\#(expiresAt)}"#)
+        }
+        let tokenExchanges = { APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/ai/token" }.count } }
         let api = try client(credentials: store, clock: { clock.withLock { $0 } })
         _ = try await api.accessToken(allowGuest: false)
         _ = try await api.accessToken(allowGuest: false)
-        #expect(APIStub.state.withLock { $0.requests.count } == 1)
-        #expect(store.read("ai-token") != nil)
+        #expect(tokenExchanges() == 1)
+        #expect(store.read("ai-token") == nil)
         clock.withLock { $0 = Self.now.addingTimeInterval(570) }
         _ = try await api.accessToken(allowGuest: false)
-        #expect(APIStub.state.withLock { $0.requests.count } == 2)
-        let relaunched = try client(credentials: store)
+        #expect(tokenExchanges() == 2)
+        let relaunched = try client(credentials: store, clock: { clock.withLock { $0 } })
         _ = try await relaunched.accessToken(allowGuest: false)
-        #expect(APIStub.state.withLock { $0.requests.count } == 3)
+        #expect(tokenExchanges() == 3)
         try await api.clearAccessToken()
         #expect(store.read("ai-token") == nil)
     }
 
     @Test
-    func guestFallbackIsExplicitAndAccountOnlyDoesNotReuseIt() async throws {
-        let store = APITestCredentials()
-        store.write(Data(String(repeating: "A", count: 43).utf8), key: "guest")
-        APIStub.reset { request in
-            if request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("Guest ") == true { return .init(body: Self.token) }
-            return .init(status: 401, body: #"{"error":"unauthorized"}"#)
-        }
-        let api = try client(credentials: store)
-        _ = try await api.accessToken()
-        #expect(await api.currentIdentity() == .guest)
-        await #expect(throws: KMAPIError.authenticationRequired) { _ = try await api.accessToken(allowGuest: false) }
-    }
-
-    @Test
-    func sessionCookiesAreOriginScopedAndClearedWithoutGuestOrHouseholdDeletion() async throws {
-        let store = APITestCredentials()
-        store.write(Data("guest-is-not-an-account".utf8), key: "guest")
-        let api = try client(credentials: store)
-        try await api.installAccountSession(value: "synthetic.session", expiresAt: Self.now.addingTimeInterval(600))
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Cookie") == "__Secure-better-auth.session_token=synthetic.session")
-            return .init(body: Endpoint.delete.body)
-        }
-        _ = try await api.deleteAccount()
-        #expect(store.read("session") == nil)
-        #expect(store.read("guest") != nil)
+    func credentialServiceIsScopedByHost() throws {
         #expect(try KMAPIConfiguration(baseURL: KMAPIConfiguration.productionURL).credentialService != KMAPIConfiguration(baseURL: URL(string: "https://preview.example.test")!).credentialService)
     }
 
@@ -962,8 +851,8 @@ struct APIClientTests {
             Self.receipt.replacingOccurrences(of: "\"purchasedTime\":null", with: "\"purchasedTime\":\"24:00\"")
         ]
         for body in invalid {
-            APIStub.reset { request in .init(body: request.url?.path == "/api/ai/token" ? Self.token : body) }
-            await #expect(throws: KMAPIError.invalidResponse) { try await perform(.receipt, client: client()) }
+            APIStub.reset { request in Self.aiReply(request, body: body) }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(.receipt, client: client(credentials: Self.nativeCredentials())) }
         }
         for body in [Self.payroll.replacingOccurrences(of: "\"employerName\":null", with: "\"employerName\":\"社員番号1234567\""), Self.payroll.replacingOccurrences(of: "payroll-v1", with: "payroll-v2")] {
             #expect(throws: KMAPIError.invalidResponse) { _ = try KMAPIValidation.decode(KMPayrollResponse.self, data: Data(body.utf8), shape: KMAPIShapes.payroll) }
@@ -1008,8 +897,8 @@ struct APIClientTests {
             (.suggestion, Endpoint.suggestion.body.replacingOccurrences(of: #""food""#, with: #""unknown""#))
         ]
         for (endpoint, body) in cases {
-            APIStub.reset { request in .init(body: request.url?.path == endpoint.path ? body : Self.token) }
-            await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client()) }
+            APIStub.reset { request in request.url?.path == endpoint.path ? .init(body: body) : Self.aiReply(request, body: Self.token) }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(endpoint, client: client(credentials: Self.nativeCredentials())) }
         }
     }
 
@@ -1058,13 +947,13 @@ struct APIClientTests {
             data: Data(Self.receipt.replacingOccurrences(of: #""merchant":null"#, with: #""merchant":"合成店""#).utf8),
             shape: KMAPIShapes.receipt)
         APIStub.reset { request in
-            if request.url?.path == "/api/ai/jev" {
+            if request.url?.path == "/api/native/ai/jev" {
                 return .init(body: #"{"model":"synthetic-model","answers":{"category":{"type":"choice","choice":"food","confidence":0.2,"probabilities":{"food":0.2,"other":0.8}}}}"#)
             }
-            return .init(body: Self.token)
+            return Self.aiReply(request, body: Self.token)
         }
         await #expect(throws: KMAPIError.invalidResponse) {
-            _ = try await client().classify(extraction: extraction, flowID: Self.flow, categories: options)
+            _ = try await client(credentials: Self.nativeCredentials()).classify(extraction: extraction, flowID: Self.flow, categories: options)
         }
     }
 
@@ -1072,8 +961,8 @@ struct APIClientTests {
     @MainActor
     func refusesUnlistedCategoryAndNonUnitDistribution() async throws {
         for body in [Endpoint.jev.body.replacingOccurrences(of: "\"choice\":\"food\"", with: "\"choice\":\"unknown\""), Endpoint.jev.body.replacingOccurrences(of: "\"food\":1", with: "\"food\":0.2")] {
-            APIStub.reset { request in .init(body: request.url?.path == "/api/ai/token" ? Self.token : body) }
-            await #expect(throws: KMAPIError.invalidResponse) { try await perform(.jev, client: client()) }
+            APIStub.reset { request in Self.aiReply(request, body: body) }
+            await #expect(throws: KMAPIError.invalidResponse) { try await perform(.jev, client: client(credentials: Self.nativeCredentials())) }
         }
     }
 
@@ -1482,44 +1371,27 @@ struct APIClientTests {
     }
 
     @Test
-    func guestDailyUsageAndCookieRefreshFollowServerValues() async throws {
-        let store = APITestCredentials()
-        store.write(Data(String(repeating: "A", count: 43).utf8), key: "guest")
-        APIStub.reset { request in
-            #expect(request.value(forHTTPHeaderField: "Authorization") == "Guest " + String(repeating: "A", count: 43))
-            return .init(body: #"{"plan":"guest","period":"day","day":"2027-01-15","used":5,"limit":5,"remaining":0}"#)
-        }
-        let api = try client(credentials: store)
-        #expect(try await api.usage(as: .guest).remaining == 0)
-        APIStub.reset { _ in .init(body: Endpoint.usage.body, headers: ["Set-Cookie": "__Secure-better-auth.session_token=refreshed.synthetic; Path=/; Expires=Fri, 29 Jan 2027 08:00:00 GMT; Secure; HttpOnly; SameSite=Lax"]) }
-        _ = try await api.usage()
-        let saved = try #require(store.read("session"))
-        #expect(try KMJSON.decoder().decode(KMStoredSession.self, from: saved).value == "refreshed.synthetic")
-    }
-
-    @Test
     func bearer401DropsTokenAndDoesNotRetryPaidRequest() async throws {
-        let store = APITestCredentials()
+        let store = Self.nativeCredentials()
         APIStub.reset { request in
-            request.url?.path == "/api/ai/token" ? .init(body: Self.token) : .init(status: 401, body: #"{"error":"unauthorized"}"#)
+            request.url?.path == "/api/native/ai/gemini" ? .init(status: 401, body: #"{"error":"unauthorized"}"#) : Self.aiReply(request, body: Self.token)
         }
         await #expect(throws: KMAPIError.authenticationRequired) { try await perform(.receipt, client: client(credentials: store)) }
         #expect(store.read("ai-token") == nil)
-        #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/ai/gemini" }.count } == 1)
+        #expect(APIStub.state.withLock { $0.requests.filter { $0.url?.path == "/api/native/ai/gemini" }.count } == 1)
     }
 
     @Test
     func cancellationIsNotConvertedToNetworkFailure() async throws {
         APIStub.reset { _ in throw URLError(.cancelled) }
-        let api = try client()
-        await #expect(throws: CancellationError.self) { _ = try await api.guestConfiguration() }
+        let api = try client(credentials: Self.nativeCredentials())
+        await #expect(throws: CancellationError.self) { _ = try await api.usage() }
     }
 
     @Test
     func mediaAndConfigurationRejectUnsafeInputsBeforeNetwork() throws {
         #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage(data: Data([0xff, 0xd8, 0xff]), contentType: "image/png") }
         #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadImage(data: Data(repeating: 0, count: 6 * 1024 * 1024 + 1), contentType: "image/jpeg") }
-        #expect(throws: KMAPIError.invalidRequest) { _ = try KMUploadAudio(data: Data("not audio".utf8), contentType: "audio/mp4") }
         for url in ["http://example.test", "https://secret@example.test", "https://example.test/api", "https://example.test/?token=secret"] {
             #expect(throws: KMAPIError.invalidRequest) { _ = try KMAPIConfiguration(baseURL: URL(string: url)!) }
         }

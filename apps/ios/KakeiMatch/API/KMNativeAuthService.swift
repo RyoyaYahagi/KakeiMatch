@@ -14,15 +14,11 @@ protocol KMNativeAuthService: Sendable {
     func addPasskey(name: String) async throws
     func startGuest() async throws
 
-    func accountSession() async throws -> KMCloudSession?
     func accountUsage() async throws -> KMAIUsage
     func guestUsage() async throws -> KMAIUsage
-    func listPasskeys() async throws -> [KMCloudPasskey]
-    func deletePasskey(id: String) async throws
 
     func issueAccountAIToken() async throws
-    func signOut() async throws
-    func deleteAccount() async throws -> KMAccountDeletion
+    func submitStoreKitTransaction(jws: String) async throws -> KMStoreKitTransactionResponse
 }
 
 extension KMWorkerAPI: KMNativeAuthService {

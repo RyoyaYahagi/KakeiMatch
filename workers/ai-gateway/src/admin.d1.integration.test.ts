@@ -126,9 +126,10 @@ describe("admin D1 APIs", () => {
     expect(await costs.json()).toMatchObject({ totalUsdMicros: 350, providers: { gemini: { requests: 1 }, jev: { requests: 1 } } });
 
     const users = await handleAdminRequest(get("/api/admin/users", jwt), env, options);
-    const userBody = await users.json() as { users: Array<{ id: string; kind: string; plan: string; enabled: boolean; createdAt: number }> };
+    const userBody = await users.json() as { users: Array<{ id: string; subject: string; entitlement: string | null; createdAt: number }> };
     expect(userBody.users.some(user => user.id === ADMIN_OPERATOR_PRINCIPAL_ID)).toBe(false);
-    expect(userBody.users.find(user => user.id === "guest-user")).toMatchObject({ kind: "guest", plan: "guest", enabled: true, createdAt: now - 3600 });
+    expect(userBody.users.find(user => user.id === "guest-user")).toMatchObject({ subject: "guest", entitlement: null, createdAt: now - 3600 });
+    expect(userBody.users.find(user => user.id === "member-user")).toMatchObject({ subject: "account", entitlement: "pro" });
     expect(JSON.stringify(userBody)).not.toContain("@example");
   });
 

@@ -34,15 +34,16 @@ struct ReceiptPresentationTests {
         #expect(!KMReceiptPresentation.retryable(.rateLimited))
         #expect(!KMReceiptPresentation.retryable(.invalidRequest))
         #expect(KMReceiptPresentation.failureMessage(.nativeUnsupported).contains("手で入力"))
-        #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
+        #expect(KMReceiptPresentation.failureMessage(.guestLimitReached).contains("手で入力"))
+        #expect(!KMReceiptPresentation.failureMessage(.guestLimitReached).contains("ログイン"))
     }
 
     @Test func failureViewMapsAPIErrorsToThePWACodes() {
         let guestQuota = KMReceiptPresentation.readingFailure(.quotaExceeded, guest: true)
         #expect(guestQuota.title == "! AIの読み取り回数の上限です")
         #expect(guestQuota.message.contains("手で入力して続けられます。"))
-        #expect(guestQuota.message.contains("ログインすると回数の制限なく使えることがあります。設定からログインできます。"))
-        #expect(guestQuota.accountAction && !guestQuota.photoProblem)
+        #expect(!guestQuota.message.contains("ログイン"))
+        #expect(!guestQuota.accountAction && !guestQuota.photoProblem)
         #expect(!guestQuota.message.contains("ぼやけや反射"))
 
         let accountQuota = KMReceiptPresentation.readingFailure(.quotaExceeded)
@@ -55,8 +56,8 @@ struct ReceiptPresentationTests {
         #expect(KMReceiptPresentation.readingFailure(.invalidResponse).title == "! 写真から読み取れませんでした")
         #expect(KMReceiptPresentation.readingFailure(.invalidRequest).photoProblem)
 
-        #expect(KMReceiptPresentation.readingFailure(.authenticationRequired).title == "! ログインが必要です")
-        #expect(KMReceiptPresentation.readingFailure(.nativeAuthenticationRequired).title == "! ログインが必要です")
+        #expect(KMReceiptPresentation.readingFailure(.authenticationRequired).title == "! 読み取りを確認できませんでした")
+        #expect(KMReceiptPresentation.readingFailure(.nativeAuthenticationRequired).title == "! 読み取りを確認できませんでした")
         for failure in [KMAPIError.rateLimited, .network, .providerUnavailable, .providerTimeout,
                         .aiTemporarilyPaused, .notConfigured] {
             let view = KMReceiptPresentation.readingFailure(failure)
@@ -65,7 +66,7 @@ struct ReceiptPresentationTests {
         }
         // PWA safeError maps the guest-creation limit to quota.
         #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).title == "! AIの読み取り回数の上限です")
-        #expect(KMReceiptPresentation.readingFailure(.guestLimitReached).accountAction)
+        #expect(!KMReceiptPresentation.readingFailure(.guestLimitReached).accountAction)
         #expect(KMReceiptPresentation.readingFailure(.nativeUnsupported).title == "! 読み取れませんでした")
         #expect(!KMReceiptPresentation.readingFailure(.nativeUnsupported).accountAction)
     }
@@ -281,7 +282,9 @@ private final class ReceiptHTTPStub: URLProtocol, @unchecked Sendable {
         }
         let json: String
         switch request.url?.path {
-        case "/api/ai/token": json = #"{"token":"header.payload.signature","expiresAt":1800000600}"#
+        case "/api/native/challenge":
+            json = #"{"challengeId":"00000000-0000-4000-8000-000000000008","challenge":""# + KMNativeCrypto.base64URL(Data(repeating: 6, count: 32)) + #"","expiresAt":1800000060}"#
+        case "/api/native/ai/token": json = #"{"token":""# + String(repeating: "T", count: 43) + #"","expiresAt":1800000600}"#
         case "/api/native/config": json = #"{"available":true,"rpId":"synthetic.example.test","appAttestEnvironment":"development"}"#
         default: json = Self.responses.withLock { $0[request.url?.path ?? ""] } ?? Self.body.withLock { $0 }
         }
@@ -362,8 +365,8 @@ extension ReceiptModelTests {
         return data as Data
     }
 
-    private func readingModel(response: String, native: Bool = false, guest: Bool = true,
-                              attest: any KMAppAttesting = ReceiptUnsupportedAttest(),
+    private func readingModel(response: String, guest: Bool = true,
+                              attest: any KMAppAttesting = ReceiptSupportedAttest(),
                               imageData: Data? = nil, contentType: String = "image/jpeg") async throws -> (KMReceiptModel, KMRepositories) {
         ReceiptHTTPStub.body.withLock { $0 = response }
         ReceiptHTTPStub.responses.withLock { $0 = [:] }
@@ -371,11 +374,14 @@ extension ReceiptModelTests {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [ReceiptHTTPStub.self]
         let credentials = ReceiptCredentials()
-        if native && guest {
+        // App Attest is already registered, so the reading goes straight to the token exchange.
+        credentials.write(Data(ReceiptSupportedAttest.syntheticKeyID.utf8), key: "app-attest-key-id")
+        credentials.write(Data([1]), key: "app-attest-registered")
+        if guest {
             let value = "{\"sessionToken\":\"" + String(repeating: "a", count: 43) + "\",\"expiresAt\":1800000600}"
             credentials.write(Data(value.utf8), key: "guest")
         }
-        let api = KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!, originPolicy: native ? .native : .existingWorkerCompatibility),
+        let api = KMWorkerAPI(configuration: try KMAPIConfiguration(baseURL: URL(string: "https://synthetic.example.test")!),
                               session: URLSession(configuration: configuration), credentials: credentials, appAttest: attest,
                               now: { Date(timeIntervalSince1970: 1_800_000_000) })
         let repositories = try KMFixtureLoader.load(named: "receipt")
@@ -400,7 +406,7 @@ extension ReceiptModelTests {
         await model.startReading()?.value
         #expect(model.error == nil)
 
-        let geminiRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
+        let geminiRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/native/ai/gemini" } })
         let bodyData = try #require(geminiRequest.httpBody)
         let payload = try #require(try JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
         #expect(payload["contentType"] as? String == "image/jpeg")
@@ -422,7 +428,7 @@ extension ReceiptModelTests {
         let (pngModel, pngRepositories) = try await readingModel(response: extraction, imageData: originalPNG, contentType: "image/png")
         await pngModel.startReading()?.value
         #expect(pngModel.error == nil)
-        let pngRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/ai/gemini" } })
+        let pngRequest = try #require(ReceiptHTTPStub.requests.withLock { $0.first { $0.url?.path == "/api/native/ai/gemini" } })
         let pngBodyData = try #require(pngRequest.httpBody)
         let pngPayload = try #require(try JSONSerialization.jsonObject(with: pngBodyData) as? [String: Any])
         #expect(pngPayload["contentType"] as? String == "image/jpeg")
@@ -438,7 +444,7 @@ extension ReceiptModelTests {
         #expect(model.phase == .idle)
         #expect(model.error == "隠した内容を確認できなかったため、写真の送信を止めました。写真を撮り直すか、手で入力してください。")
         #expect(model.redactionPreview != nil)
-        #expect(ReceiptHTTPStub.requests.withLock { $0.contains { $0.url?.path == "/api/ai/gemini" } } == false)
+        #expect(ReceiptHTTPStub.requests.withLock { $0.contains { $0.url?.path == "/api/native/ai/gemini" } } == false)
     }
 
     @Test func jevItemAnswersBecomeTheReceiptCategories() async throws {
@@ -454,7 +460,7 @@ extension ReceiptModelTests {
             return "{\"type\":\"choice\",\"choice\":\"\(choice)\",\"confidence\":0.9,\"probabilities\":{\(probabilities)}}"
         }
         ReceiptHTTPStub.responses.withLock {
-            $0["/api/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\"item_0\":\(answer(food.id)),\"item_1\":\(answer(household.id))}}"
+            $0["/api/native/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\"item_0\":\(answer(food.id)),\"item_1\":\(answer(household.id))}}"
         }
         await model.startReading()?.value
         #expect(model.phase == .idle)
@@ -475,7 +481,7 @@ extension ReceiptModelTests {
         let answer = "{\"type\":\"choice\",\"choice\":\"\(food.id)\",\"confidence\":0.9,\"probabilities\":{\(probabilities)}}"
         let answers = (0..<30).map { "\"item_\($0)\":\(answer)" }.joined(separator: ",")
         ReceiptHTTPStub.responses.withLock {
-            $0["/api/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\(answers)}}"
+            $0["/api/native/ai/jev"] = "{\"model\":\"synthetic-model\",\"answers\":{\(answers)}}"
         }
         await model.startReading()?.value
         #expect(model.phase == .idle)
@@ -519,8 +525,9 @@ extension ReceiptModelTests {
 }
 
 private struct ReceiptSupportedAttest: KMAppAttesting {
+    static let syntheticKeyID = Data(repeating: 0xa5, count: 32).base64EncodedString()
     var isSupported: Bool { true }
-    func generateKey() async throws -> String { "c3ludGhldGlj" }
+    func generateKey() async throws -> String { Self.syntheticKeyID }
     func attest(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x01]) }
     func assertion(keyID: String, clientDataHash: Data) async throws -> Data { Data([0x02]) }
 }
@@ -534,7 +541,7 @@ private struct ReceiptUnsupportedAttest: KMAppAttesting {
 
 extension ReceiptModelTests {
     @Test func firstGuestReadingWaitsForTheNativeCheckDialog() async throws {
-        let (model, _) = try await readingModel(response: "{}", native: true, guest: false, attest: ReceiptSupportedAttest())
+        let (model, _) = try await readingModel(response: "{}", guest: false, attest: ReceiptSupportedAttest())
         await model.startReading()?.value
         // Same gate as the PWA bot-check dialog: no guest exists yet, so the
         // reading stops and asks before anything is sent.
@@ -549,7 +556,7 @@ extension ReceiptModelTests {
     }
 
     @Test func unsupportedCloudStillAllowsManualRegistration() async throws {
-        let (model, repositories) = try await readingModel(response: "{}", native: true)
+        let (model, repositories) = try await readingModel(response: "{}", attest: ReceiptUnsupportedAttest())
         await model.startReading()?.value
         #expect(model.phase == .failed(.nativeUnsupported))
         #expect(model.error?.contains("手で入力") == true)

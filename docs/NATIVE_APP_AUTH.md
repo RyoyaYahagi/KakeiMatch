@@ -1,18 +1,18 @@
 # iOS アプリのクラウド認証境界（Issue #240）
 
-この文書は `/api/native/*` の実装仕様と、iOS アプリの認証画面（#322）の接続範囲です。通常の家計操作は端末内で完結し、クラウド認証へ依存させません。本番への公開・migration 適用・署名済みアプリの実機確認は、この文書更新の対象外です。Worker 側の契約と endpoint は変更しません。
+この文書は `/api/native/*` の実装仕様です。通常の家計操作は端末内で完結し、クラウド認証へ依存させません。Passkey・招待・アカウント削除は S6（#456）と S7（#458）で撤去し、この文書では扱いません。本番への公開・migration 適用・署名済みアプリの実機確認は、この文書更新の対象外です。
 
 ## 1. 境界と採用方針
 
-1. **Web**: 既存の `/api/auth/*`、`/api/account/*`、`/api/ai/*`、`/api/contact*` は、従来の trustedOrigins・CSRF・Cookie・AI JWT のままです。Origin のない POST を許可しません。
-2. **ネイティブ**: `/api/native/*` は Cookie と Origin を受け付けません。App Attest で検証した鍵と、Passkey またはゲストに結び付けた専用セッションだけを受け付けます。Origin ヘッダーをアプリの証明にしません。
-3. **既存処理への接続**: ネイティブ境界で本人・鍵・期限を検証した後、サーバー内でのみ既存ハンドラーを呼びます。リクエストの user ID、Cookie、Origin、Authorization をそのまま転送しません。AI の入力検証、利用枠、接続元制限、全体費用停止、応答検証を再利用します。
+1. **Web の旧 API**: `/api/auth/*`、`/api/account/*`、`/api/ai/*`、`/api/contact*` は410を返します（S7 単位1・2で撤去）。Web のログイン・Cookie・Turnstile の経路は残っていません。
+2. **ネイティブ**: `/api/native/*` は Cookie と Origin を受け付けません。App Attest で検証した鍵と、その鍵に結び付けたゲストのネイティブセッションだけを受け付けます。Origin ヘッダーをアプリの証明にしません。
+3. **既存処理への接続**: ネイティブ境界で鍵・期限を検証した後、サーバー内でのみ既存のAI処理を呼びます。リクエストの user ID、Cookie、Origin、Authorization をそのまま転送しません。AI の入力検証、利用枠、接続元制限、全体費用停止、応答検証を再利用します。
 
-実装の正本は [`native-auth.ts`](../workers/ai-gateway/src/native-auth.ts)、[`account-auth.ts`](../workers/ai-gateway/src/account-auth.ts)、[`worker.ts`](../workers/ai-gateway/src/worker.ts) です。アカウントの境界は [Cloud account](CLOUD_ACCOUNT.md)、費用の境界は [AI費用の停止と再開](AI_COST_GUARDRAILS.md) を参照してください。
+実装の正本は [`native-auth.ts`](../workers/ai-gateway/src/native-auth.ts)、[`worker.ts`](../workers/ai-gateway/src/worker.ts)、[`app-attest.ts`](../workers/ai-gateway/src/app-attest.ts) です。利用主体と利用量の境界は [Cloud account](CLOUD_ACCOUNT.md)、費用の境界は [AI費用の停止と再開](AI_COST_GUARDRAILS.md) を参照してください。
 
 ### 設定不足・非対応端末
 
-全設定がそろうまで、ネイティブAPIは `503 not_configured`、config は `available:false`、AASA は404です。Team ID を推測して有効にしません。App Attest 非対応端末・Simulator ではネイティブのクラウド機能を使えません。ダミー証明、自己申告、Origin 偽装、無検証のゲスト作成へ切り替えません。手入力と端末内の閲覧・編集は継続できます。既存PWAの Turnstile 経路は独立して残ります。
+全設定がそろうまで、ネイティブAPIは `503 not_configured`、config は `available:false`、AASA は404です。Team ID を推測して有効にしません。App Attest 非対応端末・Simulator ではネイティブのクラウド機能を使えません。ダミー証明、自己申告、Origin 偽装、無検証のゲスト作成へ切り替えません。手入力と端末内の閲覧・編集は継続できます。
 
 Apple は `isSupported` の確認と、非対応時のサービス設計の分岐を求めています。本実装では安全側にクラウド機能を無効にする方針を採用します。[Apple Integrity (2026/10), Check for availability]
 
@@ -21,20 +21,19 @@ Apple は `isSupported` の確認と、非対応時のサービス設計の分�
 | 資格情報 | audience / 対象 | 有効期間・保存 | 失効 |
 | --- | --- | --- | --- |
 | App Attest 鍵 | 設定済み origin / App ID / 環境 | 秘密鍵は端末の App Attest。Worker は公開鍵と検証用metadataだけ | `native_app_keys.revoked_at` 設定で即拒否。再インストール時は新鍵 |
-| challenge | attest / guest / token / passkey の1用途、鍵ID、必要時セッションに固定 | 32 bytes乱数、120秒、D1で一度だけ消費 | 成功・失敗を問わず検証開始時に消費。期限後は拒否 |
-| ネイティブセッション | account管理・usage・costs・token交換。guestはusageと交換のみ | 32 bytes乱数のbase64url、固定14日以内。accountは背後の Better Auth session の期限以内。D1にはSHA-256だけ | ログアウト・回復で背後のsessionを削除、本人削除、鍵失効、期限切れ |
-| ネイティブAI token | `kakeimatch-native-ai`。明示allowlistのAI / contact APIだけ | 不透明な32 bytes乱数。最大600秒、セッション期限以内。D1にSHA-256・audience・セッション参照 | セッション・鍵の状態を毎回確認。ログアウト・回復・本人削除に追随 |
-| Web資格情報 | 既存Web専用 | 従来のCookie・`aud:kakeimatch-ai` JWT | 従来どおり |
+| challenge | `attest`・`guest`・`token` の1用途、鍵ID、必要時セッションに固定 | 32 bytes乱数、120秒、D1で一度だけ消費 | 成功・失敗を問わず検証開始時に消費。期限後は拒否 |
+| ネイティブセッション | ゲストの利用量と、AI token の交換 | 32 bytes乱数のbase64url、発行から14日固定（利用に応じて延長しない）。D1にはSHA-256だけ | 鍵の失効、user の削除、期限切れ |
+| ネイティブAI token | `kakeimatch-native-ai`。AI の4経路だけ | 不透明な32 bytes乱数。最大600秒、セッション期限以内。D1にSHA-256・audience・セッション参照 | セッション・鍵の状態を毎回確認 |
 
-ネイティブAI token は JWT ではありません。旧Web APIでは受理されず、Web AI JWTもネイティブAPIでは受理されません。guest session・AI token でアカウント管理や費用表示はできません。管理者API、招待発行、回復、旧contact interviewはネイティブallowlistに含めません。
+ネイティブAI token は JWT ではありません。Web の AI JWT はネイティブAPIでは受理しません。ネイティブのセッションと AI token で利用できるのは、AI の読み取りと利用量の確認だけです。管理者API・問い合わせの受付・費用の表示はネイティブから呼べません。
 
-accountセッションはネイティブでは固定期限です。Webの「24時間後の利用で14日へ延長」は変更しません。ネイティブの期限後はPasskeyで再認証します。guestは同じ検証済み鍵でセッションを再発行しても同じuser・利用量を使います。App Attest 鍵を別のCloud accountへ使い回すことはサーバーで拒否します。guestから同一端末のaccountへ移る場合も、既存guestの利用量は消しません。
+セッションの期限は固定で、利用に応じて延ばしません。期限後は App Attest の確認からやり直します。ゲストは同じ検証済みの鍵でセッションを再発行しても、同じ user と利用量を使います。
 
 端末の資格情報は接続host別Keychainに保存し、同期・バックアップ移行を無効にします。短期tokenは再起動後に復元せず、メモリキャッシュは残り30秒超の場合だけ再利用します。家計バックアップへ資格情報を入れません。Appleの鍵は通常のアプリ更新で維持されますが、再インストール・端末移行・バックアップ復元では引き継がれません。[Apple Integrity (2026/10), Generate assertions / key lifetime]
 
 ## 3. API と要求・応答
 
-全通信は設定済みHTTPS hostへ直接行います。redirectを追いません。JSON応答は `Cache-Control:no-store`。ネイティブの小さな制御要求は64 KiB上限、未知フィールドは拒否します。AI本体の要求サイズは既存経路の制限を使います。時刻はUnix秒、日次・月次集計はAsia/Tokyoです。challenge / ceremonyのUUIDは大文字・小文字を受理し、D1照合前に小文字へ正規化します。SwiftのUUIDエンコード形式でも同じchallengeを参照できます。
+全通信は設定済みHTTPS hostへ直接行います。redirectを追いません。JSON応答は `Cache-Control:no-store`。ネイティブの小さな制御要求は64 KiB上限、未知フィールドは拒否します。AI本体の要求サイズは既存経路の制限を使います。時刻はUnix秒、日次・月次集計はAsia/Tokyoです。challenge のUUIDは大文字・小文字を受理し、D1照合前に小文字へ正規化します。SwiftのUUIDエンコード形式でも同じchallengeを参照できます。
 
 ### App Attest 鍵の登録
 
@@ -52,7 +51,7 @@ POST /api/native/attest {challengeId,keyId,attestation:base64}
 
 `keyId` はAppleのAPIが返すcanonical標準base64（32 bytes、padding付き）をそのまま使います。challengeだけがcanonical base64urlで、復号後は必ず32 bytesです。attestation・assertionはAppleが返すbytesを標準base64へ変換します。端末は登録成功後の鍵IDを保存します。アプリ更新時に毎回新鍵を作りません。[Apple Validation Guide (2026/10), keyId; Apple Integrity (2026/10), Attest the key]
 
-### ゲスト・AI token の交換
+### ゲストとAI token の交換
 
 ```text
 POST /api/native/challenge {purpose:"guest",keyId}
@@ -69,29 +68,7 @@ POST /api/native/ai/token {challengeId,keyId,assertion}
 
 用途・鍵・セッションはchallenge行に固定されます。別用途や別セッションのchallengeで交換できません。署名を検証してからcounterを比較更新し、競合した要求は失敗扱いにします。
 
-ゲスト作成は既存の `guest_devices` に記録し、Webとネイティブの合計で接続元あたり1日10件に制限します。接続元の生IPは保存せず、既存の暦日別HMACを使います。鍵ごとにguest userは1つです。アカウントに結び付いた鍵では、利用主体はそのアカウントで、新しいguest userは作りません。付与のない利用主体は、Asia/Tokyoの暦日で1日5回まで数えます。ネイティブにはWeb用guest secretを発行しません。レシートの1日5回、接続元の1日20回、全体費用・緊急停止も既存処理を通るため維持されます。[実装: native-auth.ts / guest-ai.ts / receipt-ai-usage.ts / worker.ts]
-
-### Passkey ceremony
-
-```text
-POST /api/native/passkey/options
-  {kind:"authenticate"|"register",keyId,context?:招待token,name?}
-  （Passkey追加時だけ Authorization: Native <accountSession>）
-  -> {ceremonyId,options:Better AuthのWebAuthn options}
-ASAuthorizationPlatformPublicKeyCredentialProvider(relyingPartyIdentifier: rpId)
-  登録: options.challenge / user.id をbase64url decodeして渡す
-  認証: options.challengeをbase64url decodeして渡す
-DCAppAttestService.generateAssertion(keyId,SHA256(decoded options.challenge))
-POST /api/native/passkey/verify
-  {ceremonyId,response:WebAuthn response JSON,name?,assertion}
-  -> {sessionToken,expiresAt}
-```
-
-Better Auth がchallengeを生成し、challenge Cookieとverification行で検証します。端末はoptions内のchallengeがcanonical base64urlで32 bytesに復号できることを検証します。`rpId` または `rp.id` が明示され、接続hostと一致しなければ拒否し、欠損値を接続hostで補いません。認証optionsに `allowCredentials` があれば空配列も含めてplatform requestへ渡します。platform passkey requestはuser verificationをrequiredにします。ネイティブ境界はCookieをサーバー内の期限付きceremony行に保持します。アプリにchallenge CookieやWeb session Cookieを渡さず、SafariのCookie jarも流用しません。招待登録は既存の一度限り招待が必要です。Passkey追加は認証済み本人に限定し、sessionと招待contextの併用を拒否します。招待の対象userはサーバーで解決し、App Attest証明後・招待消費前に鍵をその対象へ比較更新で予約します。複数アカウントの登録が競合しても、後から拒否する要求の招待を消費しません。Passkey検証に失敗した場合も、鍵の対象予約は残りますが、セッションは発行せず招待も消費しません。同じ対象の招待は新しいceremonyで再試行できます。
-
-ネイティブの `clientDataJSON.origin` の受理条件は、設定済み **HTTPS originと完全一致**です。RP IDも設定済みhostと完全一致し、App ID schemeやwildcardを追加しません。WebAuthnのchallenge・署名・RP hash・origin・crossOrigin・counterは既存のBetter Auth / SimpleWebAuthn検証へ委ねます。ネイティブ用インスタンスだけuser verificationを要求し、検証結果の `userVerified` も確認します。Webの既存設定は変更しません。
-
-AppleのPasskey APIはAssociated Domainsのwebcredentials設定を必要とし、サーバーchallengeを渡して登録・認証します。同じRPのPWA登録済みPasskeyを使うことを目標にしていますが、実際のiOS `clientDataJSON` と既存Passkeyの共有は署名済み実機で未検証です。未確認を理由にorigin条件を広げません。[Apple Passkeys (2026/10), Register / Authenticate; Apple Sample (2026/10), Configure the sample]
+ゲスト作成は `guest_devices` に記録します。接続元あたり1日10件（`GUEST_CREATIONS_PER_ADDRESS_DAILY`）に制限し、接続元の生IPは保存せず、暦日別のHMACを使います。鍵ごとにguest userは1つです。鍵がアカウントに結び付いている場合、利用主体はそのアカウントで、新しいguest userは作りません。付与のない利用主体は、Asia/Tokyoの暦日で1日5回まで数えます。ネイティブにはWeb用のguest secretを発行しません。レシートの1日5回、接続元の1日20回、全体費用・緊急停止も既存処理を通るため維持されます。[実装: native-auth.ts / guest-ai.ts / receipt-ai-usage.ts / worker.ts]
 
 ### 認証後のAPI
 
@@ -100,14 +77,11 @@ AppleのPasskey APIはAssociated Domainsのwebcredentials設定を必要とし�
 | native対象 | 認証 |
 | --- | --- |
 | `ai/gemini`, `ai/payroll`, `ai/jev`, `ai/category-suggestion` のPOST | `Bearer <nativeAI token>` |
-| `contact`, `contact/transcribe` のPOST | accountの `Bearer <nativeAI token>` |
-| `ai/usage` GET | account / guestの `Native <sessionToken>` |
-| `ai/costs` GET | account sessionのみ |
-| `auth/get-session`, `auth/passkey/list-user-passkeys` GET | account sessionのみ |
-| `auth/passkey/delete-passkey`, `auth/sign-out` POST | account sessionのみ |
-| `account/delete` DELETE | account sessionのみ |
+| `ai/usage` GET | `Native <sessionToken>`（応答は `supportId` を含む） |
 
-`get-session` の `session.token` / `id` / `expiresAt` はネイティブの値へ置換します。Webのsession tokenとSet-Cookieを外へ出しません。ネイティブ境界は `session.ipAddress` / `session.userAgent` を応答へ含めません。Better AuthのD1 adapterがepoch millisecondsで返す `user.createdAt` / `updatedAt` と `passkey.createdAt` はISO8601へ直し、iOSの検査と同じ形にします。ログアウト・本人削除はguest資格情報と家計データを削除しません。APIエラーの本文や暗号検証の例外はログへ出さず、固定の安全なerror codeだけ返します。
+上記以外のネイティブ経路は410を返します。`/api/native/passkey/*`、`/api/native/auth/*`、`/api/native/account/*`、`/api/native/contact*`、`/api/native/ai/costs` が対象です。`ai/usage` の応答は付与の有無で形が変わります（[Cloud account](CLOUD_ACCOUNT.md)の利用量の節）。
+
+ネイティブ境界は Cookie・Set-Cookie を扱いません。APIエラーの本文や暗号検証の例外はログへ出さず、固定の安全なerror codeだけ返します。
 
 ## 4. App Attest 検証
 
@@ -123,7 +97,7 @@ Appleの公開手順に従って、CBORの形を検証し、Apple App Attestatio
 - attestationのEDフラグ付きauthenticator extensionでは、`apple_validation_category_01` を4 bytesのlittle-endian整数として検証する。developmentは3、productionは2（TestFlight）・4（App Store）・5（Enterprise / ad-hoc）だけを受理する。`apple_bundle_version_01` は数字とドットによる1〜5要素（各1〜20桁、全体64 bytes以内）の版番号に限定し、UTF-8のbyte stringでも同じ内容なら受理する。`CFBundleVersion` は `apps/ios/scripts/testflight.sh` が作る12桁のbuild番号（YYYYMMDDHHMM）であり、semantic versionより長い要素を許す必要がある。最低版の強制はまだ行わない。EDなしの旧形式も構造を検証して受理し、ED付きで欠損・不正な値は拒否する。
 - assertionはAppleの検証手順（Verify the assertion）にflagsの要件がないため、flagsバイトを受理条件にしない。authenticatorDataが37 bytesなら末尾データなし、37 bytesを超えるなら署名対象のCBOR extension辞書として同じextension値を検証し、不正なら拒否する。EDビットの有無でextensionの有無を判定しない。
 
-App Attestは本人認証の代わりではありません。account本人はPasskeyが決め、guestはその鍵に固定します。App Attest自体も中継・正規端末の不正使用を完全には防ぎません。日次利用枠・address制限・全体費用停止は外しません。Apple fraud metricの照会・receiptの独立した解析は今回実装しません。receiptは検証済みattestationの付随bytesとして保存するだけで、課金許可やrisk判定には使いません。Appleはreceiptの独立検証とrisk metricによる追加評価も説明しています。この未実装は実機公開前の追加評価対象です。[Apple Validation (2026/10), Receipt / fraud assessment; Apple Integrity (2026/10)]
+App Attestは本人認証の代わりではありません。ゲストはその鍵に固定します。App Attest自体も中継・正規端末の不正使用を完全には防ぎません。日次利用枠・address制限・全体費用停止は外しません。Apple fraud metricの照会・receiptの独立した解析は今回実装しません。receiptは検証済みattestationの付随bytesとして保存するだけで、課金許可やrisk判定には使いません。Appleはreceiptの独立検証とrisk metricによる追加評価も説明しています。この未実装は実機公開前の追加評価対象です。[Apple Validation (2026/10), Receipt / fraud assessment; Apple Integrity (2026/10)]
 
 ## 5. D1 migration・保存内容・失効
 
@@ -132,13 +106,13 @@ App Attestは本人認証の代わりではありません。account本人はPas
 | 表 | 保存するもの |
 | --- | --- |
 | `native_app_keys` | 鍵ID、origin・App ID・環境、公開鍵、receipt、counter、guest/account対応、登録・失効時刻 |
-| `native_sessions` | セッションSHA-256、鍵・user・Better Auth session参照、identity、期限 |
-| `native_challenges` | 乱数challenge、用途・鍵・セッション参照、ceremony Cookie・招待/追加の対象user参照、期限・消費時刻 |
+| `native_sessions` | セッションSHA-256、鍵・user・参照先の Better Auth session（`auth_session_id`、外部キー）、identity、期限 |
+| `native_challenges` | 乱数challenge、用途・鍵・セッション参照、期限・消費時刻 |
 | `native_ai_tokens` | token SHA-256、audience、セッション参照、期限 |
 
-家計データ・画像・Passkey秘密鍵・App Attest秘密鍵・生のセッション/AI tokenは保存しません。challenge Cookieは短期のサーバー内検証状態で、汎用アカウントsessionではありません。定期handlerが期限切れchallenge/token/session行を削除します。削除前でも毎要求の期限検査で拒否します。
+家計データ・画像・App Attest秘密鍵・生のセッション/AI tokenは保存しません。定期handlerが期限切れのchallenge・token・セッション行を削除します。削除前でも毎要求の期限検査で拒否します。
 
-userまたは背後のBetter Auth session削除は外部キーでnative session / AI tokenへ伝播します。鍵は監査とcounter再利用防止のため残します。鍵を緊急失効する場合は、対象環境のD1で `native_app_keys.revoked_at` を現在のUnix秒へ更新します。新鍵登録で既存keyIdを上書きしません。鍵IDは端末識別に関わるmetadataなのでログやPRへ掲載しません。
+userの削除は外部キーでnative session / AI tokenへ伝播します。`native_sessions.auth_session_id` は Better Auth の `session(id)` への外部キー（`ON DELETE CASCADE`）で、この表は残ります（S8で表を整理するまで）。Better Auth の session 行が削除されれば、紐づくネイティブセッションも削除されます。鍵は監査とcounter再利用防止のため残します。鍵を緊急失効する場合は、対象環境のD1で `native_app_keys.revoked_at` を現在のUnix秒へ更新します。新鍵登録で既存keyIdを上書きしません。鍵IDは端末識別に関わるmetadataなので、ログやPRへ掲載しません。
 
 ## 6. 設定と環境の分離
 
@@ -154,7 +128,7 @@ userまたは背後のBetter Auth session削除は外部キーでnative session 
 
 `KMAPIConfiguration` はbundleの `KMNativeAPIHost` から既定のHTTPS API URLを作ります。値が欠損・不正なら初期化を失敗させ、production hostへfallbackしません。hostの自動発見やpreview fallbackは行いません。テスト等では明示URLを注入できますが、署名済みpreview buildでは `KM_NATIVE_HOST` とAssociated Domainsの値を合わせてください。Worker `/api/native/config` の `rpId` もそのURL hostと一致必須です。
 
-全項目を明示します。通常の Worker buildで値がなくても失敗させず、ネイティブ境界だけ無効にします。`workers/ai-gateway/cloudflare.config.ts` は本番build変数からtext bindingを作ります。previewは `PREVIEW_NATIVE_APP_*` だけを読み、本番値を継承しません。既存の `BETTER_AUTH_SECRET`・`AI_GATEWAY_AUTH_SECRET`・D1・rate-limit bindingも必須です。新しいprovider秘密鍵や端末内bootstrap secretは不要です。
+全項目を明示します。通常の Worker buildで値がなくても失敗させず、ネイティブ境界だけ無効にします。`workers/ai-gateway/cloudflare.config.ts` は本番build変数からtext bindingを作ります。previewは `PREVIEW_NATIVE_APP_*` だけを読み、本番値を継承しません。既存の `AI_GATEWAY_AUTH_SECRET`・D1・rate-limit bindingも必須です。新しいprovider秘密鍵や端末内bootstrap secretは不要です。Better Auth のシークレット（`BETTER_AUTH_SECRET`）は Worker の設定から参照しません（S7で参照を外し、Cloudflare 上の実体の削除はS8の作業です）。
 
 AASAは `/.well-known/apple-app-site-association` にJSONとして直接200で返し、`webcredentials.apps:[設定したApp ID]` を載せます。Cloudflare assetsより先にWorkerで処理します。Team/App ID、origin、RP、環境が不正なら404にし、SPAへredirectしません。Appleは有効なHTTPS証明書・redirectなし・App ID prefixとbundle IDの一致を要求します。AASAはApple CDN経由で反映に時間がかかるため、設定直後の実機失敗を即座にサーバーバグと断定しません。[Apple Domains (2026/10), Add the associated domain file / CDN]
 
@@ -164,17 +138,16 @@ previewは別host・RP・D1・AASA・Keychain serviceを使い、合成データ
 
 | 脅威 | 対策 |
 | --- | --- |
-| ブラウザーのCSRF / Origin偽装 | 旧Web検査は変更しない。nativeはCookie/Originを拒否し、専用秘密tokenと署名証明を要求。CORS許可を追加しない |
-| tokenをWebやadminへ横流し | opaque tokenのaudience・route allowlist・identity区分。旧Web JWTと別形式 |
-| challengeやassertionの再送・同時再送 | 120秒・目的/鍵/session固定、消費UPDATE、counter比較更新 |
+| ブラウザーのCSRF / Origin偽装 | nativeはCookie/Originを拒否し、App Attestの署名証明を要求。CORS許可を追加しない。Web の旧 API は410 |
+| tokenの横流し | opaque tokenのaudience・経路の限定・identity区分。Web JWTと別形式で、ネイティブAPIはWeb JWTを受理しない |
+| challengeやassertionの再送・同時再送 | 120秒・目的/鍵/セッション固定、消費UPDATE、counter比較更新 |
 | 偽証明書・別app・開発環境からの要求 | Apple root固定、証明書/nonce/公開鍵/App ID/AAGUID照合、登録設定を毎要求で再確認 |
-| 別アカウントの招待の誤消費・同一鍵での登録競合 | sessionとcontextを分離。対象をサーバー解決し、署名証明後に鍵を比較更新で予約してから招待を消費 |
-| 削除・回復後にtokenが残る | user / backing session / 鍵失効を要求ごとにD1確認、外部キーcascade |
-| 鍵の作り直しでguest quota回避 | 同鍵は同guest、Webと共有のaddress日次作成制限、AI address20回、費用停止 |
+| 削除後にtokenが残る | user・背後のsession・鍵の失効を要求ごとにD1で確認し、外部キーでcascade |
+| 鍵の作り直しでguest quota回避 | 同鍵は同guest、接続元あたりの日次作成制限、AI address20回、費用停止 |
 | 認証ストレージを家計の所有権と混同 | APIは端末Repositoryを読まない。user IDを要求から採用しない |
 | 証明の巨大入力・公開challengeの濫用 | 制御body64 KiB、既存rate-limitの専用addressキー、期限付き清掃 |
 
-既存WebハンドラーのOrigin条件、trustedOrigins、CSRF設定、Cookie属性、AIの認証・費用制限の条件式は緩めません。`createAuth` のネイティブ専用設定は別のサーバー内呼出時だけ選びます。PWA routingへの差分は専用APIとAASAの分岐・定期清掃です。COOP/COEP/CSP/no-storeは既存ラッパーを維持し、Service Workerの `/api/*` 非cacheも変更しません。D1 migrationは定期清掃の参照表も追加するため、**ネイティブを有効化しない場合も公開前の適用が必要**です。
+既存のAI処理のOrigin条件、CSRF設定、AIの認証・費用制限の条件式は緩めません。PWA routingへの差分は専用APIとAASAの分岐・定期清掃です。COOP/COEP/CSP/no-storeは既存ラッパーを維持し、Service Workerの `/api/*` 非cacheも変更しません。D1 migrationは定期清掃の参照表も追加するため、**ネイティブを有効化しない場合も公開前の適用が必要**です。
 
 ## 8. 利用者による準備・実機確認
 
@@ -184,58 +157,24 @@ previewは別host・RP・D1・AASA・Keychain serviceを使い、合成データ
 4. Xcodeの署名Teamを外部設定から指定し、Associated DomainsとApp Attest capabilityを対象App ID / provisioning profileで有効にします。Debugのdevelopment鍵を本番へ向けません。TestFlight / App Storeのproduction環境も確認します。
 5. 本番build変数に `NATIVE_APP_*` を登録します。previewには `PREVIEW_NATIVE_APP_*` を登録し、本番資格情報を使いません。秘密情報は既存のCloudflare Secret bindingのままです。
 6. PRの `ci`・AI Gateway・iOS CI成功と検証差分を確認し、利用者がマージします。通常の本番公開はmainマージ後のWorkers Buildsに任せます。このPR担当はdeployしません。
-7. 公開後、AASAのHTTPS直200・JSON・redirectなしを確認します。署名済み実機で、設定の「ログイン・利用状況」からPWA登録済みPasskeyのログイン、招待登録、追加/削除、ログアウト、Cloud account削除を合成データで確認します。レシートのゲスト確認からguest作成・token更新も確認し、両経路で日次枠・費用停止を確認します。
-8. App Attest非対応端末でログイン・AIの操作が出ず、要求も送られないこと、オフラインの手入力、資格情報と家計バックアップの分離、再インストール後の鍵再作成を確認します。AASAのCDN反映も待って確認します。
+7. 公開後、AASAのHTTPS直200・JSON・redirectなしを確認します。署名済み実機で、ゲストの作成とAI token更新、レシート読み取りを合成データで確認します。両経路で日次枠・費用停止を確認します。
+8. App Attest非対応端末でAIの操作が出ず、要求も送られないこと、オフラインの手入力、資格情報と家計バックアップの分離、再インストール後の鍵再作成を確認します。AASAのCDN反映も待って確認します。
 
-## 9. iOS の認証画面（#322）
+## 9. iOS の認証画面（S6 で撤去）
 
-`apps/ios/KakeiMatch/Features/Settings/NativeAuth{Model,Presentation,View}.swift` と `API/KMNativeAuthService.swift` が、設定の「ログイン・利用状況」を `/api/native/*` へ接続します。画面は家計 Repository を読まず、ログインできない状態でも端末内の家計簿の閲覧・編集を止めません。API の契約・endpoint は3節のままです。
+設定の「ログイン・利用状況」（Passkey ログイン、招待コード、Passkey の追加・削除、ログアウト、アカウント削除）は、S6（#456）で画面から撤去しました。`KMNativeAuthService` などの service 層は残りますが、UI からは呼びません。撤去前の画面の仕様は、Git 履歴の旧版を参照してください。
 
-### 入口と状態
+iOS の API 契約（`KMWorkerAPI.swift`）は、アプリが呼ぶ経路として、ゲストの作成（`/api/native/challenge`・`/api/native/guest`）、AI token（`/api/native/ai/token`）、AI の読み取り、利用量（`/api/native/ai/usage`）を使います。Passkey・招待・アカウント削除の経路は退役（410）しています。
 
-入口は設定 →「写真の読み取り」→「ログイン・利用状況」です。一覧の行の右には PWA の `#ai-row-value` と同じ利用回数を出し、ログイン・ログアウト後に設定一覧へ戻った時に取り直します。
-
-| 状態 | 表示と操作 |
-| --- | --- |
-| 読み込み中 | アカウント状態は空。利用回数は「利用状況を読み込んでいます…」 |
-| 未ログイン | 「未ログインです。」、ゲストの当日利用回数とメーター、Passkeyログイン、招待コード登録、家計簿に戻る。初回でゲストセッションがない時は回数の代わりに1日5回の説明を出す |
-| ログイン中 | 利用者名、プラン別の今月の利用回数とメーター、AI利用の確認、Passkeyの一覧・追加・削除、ログアウト、Cloud account削除 |
-| 接続不可 | App Attest 非対応（Simulatorを含む）、Worker未設定、通信失敗を区別して理由を出す。ログインとAIの操作は出さず、端末内の家計簿を続けられることを書く |
-
-- Passkeyログインと招待コード登録の成功後は、利用状況とPasskey一覧を取り直し、続けてアカウントのAI tokenを取得します。失敗時は再試行を促す文言を出し、画面と端末内データは保持します。
-- 招待コードはOSのアラート入力欄で受け取ります（PWAの`window.prompt`に相当）。前後の空白を除き、空でない4 KiB以下だけを送ります。
-- Passkey削除は確認アラートを出してから実行します。Cloud account削除は確認アラートの後に「アカウントを削除」の入力をもう一度求め、一致した時だけ実行します。文言と入力語はPWAと同じです。
-- ログアウトとCloud account削除は端末の家計簿・レシート・明細・照合記録を消しません。削除後も端末内データを閲覧・バックアップできることを画面に書きます。
-- 利用状況の取得やAI tokenの取得でセッション切れを検出した時は未ログイン表示へ戻し、「Passkeyで再度ログインしてください」と伝えます。AI token取得だけが失敗した時は、家計簿の利用は続けられることを伝えます。
-
-### レシート読み取り前のゲスト確認
-
-未ログインでAIを使う最初のレシート読み取りでは、AI tokenの取得が `nativeAuthenticationRequired` または `authenticationRequired` で止まった時に「確認しています」ダイアログを出します。PWAのTurnstileウィジェットの代わりにApp Attestで端末を確認するため、説明は「この端末が正規のアプリか」に置き換え、表示直後にゲストセッションの作成を始めます。
-
-- 作成に成功するとダイアログを閉じ、同じ写真の読み取りを続けます。ゲストセッションが有効な間は、以降の読み取りで確認を出しません。
-- 「やめる」、作成失敗、通信失敗でも画像と手入力は保持します。キャンセル時は写真が残っていることを伝え、失敗時は理由を出します。
-- ゲストの作成数とAI利用回数の上限はサーバーが判定します。端末は結果だけを表示し、上限を回避する再作成をしません。
-
-### 端末・ビルド設定
-
-Simulator は `KMLiveAppAttest.isSupported` が常に `false` を返します。認証画面は、`KMWorkerAPI` の生成時に1回読んだ `appAttestSupported` が false ならネイティブ要求を送らず、接続不可の表示に切り替えます。App Attest 非対応の実機も同じ扱いです。画面は「この端末ではクラウドのログインとAI機能を利用できません」と出し、家計簿の閲覧・編集は続けられます。
+Simulator は `KMLiveAppAttest.isSupported` が常に `false` を返します。App Attest 非対応の端末では、ネイティブ要求を送らず、クラウドのAI機能を使えないことを示します。家計簿の閲覧・編集は続けられます。
 
 `project.yml` は `INFOPLIST_KEY_KMNativeAPIHost` を使わず、`postBuildScripts` で署名前に `$(KM_NATIVE_HOST)` を `KMNativeAPIHost` として生成plistへ注入します。Xcodeの `INFOPLIST_KEY_` は既知のキーしか反映しないためです。Debugは `KM_APP_ATTEST_ENVIRONMENT=development`、Releaseは `production` の既定値を変えません。previewは6節のとおり、hostとAssociated Domainsを同時に切り替えます。
 
-### PWA との差分
-
-- Turnstile の代わりに App Attest を使うため、確認ダイアログの説明は「この端末が正規のアプリか」に変わります。ウィジェットがないので、同じ位置に進捗表示を置き、表示直後に確認を始めます。
-- 招待コードは `window.prompt` ではなくOSのアラート入力欄です。
-- Simulator / App Attest非対応端末は、PWAの汎用エラーではなく理由と端末内機能の継続を表示します。
-- ログアウト後にゲストの当日利用回数を取り直します（PWAは直前のアカウント値が残ります）。
-
-画面の確認は `KMNativeAuthModel` のstubとXCUITestの固定状態で行います。実Worker、実機のPasskey、App Attest、AASA、Keychainは未検証です（10節）。
-
 ## 10. 検証の範囲と残件
 
-Workerの暗号テストは実行時に生成する合成証明書・鍵を使います。HTTP/D1テストは期限切れ、replay、環境/設定不一致、失効、route/audience分離と旧Webの拒否を検査します。Swift TestingはURLProtocol / Passkey / App Attestのstubで順序と保存・拒否を検査します。画面は `KMNativeAuthModel` のstubとXCUITestのDebug専用状態で、未ログイン・ログイン中・App Attest非対応の表示と操作を検査します。CI成功はAppleサーバー・実機・本番D1での成功を意味しません。
+Workerの暗号テストは実行時に生成する合成証明書・鍵を使います。HTTP/D1テストは期限切れ、replay、環境/設定不一致、失効、経路の分離と、Web 旧 API・退役経路の410を検査します。Swift Testingは URLProtocol / App Attest のstubで順序と保存・拒否を検査します。CI成功はAppleサーバー・実機・本番D1での成功を意味しません。
 
-未検証: 正しいTeam/App ID、署名済み実機のAssociated Domains、App Attestの本物の証明書・assertion、PWA既存Passkeyのネイティブ共有とorigin実値、TestFlightの環境、実provider・本番費用制限・本番migration・AASA CDN反映。iOSの認証画面についても、実Worker通信、実機のPasskey（ログイン・招待登録・追加・削除）、App Attest、AASA、署名済みentitlement、実Keychain、実機のVoiceOver・Dynamic Type・横向き、実機でのゲスト確認ダイアログは未検証です。PWAには「ログイン・利用状況」の基準画像がないため、画像比較はPWAソースとiOSの実画面で行いました。
+未検証: 正しいTeam/App ID、署名済み実機のAssociated Domains、App Attestの本物の証明書・assertion、TestFlightの環境、実provider・本番費用制限・本番migration・AASA CDN反映、実機のKeychain。
 
 ## 参照資料
 

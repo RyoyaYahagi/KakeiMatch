@@ -247,7 +247,6 @@ enum KMReceiptPresentation {
     private static let photoFailureCodes: Set<String> = [
         "invalid_image", "invalid_ai_response", "image_too_large", "image_missing", "image_required"
     ]
-    private static let guestQuotaHint = "ログインすると回数の制限なく使えることがあります。設定からログインできます。"
 
     static func readingFailure(code: String, message: String, guest: Bool = false) -> ReadingFailure {
         if photoFailureCodes.contains(code) {
@@ -256,22 +255,16 @@ enum KMReceiptPresentation {
         }
         let reason = message.range(of: "[ぁ-んァ-ヶ一-龠]", options: .regularExpression) != nil
             ? message : "処理できませんでした。通信状態を確認して、もう一度お試しください。"
-        let guestQuota = code == "quota" && guest
         // A cancelled or unverified bot check also arrives as auth_required; it did not ask for a sign-in.
         let cancelled = reason.contains("確認をやめ")
-        let checkFailed = reason.contains("ロボットでないこと")
         let title: String
         switch code {
         case "quota": title = "! AIの読み取り回数の上限です"
         case "auth_required":
-            title = cancelled ? "! 読み取りを中止しました"
-                : checkFailed ? "! 読み取りを確認できませんでした" : "! ログインが必要です"
+            title = cancelled ? "! 読み取りを中止しました" : "! 読み取りを確認できませんでした"
         case "rate_limited", "offline_or_unavailable", "not_configured", "unavailable": title = "! 今はAIで読み取れません"
         default: title = "! 読み取れませんでした"
         }
-        let accountAction = guestQuota || reason.contains("アカウント") || reason.contains("ログイン")
-            || reason.contains("認証") || reason.contains("サインイン")
-        return ReadingFailure(title: title, message: guestQuota ? "\(reason) \(guestQuotaHint)" : reason,
-                              photoProblem: false, accountAction: accountAction)
+        return ReadingFailure(title: title, message: reason, photoProblem: false, accountAction: false)
     }
 }

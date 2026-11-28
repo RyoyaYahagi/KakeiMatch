@@ -90,7 +90,7 @@ describe("admin authorization", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it("allows an email in ADMIN_ACCESS_EMAILS without Better Auth session or ADMIN_USER_IDS", async () => {
+  it("allows an email in ADMIN_ACCESS_EMAILS without a Better Auth session", async () => {
     const { sign, jwks } = await createSigner();
     const env = envBase();
     const jwt = await sign({ email: "Admin@Example.Test", sub: "cf-sub-1" });

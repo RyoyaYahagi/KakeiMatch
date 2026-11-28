@@ -1,4 +1,4 @@
-import type { AccountD1Database, AccountD1Statement } from './account-auth';
+import type { AccountD1Database, AccountD1Statement } from './account-db';
 import { removeFeedbackSecrets, sanitizeFeedbackDiagnostics, sanitizeFeedbackMessage } from './feedback-sanitizer';
 
 export type FeedbackKind = 'bug' | 'improvement' | 'question';

@@ -105,7 +105,6 @@ struct ContactPresentationTests {
         current = current.addingTimeInterval(1)
         recorder.recordNetwork(true)
         let snapshot = recorder.snapshot(now: current)
-        #expect(KMContactPresentation.isValidForWorker(snapshot))
 
         let object = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(snapshot)) as? [String: Any])
         #expect(Set(object.keys) == ["version", "currentScreen", "network", "events"])
@@ -116,25 +115,6 @@ struct ContactPresentationTests {
         #expect(Set(events[2].keys) == ["type", "secondsAgo", "screen", "errorCode"])
         #expect(Set(events[3].keys) == ["type", "secondsAgo", "online"])
         #expect(events.allSatisfy { $0["secondsAgo"] as? Int != nil })
-    }
-
-    @Test func rejectsDiagnosticsThatDoNotMatchTheWorkerShape() {
-        let valid = KMContactDiagnosticContext(version: 1, currentScreen: "settings", network: "online", events: [
-            .init(type: "screen_open", secondsAgo: 2, screen: "home"),
-        ])
-        #expect(KMContactPresentation.isValidForWorker(valid))
-        #expect(!KMContactPresentation.isValidForWorker(.init(
-            version: 1, currentScreen: "private-screen", network: "online", events: []
-        )))
-        #expect(!KMContactPresentation.isValidForWorker(.init(
-            version: 1, currentScreen: "home", network: "online", events: [.init(type: "screen_open", secondsAgo: 2)]
-        )))
-        #expect(!KMContactPresentation.isValidForWorker(.init(
-            version: 1, currentScreen: "home", network: "online", events: [.init(type: "action", secondsAgo: 2, screen: "home", action: "free_text")]
-        )))
-        #expect(!KMContactPresentation.isValidForWorker(.init(
-            version: 1, currentScreen: "home", network: "online", events: [.init(type: "error", secondsAgo: 2, screen: "home", errorCode: "private")]
-        )))
     }
 
     @Test func contactFailureMessagesSeparateLoginConfigurationAndSimulatorCauses() {

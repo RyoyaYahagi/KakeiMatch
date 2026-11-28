@@ -1,4 +1,4 @@
-import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-auth";
+import type { AccountD1BatchResult, AccountD1Statement, AccountEnv } from "./account-db";
 
 type Db = AccountEnv["ACCOUNT_DB"];
 const IMAGE_RETRY_LIFETIME_SECONDS = 10 * 60;

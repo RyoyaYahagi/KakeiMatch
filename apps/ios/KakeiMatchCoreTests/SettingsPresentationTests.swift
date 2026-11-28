@@ -3,16 +3,16 @@ import Testing
 @testable import KakeiMatchCore
 
 struct SettingsPresentationTests {
-    @Test func settingRowsKeepPWAOrderAndExcludeDeviceSync() {
+    @Test func settingRowsKeepPWAOrderAndExcludeAccountAndContactUI() {
         let sections = KMSettingsPresentation.sections(theme: .system)
         #expect(sections.map(\.title) == ["家計簿", "データ", "写真の読み取り", "アプリ"])
         #expect(sections.map { $0.rows.map(\.title) } == [
             ["分類ルール", "カテゴリ", "支払元", "照合の自動一致", "予算設定", "定期登録"],
             ["バックアップと復元", "AIアシスタント向けの書き出し", "Google Driveへの自動保存", "原本の整理・全削除"],
-            ["ログイン・利用状況"],
-            ["外観", "お問い合わせ", "アプリ情報"],
+            ["利用状況"],
+            ["外観", "アプリ情報"],
         ])
-        #expect(!sections.flatMap(\.rows).contains { $0.title.contains("同期") })
+        #expect(!sections.flatMap(\.rows).contains { $0.title.contains("同期") || $0.title.contains("ログイン") || $0.title.contains("お問い合わせ") })
         #expect(sections[0].rows[3].destination == .reconciliationAutoMatch)
         #expect(sections[0].rows[3].value == "従来どおり")
         let sourceOnly = KMSettingsPresentation.sections(
@@ -27,11 +27,24 @@ struct SettingsPresentationTests {
         #expect(!sections[1].rows[2].isDestructive)
         #expect(sections[1].rows[3].isDestructive)
         #expect(sections[3].rows[0].value == "システム")
-        #expect(sections[3].rows[1].destination == .contact)
-        #expect(sections[3].rows[2].destination == .appInfo)
+        #expect(sections[3].rows[1].destination == .appInfo)
         #expect(sections[2].rows[0].destination == .ai)
         #expect(sections[2].rows[0].value == nil)
-        #expect(sections[3].rows[1].value == nil)
+        #expect(!KMSettingsPresentation.settingsFooter.contains("ログアウト"))
+    }
+
+    @Test func supportIdRowIsHiddenWhenAbsentOrBlankAndAppendedWhenPresent() {
+        for missing in [nil, "", "   \n\t "] {
+            let sections = KMSettingsPresentation.sections(theme: .system, supportId: missing)
+            #expect(sections[3].rows.map(\.id) == ["settings.theme", "settings.appInfo"])
+        }
+
+        let sections = KMSettingsPresentation.sections(theme: .system, supportId: "  sup_12345  ")
+        #expect(sections[3].rows.map(\.id) == ["settings.theme", "settings.appInfo", "settings.supportId"])
+        let supportRow = sections[3].rows[2]
+        #expect(supportRow.title == "サポートID")
+        #expect(supportRow.value == "sup_12345")
+        #expect(supportRow.destination == .copySupportId)
     }
 
     @Test func driveSyncRowReflectsTheStoredToggle() {

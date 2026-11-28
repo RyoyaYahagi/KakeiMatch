@@ -64,24 +64,12 @@ struct KMKeychainCredentials: KMCloudCredentialStore {
     }
 }
 
-struct KMStoredSession: Codable, Sendable {
-    let value: String
-    let expiresAt: Date
-}
-
 struct KMAPIConfiguration: Sendable {
-    enum OriginPolicy: Sendable, Equatable {
-        /// Native has no web origin. POST is rejected by the current Worker.
-        case native
-        /// Explicit compatibility choice, not proof that this request is from the app.
-        case existingWorkerCompatibility
-    }
     let baseURL: URL
-    let originPolicy: OriginPolicy
 
     static let productionURL = URL(string: "https://kakeimatch.yhgry.workers.dev")!
 
-    init(baseURL: URL? = nil, originPolicy: OriginPolicy = .native) throws {
+    init(baseURL: URL? = nil) throws {
         let resolvedURL: URL
         if let baseURL {
             resolvedURL = baseURL
@@ -94,10 +82,8 @@ struct KMAPIConfiguration: Sendable {
               resolvedURL.query == nil, resolvedURL.fragment == nil, resolvedURL.port == nil,
               resolvedURL.path.isEmpty || resolvedURL.path == "/" else { throw KMAPIError.invalidRequest }
         self.baseURL = resolvedURL
-        self.originPolicy = originPolicy
     }
 
-    var origin: String { "https://\(baseURL.host!)" }
     var credentialService: String { "jp.kakeimatch.ios.cloud.\(baseURL.host!)" }
 }
 

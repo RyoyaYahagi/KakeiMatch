@@ -68,6 +68,7 @@ final class SettingsFlowTests: XCTestCase {
     @MainActor func testGuestCanReachPolicyAndSupportFromSettings() {
         continueAfterFailure = false
         let app = launch("light")
+        XCTAssertFalse(app.buttons["settings.contact"].exists)
         let about = app.buttons["settings.appInfo"]
         for _ in 0..<4 where !about.isHittable { app.swipeUp() }
         about.tap()

@@ -4,7 +4,7 @@ Issue #234の管理画面は `/admin`、問い合わせInboxは `/admin/feedback
 
 ## 認証と認可
 
-管理ページ（`/admin`、`/admin/*`、`/admin.html`）と `/api/admin/*` のすべての要求は Cloudflare Access の認証のみで保護し、PWAのBetter Auth session や cookie には依存しません。
+管理ページ（`/admin`、`/admin/*`、`/admin.html`）と `/api/admin/*` のすべての要求は Cloudflare Access の認証のみで保護し、Web の Better Auth session や cookie（S7 で撤去）には依存しません。
 
 Worker側では次の3つの設定がすべて必須です。いずれかが未設定、または片方だけ設定されている場合は、ローカル環境を含めて素通りさせず `503`（`admin_not_configured`）で拒否します。
 
@@ -12,7 +12,7 @@ Worker側では次の3つの設定がすべて必須です。いずれかが未�
 - `CF_ACCESS_AUD`: 対象 Access application の audience（`aud`）
 - `ADMIN_ACCESS_EMAILS`: 管理を許可するメールアドレスの許可リスト（Cloudflare Secret binding）。書式はカンマ区切り（例: `admin@example.com,ops@example.com`）で、各要素の前後の空白は無視し、大文字・小文字を区別せず照合します。
 
-`ADMIN_USER_IDS` は後続段の整理まで設定定義のみ残置していますが、認可判定には使用しません。
+`ADMIN_USER_IDS` は S7 で設定から参照を外しました。認可判定には使っていませんでした。
 
 すべての管理要求で `Cf-Access-Jwt-Assertion` ヘッダーの RS256 署名、`iss`、`aud`、`exp` / `nbf` に加え、`email`（許可リスト一致）と `sub` の存在を検証します。JWT がない場合、署名不正、audience 不一致、期限切れ、許可されていない `email`、`email` を持たないサービストークンは `403` で拒否します。管理操作（`GET` 以外、および `Origin` ヘッダーが付与された要求）は同一 origin からの要求だけを受け付けます。
 

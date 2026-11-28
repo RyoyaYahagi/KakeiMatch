@@ -1,4 +1,4 @@
-import type { AccountD1Database, AccountEnv } from "./account-auth";
+import type { AccountD1Database, AccountEnv } from "./account-db";
 import { monthBounds } from "./ai-provider-costs";
 import { monthKey } from "./receipt-ai-usage";
 import { analyzeFeedback, createFeedbackIssue, deleteFeedback, getFeedback, listFeedback, revealFeedbackOriginal, updateFeedbackStatus,
@@ -7,7 +7,6 @@ import { analyzeFeedback, createFeedbackIssue, deleteFeedback, getFeedback, list
 export const ADMIN_OPERATOR_PRINCIPAL_ID = "admin-operator";
 
 export interface AdminEnv extends AccountEnv {
-  ADMIN_USER_IDS?: string;
   ADMIN_ACCESS_EMAILS?: string;
   CF_ACCESS_TEAM_DOMAIN?: string;
   CF_ACCESS_AUD?: string;
@@ -232,15 +231,16 @@ async function errors(db: AccountD1Database, now: number, limit: number) {
 }
 
 async function users(db: AccountD1Database, limit: number) {
-  const rows = await selectRows<{ id: string; plan: string; createdAt: number; lastAiUseAt: number | null; aiRequests: number; kind: string; enabled: number }>(db,
-    `SELECT u.id, CASE WHEN g.user_id IS NOT NULL THEN 'guest' ELSE COALESCE(e.plan,'free') END AS plan,
+  // subject says how the user holds data (account or guest device); entitlement is the explicit plan row, null when none.
+  const rows = await selectRows<{ id: string; subject: string; entitlement: string | null; createdAt: number; lastAiUseAt: number | null; aiRequests: number }>(db,
+    `SELECT u.id, CASE WHEN g.user_id IS NOT NULL THEN 'guest' ELSE 'account' END AS subject, e.plan AS entitlement,
       CAST(u.createdAt / 1000 AS INTEGER) AS createdAt, MAX(c.dispatched_at) AS lastAiUseAt,
-      COUNT(c.id) AS aiRequests, CASE WHEN g.user_id IS NOT NULL THEN 'guest' ELSE 'registered' END AS kind, 1 AS enabled
+      COUNT(c.id) AS aiRequests
      FROM user u LEFT JOIN account_entitlements e ON e.user_id=u.id
      LEFT JOIN guest_devices g ON g.user_id=u.id LEFT JOIN ai_provider_cost_events c ON c.user_id=u.id
      WHERE u.id != ?
      GROUP BY u.id ORDER BY u.createdAt DESC LIMIT ?`, ADMIN_OPERATOR_PRINCIPAL_ID, limit);
-  return { users: rows.map(row => ({ ...row, enabled: row.enabled === 1 })) };
+  return { users: rows };
 }
 
 async function auditLog(db: AccountD1Database, limit: number) {

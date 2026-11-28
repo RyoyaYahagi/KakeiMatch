@@ -1,42 +1,44 @@
 import Foundation
 import Observation
 
-/// State for the PWA `settings-page-ai` screen. Authentication never reads or
-/// writes household repositories; local data stays usable while this screen is
-/// unavailable or signed out.
+/// State for the Settings > 利用状況 screen and the Settings support ID row.
+/// Never reads or writes household repositories; local data stays usable while
+/// cloud usage is unavailable or unused.
 @MainActor @Observable
 final class KMNativeAuthModel {
     enum Phase: Equatable { case loading, signedOut, signedIn, unavailable }
 
     private(set) var phase = Phase.loading
-    private(set) var accountName: String?
     private(set) var usage: KMAIUsage?
     private(set) var usageMessage = KMNativeAuthPresentation.usageLoading
     private(set) var usageRowValue: String?
-    private(set) var passkeys: [KMCloudPasskey] = []
-    private(set) var passkeysLoaded = false
-    private(set) var busy = false
     private(set) var hasLoaded = false
-    var message: String?
+
+    private(set) var showStoreKitSandboxSection = false
+    private(set) var storeKitProducts: [KMStoreKitProduct] = []
+    private(set) var storeKitBusy = false
+    private(set) var storeKitStatusMessage: String?
+    private(set) var storeKitErrorMessage: String?
 
     @ObservationIgnored private var injectedService: (any KMNativeAuthService)?
     @ObservationIgnored private var liveService: (any KMNativeAuthService)?
+    @ObservationIgnored private var injectedStoreKit: (any KMStoreKitServicing)?
+    @ObservationIgnored private var liveStoreKit: (any KMStoreKitServicing)?
+    @ObservationIgnored private let storeKitSandboxFlagEnabled: Bool
+    @ObservationIgnored private var storeKitObserverStarted = false
 
-    init(service: (any KMNativeAuthService)? = nil) {
+    init(
+        service: (any KMNativeAuthService)? = nil,
+        storeKit: (any KMStoreKitServicing)? = nil,
+        storeKitSandboxFlagEnabled: Bool? = nil
+    ) {
         injectedService = service ?? KMNativeAuthTestService.make()
+        injectedStoreKit = storeKit
+        self.storeKitSandboxFlagEnabled = storeKitSandboxFlagEnabled ?? KMStoreKitConfiguration.isSandboxUIFlagEnabled()
     }
 
-    var accountStatus: String {
-        switch phase {
-        case .loading:
-            // PWA leaves `#account-status` empty until the session check settles;
-            // showing the failure copy while loading would flash a false error.
-            return ""
-        case .unavailable:
-            return KMNativeAuthPresentation.unavailableStatus
-        case .signedOut, .signedIn:
-            return KMNativeAuthPresentation.accountStatus(isSignedIn: phase == .signedIn, name: accountName)
-        }
+    var supportId: String? {
+        KMSettingsPresentation.normalizedSupportId(usage?.supportId)
     }
 
     var usageSummary: String {
@@ -50,16 +52,11 @@ final class KMNativeAuthModel {
     }
 
     var settingsRowValue: String? { usageRowValue }
-    var showsSignedOutActions: Bool { phase == .signedOut }
-    var showsSignedInActions: Bool { phase == .signedIn }
     var isUnavailable: Bool { phase == .unavailable }
 
     func refresh() async {
-        message = nil
         usage = nil
         usageRowValue = nil
-        passkeys = []
-        passkeysLoaded = false
         usageMessage = KMNativeAuthPresentation.usageLoading
         phase = .loading
         guard let service = resolvedService() else {
@@ -92,185 +89,212 @@ final class KMNativeAuthModel {
             hasLoaded = true
             return
         }
-        do {
-            let session = try await service.accountSession()
-            if let session {
-                phase = .signedIn
-                accountName = session.user.name
-                await loadSignedIn(service)
-            } else {
-                phase = .signedOut
-                accountName = nil
-                await loadSignedOut(service)
-            }
-        } catch let error as KMAPIError where error == .authenticationRequired || error == .nativeAuthenticationRequired {
-            phase = .signedOut
-            accountName = nil
-            message = KMNativeAuthPresentation.sessionExpired
-            await loadSignedOut(service)
-        } catch {
-            phase = .unavailable
-            usageMessage = KMNativeAuthPresentation.usageUnavailable
-        }
+        await loadUsage(service)
         hasLoaded = true
     }
 
-    func signInWithPasskey() async {
-        guard !busy, let service = resolvedService() else { return }
-        busy = true
-        defer { busy = false }
-        message = KMNativeAuthPresentation.loginInProgress
+    /// Evaluates the feature flag and Sandbox environment guard. When the flag
+    /// is OFF, this exits immediately without touching StoreKit APIs.
+    func loadStoreKitSandboxIfNeeded() async {
+        guard storeKitSandboxFlagEnabled else {
+            showStoreKitSandboxSection = false
+            return
+        }
+        let storeKit = resolvedStoreKitService()
+        guard await storeKit.isSandboxEnvironment() else {
+            showStoreKitSandboxSection = false
+            return
+        }
+        showStoreKitSandboxSection = true
+        if !storeKitObserverStarted {
+            storeKitObserverStarted = true
+            await storeKit.startObservingUpdates { [weak self] transaction in
+                await self?.handleObservedStoreKitTransaction(transaction)
+            }
+        }
+        if storeKitProducts.isEmpty {
+            await reloadStoreKitProducts()
+        }
+    }
+
+    func reloadStoreKitProducts() async {
+        guard showStoreKitSandboxSection, !storeKitBusy else { return }
+        storeKitBusy = true
+        storeKitErrorMessage = nil
+        defer { storeKitBusy = false }
+        let storeKit = resolvedStoreKitService()
         do {
-            try await service.signInWithPasskey()
+            storeKitProducts = try await storeKit.fetchProducts()
+        } catch {
+            storeKitErrorMessage = "Sandbox の商品情報を取得できませんでした。"
+        }
+    }
+
+    func purchaseStoreKitProduct(id: String) async {
+        guard showStoreKitSandboxSection, !storeKitBusy else { return }
+        storeKitBusy = true
+        storeKitStatusMessage = nil
+        storeKitErrorMessage = nil
+        defer { storeKitBusy = false }
+        let storeKit = resolvedStoreKitService()
+        do {
+            let outcome = try await storeKit.purchase(productID: id)
+            switch outcome {
+            case .purchased(let transaction):
+                let response = try await submitStoreKitTransactionAndFinish(transaction, storeKit: storeKit)
+                await refresh()
+                storeKitStatusMessage = Self.storeKitSyncMessage(response, restored: false)
+            case .pending:
+                storeKitStatusMessage = "購入の承認待ちです。完了後に自動で反映されます。"
+            case .userCancelled:
+                break
+            }
+        } catch {
+            storeKitErrorMessage = Self.storeKitErrorDescription(error)
+        }
+    }
+
+    func restoreStoreKitPurchases() async {
+        guard showStoreKitSandboxSection, !storeKitBusy else { return }
+        storeKitBusy = true
+        storeKitStatusMessage = nil
+        storeKitErrorMessage = nil
+        defer { storeKitBusy = false }
+        let storeKit = resolvedStoreKitService()
+        do {
+            let transactions = try await storeKit.syncAndCollectEntitlements()
+            guard !transactions.isEmpty else {
+                await refresh()
+                storeKitStatusMessage = "復元できる Sandbox の購入が見つかりませんでした。"
+                return
+            }
+            var lastResponse: KMStoreKitTransactionResponse?
+            for transaction in transactions {
+                lastResponse = try await submitStoreKitTransactionAndFinish(transaction, storeKit: storeKit)
+            }
             await refresh()
-            if phase == .signedIn { await issueAIToken(service) }
+            if let lastResponse {
+                storeKitStatusMessage = Self.storeKitSyncMessage(lastResponse, restored: true)
+            }
         } catch {
-            message = KMNativeAuthPresentation.loginFailed
+            storeKitErrorMessage = Self.storeKitErrorDescription(error)
         }
     }
 
-    func registerWithInvitation(_ invitation: String) async {
-        guard !busy, let service = resolvedService(), KMNativeAuthPresentation.invitationIsValid(invitation) else { return }
-        busy = true
-        defer { busy = false }
-        message = KMNativeAuthPresentation.registerInProgress
+    private func handleObservedStoreKitTransaction(_ transaction: KMStoreKitVerifiedTransaction) async {
+        guard showStoreKitSandboxSection else { return }
+        let storeKit = resolvedStoreKitService()
         do {
-            try await service.registerPasskey(context: invitation.trimmingCharacters(in: .whitespacesAndNewlines), name: "この端末")
+            let response = try await submitStoreKitTransactionAndFinish(transaction, storeKit: storeKit)
             await refresh()
-            if phase == .signedIn { await issueAIToken(service) }
+            storeKitStatusMessage = Self.storeKitSyncMessage(response, restored: false)
+            storeKitErrorMessage = nil
         } catch {
-            message = KMNativeAuthPresentation.registerFailed
+            storeKitErrorMessage = Self.storeKitErrorDescription(error)
         }
     }
 
-    func addPasskey() async {
-        guard !busy, let service = resolvedService(), phase == .signedIn else { return }
-        busy = true
-        defer { busy = false }
-        do {
-            try await service.addPasskey(name: "追加のPasskey")
-            message = KMNativeAuthPresentation.passkeyAdded
-            await loadPasskeys(service)
-        } catch {
-            message = KMNativeAuthPresentation.passkeyAddFailed
+    private func submitStoreKitTransactionAndFinish(
+        _ transaction: KMStoreKitVerifiedTransaction,
+        storeKit: any KMStoreKitServicing
+    ) async throws -> KMStoreKitTransactionResponse {
+        guard transaction.isSandboxOrXcode else {
+            throw KMStoreKitError.productionEnvironmentRejected
         }
-    }
-
-    func deletePasskey(_ passkey: KMCloudPasskey) async {
-        guard !busy, let service = resolvedService() else { return }
-        busy = true
-        defer { busy = false }
-        do {
-            try await service.deletePasskey(id: passkey.id)
-            await loadPasskeys(service)
-        } catch {
-            message = KMNativeAuthPresentation.passkeyDeleteFailed
+        guard let service = resolvedService() else {
+            throw KMAPIError.notConfigured
         }
-    }
-
-    func issueAIToken() async {
-        guard let service = resolvedService() else { return }
-        await issueAIToken(service)
-    }
-
-    func signOut() async {
-        guard !busy, let service = resolvedService() else { return }
-        busy = true
-        defer { busy = false }
+        let response: KMStoreKitTransactionResponse
         do {
-            try await service.signOut()
-            phase = .signedOut
-            accountName = nil
-            await loadSignedOut(service)
-            message = KMNativeAuthPresentation.logoutDone
-        } catch {
-            message = KMNativeAuthPresentation.logoutFailed
+            response = try await service.submitStoreKitTransaction(jws: transaction.jwsRepresentation)
+        } catch let error as KMAPIError where error == .nativeAuthenticationRequired {
+            try await service.startGuest()
+            response = try await service.submitStoreKitTransaction(jws: transaction.jwsRepresentation)
         }
+        await storeKit.finishTransaction(id: transaction.transactionID)
+        return response
     }
 
-    func deleteAccount() async {
-        guard !busy, let service = resolvedService() else { return }
-        busy = true
-        defer { busy = false }
-        message = KMNativeAuthPresentation.accountDeleteInProgress
-        do {
-            _ = try await service.deleteAccount()
-            phase = .signedOut
-            accountName = nil
-            passkeys = []
-            passkeysLoaded = false
-            usage = nil
-            usageRowValue = nil
-            usageMessage = KMNativeAuthPresentation.accountDeletedUsage
-            message = KMNativeAuthPresentation.accountDeleteDone
-        } catch let error as KMAPIError where error == .authenticationRequired || error == .nativeAuthenticationRequired {
-            message = KMNativeAuthPresentation.accountDeleteSessionExpired
-        } catch {
-            message = KMNativeAuthPresentation.accountDeleteFailed
+    private static func storeKitSyncMessage(_ response: KMStoreKitTransactionResponse, restored: Bool) -> String {
+        if let reason = response.reason {
+            switch reason {
+            case .staleOwnerTransfer:
+                return "取引が古いため所有者を切り替えられませんでした。"
+            case .ownerChangeRateLimited:
+                return "所有者変更の上限に達したため同期をスキップしました。"
+            case .staleTransaction:
+                return "より新しい取引が既に反映されています。"
+            }
         }
+        guard response.synced else {
+            return "取引はまだ反映されていません。時間をおいて再度お試しください。"
+        }
+        return restored
+            ? "購入を復元し、利用状況を更新しました。"
+            : "購入を確認し、利用状況を更新しました。"
     }
 
-    func clearMessage() { message = nil }
+    private static func storeKitErrorDescription(_ error: any Error) -> String {
+        if let storeKitError = error as? KMStoreKitError {
+            switch storeKitError {
+            case .productNotFound: return "対象の商品が見つかりませんでした。"
+            case .unverifiedTransaction: return "取引の署名を検証できませんでした。"
+            case .productionEnvironmentRejected: return "本番環境の取引は Sandbox UI から送信できません。"
+            case .purchaseFailed: return "購入処理を完了できませんでした。"
+            case .syncFailed: return "App Store との同期に失敗しました。"
+            }
+        }
+        if let apiError = error as? KMAPIError {
+            switch apiError {
+            case .storeKitInvalidJWS: return "サーバーで取引署名を検証できませんでした。"
+            case .storeKitEnvironmentNotAllowed: return "サーバーで許可されていない環境です。"
+            case .storeKitUnsupportedOwnershipType: return "ファミリー共有の購入は対象外です。"
+            case .storeKitUnknownProduct: return "サーバーに未登録の商品です。"
+            case .notConfigured: return "サーバー側の課金設定が無効です。"
+            case .nativeUnsupported: return KMNativeAuthPresentation.unsupportedDetail
+            case .authenticationRequired, .nativeAuthenticationRequired: return "端末認証を確認できませんでした。"
+            default: return "サーバーへの取引送信に失敗しました。"
+            }
+        }
+        return "処理に失敗しました。"
+    }
 
-    private func issueAIToken(_ service: any KMNativeAuthService) async {
-        message = KMNativeAuthPresentation.tokenInProgress
+    private func loadUsage(_ service: any KMNativeAuthService) async {
         do {
-            try await service.issueAccountAIToken()
-            message = KMNativeAuthPresentation.tokenReady
+            let value = try await service.accountUsage()
+            applyUsage(value, phase: .signedIn)
         } catch let error as KMAPIError where error == .nativeAuthenticationRequired || error == .authenticationRequired {
-            phase = .signedOut
-            accountName = nil
-            message = KMNativeAuthPresentation.sessionExpired
-            await loadSignedOut(service)
+            await loadGuestUsage(service)
         } catch {
-            message = KMNativeAuthPresentation.tokenFailed
+            phase = .unavailable
+            usage = nil
+            usageMessage = KMNativeAuthPresentation.usageUnavailable
+            usageRowValue = nil
         }
     }
 
-    private func loadSignedOut(_ service: any KMNativeAuthService) async {
-        // PWA hides the signed-in block; drop the previous account's list too so
-        // a later session never shows another account's Passkeys.
-        passkeys = []
-        passkeysLoaded = false
+    private func loadGuestUsage(_ service: any KMNativeAuthService) async {
         do {
             let value = try await service.guestUsage()
-            usage = value
-            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
-            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
+            applyUsage(value, phase: .signedOut)
         } catch let error as KMAPIError where error == .nativeAuthenticationRequired || error == .authenticationRequired {
+            phase = .signedOut
             usage = nil
             usageMessage = KMNativeAuthPresentation.signedOutFreeUsage
             usageRowValue = KMNativeAuthPresentation.signedOutRowValue
         } catch {
+            phase = .unavailable
             usage = nil
             usageMessage = KMNativeAuthPresentation.guestUsageUnavailable
             usageRowValue = nil
         }
     }
 
-    private func loadSignedIn(_ service: any KMNativeAuthService) async {
-        do {
-            let value = try await service.accountUsage()
-            usage = value
-            usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
-            usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
-        } catch {
-            usage = nil
-            usageMessage = KMNativeAuthPresentation.usageUnavailable
-            usageRowValue = nil
-        }
-        await loadPasskeys(service)
-    }
-
-    private func loadPasskeys(_ service: any KMNativeAuthService) async {
-        do {
-            passkeys = try await service.listPasskeys()
-            passkeysLoaded = true
-        } catch {
-            passkeys = []
-            passkeysLoaded = false
-            message = KMNativeAuthPresentation.passkeyListFailed
-        }
+    private func applyUsage(_ value: KMAIUsage, phase: Phase) {
+        self.phase = phase
+        usage = value
+        usageMessage = KMNativeAuthPresentation.usageSummary(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
+        usageRowValue = KMNativeAuthPresentation.settingsRowValue(plan: value.plan.rawValue, period: value.period.rawValue, used: value.used, limit: value.limit)
     }
 
     private func resolvedService() -> (any KMNativeAuthService)? {
@@ -281,6 +305,14 @@ final class KMNativeAuthModel {
         liveService = api
         return api
     }
+
+    private func resolvedStoreKitService() -> any KMStoreKitServicing {
+        if let injectedStoreKit { return injectedStoreKit }
+        if let liveStoreKit { return liveStoreKit }
+        let service = KMStoreKitService()
+        liveStoreKit = service
+        return service
+    }
 }
 
 /// Debug-only launch states used by XCUITest. Release builds always use the
@@ -288,11 +320,13 @@ final class KMNativeAuthModel {
 private enum KMNativeAuthTestService {
     static func make() -> (any KMNativeAuthService)? {
         #if DEBUG
+        let supportId = ProcessInfo.processInfo.environment["KM_UI_TEST_SUPPORT_ID"]
         switch ProcessInfo.processInfo.environment["KM_UI_TEST_NATIVE_AUTH_STATE"] {
-        case "signedOut": return KMFakeNativeAuthService(initial: .signedOut)
-        case "signedIn": return KMFakeNativeAuthService(initial: .signedIn)
-        case "guest": return KMFakeNativeAuthService(initial: .guest)
-        case "unsupported": return KMFakeNativeAuthService(initial: .unsupported)
+        case "signedOut": return KMFakeNativeAuthService(initial: .signedOut, supportId: supportId)
+        case "signedIn": return KMFakeNativeAuthService(initial: .signedIn, supportId: supportId)
+        case "signedInDaily": return KMFakeNativeAuthService(initial: .signedInDaily, supportId: supportId)
+        case "guest": return KMFakeNativeAuthService(initial: .guest, supportId: supportId)
+        case "unsupported": return KMFakeNativeAuthService(initial: .unsupported, supportId: supportId)
         default: return nil
         }
         #else

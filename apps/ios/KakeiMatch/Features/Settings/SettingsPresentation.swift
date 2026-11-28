@@ -6,7 +6,6 @@ struct KMSettingsRow: Identifiable, Equatable {
         case theme
         case budget
         case recurring
-        case contact
         case categoryRules
         case categories
         case accounts
@@ -16,6 +15,7 @@ struct KMSettingsRow: Identifiable, Equatable {
         case driveSync
         case ai
         case appInfo
+        case copySupportId
     }
 
     let id: String
@@ -37,7 +37,7 @@ enum KMSettingsPresentation {
     static let backupReminderAge: TimeInterval = 30 * 24 * 60 * 60
 
     static let backupReminder = "△ 復旧に備えてバックアップを書き出してください。目安は最終書き出しから30日です。"
-    static let settingsFooter = "家計簿と画像はこの端末に保存されます。ログアウトしても消えません。"
+    static let settingsFooter = "家計簿と画像はこの端末に保存されます。"
 
     static func themeLabel(_ preference: KMThemePreference) -> String {
         switch preference {
@@ -65,9 +65,24 @@ enum KMSettingsPresentation {
         requireSamePaymentSource ? "支払元が一致したもの" : "従来どおり"
     }
 
+    static func normalizedSupportId(_ value: String?) -> String? {
+        guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+            return nil
+        }
+        return trimmed
+    }
+
     static func sections(theme: KMThemePreference, aiUsageValue: String? = nil,
-                         driveSyncValue: String = "オフ", reconciliationAutoMatchValue: String = "従来どおり") -> [KMSettingsSection] {
-        [
+                         driveSyncValue: String = "オフ", reconciliationAutoMatchValue: String = "従来どおり",
+                         supportId: String? = nil) -> [KMSettingsSection] {
+        var appRows: [KMSettingsRow] = [
+            .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),
+            .init(id: "settings.appInfo", title: "アプリ情報", value: "診断・ライセンス", destination: .appInfo),
+        ]
+        if let supportId = normalizedSupportId(supportId) {
+            appRows.append(.init(id: "settings.supportId", title: "サポートID", value: supportId, destination: .copySupportId))
+        }
+        return [
             KMSettingsSection(title: "家計簿", rows: [
                 .init(id: "settings.categoryRules", title: "分類ルール", destination: .categoryRules),
                 .init(id: "settings.categories", title: "カテゴリ", destination: .categories),
@@ -85,13 +100,9 @@ enum KMSettingsPresentation {
                 .init(id: "settings.cleanup", title: "原本の整理・全削除", isDestructive: true),
             ]),
             KMSettingsSection(title: "写真の読み取り", rows: [
-                .init(id: "settings.aiUsage", title: "ログイン・利用状況", value: aiUsageValue, destination: .ai),
+                .init(id: "settings.aiUsage", title: "利用状況", value: aiUsageValue, destination: .ai),
             ]),
-            KMSettingsSection(title: "アプリ", rows: [
-                .init(id: "settings.theme", title: "外観", value: themeLabel(theme), destination: .theme),
-                .init(id: "settings.contact", title: "お問い合わせ", destination: .contact),
-                .init(id: "settings.appInfo", title: "アプリ情報", value: "診断・ライセンス", destination: .appInfo),
-            ]),
+            KMSettingsSection(title: "アプリ", rows: appRows),
         ]
     }
 }

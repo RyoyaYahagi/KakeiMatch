@@ -1,42 +1,44 @@
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { handleRequest, type AccountD1Binding, type GatewayEnv } from "./worker";
-import { ADMIN_OPERATOR_PRINCIPAL_ID } from "./admin";
-import { reserveFlow, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
-import { GUEST_CREATIONS_PER_ADDRESS_DAILY } from "./guest-ai";
+import { beforeEach, describe, expect, it } from "vitest";
+import { handleRequest, usageSummary, type AccountD1Binding, type GatewayEnv } from "./worker";
+import { addressDayMac } from "./guest-ai";
+import { dayKey, reserveFlow, uncountFlow, type FlowLimits } from "./receipt-ai-usage";
 import { sqliteD1 } from "./test-support/sqlite-d1";
 
 const origin = "https://guest.example.test";
 const secret = "synthetic-guest-signing-secret";
-const testingTurnstileSecret = "1x0000000000000000000000000000000AA";
 const now = Date.parse("2026-10-06T03:00:00Z") / 1000;
 const limits: FlowLimits = { guestDaily: 5, guestAddressDaily: 20, contactSubmitAddressDaily: 10 };
-const turnstilePass = () => vi.fn<typeof fetch>(async () => Response.json({ success: true, hostname: "guest.example.test", action: "guest" }));
 
 let sqlite: DatabaseSync;
 let db: AccountD1Binding;
 let env: GatewayEnv;
+let guestCount = 0;
 beforeEach(() => {
   sqlite = new DatabaseSync(":memory:");
   sqlite.exec("PRAGMA foreign_keys = ON");
   const dir = new URL("../migrations/", import.meta.url);
   for (const name of readdirSync(dir).filter(name => name.endsWith(".sql")).sort()) sqlite.exec(readFileSync(new URL(name, dir), "utf8"));
   db = sqliteD1(sqlite);
-  env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, TURNSTILE_SITE_KEY: "synthetic-site-key", TURNSTILE_SECRET_KEY: testingTurnstileSecret,
-    AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) } };
+  env = { ACCOUNT_DB: db, AI_GATEWAY_AUTH_SECRET: secret, AI_USER_RATE_LIMIT: { limit: async () => ({ success: true }) } };
 });
 
-function guestRequest(method: string, headers: Record<string, string> = {}, body?: unknown) {
-  return new Request(`${origin}/api/ai/guest`, { method, headers: { origin, "cf-connecting-ip": "192.0.2.10", ...(body ? { "content-type": "application/json" } : {}), ...headers }, body: body ? JSON.stringify(body) : undefined });
-}
-async function createGuest(fetchImpl = turnstilePass(), address = "192.0.2.10", at = now): Promise<Response> {
-  return handleRequest(guestRequest("POST", { "cf-connecting-ip": address }, { turnstileToken: "synthetic-turnstile-token" }), env, { fetchImpl, nowSeconds: () => at });
-}
-async function guestSecret(address?: string, at?: number): Promise<string> {
-  const response = await createGuest(turnstilePass(), address, at);
-  expect(response.status).toBe(201);
-  return (await response.json() as { guestSecret: string }).guestSecret;
+/**
+ * Seeds a guest the way the native guest route stores one: a user row, and a device row
+ * holding only the digest of the guest secret and the keyed address MAC.
+ */
+async function guestSecret(address = "192.0.2.10", at = now): Promise<string> {
+  guestCount++;
+  const value = `synthetic-guest-${guestCount}`.padEnd(43, "x");
+  const userId = `guest-user-${guestCount}`;
+  const mac = await addressDayMac(secret, new Request(origin, { headers: { "cf-connecting-ip": address } }), at);
+  sqlite.prepare("INSERT INTO user (id, name, email, emailVerified, createdAt, updatedAt) VALUES (?, 'Guest', ?, 0, ?, ?)")
+    .run(userId, `${userId}@guest.kakeimatch.invalid`, at * 1000, at * 1000);
+  sqlite.prepare(`INSERT INTO guest_devices (user_id, secret_hash, created_at, created_day, created_ip_day_mac, last_used_at)
+    VALUES (?, ?, ?, ?, ?, ?)`).run(userId, createHash("sha256").update(value).digest("hex"), at, dayKey(at), mac, at);
+  return value;
 }
 const guestId = () => (sqlite.prepare("SELECT user_id FROM guest_devices ORDER BY rowid DESC LIMIT 1").get() as { user_id: string }).user_id;
 function tokenRequest(guest: string) {
@@ -44,91 +46,14 @@ function tokenRequest(guest: string) {
 }
 
 describe("guest AI", () => {
-  it.each([undefined, '1', 'invalid'])('limits streamed bytes even with Content-Length %s', async declaredLength => {
-    const cancel = vi.fn();
-    let chunksRead = 0;
-    const body = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        chunksRead++;
-        if (chunksRead <= 5) controller.enqueue(new TextEncoder().encode(' '.repeat(2048)));
-        else controller.close();
-      }, cancel,
-    }, { highWaterMark: 0 });
-    const request = new Request(`${origin}/api/ai/guest`, {
-      method: 'POST', headers: { origin, ...(declaredLength === undefined ? {} : { 'content-length': declaredLength }) },
-      body, duplex: 'half',
-    } as RequestInit);
-    const fetchImpl = turnstilePass();
-    const response = await handleRequest(request, env, { fetchImpl });
-    expect(response.status).toBe(413);
-    expect(chunksRead).toBe(3);
-    expect(cancel).toHaveBeenCalledOnce();
-    expect(fetchImpl).not.toHaveBeenCalled();
-    expect(sqlite.prepare('SELECT COUNT(*) AS count FROM user WHERE id != ?').get(ADMIN_OPERATOR_PRINCIPAL_ID)).toEqual({ count: 0 });
-  });
-
-  it('accepts a valid guest request at the byte limit and rejects malformed JSON', async () => {
-    const payload = JSON.stringify({ turnstileToken: 'synthetic-turnstile-token' });
-    const request = new Request(`${origin}/api/ai/guest`, {
-      method: 'POST', headers: { origin }, body: payload.padEnd(4096, ' '),
-    });
-    expect((await handleRequest(request, env, { fetchImpl: turnstilePass() })).status).toBe(201);
-    const invalid = new Request(`${origin}/api/ai/guest`, { method: 'POST', headers: { origin }, body: '{' });
-    expect((await handleRequest(invalid, env)).status).toBe(400);
-  });
-
-  it("tells the PWA whether guests are available, with the public site key only", async () => {
-    const config = await handleRequest(new Request(`${origin}/api/ai/guest`), env);
-    expect(await config.json()).toEqual({ guestAvailable: true, turnstileSiteKey: "synthetic-site-key" });
-    env.TURNSTILE_SECRET_KEY = undefined;
-    expect(await (await handleRequest(new Request(`${origin}/api/ai/guest`), env)).json()).toEqual({ guestAvailable: false, turnstileSiteKey: null });
-  });
-
-  it("creates a guest only after the bot check, storing a digest and no address", async () => {
-    const failed = vi.fn<typeof fetch>(async () => Response.json({ success: false }));
-    expect((await createGuest(failed)).status).toBe(403);
-    expect((await handleRequest(guestRequest("POST", { origin: "https://evil.example.test" }, { turnstileToken: "x" }), env, { fetchImpl: turnstilePass() })).status).toBe(403);
-    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM user WHERE id != ?").get(ADMIN_OPERATOR_PRINCIPAL_ID)).toEqual({ count: 0 });
-
+  it("no longer serves the Web token or usage routes, and reports guest usage from the shared summary", async () => {
     const value = await guestSecret();
-    expect(value).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    const row = sqlite.prepare("SELECT secret_hash, created_ip_day_mac FROM guest_devices").get() as { secret_hash: string; created_ip_day_mac: string };
-    expect(row.secret_hash).not.toContain(value);
-    expect(JSON.stringify(sqlite.prepare("SELECT * FROM guest_devices").all())).not.toContain("192.0.2.10");
-  });
-
-  it("checks the action and hostname with a production Turnstile secret", async () => {
-    env.TURNSTILE_SECRET_KEY = "synthetic-production-turnstile-secret";
-    const signup = vi.fn<typeof fetch>(async () => Response.json({ success: true, hostname: "guest.example.test", action: "signup" }));
-    expect((await createGuest(signup)).status).toBe(403);
-    const otherHost = vi.fn<typeof fetch>(async () => Response.json({ success: true, hostname: "evil.example.test", action: "guest" }));
-    expect((await createGuest(otherHost)).status).toBe(403);
-    expect((await createGuest(turnstilePass())).status).toBe(201);
-  });
-
-  it("caps new guests per address per Tokyo day", async () => {
-    for (let index = 0; index < GUEST_CREATIONS_PER_ADDRESS_DAILY; index++) await guestSecret();
-    const capped = await createGuest();
-    expect(capped.status).toBe(429);
-    expect(await capped.json()).toEqual({ error: "guest_limit_reached" });
-    expect((await createGuest(turnstilePass(), "198.51.100.7")).status).toBe(201);
-    expect((await createGuest(turnstilePass(), "192.0.2.10", now + 24 * 60 * 60)).status).toBe(201);
-  });
-
-  it("exchanges the guest secret for a short AI token and reports today's usage", async () => {
-    const value = await guestSecret();
-    const token = await handleRequest(tokenRequest(value), env, { nowSeconds: () => now });
-    expect(token.status).toBe(200);
-    const { token: jwt } = await token.json() as { token: string };
-    expect(JSON.parse(Buffer.from(jwt.split(".")[1]!, "base64url").toString())).toMatchObject({ sub: guestId(), aud: "kakeimatch-ai" });
-    expect((await handleRequest(tokenRequest("A".repeat(43)), env)).status).toBe(401);
+    expect((await handleRequest(tokenRequest(value), env, { nowSeconds: () => now })).status).toBe(404);
+    expect((await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { authorization: `Guest ${value}` } }), env)).status).toBe(404);
 
     await reserveFlow(db, guestId(), crypto.randomUUID(), "mac", now, limits, "receipt", "address");
     sqlite.exec("UPDATE ai_receipt_flows SET dispatched = 1");
-    const usage = await handleRequest(new Request(`${origin}/api/ai/usage`, { headers: { authorization: `Guest ${value}` } }), env, { nowSeconds: () => now });
-    expect(await usage.json()).toEqual({ plan: "guest", period: "day", day: "2026-10-06", used: 1, limit: 5, remaining: 4 });
-    // Developer costs stay account-only.
-    expect((await handleRequest(new Request(`${origin}/api/ai/costs`, { headers: { authorization: `Guest ${value}` } }), env)).status).not.toBe(200);
+    expect(await usageSummary(db, guestId(), now, env)).toEqual({ plan: "guest", period: "day", day: "2026-10-06", used: 1, limit: 5, remaining: 4 });
   });
 
   it("allows five receipts per guest per Tokyo day and twenty per address", async () => {
@@ -153,15 +78,4 @@ describe("guest AI", () => {
     expect(await reserve(guestId(), "address-b")).toBe("ai_quota_exceeded");
     expect(await reserve(guestId(), "address-c")).toBe("reserved");
   });
-
-  it("does not count contact features, and caps contact submissions per address", async () => {
-    await guestSecret(); const user = guestId();
-    for (let index = 0; index < 5; index++) await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, "receipt", "address");
-    for (const kind of ["contact-transcribe", "contact-interview"] as const) {
-      for (let index = 0; index < 12; index++) expect(await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, kind, "address")).toBe("reserved");
-    }
-    for (let index = 0; index < 10; index++) expect(await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, "contact-submit", "address")).toBe("reserved");
-    expect(await reserveFlow(db, user, crypto.randomUUID(), "mac", now, limits, "contact-submit", "address")).toBe("ai_quota_exceeded");
-  });
-
 });
