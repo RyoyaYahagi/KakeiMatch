@@ -948,4 +948,46 @@ extension ReceiptModelTests {
         let rulesAfterFailedSave = try await repositories.categoryLearning.categoryRules()
         #expect(!rulesAfterFailedSave.contains { $0.targetType == .item && $0.normalizedName == normalizedName })
     }
+
+    @Test func manualItemCategoryDoesNotReviveDisabledRule() async throws {
+        try await expectSwitchedOffRuleStaysOff(disabled: true, deleted: nil)
+    }
+
+    @Test func manualItemCategoryDoesNotReviveDeletedRule() async throws {
+        try await expectSwitchedOffRuleStaysOff(disabled: nil, deleted: true)
+    }
+
+    private func expectSwitchedOffRuleStaysOff(disabled: Bool?, deleted: Bool?) async throws {
+        let repositories = try KMFixtureLoader.load(named: "receipt")
+        let receipt = try #require(try await repositories.receipts.receipts().first)
+        let model = KMReceiptModel()
+        await model.load(repositories, receiptID: receipt.id)
+        model.accountId = try #require(model.accounts.first?.id)
+        let targetItem = try #require(model.items.first)
+        let food = try #require(model.categories.first { $0.name == "食費" })
+        let daily = try #require(model.categories.first { $0.name == "日用品" })
+        let normalizedName = KMCategoryLearningService.normalizeName(targetItem.name)
+
+        // The user switched this item rule off in settings before classifying by hand.
+        try await repositories.categoryLearning.setCategoryRuleOverride(.init(
+            targetType: .item, normalizedName: normalizedName, disabled: disabled, deleted: deleted, categoryId: food.id
+        ))
+
+        model.setItemCategory(targetItem.id, categoryId: daily.id)
+        await model.save()
+        #expect(model.didSave && model.error == nil)
+        // The manual category still applies to this receipt.
+        #expect(model.items.first { $0.id == targetItem.id }?.categoryId == daily.id)
+
+        let rules = try await repositories.categoryLearning.categoryRules()
+        let rule = try #require(rules.first { $0.targetType == .item && $0.normalizedName == normalizedName })
+        #expect(rule.categoryId == food.id)
+        #expect(!rule.enabled || rule.deleted)
+        #expect(rule.deleted == (deleted == true))
+
+        let nextLearning = KMReceiptPresentation.categoryLearning(
+            merchant: "別の合成店舗", itemNames: [targetItem.name], rules: rules, categories: model.categories
+        )
+        #expect(nextLearning.itemCategoryIds == [nil])
+    }
 }

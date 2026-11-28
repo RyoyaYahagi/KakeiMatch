@@ -844,12 +844,18 @@ final class KMReceiptModel {
             guard let item = itemsByID[id] else { return nil }
             return (name: item.name, categoryId: item.categoryId)
         }
-        let manualOverrides = KMCategoryLearningService.manualItemOverrides(
-            items: manualItems,
-            availableCategoryIds: availableCategoryIds
-        )
-        guard observation != nil || !manualOverrides.isEmpty else { return }
+        guard observation != nil || !manualItems.isEmpty else { return }
         do {
+            // Rules the user disabled or deleted must not be revived by a manual classification.
+            var manualOverrides: [KMCategoryRuleOverride] = []
+            if !manualItems.isEmpty {
+                let existingRules = try await repositories.categoryLearning.categoryRules()
+                manualOverrides = KMCategoryLearningService.manualItemOverrides(
+                    items: manualItems,
+                    availableCategoryIds: availableCategoryIds,
+                    existingRules: existingRules
+                )
+            }
             if let observation {
                 try await repositories.categoryLearning.saveCategoryObservation(observation)
             }

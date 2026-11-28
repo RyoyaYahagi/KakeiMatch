@@ -118,12 +118,16 @@ enum KMCategoryLearningService {
 
     /// Builds immediate item rule overrides from manually categorized receipt items.
     /// When the same normalized item name appears multiple times, the latest entry wins.
-    static func manualItemOverrides(items: [(name: String, categoryId: String?)], availableCategoryIds: Set<String>) -> [KMCategoryRuleOverride] {
+    /// Items whose existing rule the user disabled or deleted are skipped so the rule stays off.
+    static func manualItemOverrides(items: [(name: String, categoryId: String?)], availableCategoryIds: Set<String>,
+                                    existingRules: [KMCategoryLearningRule] = []) -> [KMCategoryRuleOverride] {
+        let switchedOff = Set(existingRules.filter { $0.targetType == .item && (!$0.enabled || $0.deleted) }.map(\.normalizedName))
         var order: [String] = []
         var latestByName: [String: String] = [:]
         for item in items {
             let normalized = normalizeName(item.name)
-            guard !normalized.isEmpty, let categoryId = item.categoryId, availableCategoryIds.contains(categoryId) else { continue }
+            guard !normalized.isEmpty, !switchedOff.contains(normalized),
+                  let categoryId = item.categoryId, availableCategoryIds.contains(categoryId) else { continue }
             if latestByName[normalized] == nil { order.append(normalized) }
             latestByName[normalized] = categoryId
         }

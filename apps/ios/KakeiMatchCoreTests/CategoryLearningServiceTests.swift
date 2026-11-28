@@ -205,4 +205,39 @@ struct CategoryLearningServiceTests {
         )
         #expect(disabledOnly.isEmpty)
     }
+
+    @Test func manualItemOverridesKeepDisabledAndDeletedRulesOff() {
+        let available: Set<String> = ["food-custom", "home-custom"]
+        func rule(_ type: KMCategoryRuleStats.TargetType, _ name: String, enabled: Bool, deleted: Bool) -> KMCategoryLearningRule {
+            .init(targetType: type, normalizedName: name, categoryId: "food-custom", receipts: 3, matchingReceipts: 3,
+                  agreementPercent: 100, enabled: enabled, deleted: deleted)
+        }
+        let existing = [
+            rule(.item, "synthetic disabled", enabled: false, deleted: false),
+            rule(.item, "synthetic deleted", enabled: false, deleted: true),
+            rule(.item, "synthetic active", enabled: true, deleted: false),
+            // A switched-off merchant rule must not block an item rule with the same name.
+            rule(.merchant, "synthetic shared", enabled: false, deleted: true)
+        ]
+
+        let overrides = KMCategoryLearningService.manualItemOverrides(
+            items: [
+                (name: "Synthetic Disabled", categoryId: "home-custom"),
+                (name: "Synthetic Deleted", categoryId: "home-custom"),
+                (name: "Synthetic Active", categoryId: "home-custom"),
+                (name: "Synthetic New", categoryId: "home-custom"),
+                (name: "Synthetic Shared", categoryId: "home-custom")
+            ],
+            availableCategoryIds: available,
+            existingRules: existing
+        )
+        #expect(overrides.map(\.normalizedName) == ["synthetic active", "synthetic new", "synthetic shared"])
+        #expect(overrides.allSatisfy { $0.targetType == .item && $0.categoryId == "home-custom" && $0.disabled == false && $0.deleted == false })
+
+        // Without existing rules the behavior is unchanged.
+        let fresh = KMCategoryLearningService.manualItemOverrides(
+            items: [(name: "Synthetic Disabled", categoryId: "home-custom")], availableCategoryIds: available
+        )
+        #expect(fresh.map(\.normalizedName) == ["synthetic disabled"])
+    }
 }
