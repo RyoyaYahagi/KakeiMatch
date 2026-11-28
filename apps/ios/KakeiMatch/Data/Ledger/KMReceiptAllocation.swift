@@ -1,6 +1,8 @@
 import Foundation
 
-/// apps/pwa/src/local-receipts.ts receiptAllocations / distributeProportionally.
+/// Total-amount proportional distribution (the remainder and the fallback when a tax-rate group cannot be used)
+/// follows the retired PWA receiptAllocations / distributeProportionally (apps/pwa was removed; it is not in this repo).
+/// Per-tax-rate tax allocation (allocateTax) exists only on iOS.
 /// Order is first item appearance; full-width UInt multiplication mirrors TS BigInt exactly.
 enum KMReceiptAllocation {
     struct Allocation: Equatable, Sendable {
