@@ -65,6 +65,8 @@ final class KMReceiptModel {
     @ObservationIgnored private var draftSavedOnce = false
     @ObservationIgnored private var revision = UUID()
     @ObservationIgnored private var api: KMWorkerAPI?
+    /// Item IDs whose category was manually assigned in this editing session, ordered by most recent edit.
+    @ObservationIgnored private var manualCategoryItemOrder: [String] = []
 
     init(api: KMWorkerAPI? = nil) { self.api = api }
 
@@ -187,6 +189,7 @@ final class KMReceiptModel {
 
     private func applyValues(_ draft: KMReceiptDraft) {
         blockedByUnclassifiedItems = false
+        manualCategoryItemOrder = []
         merchant = draft.merchant
         amount = draft.totalAmountText
         if !draft.purchasedDate.isEmpty { date = draft.purchasedDate }
@@ -206,6 +209,7 @@ final class KMReceiptModel {
 
     private func applyValues(_ receipt: KMReceipt) {
         blockedByUnclassifiedItems = false
+        manualCategoryItemOrder = []
         let confirmed = receipt.confirmedValue
         let extraction = receipt.extraction?.documentKind == .receipt ? receipt.extraction : nil
         merchant = confirmed?.merchant ?? extraction?.merchant ?? ""
@@ -254,9 +258,17 @@ final class KMReceiptModel {
         }
     }
 
+    private func recordManualItemCategory(_ itemId: String, categoryId: String?) {
+        manualCategoryItemOrder.removeAll { $0 == itemId }
+        if !KMReceiptPresentation.isUnclassifiedCategory(categoryId) {
+            manualCategoryItemOrder.append(itemId)
+        }
+    }
+
     func setItemCategory(_ itemId: String, categoryId: String?) {
         guard let index = items.firstIndex(where: { $0.id == itemId }) else { return }
         items[index].categoryId = categoryId
+        recordManualItemCategory(itemId, categoryId: categoryId)
         clearUnclassifiedBlockIfResolved()
     }
 
@@ -266,6 +278,8 @@ final class KMReceiptModel {
             updated.categoryId = categoryId
             return updated
         }
+        // A bulk setting is not a per-item choice: it applies to this receipt only and never becomes an instant rule.
+        manualCategoryItemOrder = []
         clearUnclassifiedBlockIfResolved()
     }
 
@@ -309,6 +323,7 @@ final class KMReceiptModel {
 
     func removeItem(_ itemId: String) {
         items.removeAll { $0.id == itemId }
+        manualCategoryItemOrder.removeAll { $0 == itemId }
         adjustments = adjustments.map { adjustment in
             guard adjustment.targetItemId == itemId else { return adjustment }
             var updated = adjustment
@@ -433,6 +448,7 @@ final class KMReceiptModel {
             applyValues(saved)
             // PWA replaces a pending receipt and opens a fresh editor for the new photo.
             categoryId = ""; taxes = []; taxAmountTexts = []; items = []; adjustments = []; adjustmentIsAddition = [:]
+            manualCategoryItemOrder = []
             reviewed = []; status = nil; error = nil; blockedByUnclassifiedItems = false
             displayedDraft = draftSnapshot; draftSavedOnce = false
         } catch {
@@ -816,13 +832,36 @@ final class KMReceiptModel {
     }
 
     private func saveLearning(receiptId: String, fallback: String, repositories: KMRepositories, successMessage: String) async {
-        guard let observation = KMCategoryLearningService.observation(
+        let availableCategoryIds = Set(categories.map(\.id))
+        let observation = KMCategoryLearningService.observation(
             receiptId: receiptId, merchant: merchant, defaultCategoryId: fallback,
             items: items.map { (name: $0.name, categoryId: $0.categoryId) },
-            availableCategoryIds: Set(categories.map(\.id)), confirmedAt: now
-        ) else { return }
-        do { try await repositories.categoryLearning.saveCategoryObservation(observation) }
-        catch {
+            availableCategoryIds: availableCategoryIds, confirmedAt: now
+        )
+        let itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        let manualItems = manualCategoryItemOrder.compactMap { id -> (name: String, categoryId: String?)? in
+            guard let item = itemsByID[id] else { return nil }
+            return (name: item.name, categoryId: item.categoryId)
+        }
+        guard observation != nil || !manualItems.isEmpty else { return }
+        do {
+            // Rules the user disabled or deleted must not be revived by a manual classification.
+            var manualOverrides: [KMCategoryRuleOverride] = []
+            if !manualItems.isEmpty {
+                let existingRules = try await repositories.categoryLearning.categoryRules()
+                manualOverrides = KMCategoryLearningService.manualItemOverrides(
+                    items: manualItems,
+                    availableCategoryIds: availableCategoryIds,
+                    existingRules: existingRules
+                )
+            }
+            if let observation {
+                try await repositories.categoryLearning.saveCategoryObservation(observation)
+            }
+            for override in manualOverrides {
+                try await repositories.categoryLearning.setCategoryRuleOverride(override)
+            }
+        } catch {
             // PWA local-ui.ts reports the same failure for both edit and register saves.
             KMContactDiagnosticRecorder.shared.recordFailure(error, screen: .records)
             self.error = "\(successMessage)\(error.localizedDescription)"
