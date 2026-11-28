@@ -37,6 +37,8 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
     var manualStatementIds: Set<String> = []
     var undoHistory: [KMReconciliationUndo] = []
     var latest: KMReconciliationRun?
+    /// Household setting copied from KMAppSettings by the store. Changing it makes the latest run stale.
+    var requireSamePaymentSourceForAutoMatch = false
     private var preparedAtRun: Prepared?
 
     struct Prepared: Codable, Equatable, Sendable {
@@ -50,6 +52,7 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
         var rejections: [KMReconciliationPairRejection]
         var suspected: [KMSuspectedStatement]
         var manual: Set<String>
+        var requireSamePaymentSourceForAutoMatch: Bool
     }
     init(statements: [KMStatementTransaction], imports: [KMLocalRecord<KMStatementImport>], transactions: [KMTransaction],
          accounts: [KMAccount], categories: [KMCategory], receipts: [KMReceipt] = [], resolutions: [KMReconciliationResolution] = []) {
@@ -92,7 +95,8 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
             imports: imports.sorted { $0.id < $1.id }, transactions: transactionInputs.sorted { $0.id < $1.id },
             accounts: accountInputs.sorted { $0.id < $1.id },
             resolutions: resolutions.sorted { $0.statementId < $1.statementId }, aliases: aliases,
-            rejections: rejections, suspected: suspected, manual: manualStatementIds)
+            rejections: rejections, suspected: suspected, manual: manualStatementIds,
+            requireSamePaymentSourceForAutoMatch: requireSamePaymentSourceForAutoMatch)
     }
     private func receiptId(for transaction: KMTransaction) -> String {
         receipts.first { $0.confirmedValue != nil && $0.registration.status == .applied && $0.registration.actualTransactionId == transaction.id }?.id ?? "actual:\(transaction.id)"
@@ -119,7 +123,8 @@ struct KMLocalReconciliation: Codable, Equatable, Sendable {
             aliases: Set(aliases.map { KMReconciliationEngine.aliasKey($0.merchant, $0.aliasMerchant) }),
             excludedStatementIds: excludedStatements,
             excludedReceiptIds: Set(resolutions.filter { $0.resolution == .sameExpense }.compactMap(\.receiptId)),
-            rejectedPairs: Set(rejections.map { KMReconciliationEngine.pairKey($0.statementId, $0.receiptId) }), manualStatementIds: manualStatementIds)
+            rejectedPairs: Set(rejections.map { KMReconciliationEngine.pairKey($0.statementId, $0.receiptId) }), manualStatementIds: manualStatementIds,
+            requireSamePaymentSourceForAutoMatch: requireSamePaymentSourceForAutoMatch)
         let waiting = Set(rows.filter { row in
             statements.contains { statement in
                 guard window(statement.importId, includes: row.date), let account = accounts.first(where: { $0.id == row.accountId }) else { return false }
