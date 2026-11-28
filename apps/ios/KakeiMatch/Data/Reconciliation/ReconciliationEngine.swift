@@ -30,6 +30,7 @@ enum KMReconciliationEngine {
         var similarity: KMJSNumber
         var autoSimilarity: KMJSNumber
         var aliasMatch: Bool
+        var sameSource: Bool
         var reasons: [String]
     }
 
@@ -97,7 +98,8 @@ enum KMReconciliationEngine {
         statements: [KMStatementTransaction], receipts: [KMReconciliationReceipt],
         preferredAccountIds: [String: Set<String>] = [:], aliases: Set<String> = [],
         excludedStatementIds: Set<String> = [], excludedReceiptIds: Set<String> = [],
-        rejectedPairs: Set<String> = [], manualStatementIds: Set<String> = []
+        rejectedPairs: Set<String> = [], manualStatementIds: Set<String> = [],
+        requireSamePaymentSourceForAutoMatch: Bool = false
     ) -> KMReconciliationResult {
         // Count exact-amount competitors from the full input before exclusions
         // and rejected pairs. Only purchase statements participate. The day /
@@ -154,7 +156,7 @@ enum KMReconciliationEngine {
                     if similarity >= candidateMerchantThreshold { reasons.append("merchant_similar") }
                     if alias { reasons.append("merchant_alias_match") }
                     if sameSource { reasons.append("payment_source_match") }
-                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore, delta: delta, days: distance, similarity: similarity, autoSimilarity: autoSimilarity, aliasMatch: alias, reasons: reasons)
+                    let candidate = Candidate(statementId: statement.id, receiptId: receipt.receiptId, score: score, autoScore: autoScore, delta: delta, days: distance, similarity: similarity, autoSimilarity: autoSimilarity, aliasMatch: alias, sameSource: sameSource, reasons: reasons)
                     byStatement[statement.id, default: []].append(candidate)
                     byReceipt[receipt.receiptId, default: []].append(candidate)
                 }
@@ -170,7 +172,10 @@ enum KMReconciliationEngine {
             guard let top = choices.first, !manualStatementIds.contains(statement.id) else { continue }
             let receiptChoices = byReceipt[top.receiptId] ?? []
             guard let receiptTop = receiptChoices.first else { continue }
-            let strong = top.delta == 0 && top.days <= autoWindow && (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold
+            // Opt-in: the setting narrows automatic matches to pairs whose payment sources agree.
+            // Candidate generation, scores, and review ordering are unchanged.
+            let sourceAllowsAuto = !requireSamePaymentSourceForAutoMatch || top.sameSource
+            let strong = top.delta == 0 && top.days <= autoWindow && (top.autoSimilarity >= autoMerchantThreshold || top.aliasMatch) && top.autoScore >= autoScoreThreshold && sourceAllowsAuto
             if receiptTop.statementId == statement.id && margin(top, choices.dropFirst().first) >= marginThreshold && margin(receiptTop, receiptChoices.dropFirst().first) >= marginThreshold && strong {
                 matchedStatements[statement.id] = top.receiptId
                 matchedReceipts[top.receiptId] = statement.id

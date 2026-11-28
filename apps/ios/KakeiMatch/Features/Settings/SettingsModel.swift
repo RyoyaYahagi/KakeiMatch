@@ -47,4 +47,25 @@ final class KMSettingsModel {
         }
     }
 
+    func setRequireSamePaymentSourceForAutoMatch(_ enabled: Bool) async {
+        guard settings.requireSamePaymentSourceForAutoMatch != enabled else { return }
+        let previous = settings
+        settings.requireSamePaymentSourceForAutoMatch = enabled
+        error = nil
+        guard let repository else {
+            settings = previous
+            error = "設定を保存できませんでした。アプリを開き直してください。"
+            return
+        }
+        do {
+            var latest = try await repository.settings()
+            latest.requireSamePaymentSourceForAutoMatch = enabled
+            try await repository.saveSettings(latest)
+            settings = latest
+        } catch {
+            settings = previous
+            self.error = "照合の設定を保存できませんでした。\(error.localizedDescription)"
+        }
+    }
+
 }
