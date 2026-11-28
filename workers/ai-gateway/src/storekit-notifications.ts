@@ -54,6 +54,15 @@ const REVOCATION_NOTIFICATION_TYPES = new Set(['REFUND', 'REVOKE']);
 function isRevocationNotification(notificationType: string, tx: VerifiedStoreKitTransaction): boolean {
   return REVOCATION_NOTIFICATION_TYPES.has(notificationType) || tx.revokedAt !== null;
 }
+
+function isPriorPeriodTransaction(existing: ExistingSubscriptionRow, tx: VerifiedStoreKitTransaction): boolean {
+  return (
+    tx.transactionId !== existing.latest_transaction_id &&
+    existing.expires_at !== null &&
+    tx.expiresAt !== null &&
+    tx.expiresAt < existing.expires_at
+  );
+}
 const MAX_NOTIFICATION_BODY_BYTES = 64 * 1024;
 const utf8Decoder = new TextDecoder('utf-8', { fatal: true });
 
@@ -502,8 +511,12 @@ export async function handleStoreKitNotificationRequest(
 
   const eventSignedDateMs = Math.max(signedDateMs, tx.signedDateMs, renewal?.signedDateMs ?? 0);
 
-  // Invariant: once revoked, notifications never revert or mutate the subscription.
-  if (existing && (existing.status === 'revoked' || existing.revoked_at !== null)) {
+  const isRefundReversed = notificationType === 'REFUND_REVERSED';
+
+  // Invariant: once revoked, notifications never revert or mutate the subscription,
+  // EXCEPT REFUND_REVERSED (Apple reversed the refund), which restores the subscription
+  // according to the verified signedTransactionInfo (subject to signedDate ordering).
+  if (existing && !isRefundReversed && (existing.status === 'revoked' || existing.revoked_at !== null)) {
     await recordNotification(db, {
       notificationUuid,
       notificationType,
@@ -519,9 +532,25 @@ export async function handleStoreKitNotificationRequest(
 
   const isRevocation = isRevocationNotification(notificationType, tx);
 
+  // Guard: a revocation (or refund reversal) for an older billing-period transaction must not
+  // overwrite or revoke a newer active renewal on the same originalTransactionId.
+  if (existing && (isRevocation || isRefundReversed) && isPriorPeriodTransaction(existing, tx)) {
+    await recordNotification(db, {
+      notificationUuid,
+      notificationType,
+      subtype,
+      environment,
+      originalTransactionId: tx.originalTransactionId,
+      signedDateMs,
+      outcome: 'ignored_stale',
+      receivedAt: now,
+    });
+    return json(200, { received: true, outcome: 'ignored_stale' });
+  }
+
   // Invariant: enforce signedDate ordering so older notifications never overwrite newer state,
-  // EXCEPT revocation notifications (REFUND, REVOKE, or tx.revokedAt !== null), which always apply
-  // upon arrival even if a client POST previously advanced latest_signed_date_ms.
+  // EXCEPT revocation notifications (REFUND, REVOKE, or tx.revokedAt !== null) for the current
+  // (or newer) period, which always apply even if a client POST previously advanced latest_signed_date_ms.
   if (existing && !isRevocation && eventSignedDateMs < existing.latest_signed_date_ms) {
     await recordNotification(db, {
       notificationUuid,
@@ -576,7 +605,13 @@ export async function handleStoreKitNotificationRequest(
                  updated_at = ?
              WHERE original_transaction_id = ?
                AND revoked_at IS NULL
-               AND status != 'revoked'`,
+               AND status != 'revoked'
+               AND (
+                 latest_transaction_id = ?
+                 OR expires_at IS NULL
+                 OR ? IS NULL
+                 OR expires_at <= ?
+               )`,
           )
           .bind(
             tx.environment,
@@ -590,26 +625,61 @@ export async function handleStoreKitNotificationRequest(
             transition.autoRenewStatus,
             now,
             tx.originalTransactionId,
+            tx.transactionId,
+            tx.expiresAt,
+            tx.expiresAt,
           )
           .run()
-      : await db
-          .prepare(
-            `UPDATE store_subscriptions
-             SET environment = ?,
-                 product_id = ?,
-                 status = ?,
-                 expires_at = ?,
-                 revoked_at = ?,
-                 revocation_reason = ?,
-                 latest_transaction_id = ?,
-                 latest_signed_date_ms = ?,
-                 auto_renew_status = ?,
-                 updated_at = ?
-             WHERE original_transaction_id = ?
-               AND latest_signed_date_ms <= ?
-               AND revoked_at IS NULL
-               AND status != 'revoked'`,
-          )
+      : isRefundReversed
+        ? await db
+            .prepare(
+              `UPDATE store_subscriptions
+               SET environment = ?,
+                   product_id = ?,
+                   status = ?,
+                   expires_at = ?,
+                   revoked_at = ?,
+                   revocation_reason = ?,
+                   latest_transaction_id = ?,
+                   latest_signed_date_ms = ?,
+                   auto_renew_status = ?,
+                   updated_at = ?
+               WHERE original_transaction_id = ?
+                 AND latest_signed_date_ms <= ?`,
+            )
+            .bind(
+              tx.environment,
+              tx.productId,
+              transition.status,
+              transition.expiresAt,
+              transition.revokedAt,
+              transition.revocationReason,
+              tx.transactionId,
+              eventSignedDateMs,
+              transition.autoRenewStatus,
+              now,
+              tx.originalTransactionId,
+              existing.latest_signed_date_ms,
+            )
+            .run()
+        : await db
+            .prepare(
+              `UPDATE store_subscriptions
+               SET environment = ?,
+                   product_id = ?,
+                   status = ?,
+                   expires_at = ?,
+                   revoked_at = ?,
+                   revocation_reason = ?,
+                   latest_transaction_id = ?,
+                   latest_signed_date_ms = ?,
+                   auto_renew_status = ?,
+                   updated_at = ?
+               WHERE original_transaction_id = ?
+                 AND latest_signed_date_ms <= ?
+                 AND revoked_at IS NULL
+                 AND status != 'revoked'`,
+            )
           .bind(
             tx.environment,
             tx.productId,
