@@ -15,3 +15,8 @@ FEEDBACK_ENCRYPTION_KEY=<synthetic-32-byte-base64-key>
 CF_ACCESS_TEAM_DOMAIN=https://<team>.cloudflareaccess.com
 CF_ACCESS_AUD=<access-application-audience>
 ADMIN_ACCESS_EMAILS=operator@example.test
+
+# App Store Server API (synthetic local values only; never commit real keys).
+APP_STORE_SERVER_API_ISSUER_ID=00000000-0000-0000-0000-000000000000
+APP_STORE_SERVER_API_KEY_ID=SYNTHETIC0
+APP_STORE_SERVER_API_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n<synthetic-p256-pkcs8-private-key>\n-----END PRIVATE KEY-----"

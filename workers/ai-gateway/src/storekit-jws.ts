@@ -127,13 +127,15 @@ function optionalTimestampMs(value: unknown): number | null {
 }
 
 /**
- * Verifies a StoreKit 2 JWS transaction payload signed by Apple's StoreKit certificate chain.
- * Uses the shared X.509 chain verifier from app-attest.ts against Apple Root CA - G3.
+ * Verifies any StoreKit 2 / App Store Server Notifications V2 JWS signed by Apple's
+ * StoreKit certificate chain (strict header allowlist, 3-cert x5c anchored to Apple Root CA - G3,
+ * X.509 chain verification via app-attest.ts, StoreKit OIDs, and ECDSA signature verification).
+ * Returns the decoded JSON payload object without assuming a specific payload schema.
  */
-export async function verifyStoreKitTransactionJws(
+export async function verifyStoreKitJws(
   jws: string,
   options: VerifyStoreKitJwsOptions = {},
-): Promise<VerifiedStoreKitTransaction> {
+): Promise<Record<string, unknown>> {
   if (typeof jws !== 'string' || jws.length === 0 || jws.length > MAX_JWS_LENGTH) {
     throw new Error('invalid_jws');
   }
@@ -205,7 +207,19 @@ export async function verifyStoreKitTransactionJws(
     throw new Error('invalid_signature');
   }
 
-  const payload = parseJsonObject(payloadBytes);
+  return parseJsonObject(payloadBytes);
+}
+
+/**
+ * Verifies a StoreKit 2 JWS transaction payload signed by Apple's StoreKit certificate chain.
+ * Uses verifyStoreKitJws for chain & signature verification, then validates transaction fields.
+ */
+export async function verifyStoreKitTransactionJws(
+  jws: string,
+  options: VerifyStoreKitJwsOptions = {},
+): Promise<VerifiedStoreKitTransaction> {
+  const now = options.now ?? new Date();
+  const payload = await verifyStoreKitJws(jws, { ...options, now });
   const expectedBundleId = options.expectedBundleId ?? DEFAULT_BUNDLE_ID;
   const bundleId = requireNonEmptyString(payload.bundleId);
   if (bundleId !== expectedBundleId) {

@@ -5,8 +5,10 @@ import { handleAdminGatewayRequest } from './worker';
 import { purgeExpiredFeedback } from './feedback';
 import { PWA_CONTENT_SECURITY_POLICY } from './security-policy';
 import { appleAppSiteAssociation, handleNativeRequest, purgeNativeCredentials, type NativeEnv } from './native-auth';
+import { handleStoreKitNotificationRequest, type StoreKitNotificationsEnv } from './storekit-notifications';
+import { reconcileStoreSubscriptions, type StoreKitReconcileEnv } from './storekit-reconcile';
 
-type AppEnv = AccountEnv & Parameters<typeof handleAiRequest>[1] & AdminEnv & NativeEnv & {
+type AppEnv = AccountEnv & Parameters<typeof handleAiRequest>[1] & AdminEnv & NativeEnv & StoreKitNotificationsEnv & StoreKitReconcileEnv & {
   ASSETS: { fetch(request: Request): Promise<Response> };
 };
 
@@ -160,13 +162,19 @@ function isRetiredPath(path: string): boolean {
 
 const appWorker = {
   async scheduled(event: { scheduledTime: number }, env: AppEnv): Promise<void> {
-    await purgeExpiredFeedback(env.ACCOUNT_DB, Math.floor(event.scheduledTime / 1000));
-    await purgeNativeCredentials(env.ACCOUNT_DB, Math.floor(event.scheduledTime / 1000));
+    const now = Math.floor(event.scheduledTime / 1000);
+    await purgeExpiredFeedback(env.ACCOUNT_DB, now);
+    await purgeNativeCredentials(env.ACCOUNT_DB, now);
+    await reconcileStoreSubscriptions(env, now);
   },
   async fetch(request: Request, env: AppEnv): Promise<Response> {
     const path = new URL(request.url).pathname;
     if (path === '/.well-known/apple-app-site-association') return secureApiResponse(appleAppSiteAssociation(request, env));
     if (path.startsWith('/api/native/')) return secureApiResponse(await handleNativeRequest(request, env));
+    if (path === '/api/storekit/notifications') {
+      if (request.method !== 'POST') return secureApiResponse(jsonError(405, 'method_not_allowed'));
+      return secureApiResponse(await handleStoreKitNotificationRequest(request, env));
+    }
     if (isAdminDocumentPath(path) || isAdminStaticPath(path)) {
       const auth = await requireAdmin(request, env);
       if ('response' in auth) return secureApiResponse(auth.response);
