@@ -111,7 +111,7 @@ import Testing
         let rowWithRule = unmatchedRows[0]
         let rowWithoutRule = unmatchedRows[1]
 
-        let initialWithoutRule = model.entryInitialValues(for: rowWithRule.statement)
+        let initialWithoutRule = await model.entryInitialValues(for: rowWithRule.statement, repositories: repositories)
         #expect(initialWithoutRule.categoryId == nil)
         let formWithoutRule = KMEntryFormModel(kind: .expense, initialValues: initialWithoutRule)
         await formWithoutRule.load(repositories)
@@ -128,7 +128,7 @@ import Testing
         }
         await model.load(repositories)
 
-        let initialWithRule = model.entryInitialValues(for: rowWithRule.statement)
+        let initialWithRule = await model.entryInitialValues(for: rowWithRule.statement, repositories: repositories)
         #expect(initialWithRule.categoryId == targetCategory.id)
         let formWithRule = KMEntryFormModel(kind: .expense, initialValues: initialWithRule)
         await formWithRule.load(repositories)
@@ -137,10 +137,62 @@ import Testing
         formWithRule.categoryId = alternativeCategory.id
         #expect(formWithRule.categoryId == alternativeCategory.id)
 
-        let otherInitial = model.entryInitialValues(for: rowWithoutRule.statement)
+        let otherInitial = await model.entryInitialValues(for: rowWithoutRule.statement, repositories: repositories)
         #expect(otherInitial.categoryId == nil)
         let otherForm = KMEntryFormModel(kind: .expense, initialValues: otherInitial)
         await otherForm.load(repositories)
         #expect(otherForm.error == nil && otherForm.categoryId.isEmpty)
+    }
+    @Test func unmatchedEntryInitialValuesResolveStandardAccountNameAndPersistProvider() async throws {
+        let repositories = try KMFixtureLoader.load(named: "empty")
+        let card = KMAccount(id: "paypay-card-standard", name: "PayPayカード", accountType: .creditCard, statementProvider: nil)
+        try await repositories.accounts.createAccount(card, startingBalanceYen: 0, startingDate: KMDate(instant: repositories.referenceDate))
+        let model = KMReconciliationModel(); await model.load(repositories)
+        let csv = Data(("利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日\n"
+            + "2026/10/01,合成店,本人,PayPayクレジット,1回,1000,0,1000,1000,0,0,2026/11/27\n").utf8)
+        await model.importCSV(csv, provider: .paypayCard, repositories: repositories)
+        #expect(model.errorMessage == nil)
+        let row = try #require(model.presentation.pending.first { $0.status == .unmatchedStatement })
+        #expect(try await repositories.accounts.accounts(includeClosed: true).first { $0.id == card.id }?.statementProvider == nil)
+
+        let initial = await model.entryInitialValues(for: row.statement, repositories: repositories)
+        #expect(initial.accountId == card.id)
+        let form = KMEntryFormModel(kind: .expense, initialValues: initial)
+        await form.load(repositories)
+        #expect(form.error == nil && form.accountId == card.id)
+
+        let savedAccounts = try await repositories.accounts.accounts(includeClosed: true)
+        #expect(savedAccounts.count == 1)
+        #expect(savedAccounts[0].statementProvider == .paypayCard)
+        #expect(model.accounts.first { $0.id == card.id }?.statementProvider == .paypayCard)
+
+        // Once saved, renaming the account still resolves via statementProvider (step 1).
+        var renamed = savedAccounts[0]
+        renamed.name = "メインカード"
+        try await repositories.accounts.saveAccount(renamed)
+        await model.load(repositories)
+        let secondInitial = await model.entryInitialValues(for: row.statement, repositories: repositories)
+        #expect(secondInitial.accountId == card.id)
+    }
+    @Test func unmatchedEntryInitialValuesLeaveAccountEmptyWithoutMatchingAccount() async throws {
+        let repositories = try KMFixtureLoader.load(named: "empty")
+        let other = KMAccount(id: "other-card", name: "別名カード", accountType: .creditCard, statementProvider: nil)
+        try await repositories.accounts.createAccount(other, startingBalanceYen: 0, startingDate: KMDate(instant: repositories.referenceDate))
+        let model = KMReconciliationModel(); await model.load(repositories)
+        let csv = Data(("利用日/キャンセル日,利用店名・商品名,利用者,決済方法,支払区分,利用金額,手数料,支払総額,当月支払金額,翌月以降繰越金額,調整額,当月お支払日\n"
+            + "2026/10/01,合成店,本人,PayPayクレジット,1回,1000,0,1000,1000,0,0,2026/11/27\n").utf8)
+        await model.importCSV(csv, provider: .paypayCard, repositories: repositories)
+        #expect(model.errorMessage == nil)
+        let row = try #require(model.presentation.pending.first { $0.status == .unmatchedStatement })
+
+        let initial = await model.entryInitialValues(for: row.statement, repositories: repositories)
+        #expect(initial.accountId == nil)
+        let form = KMEntryFormModel(kind: .expense, initialValues: initial)
+        await form.load(repositories)
+        #expect(form.error == nil && form.accountId.isEmpty)
+
+        let savedAccounts = try await repositories.accounts.accounts(includeClosed: true)
+        #expect(savedAccounts.count == 1)
+        #expect(savedAccounts[0].statementProvider == nil)
     }
 }
