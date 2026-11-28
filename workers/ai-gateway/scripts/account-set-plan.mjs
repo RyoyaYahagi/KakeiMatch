@@ -10,18 +10,23 @@ if (!userId || !/^[A-Za-z0-9_-]{1,128}$/.test(userId) || !["free", "pro", "famil
   console.error("Usage: npm run account:set-plan -- <opaque-user-id> <free|pro|family>");
   process.exit(2);
 }
-let limit = "NULL";
-if (plan !== "family") {
-  const variable = plan === "free" ? "AI_FREE_MONTHLY_LIMIT" : "AI_PRO_MONTHLY_LIMIT";
-  const configured = process.env[variable];
-  const number = Number(configured);
-  if (!configured || !Number.isSafeInteger(number) || number < 1) {
-    console.error(`Set ${variable} to a positive integer for ${plan} assignments.`);
-    process.exit(2);
+// free は付与を消して「付与なし」と同じ日次上限にする（free の月間上限は読まれない）。
+// pro の上限 0 は利用停止（有効な StoreKit 購入があれば購入が優先される）。family は上限なし。
+let sql;
+if (plan === "free") {
+  sql = `DELETE FROM account_entitlements WHERE user_id = '${userId}'`;
+} else {
+  let limit = "NULL";
+  if (plan === "pro") {
+    const configured = process.env.AI_PRO_MONTHLY_LIMIT ?? "";
+    if (!/^(0|[1-9][0-9]*)$/.test(configured) || !Number.isSafeInteger(Number(configured))) {
+      console.error("Set AI_PRO_MONTHLY_LIMIT to a non-negative integer for pro assignments. 0 stops the account (0/month) unless it has a valid StoreKit purchase.");
+      process.exit(2);
+    }
+    limit = configured;
   }
-  limit = String(number);
+  sql = `INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES ('${userId}', '${plan}', ${limit}, unixepoch()) ON CONFLICT(user_id) DO UPDATE SET plan = excluded.plan, monthly_ai_limit = excluded.monthly_ai_limit, updated_at = excluded.updated_at`;
 }
-const sql = `INSERT INTO account_entitlements(user_id, plan, monthly_ai_limit, updated_at) VALUES ('${userId}', '${plan}', ${limit}, unixepoch()) ON CONFLICT(user_id) DO UPDATE SET plan = excluded.plan, monthly_ai_limit = excluded.monthly_ai_limit, updated_at = excluded.updated_at`;
 const result = spawnSync("cf", ["d1", "query", dbId, "--sql", sql], { stdio: "inherit" });
 if (result.error) {
   console.error("Could not run cf d1 query. Check that the cf CLI is installed and authenticated.");

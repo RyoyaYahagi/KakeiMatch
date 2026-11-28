@@ -7,6 +7,8 @@ const handlers = vi.hoisted(() => ({
   adminGateway: vi.fn(async () => Response.json({ source: 'admin-gateway' })),
   nativeRequest: vi.fn(async () => Response.json({ source: 'native' })),
   appleAppSiteAssociation: vi.fn(() => Response.json({ webcredentials: { apps: [] } })),
+  storeKitNotifications: vi.fn(async () => Response.json({ source: 'storekit-notifications' })),
+  reconcileStoreSubscriptions: vi.fn(async () => ({ skipped: true, checked: 0, updated: 0, unchanged: 0, errors: 0 })),
 }));
 vi.mock('./admin', () => ({
   requireAdmin: async () => state.status === 200
@@ -18,6 +20,12 @@ vi.mock('./native-auth', () => ({
   handleNativeRequest: handlers.nativeRequest,
   appleAppSiteAssociation: handlers.appleAppSiteAssociation,
   purgeNativeCredentials: vi.fn(),
+}));
+vi.mock('./storekit-notifications', () => ({
+  handleStoreKitNotificationRequest: handlers.storeKitNotifications,
+}));
+vi.mock('./storekit-reconcile', () => ({
+  reconcileStoreSubscriptions: handlers.reconcileStoreSubscriptions,
 }));
 
 function run(path: string, assets: (request: Request) => Promise<Response> = async () => new Response('asset'), init?: RequestInit) {
@@ -54,6 +62,19 @@ describe('worker route allowlist', () => {
     expect(native.status).toBe(200);
     expect(await native.json()).toEqual({ source: 'native' });
     expect(handlers.nativeRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes POST /api/storekit/notifications to the notification handler and rejects GET with 405', async () => {
+    const postResponse = await run('/api/storekit/notifications', undefined, { method: 'POST' });
+    expect(postResponse.status).toBe(200);
+    expect(await postResponse.json()).toEqual({ source: 'storekit-notifications' });
+    expect(handlers.storeKitNotifications).toHaveBeenCalledTimes(1);
+
+    const getResponse = await run('/api/storekit/notifications', undefined, { method: 'GET' });
+    expect(getResponse.status).toBe(405);
+    expect(getResponse.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(await getResponse.json()).toEqual({ error: 'method_not_allowed' });
+    expect(handlers.storeKitNotifications).toHaveBeenCalledTimes(1);
   });
 
   it('passes admin API requests to the admin gateway', async () => {
@@ -159,6 +180,7 @@ describe('worker route allowlist', () => {
 
   it.each([
     '/api/unknown',
+    '/api/storekit/unknown',
     '/api/receipts/receipt-a/analyze',
     '/sw.js',
     '/manifest.webmanifest',

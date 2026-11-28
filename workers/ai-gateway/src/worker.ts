@@ -7,6 +7,7 @@ import { assertCostEventCompleted, beginCostEventStatement, completeCostEventSta
 import { monthKey, dayKey, flowMac, flowUsage, guestDayUsage, reserveFlow, attemptFlow, allowCategory, releaseUndispatchedFlow, markFlowDispatchedStatement, reserveCategorySuggestionFlow, markCategorySuggestionDispatchedStatement, releaseUndispatchedCategorySuggestionFlow, uncountFlow, uncountCategorySuggestionFlow, type FlowLimits } from "./receipt-ai-usage";
 import { addressDayMac, type GuestEnv } from "./guest-ai";
 import { isAccountActive, type AccountD1BatchResult, type AccountEnv } from "./account-db";
+import { resolveDailyLimit, resolveEffectiveEntitlement, type StoreKitEnv } from "./entitlements";
 
 const MAX_JSON_BYTES = 9 * 1024 * 1024;
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024;
@@ -14,7 +15,6 @@ const MAX_PROVIDER_RESPONSE_BYTES = 1024 * 1024;
 const DECISIONS_MODEL = "gemini-decision-1";
 const DECISIONS_URL = "https://generativelanguage.googleapis.com/v1beta/decisions";
 const TOKEN_LIFETIME_SECONDS = 10 * 60;
-const DEFAULT_GUEST_DAILY_AI_LIMIT = 5;
 // Caps guests who share or rotate an address, and Issue floods from one address.
 const GUEST_ADDRESS_DAILY_AI_LIMIT = 20;
 const CONTACT_SUBMITS_PER_ADDRESS_DAILY = 10;
@@ -40,7 +40,7 @@ const CATEGORY_CRITERIA: Record<(typeof CATEGORY_IDS)[number], string> = {
 
 export interface RateLimitBinding { limit(input: { key: string }): Promise<{ success: boolean }> }
 export type AccountD1Binding = AccountEnv["ACCOUNT_DB"];
-export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT"> {
+export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, Omit<GuestEnv, "ACCOUNT_DB" | "AI_USER_RATE_LIMIT">, StoreKitEnv {
   AI_GATEWAY_AUTH_SECRET?: string; GEMINI_API_KEY?: string; GEMINI_MODEL?: string;
   AI_USER_RATE_LIMIT?: RateLimitBinding;
   ACCOUNT_DB?: AccountD1Binding; AI_GUEST_DAILY_LIMIT?: string; AI_GUARDRAILS_JSON?: string; AI_EMERGENCY_STOP?: string;
@@ -50,17 +50,11 @@ export interface GatewayEnv extends Omit<AccountEnv, "ACCOUNT_DB">, ContactEnv, 
 }
 type HandlerOptions = { fetchImpl?: typeof fetch; nowSeconds?: () => number };
 
-type Plan = "free" | "pro" | "family";
 export function guestLimit(env: GatewayEnv): number {
-  const configured = Number(env.AI_GUEST_DAILY_LIMIT);
-  return Number.isSafeInteger(configured) && configured > 0 ? configured : DEFAULT_GUEST_DAILY_AI_LIMIT;
+  return resolveDailyLimit(env);
 }
 function flowLimits(env: GatewayEnv): FlowLimits {
   return { guestDaily: guestLimit(env), guestAddressDaily: GUEST_ADDRESS_DAILY_AI_LIMIT, contactSubmitAddressDaily: CONTACT_SUBMITS_PER_ADDRESS_DAILY };
-}
-function readPlan(value: unknown): Plan {
-  if (value === "free" || value === "pro" || value === "family") return value;
-  throw new Error("invalid_entitlement");
 }
 /** Server-only token minting; callers must resolve identity from verified credentials. */
 export async function issueAiToken(userId: string, secret: string, now: number): Promise<string> {
@@ -73,19 +67,19 @@ export async function issueAiToken(userId: string, secret: string, now: number):
   const encodedSignature = btoa(String.fromCharCode(...signature)).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
   return `${head}.${payload}.${encodedSignature}`;
 }
-/** Only an explicit entitlement row sets a monthly plan. Accounts without one, like guests, use the daily cap. */
+/** Effective entitlements combine manual grants and active StoreKit subscriptions. Free-tier users share the daily cap. */
 export async function usageSummary(db: AccountD1Binding, user: string, now: number, env: GatewayEnv): Promise<Record<string, unknown>> {
-  const row = await db.prepare("SELECT plan, monthly_ai_limit AS monthlyAiLimit FROM account_entitlements WHERE user_id = ?").bind(user).first<{ plan: string; monthlyAiLimit: number | null }>();
-  if (!row) {
-    const limit = guestLimit(env);
+  const effective = await resolveEffectiveEntitlement(db, user, now, env);
+  if (effective.period === "day") {
+    const limit = effective.dailyLimit;
     const used = await guestDayUsage(db, user, dayKey(now));
     const guest = await db.prepare("SELECT 1 AS found FROM guest_devices WHERE user_id = ?").bind(user).first();
     return { plan: guest ? "guest" : "free", period: "day", day: dayKey(now), used, limit, remaining: Math.max(0, limit - used) };
   }
   const month = monthKey(now);
   const used = await flowUsage(db, user, month);
-  const limit = row.monthlyAiLimit;
-  return { plan: readPlan(row.plan), period: "month", month, used, limit, remaining: limit === null ? null : Math.max(0, limit - used) };
+  const limit = effective.monthlyAiLimit;
+  return { plan: effective.plan, period: "month", month, used, limit, remaining: limit === null ? null : Math.max(0, limit - used) };
 }
 
 function json(status: number, value: unknown): Response {
@@ -496,7 +490,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     catch (error) { return dispatchError(error); }
     try {
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, input.flowId, "category-suggestion", { sourceCategoryName: input.sourceCategoryName, categories: input.categories });
-      const reservation = await reserveCategorySuggestionFlow(env.ACCOUNT_DB, identity, input.flowId, mac, requestNow, flowLimits(env), addressMac);
+      const reservation = await reserveCategorySuggestionFlow(env.ACCOUNT_DB, identity, input.flowId, mac, requestNow, flowLimits(env), addressMac, env);
       if (reservation !== "reserved") return json(reservation === "ai_quota_exceeded" ? 429 : 409, { error: reservation });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
     const fetchImpl = options.fetchImpl ?? fetch;
@@ -537,7 +531,7 @@ export async function handleRequest(request: Request, env: GatewayEnv, options: 
     catch (error) { return dispatchError(error); }
     try {
       const mac = await flowMac(env.AI_GATEWAY_AUTH_SECRET!, identity, flowId, "gemini", payroll ? { ...image, documentKind: "pay_slip" } : image);
-      const reservation = await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, flowLimits(env), "receipt", addressMac);
+      const reservation = await reserveFlow(env.ACCOUNT_DB, identity, flowId, mac, now, flowLimits(env), "receipt", addressMac, env);
       if (reservation !== "reserved") return json(reservation === "ai_quota_exceeded" ? 429 : 409, { error: reservation });
     } catch { return json(503, { error: "temporarily_unavailable" }); }
 

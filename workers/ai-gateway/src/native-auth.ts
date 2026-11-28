@@ -3,6 +3,7 @@ import type { AppAttestConfig } from './app-attest';
 import { addressDayMac, GUEST_CREATIONS_PER_ADDRESS_DAILY } from './guest-ai';
 import { dayKey } from './receipt-ai-usage';
 import { readRequestBytes } from './request-body';
+import { handleStoreKitTransactionPost, type StoreKitTransactionOptions } from './storekit';
 import { handleRequest as handleAiRequest, issueAiToken, usageSummary, type GatewayEnv } from './worker';
 
 export interface NativeEnv extends GatewayEnv {
@@ -18,7 +19,7 @@ type Config = AppAttestConfig & { origin: string; rpId: string };
 type KeyRow = { key_id: string; public_key: string; counter: number; guest_user_id: string | null; account_user_id: string | null };
 type SessionRow = { token_hash: string; key_id: string; user_id: string; identity: 'guest' | 'account'; expires_at: number };
 type Challenge = { id: string; challenge: string; purpose: string; key_id: string; session_hash: string | null };
-type Options = { nowSeconds?: () => number; fetchImpl?: typeof fetch };
+type Options = { nowSeconds?: () => number; fetchImpl?: typeof fetch } & StoreKitTransactionOptions;
 const SESSION_SECONDS = 14 * 86400;
 const CHALLENGE_SECONDS = 120;
 const ACCESS_SECONDS = 600;
@@ -91,8 +92,8 @@ async function resolveSessionHash(db: Db, config: Config, now: number, digest: s
 async function newSession(db: Db, id: string, user: string, now: number) {
   const token = randomToken();
   const expiresAt = now + SESSION_SECONDS;
-  const result = await db.prepare(`INSERT INTO native_sessions(token_hash,key_id,user_id,auth_session_id,identity,created_at,expires_at)
-    VALUES (?,?,?,NULL,'guest',?,?)`).bind(await tokenHash(token), id, user, now, expiresAt).run();
+  const result = await db.prepare(`INSERT INTO native_sessions(token_hash,key_id,user_id,identity,created_at,expires_at)
+    VALUES (?,?,?,'guest',?,?)`).bind(await tokenHash(token), id, user, now, expiresAt).run();
   if (!result.success || result.meta?.changes !== 1) throw new Error('native_session_failed');
   return { sessionToken: token, expiresAt };
 }
@@ -241,6 +242,23 @@ export async function handleNativeRequest(request: Request, env: NativeEnv, opti
         }
       }
       return json(201, await newSession(db, registered.key_id, user, now));
+    }
+    if (path === '/api/native/storekit/transactions') {
+      if (request.method !== 'POST') return json(405, { error: 'method_not_allowed' });
+      const session = await resolveSession(db, config, now, request.headers.get('authorization'));
+      if (!session) return json(401, { error: 'unauthorized' });
+      const input = await body(request);
+      if (!input || !fields(input, ['signedTransactionInfo']) || !text(input.signedTransactionInfo, 48 * 1024)) {
+        return json(400, { error: 'invalid_request' });
+      }
+      return await handleStoreKitTransactionPost(
+        db,
+        env,
+        session.user_id,
+        input.signedTransactionInfo,
+        now,
+        { storeKitTestTrustAnchor: options.storeKitTestTrustAnchor },
+      );
     }
     return await authenticatedRequest(request, env, db, config, now, options);
   } catch { return json(503, { error: 'temporarily_unavailable' }); }
