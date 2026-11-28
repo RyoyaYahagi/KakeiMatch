@@ -512,7 +512,7 @@ describe('POST /api/storekit/notifications', () => {
     });
   });
 
-  it('restores a revoked subscription on REFUND_REVERSED while enforcing signedDate ordering and idempotency', async () => {
+  it('restores a revoked subscription on REFUND_REVERSED and preserves idempotency', async () => {
     seedSubscription({ status: 'active', latestSignedDateMs: (NOW - 300) * 1000 });
 
     const revokedSec = NOW - 100;
@@ -537,28 +537,7 @@ describe('POST /api/storekit/notifications', () => {
     );
     expect(await refundRes.json()).toEqual({ received: true, outcome: 'applied', status: 'revoked' });
 
-    // Stale REFUND_REVERSED (older signedDate than the refund) must be ignored_stale.
-    const txStaleReversed = await buildStoreKitJwsFixture({
-      chain,
-      payloadOverrides: {
-        signedDate: (NOW - 150) * 1000,
-        expiresDate: (NOW + 30 * 86400) * 1000,
-      },
-    });
-    const staleReversedNotif = await signPayload(chain, {
-      notificationType: 'REFUND_REVERSED',
-      notificationUUID: 'uuid-rr-stale',
-      signedDate: (NOW - 120) * 1000,
-      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txStaleReversed.jws },
-    });
-    const staleRes = await handleStoreKitNotificationRequest(
-      postNotification({ signedPayload: staleReversedNotif }),
-      env,
-      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
-    );
-    expect(await staleRes.json()).toEqual({ received: true, outcome: 'ignored_stale' });
-
-    // Newer REFUND_REVERSED restores the subscription to active and clears revocation fields.
+    // REFUND_REVERSED restores the subscription to active and clears revocation fields.
     const restoredExpiresSec = NOW + 30 * 86400;
     const reversedSignedMs = (NOW - 20) * 1000;
     const txReversed = await buildStoreKitJwsFixture({
@@ -602,6 +581,58 @@ describe('POST /api/storekit/notifications', () => {
     );
     expect(dupRes.status).toBe(200);
     expect(await dupRes.json()).toEqual({ received: true, duplicate: true, outcome: 'applied' });
+  });
+
+  it('restores a revoked subscription when a retried REFUND_REVERSED has an older signedDate than latest_signed_date_ms advanced by device sync', async () => {
+    const advancedSignedDateMs = (NOW - 10) * 1000;
+    const restoredExpiresSec = NOW + 30 * 86400;
+    // Simulate: subscription was revoked, then a device sync advanced latest_signed_date_ms
+    // before Apple's retried REFUND_REVERSED arrived.
+    seedSubscription({
+      originalTransactionId: ORIG_TX_ID,
+      status: 'revoked',
+      expiresAt: restoredExpiresSec,
+      revokedAt: NOW - 200,
+      revocationReason: 1,
+      latestTransactionId: '2000000000000001',
+      latestSignedDateMs: advancedSignedDateMs,
+    });
+
+    const txRetriedReversed = await buildStoreKitJwsFixture({
+      chain,
+      payloadOverrides: {
+        originalTransactionId: ORIG_TX_ID,
+        transactionId: '2000000000000001',
+        signedDate: (NOW - 120) * 1000,
+        expiresDate: restoredExpiresSec * 1000,
+      },
+    });
+    const retriedReversedNotif = await signPayload(chain, {
+      notificationType: 'REFUND_REVERSED',
+      notificationUUID: 'uuid-rr-retry-older',
+      signedDate: (NOW - 100) * 1000,
+      data: { bundleId: 'jp.kakeimatch.ios', environment: 'Sandbox', signedTransactionInfo: txRetriedReversed.jws },
+    });
+
+    const response = await handleStoreKitNotificationRequest(
+      postNotification({ signedPayload: retriedReversedNotif }),
+      env,
+      { nowSeconds: () => NOW, storeKitTestTrustAnchor: chain.rootDER },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ received: true, outcome: 'applied', status: 'active' });
+
+    expect(
+      sqlite
+        .prepare('SELECT status, expires_at, revoked_at, revocation_reason, latest_signed_date_ms FROM store_subscriptions WHERE original_transaction_id = ?')
+        .get(ORIG_TX_ID),
+    ).toEqual({
+      status: 'active',
+      expires_at: restoredExpiresSec,
+      revoked_at: null,
+      revocation_reason: null,
+      latest_signed_date_ms: advancedSignedDateMs,
+    });
   });
 
   it('does not revoke a newer renewed subscription when a REFUND arrives for an older billing-period transaction', async () => {
